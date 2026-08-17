@@ -1,0 +1,1235 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 57_JS_InventorySettings.html — شاشة إعدادات المخزون العامة
+  // ═══════════════════════════════════════════════════════════════════
+  // [INV-SETTINGS-2026-08-07] Phase 2: هيكل الـ15 تاب فقط (عناوين + تنقل
+  // + تحميل/حفظ فعلي للـ backend عبر Code_56_InventorySettingsEngine.js).
+  // محتوى كل تاب (الحقول الفعلية) هيتم تعبئته تاب بتاب في Phase 3 —
+  // دلوقتي كل تاب فيه Placeholder "قريبًا" بس عشان نتأكد من الشكل
+  // والتنقل الأول قبل ما نستثمر وقت في بناء كل الحقول.
+  //
+  // نفس نمط تابات فورم الصنف (03_JS_Dashboard_Items.html) في الـ CSS
+  // classes، لكن التبديل هنا عبر TabEngine الموحّد (50_JS_TabEngine)
+  // بدل منطق يدوي، لأن كل التابات هنا static (تحميل واحد للداتا كلها
+  // مع فتح الشاشة، مفيش لكل تاب loader منفصل).
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ── تعريف الأقسام الـ15 (مفتاح، عنوان، أيقونة) — مصدر واحد لبناء
+  // أزرار التابات ولوحاتها، عشان إضافة قسم جديد مستقبلاً = سطر واحد هنا
+  var INV_SETTINGS_SECTIONS = [
+    { key: "general", label: "عام", icon: "ti-adjustments" },
+    { key: "item_defaults", label: "خصائص المخزون", icon: "ti-list-details" },
+    { key: "units_measure", label: "وحدات القياس", icon: "ti-ruler-2" },
+    { key: "units_guide", label: "دليل الوحدات", icon: "ti-book" },
+    { key: "receipt_permits", label: "إذون الإضافة", icon: "ti-square-rounded-plus" },
+    { key: "issue_permits", label: "إذون الصرف", icon: "ti-square-rounded-minus" },
+    { key: "price_formulas", label: "معادلة الأسعار", icon: "ti-calculator" },
+    { key: "non_homogeneous_units", label: "الوحدات الغير متجانسة", icon: "ti-transform" },
+    { key: "item_formulas", label: "معادلة الأصناف", icon: "ti-math-function" },
+    { key: "valuation", label: "سياسة تقييم المخزون", icon: "ti-scale" },
+    { key: "costing", label: "سياسة التكلفة", icon: "ti-coin" },
+    { key: "reservation", label: "سياسة الحجز", icon: "ti-lock" },
+    { key: "stocktake", label: "سياسة الجرد", icon: "ti-clipboard-check" },
+    { key: "transfer", label: "سياسة التحويل بين المخازن", icon: "ti-transfer" },
+    { key: "returns", label: "سياسة المرتجعات", icon: "ti-corner-up-left" },
+    { key: "reorder", label: "الحد الأدنى والأقصى", icon: "ti-alert-triangle" },
+    { key: "units", label: "سياسة الوحدات", icon: "ti-ruler-2" },
+    { key: "barcode", label: "سياسة الباركود", icon: "ti-barcode" },
+    { key: "numbering", label: "سياسة الترقيم", icon: "ti-list-numbers" },
+    { key: "user_perms", label: "صلاحيات المستخدمين", icon: "ti-shield-lock" },
+    { key: "accounting", label: "الربط المحاسبي", icon: "ti-report-money" },
+    { key: "notifications", label: "الإشعارات", icon: "ti-bell" },
+    { key: "log", label: "سجل التغييرات", icon: "ti-history" },
+  ];
+
+  var _invSetTabsCtrl = null; // مرجع TabEngine instance الحالي
+  var _invSetCurrentData = null; // آخر نسخة إعدادات محمّلة من السيرفر
+  var _invSetLogLoaded = false; // هل تاب السجل اتحمّل قبل كده (lazy)
+
+  // ═══════════════════════════════════════════════════════════════
+  // [PHASE-3] Field Builders — دوال موحّدة لبناء كل نوع حقل، عشان كل
+  // الـ15 قسم يستخدموا نفس الشكل بالظبط ومفيش تكرار HTML. كل حقل
+  // بياخد data-inv-key="<مفتاح من INVENTORY_SETTINGS_DEFAULTS>" عشان
+  // _invSetApplyToUI/_invSetGatherFromUI يقدروا يلاقوه تلقائيًا بدون
+  // سويتش/if يدوي لكل حقل.
+  // ═══════════════════════════════════════════════════════════════
+
+  function _invRow(labelText, controlHtml, hint) {
+    return (
+      '<div class="invset-field-row">' +
+      '<div class="invset-field-label">' +
+      "<label>" +
+      labelText +
+      "</label>" +
+      (hint ? '<span class="invset-field-hint">' + hint + "</span>" : "") +
+      "</div>" +
+      '<div class="invset-field-control">' +
+      controlHtml +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function _invToggle(key) {
+    return (
+      '<label class="invset-switch">' +
+      '<input type="checkbox" data-inv-key="' +
+      key +
+      '" data-inv-type="bool">' +
+      '<span class="invset-switch-track"><span class="invset-switch-thumb"></span></span>' +
+      "</label>"
+    );
+  }
+
+  function _invNumber(key, opts) {
+    opts = opts || {};
+    return (
+      '<input class="input invset-input-sm" type="number" data-inv-key="' +
+      key +
+      '" data-inv-type="number"' +
+      (opts.min !== undefined ? ' min="' + opts.min + '"' : "") +
+      (opts.max !== undefined ? ' max="' + opts.max + '"' : "") +
+      (opts.step !== undefined ? ' step="' + opts.step + '"' : "") +
+      ">"
+    );
+  }
+
+  function _invText(key, opts) {
+    opts = opts || {};
+    return (
+      '<input class="input invset-input-sm" type="text" data-inv-key="' +
+      key +
+      '" data-inv-type="text"' +
+      (opts.placeholder ? ' placeholder="' + opts.placeholder + '"' : "") +
+      ">"
+    );
+  }
+
+  function _invSelect(key, options) {
+    var opts = options
+      .map(function (o) {
+        return '<option value="' + o.v + '">' + o.label + "</option>";
+      })
+      .join("");
+    return (
+      '<select class="input" data-inv-key="' + key + '" data-inv-type="text">' + opts + "</select>"
+    );
+  }
+
+  // ── محتوى كل تاب (دوال منفصلة لسهولة القراءة/الصيانة) ──────────
+
+  function _invPanelGeneral() {
+    return (
+      '<div class="invset-section-title">تفعيل ميزات المخزون</div>' +
+      '<div class="invset-info-note"><i class="ti ti-info-circle" aria-hidden="true"></i> إعداد "السماح بالمخزون السالب" مكانه شاشة الإعدادات العامة ← تاب "العمليات"، مش هنا.</div>' +
+      _invRow("منع بيع صنف غير متوفر", _invToggle("block_sale_if_unavailable")) +
+      _invRow("السماح بالحجز قبل التوفر", _invToggle("allow_reserve_before_available")) +
+      _invRow("تفعيل تتبع الكميات", _invToggle("enable_qty_tracking")) +
+      _invRow("تفعيل تتبع القيمة", _invToggle("enable_value_tracking")) +
+      _invRow("تفعيل تعدد المخازن", _invToggle("enable_multi_warehouse")) +
+      _invRow("تفعيل مواقع التخزين داخل المخزن (Bins)", _invToggle("enable_bins")) +
+      _invRow("تفعيل الدفعات (Batches)", _invToggle("enable_batches")) +
+      _invRow("تفعيل الأرقام التسلسلية (Serial Numbers)", _invToggle("enable_serial_numbers")) +
+      _invRow("تفعيل تواريخ الصلاحية", _invToggle("enable_expiry_dates")) +
+      _invRow("تفعيل الوحدات المتعددة", _invToggle("enable_multi_units")) +
+      _invRow("تفعيل الأصناف المركبة", _invToggle("enable_bundle_items")) +
+      _invRow("تفعيل الأصناف الخدمية", _invToggle("enable_service_items")) +
+      _invRow("تفعيل الأصناف غير المخزنية", _invToggle("enable_non_stock_items")) +
+      '<div class="invset-section-heading"><i class="ti ti-adjustments"></i><h3>عام</h3></div>' +
+      _invRow(
+        "كيفية إحتساب كمية البونص في الفاتورة",
+        _invSelect("bonus_qty_calc_method", [
+          { v: "smallest_unit", label: "بالوحدة الصغرى" },
+          { v: "invoice_unit", label: "بوحدة الفاتورة" },
+        ]),
+      ) +
+      _invRow(
+        "كيفية تكرار الباركود عند طباعة الباركود",
+        _invSelect("barcode_print_repeat_mode", [
+          { v: "once", label: "مرة واحدة" },
+          { v: "per_qty", label: "بعدد الكمية" },
+          { v: "custom", label: "عدد مخصص" },
+        ]),
+      ) +
+      '<div class="invset-section-heading"><i class="ti ti-barcode"></i><h3>أصناف برقم تسلسلي</h3></div>' +
+      _invRow(
+        "يجب إدخال إسم العميل أو المورد في الفواتير التي تحتوي على أصناف برقم تسلسلي",
+        _invToggle("serial_require_party_name"),
+      ) +
+      _invRow("أثناء البيع يتاح للمستخدم الاختيار من الأرقام التسلسلية المتاحة", _invToggle("serial_allow_manual_pick_on_sale")) +
+      _invRow(
+        "في حالة عدم التحقق من صحة إستخدام الرقم التسلسلي",
+        _invSelect("serial_invalid_use_action", [
+          { v: "block", label: "منع إتمام العملية" },
+          { v: "warn_password", label: "قبول التعامل بعد كتابة رقم سري" },
+          { v: "allow", label: "السماح بدون تنبيه" },
+        ]),
+      ) +
+      _invRow("الرقم السري لتنفيذ العملية", _invText("serial_override_password", { placeholder: "*****" })) +
+      '<div class="invset-section-heading"><i class="ti ti-calendar-due"></i><h3>مخزون بتاريخ صلاحية</h3></div>' +
+      _invRow(
+        "في حالة الشراء .. إذا كان الصنف لصلاحية تشفيلية غير مسجل لدينا، ما الذي تود فعله؟",
+        _invSelect("expiry_unknown_batch_on_purchase", [
+          { v: "create_auto", label: "إنشاء رقم لصنفية بالبيانات المدخلة" },
+          { v: "block", label: "منع الشراء" },
+          { v: "ask", label: "سؤال المستخدم في كل مرة" },
+        ]),
+      ) +
+      _invRow(
+        "سياسة الإدخال في حالة الإستلام؟",
+        _invSelect("expiry_receive_policy", [
+          { v: "always_ask_date", label: "دعني أختار التاريخ دائمًا" },
+          { v: "nearest_expiry", label: "أقرب تاريخ صلاحية" },
+        ]),
+      ) +
+      _invRow(
+        "سياسة الإدخال في حالة الصرف؟",
+        _invSelect("expiry_issue_policy", [
+          { v: "fefo", label: "البيع من التواريخ الأقدم أولاً" },
+          { v: "manual", label: "اختيار يدوي" },
+        ]),
+      ) +
+      _invRow("أقل مدة صلاحية يمكن قبولها", _invNumber("expiry_min_accept_days", { min: 0 }) + " يوم") +
+      _invRow("منع التعديل على رقم التشغيلة أثناء عملية الشراء؟", _invToggle("expiry_block_batch_edit_on_purchase")) +
+      _invRow(
+        "عند إضافة صنف عن طريق QR Barcode وكان تاريخ صلاحيته غير مسجل لدينا، ما الذي تود فعله؟",
+        _invSelect("expiry_qr_unknown_action", [
+          { v: "open_expiry_screen", label: "فتح شاشة إضافة تاريخ صلاحية" },
+          { v: "ignore", label: "تجاهل" },
+        ]),
+      )
+    );
+  }
+
+  function _invPanelItemDefaults() {
+    return (
+      '<div class="invset-section-title">يتم ملأ صفحة إضافة صنف بهذه الخصائص لتسهيل عملية الإدخال عليكم</div>' +
+      _invRow(
+        "طريقة تقييم المخزون",
+        _invSelect("item_default_valuation_method", [
+          { v: "fifo", label: "الوارد أولاً صادر أولاً" },
+          { v: "lifo", label: "الوارد أخيرًا صادر أولاً" },
+          { v: "average", label: "متوسط مرجّح" },
+        ]),
+      ) +
+      _invRow(
+        "طريقة كتابة الكود",
+        _invSelect("item_code_generation_method", [
+          { v: "auto_increment", label: "زيادة الكود بطريقة تلقائية" },
+          { v: "manual", label: "إدخال يدوي" },
+        ]),
+      ) +
+      _invRow(
+        "نوع المخزون الافتراضي",
+        _invSelect("item_default_inventory_type", [
+          { v: "stock", label: "مخزون" },
+          { v: "service", label: "خدمي" },
+          { v: "non_stock", label: "غير مخزني" },
+        ]),
+      ) +
+      _invRow("وحدة القياس الافتراضية", _invText("item_default_unit", { placeholder: "قطعة" })) +
+      _invRow("الحد الأدنى لكمية الصنف", _invNumber("item_default_min_qty", { min: 0 })) +
+      _invRow("الحد الأقصى لكمية الصنف", _invNumber("item_default_max_qty", { min: 0 })) +
+      _invRow("فترة الركود", _invNumber("item_stagnation_period_days", { min: 0 }) + " يوم") +
+      _invRow("التنبيه قبل انتهاء تاريخ الصلاحية بـ", _invNumber("item_expiry_alert_days", { min: 0 }) + " يوم") +
+      '<div class="invset-section-heading"><i class="ti ti-receipt-tax"></i><h3>الضرائب</h3></div>' +
+      _invRow(
+        "كيفية تعامل الأصناف مع الضريبة",
+        _invSelect("item_tax_handling", [
+          { v: "no", label: "لا" },
+          { v: "sales_only", label: "المبيعات فقط" },
+          { v: "purchases_only", label: "المشتريات فقط" },
+          { v: "both", label: "المبيعات والمشتريات" },
+        ]),
+      ) +
+      _invRow(
+        "نسبة الضريبة",
+        _invNumber("item_tax_rate_sales", { min: 0, max: 100 }) + " المبيعات &nbsp; " + _invNumber("item_tax_rate_purchases", { min: 0, max: 100 }) + " المشتريات",
+      ) +
+      _invRow("سعر الصنف يشمل الضريبة", _invToggle("item_price_includes_tax")) +
+      _invRow(
+        "كيفية تعامل الأصناف مع ضريبة الخصم",
+        _invSelect("item_discount_tax_handling", [
+          { v: "as_invoice", label: "كما بالفاتورة" },
+          { v: "fixed", label: "نسبة ثابتة" },
+          { v: "none", label: "بدون" },
+        ]),
+      ) +
+      _invRow("حساب ضريبة الخصم", _invText("item_discount_tax_account")) +
+      _invRow("نسبة ضريبة الخصم", _invNumber("item_discount_tax_rate", { min: 0, max: 100 }))
+    );
+  }
+
+  // ── تاب: وحدات القياس (اسم + عدد الوحدات) ───────────────────────────
+  function _invPanelUnitsMeasure() {
+    return (
+      '<div class="invset-section-title">هي عبارة عن علاقة بين الوحدات الصغرى والكبرى مثلة بعدد القطع لكل وحدة مثال (الكرتونة = 12 قطعة أو العلبة تحتوي على 2 شريط)</div>' +
+      '<div class="cset-table-wrap">' +
+      '<table class="invset-num-table" id="invset-units-table">' +
+      "<thead><tr><th>الاسم</th><th>عدد الوحدات</th><th></th></tr></thead>" +
+      '<tbody id="invset-units-list"></tbody>' +
+      "</table></div>" +
+      '<button type="button" class="btn btn-outline-primary" id="invset-add-unit-btn" style="margin-top:10px">' +
+      '<i class="ti ti-plus"></i> جديد</button>'
+    );
+  }
+
+  function _invUnitRowHtml(u, i) {
+    u = u || {};
+    return (
+      '<tr data-unit-row data-unit-index="' +
+      i +
+      '">' +
+      '<td><input class="input invset-input-sm" data-unit-field="name" value="' + (u.name || "") + '"></td>' +
+      '<td><input class="input invset-input-sm" type="number" min="1" data-unit-field="count" value="' +
+      (u.count != null ? u.count : 1) +
+      '"></td>' +
+      '<td><button type="button" class="btn btn-sm btn-outline-danger" data-remove-unit><i class="ti ti-trash"></i></button></td>' +
+      "</tr>"
+    );
+  }
+
+  function _invRenderUnitsList(units) {
+    var container = document.getElementById("invset-units-list");
+    if (!container) return;
+    container.innerHTML = (units || []).map(_invUnitRowHtml).join("");
+    container.querySelectorAll("[data-remove-unit]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        btn.closest("[data-unit-row]").remove();
+      });
+    });
+  }
+
+  function _invGatherUnits() {
+    var container = document.getElementById("invset-units-list");
+    if (!container) return [];
+    var out = [];
+    container.querySelectorAll("[data-unit-row]").forEach(function (row) {
+      var get = function (f) {
+        var el = row.querySelector('[data-unit-field="' + f + '"]');
+        return el ? el.value : "";
+      };
+      var name = (get("name") || "").trim();
+      if (!name) return;
+      out.push({ name: name, count: Number(get("count") || 1) });
+    });
+    return out;
+  }
+
+  // ── تاب: دليل الوحدات (Placeholder — قائمة مرجعية فقط، لسه محتاجة تفاصيل) ──
+  function _invPanelUnitsGuide() {
+    return (
+      '<div class="invset-panel-placeholder">' +
+      '<i class="ti ti-book" style="font-size:32px;opacity:.35"></i>' +
+      "<p>دليل الوحدات — قائمة مرجعية بكل وحدات القياس المتاحة في النظام (قطعة، كرتونة، شريط...) تُستخدم عند تعريف وحدات القياس بالأعلى. " +
+      "لسه محتاجين تفاصيل الشاشة دي عندك عشان نبنيها بالكامل.</p>" +
+      "</div>"
+    );
+  }
+
+  // ── تابين: إذون الإضافة / إذون الصرف (نفس الشكل بالظبط، بادئة مختلفة) ──
+  function _invWarehousePermitPanel(prefix) {
+    return (
+      '<div class="invset-header-actions" style="justify-content:flex-end;margin-bottom:14px">' +
+      '<select class="input invset-input-sm" id="invset-' + prefix + '-branch-filter"><option value="">الفرع الرئيسي</option></select>' +
+      '<select class="input invset-input-sm" id="invset-' + prefix + '-status-filter">' +
+      '<option value="active" selected>نشط</option><option value="all">الكل</option><option value="inactive">غير نشط</option>' +
+      "</select>" +
+      '<button type="button" class="btn btn-primary" id="invset-add-' + prefix + '-btn">جديد</button>' +
+      "</div>" +
+      '<div class="cset-table-wrap">' +
+      '<table class="invset-num-table" id="invset-' + prefix + '-table">' +
+      "<thead><tr><th>الاسم</th><th>قيد محاسبي</th><th>نشط</th><th></th></tr></thead>" +
+      '<tbody id="invset-' + prefix + '-list"></tbody>' +
+      "</table></div>"
+    );
+  }
+
+  function _invPanelReceiptPermits() {
+    return _invWarehousePermitPanel("receipt");
+  }
+
+  function _invPanelIssuePermits() {
+    return _invWarehousePermitPanel("issue");
+  }
+
+  function _invPermitRowHtml(prefix, p, i) {
+    p = p || {};
+    return (
+      '<tr data-' + prefix + '-row data-' + prefix + '-index="' +
+      i +
+      '">' +
+      '<td><input class="input invset-input-sm" data-' + prefix + '-field="name" value="' + (p.name || "") + '"></td>' +
+      '<td><input class="input invset-input-sm" data-' + prefix + '-field="ledger_account" value="' + (p.ledger_account || "") + '"></td>' +
+      '<td style="text-align:center"><label class="invset-switch"><input type="checkbox" data-' + prefix + '-field="active"' +
+      (p.active === false ? "" : " checked") +
+      '><span class="invset-switch-track"><span class="invset-switch-thumb"></span></span></label></td>' +
+      '<td><button type="button" class="btn btn-sm btn-outline-danger" data-remove-' + prefix + '><i class="ti ti-trash"></i></button></td>' +
+      "</tr>"
+    );
+  }
+
+  function _invRenderPermitsList(prefix, rows) {
+    var container = document.getElementById("invset-" + prefix + "-list");
+    if (!container) return;
+    container.innerHTML = (rows || []).map(function (p, i) { return _invPermitRowHtml(prefix, p, i); }).join("");
+    container.querySelectorAll("[data-remove-" + prefix + "]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        btn.closest("[data-" + prefix + "-row]").remove();
+      });
+    });
+  }
+
+  function _invGatherPermits(prefix) {
+    var container = document.getElementById("invset-" + prefix + "-list");
+    if (!container) return [];
+    var out = [];
+    container.querySelectorAll("[data-" + prefix + "-row]").forEach(function (row) {
+      var get = function (f) {
+        var el = row.querySelector('[data-' + prefix + '-field="' + f + '"]');
+        return el ? el.value : "";
+      };
+      var name = (get("name") || "").trim();
+      if (!name) return;
+      out.push({
+        name: name,
+        ledger_account: get("ledger_account") || "",
+        active: !!row.querySelector('[data-' + prefix + '-field="active"]').checked,
+      });
+    });
+    return out;
+  }
+
+  // ── تاب: معادلة الأسعار ──────────────────────────────────────────
+  function _invPanelPriceFormulas() {
+    return (
+      '<div class="invset-section-title">تستخدم معادلة الأسعار لوضع سعر جديد للأصناف بناء على عدة معطيات</div>' +
+      '<div class="invset-header-actions" style="justify-content:flex-end;margin-bottom:14px">' +
+      '<select class="input invset-input-sm" id="invset-price-formula-status-filter">' +
+      '<option value="active" selected>نشط</option><option value="all">الكل</option>' +
+      "</select>" +
+      '<button type="button" class="btn btn-primary" id="invset-add-price-formula-btn">جديد</button>' +
+      "</div>" +
+      '<div class="cset-table-wrap">' +
+      '<table class="invset-num-table" id="invset-price-formulas-table">' +
+      "<thead><tr><th>الاسم</th><th>النشاط</th><th></th></tr></thead>" +
+      '<tbody id="invset-price-formulas-list"></tbody>' +
+      "</table></div>"
+    );
+  }
+
+  function _invPriceFormulaRowHtml(f, i) {
+    f = f || {};
+    return (
+      '<tr data-formula-row data-formula-index="' +
+      i +
+      '">' +
+      '<td><input class="input invset-input-sm" data-formula-field="name" value="' + (f.name || "") + '"></td>' +
+      '<td style="text-align:center"><label class="invset-switch"><input type="checkbox" data-formula-field="active"' +
+      (f.active === false ? "" : " checked") +
+      '><span class="invset-switch-track"><span class="invset-switch-thumb"></span></span></label></td>' +
+      '<td><button type="button" class="btn btn-sm btn-outline-danger" data-remove-formula><i class="ti ti-trash"></i></button></td>' +
+      "</tr>"
+    );
+  }
+
+  function _invRenderPriceFormulasList(rows) {
+    var container = document.getElementById("invset-price-formulas-list");
+    if (!container) return;
+    container.innerHTML = (rows || []).map(_invPriceFormulaRowHtml).join("");
+    container.querySelectorAll("[data-remove-formula]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        btn.closest("[data-formula-row]").remove();
+      });
+    });
+  }
+
+  function _invGatherPriceFormulas() {
+    var container = document.getElementById("invset-price-formulas-list");
+    if (!container) return [];
+    var out = [];
+    container.querySelectorAll("[data-formula-row]").forEach(function (row) {
+      var nameEl = row.querySelector('[data-formula-field="name"]');
+      var name = nameEl ? nameEl.value.trim() : "";
+      if (!name) return;
+      out.push({ name: name, active: !!row.querySelector('[data-formula-field="active"]').checked });
+    });
+    return out;
+  }
+
+  // ── تاب: الوحدات الغير متجانسة (Placeholder) ─────────────────────
+  function _invPanelNonHomogeneousUnits() {
+    return (
+      '<div class="invset-panel-placeholder">' +
+      '<i class="ti ti-transform" style="font-size:32px;opacity:.35"></i>' +
+      "<p>الوحدات الغير متجانسة (وحدات مختلفة النوع بين نفس الصنف — زي بيع بالمتر وشراء بالكيلو). " +
+      "لسه محتاجين تفاصيل الشاشة دي عندك عشان نبنيها بالكامل.</p>" +
+      "</div>"
+    );
+  }
+
+  // ── تاب: معادلة الأصناف (Placeholder) ─────────────────────────────
+  function _invPanelItemFormulas() {
+    return (
+      '<div class="invset-panel-placeholder">' +
+      '<i class="ti ti-math-function" style="font-size:32px;opacity:.35"></i>' +
+      "<p>معادلة الأصناف — بتستخدم لاشتقاق كمية/قيمة صنف من صنف آخر (تصنيع/تفكيك). " +
+      "لسه محتاجين تفاصيل الشاشة دي عندك عشان نبنيها بالكامل.</p>" +
+      "</div>"
+    );
+  }
+
+  function _invPanelValuation() {
+    return (
+      '<div class="invset-section-title">طريقة التقييم المطبّقة تلقائيًا على كل الحركات</div>' +
+      _invRow(
+        "طريقة التقييم",
+        _invSelect("valuation_method", [
+          { v: "fifo", label: "FIFO — الوارد أولاً صادر أولاً" },
+          { v: "lifo", label: "LIFO — الوارد أخيرًا صادر أولاً" },
+          { v: "average", label: "Weighted Average — متوسط مرجّح" },
+          { v: "moving_average", label: "Moving Average — متوسط متحرك" },
+          { v: "standard", label: "Standard Cost — تكلفة معيارية" },
+        ]),
+      )
+    );
+  }
+
+  function _invPanelCosting() {
+    return (
+      _invRow("تحديث التكلفة تلقائيًا", _invToggle("auto_update_cost")) +
+      _invRow(
+        "مصدر التكلفة",
+        _invSelect("cost_source", [
+          { v: "last_purchase", label: "آخر سعر شراء" },
+          { v: "average", label: "متوسط التكلفة" },
+          { v: "fixed", label: "تكلفة ثابتة" },
+          { v: "manual", label: "تكلفة يدوية" },
+        ]),
+      )
+    );
+  }
+
+  function _invPanelReservation() {
+    return (
+      _invRow(
+        "وقت الحجز",
+        _invSelect("reserve_on", [
+          { v: "order_create", label: "عند إنشاء الطلب" },
+          { v: "order_approve", label: "عند اعتماد الطلب" },
+          { v: "invoice", label: "عند الفاتورة" },
+        ]),
+      ) +
+      _invRow("إلغاء الحجز تلقائيًا", _invToggle("auto_release_reservation")) +
+      _invRow("مدة صلاحية الحجز (ساعات)", _invNumber("reservation_expiry_hours", { min: 0 }))
+    );
+  }
+
+  function _invPanelStocktake() {
+    return (
+      _invRow(
+        "نمط الجرد",
+        _invSelect("stocktake_mode", [
+          { v: "periodic", label: "الجرد الدوري" },
+          { v: "continuous", label: "الجرد المستمر" },
+        ]),
+      ) +
+      _invRow("السماح بالجرد أثناء البيع", _invToggle("allow_sale_during_stocktake")) +
+      _invRow("إيقاف العمليات أثناء الجرد", _invToggle("freeze_ops_during_stocktake")) +
+      _invRow("اعتماد الجرد بموافقة", _invToggle("stocktake_requires_approval"))
+    );
+  }
+
+  function _invPanelTransfer() {
+    return (
+      _invRow("اعتماد التحويل", _invToggle("transfer_requires_approval")) +
+      _invRow(
+        "نوع الموافقة",
+        _invSelect("transfer_approval_type", [
+          { v: "electronic", label: "الموافقة الإلكترونية" },
+          { v: "direct", label: "التحويل المباشر (بدون موافقة)" },
+        ]),
+      ) +
+      _invRow(
+        "مراحل التحويل",
+        _invSelect("transfer_mode", [
+          { v: "direct", label: "التحويل المباشر" },
+          { v: "two_step", label: "التحويل على مرحلتين (إرسال + استلام)" },
+        ]),
+      ) +
+      _invRow("استقبال التحويل يتطلب تأكيد", _invToggle("transfer_requires_receipt_confirm"))
+    );
+  }
+
+  function _invPanelReturns() {
+    return (
+      _invRow("تفعيل مرتجع بيع", _invToggle("sales_return_enabled")) +
+      _invRow("تفعيل مرتجع شراء", _invToggle("purchase_return_enabled")) +
+      _invRow(
+        "الإجراء الافتراضي للمرتجع",
+        _invSelect("return_default_action", [
+          { v: "restock", label: "إعادة للمخزون" },
+          { v: "scrap", label: "إعدام" },
+          { v: "quarantine", label: "حجر" },
+        ]),
+      )
+    );
+  }
+
+  function _invPanelReorder() {
+    return (
+      _invRow("الحد الأدنى الافتراضي", _invNumber("default_min_qty", { min: 0 })) +
+      _invRow("الحد الأقصى الافتراضي", _invNumber("default_max_qty", { min: 0 })) +
+      _invRow("نقطة إعادة الطلب الافتراضية", _invNumber("default_reorder_point", { min: 0 })) +
+      _invRow("كمية إعادة الطلب الافتراضية", _invNumber("default_reorder_qty", { min: 0 })) +
+      _invRow(
+        "عدد أيام التنبيه قبل الطلب",
+        _invNumber("reorder_alert_days_before", { min: 0 }),
+        "بديل حقل \"Lead Time\" اللي كان لكل صنف — إعداد عام واحد بدل ما يتكرر",
+      ) +
+      _invRow("تفعيل إشعارات النفاد", _invToggle("low_stock_notify"))
+    );
+  }
+
+  function _invPanelUnits() {
+    return _invRow("السماح بالبيع بأي وحدة", _invToggle("allow_sell_any_unit"));
+  }
+
+  function _invPanelBarcode() {
+    return (
+      _invRow("توليد الباركود تلقائيًا", _invToggle("barcode_auto_generate")) +
+      _invRow("منع تكرار الباركود", _invToggle("barcode_prevent_duplicate")) +
+      _invRow("السماح بأكثر من باركود للصنف", _invToggle("barcode_multi_per_item")) +
+      _invRow("طباعة تلقائية بعد الإضافة", _invToggle("barcode_auto_print"))
+    );
+  }
+
+  var INV_NUMBERING_DOC_TYPES = [
+    { key: "items", label: "الأصناف" },
+    { key: "movements", label: "الحركات" },
+    { key: "transfer_orders", label: "أوامر التحويل" },
+    { key: "stocktake_orders", label: "أوامر الجرد" },
+    { key: "receipt_orders", label: "أوامر الاستلام" },
+    { key: "issue_orders", label: "أوامر الصرف" },
+  ];
+
+  function _invPanelNumbering() {
+    var rows = INV_NUMBERING_DOC_TYPES.map(function (d) {
+      return (
+        '<tr data-numbering-doc="' +
+        d.key +
+        '">' +
+        "<td>" +
+        d.label +
+        "</td>" +
+        '<td><input class="input invset-input-sm" type="text" data-num-field="prefix"></td>' +
+        '<td><input class="input invset-input-sm" type="text" data-num-field="suffix"></td>' +
+        '<td><input class="input invset-input-sm" type="number" min="1" max="10" data-num-field="digits"></td>' +
+        "</tr>"
+      );
+    }).join("");
+    return (
+      '<div class="invset-section-title">Prefix / Suffix / عدد الأرقام لكل نوع مستند</div>' +
+      '<table class="invset-num-table"><thead><tr>' +
+      "<th>نوع المستند</th><th>Prefix</th><th>Suffix</th><th>عدد الأرقام</th>" +
+      "</tr></thead><tbody>" +
+      rows +
+      "</tbody></table>"
+    );
+  }
+
+  function _invPanelUserPerms() {
+    return (
+      '<div class="invset-section-title">من يستطيع تنفيذ العمليات الحساسة التالية (سياسة افتراضية — التفعيل الفعلي عبر شاشة الأدوار والصلاحيات)</div>' +
+      _invRow("تقييد تعديل الكميات", _invToggle("restrict_qty_edit")) +
+      _invRow("تقييد تعديل التكلفة", _invToggle("restrict_cost_edit")) +
+      _invRow("تقييد تعديل التقييم", _invToggle("restrict_valuation_edit")) +
+      _invRow("تقييد حذف حركة", _invToggle("restrict_movement_delete")) +
+      _invRow("تقييد إلغاء حركة", _invToggle("restrict_movement_cancel")) +
+      _invRow("تقييد إعادة فتح حركة", _invToggle("restrict_movement_reopen"))
+    );
+  }
+
+  // [PHASE-5-2026-08-07] قسم 13 مالوش تخزين مستقل (بيترابط مع
+  // POSTING_CONFIG_KEYS في Code_19_PostingConfig.js عشان نتجنب نظام
+  // حسابات موازي — راجع README_HANDOFF.md §8). المفاتيح المحاسبية
+  // المتعلقة بالمخزون (inventory_account, inventory_variance_account,
+  // wip_account, scrap_waste_account, cogs_account) موجودة فعلاً هناك،
+  // مفيش مفاتيح ناقصة احتاجت تتضاف. اللي كان ناقص فعليًا هو ربط فعلي
+  // (زرار حقيقي) بدل نص Placeholder بيشرح القرار بس من غير ما ينفّذه.
+  var INV_ACCOUNTING_RELATED_KEYS = [
+    "inventory_account",
+    "inventory_variance_account",
+    "wip_account",
+    "scrap_waste_account",
+    "cogs_account",
+  ];
+
+  function _invPanelAccounting() {
+    var itemsHtml = INV_ACCOUNTING_RELATED_KEYS.map(function (k) {
+      return "<li><code>" + k + "</code></li>";
+    }).join("");
+    return (
+      '<div class="invset-panel-placeholder">' +
+      '<i class="ti ti-report-money" style="font-size:32px;opacity:.35"></i>' +
+      "<p>حسابات المخزون (المخزون، تكلفة البضاعة المباعة، فروقات الجرد،" +
+      " الهالك، المخزون تحت التشغيل) بترتبط من شاشة" +
+      ' <b>"إعدادات الترحيل المحاسبي"</b> الموجودة أصلاً — عشان نتجنب تكرار' +
+      " نظام حسابات موازي. المفاتيح دي مسجّلة هناك بالفعل:</p>" +
+      '<ul class="invset-accounting-keys-list">' +
+      itemsHtml +
+      "</ul>" +
+      '<button type="button" class="btn btn-outline-primary" onclick="navigate(\'posting-config\')">' +
+      '<i class="ti ti-external-link"></i> فتح شاشة إعدادات الترحيل المحاسبي' +
+      "</button>" +
+      "</div>"
+    );
+  }
+
+  function _invPanelNotifications() {
+    return (
+      _invRow("تنبيه قرب النفاد", _invToggle("notify_near_stockout")) +
+      _invRow("تنبيه انتهاء الصلاحية", _invToggle("notify_expiry")) +
+      _invRow("تنبيه انخفاض المخزون", _invToggle("notify_low_stock")) +
+      _invRow("تنبيه زيادة المخزون", _invToggle("notify_overstock")) +
+      _invRow("تنبيه اختلاف الجرد", _invToggle("notify_stocktake_variance")) +
+      _invRow("تنبيه وصول طلب شراء", _invToggle("notify_po_arrival"))
+    );
+  }
+
+  function _invPanelLog() {
+    return (
+      '<div id="invset-log-list" class="invset-log-list">' +
+      '<div class="invset-panel-placeholder"><i class="ti ti-history" style="font-size:28px;opacity:.35"></i>' +
+      "<p>جارِ التحميل...</p></div></div>"
+    );
+  }
+
+  var INV_PANEL_BUILDERS = {
+    general: _invPanelGeneral,
+    item_defaults: _invPanelItemDefaults,
+    units_measure: _invPanelUnitsMeasure,
+    units_guide: _invPanelUnitsGuide,
+    receipt_permits: _invPanelReceiptPermits,
+    issue_permits: _invPanelIssuePermits,
+    price_formulas: _invPanelPriceFormulas,
+    non_homogeneous_units: _invPanelNonHomogeneousUnits,
+    item_formulas: _invPanelItemFormulas,
+    valuation: _invPanelValuation,
+    costing: _invPanelCosting,
+    reservation: _invPanelReservation,
+    stocktake: _invPanelStocktake,
+    transfer: _invPanelTransfer,
+    returns: _invPanelReturns,
+    reorder: _invPanelReorder,
+    units: _invPanelUnits,
+    barcode: _invPanelBarcode,
+    numbering: _invPanelNumbering,
+    user_perms: _invPanelUserPerms,
+    accounting: _invPanelAccounting,
+    notifications: _invPanelNotifications,
+    log: _invPanelLog,
+  };
+
+  function renderInventorySettings() {
+    var tabsBtns = INV_SETTINGS_SECTIONS.map(function (s, i) {
+      return (
+        '<button type="button" class="invset-tab' +
+        (i === 0 ? " active" : "") +
+        '" data-tab="' +
+        s.key +
+        '"><i class="ti ' +
+        s.icon +
+        '"></i><span>' +
+        s.label +
+        "</span></button>"
+      );
+    }).join("");
+
+    var panels = INV_SETTINGS_SECTIONS.map(function (s, i) {
+      var builder = INV_PANEL_BUILDERS[s.key];
+      var innerHtml = builder
+        ? builder()
+        : '<div class="invset-panel-placeholder"><p>' + s.label + "</p></div>";
+      return (
+        '<div class="invset-panel' +
+        (i === 0 ? " active" : "") +
+        '" id="invset-panel-' +
+        s.key +
+        '" data-panel="' +
+        s.key +
+        '">' +
+        '<div class="invset-section-heading"><i class="ti ' +
+        s.icon +
+        '"></i><h3>' +
+        s.label +
+        "</h3></div>" +
+        innerHtml +
+        "</div>"
+      );
+    }).join("");
+
+    return (
+      '<div class="invset-wrap">' +
+      '<div class="page-header"><div>' +
+      "<h2>إعدادات المخزون</h2>" +
+      '<p class="page-subtitle">المرجع الوحيد لكل سياسات وسلوكيات المخزون في النظام</p>' +
+      "</div>" +
+      '<div class="invset-header-actions">' +
+      '<button type="button" class="btn btn-secondary" id="invset-reset-btn">' +
+      "استرجاع الافتراضي</button>" +
+      '<button type="button" class="btn btn-primary" id="invset-save-btn">' +
+      "حفظ الإعدادات</button>" +
+      "</div>" +
+      "</div>" +
+      '<div class="invset-body">' +
+      '<div class="invset-tabs" id="invset-tabs">' +
+      tabsBtns +
+      "</div>" +
+      '<div class="invset-panels" id="invset-panels">' +
+      panels +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function bindInventorySettings() {
+    // ── تبديل التابات عبر المحرك الموحّد (بدون loaders — كل الداتا
+    // بتتحمّل مرة واحدة مع فتح الشاشة، التابات هنا بصرية بس) ──
+    if (_invSetTabsCtrl && _invSetTabsCtrl.destroy) _invSetTabsCtrl.destroy();
+    _invSetTabsCtrl = TabEngine.init({
+      scope: document.getElementById("invset-tabs").parentElement,
+      tabSelector: ".invset-tab",
+      panelPrefix: "invset-panel-",
+      activeClass: "active",
+    });
+
+    var saveBtn = document.getElementById("invset-save-btn");
+    var resetBtn = document.getElementById("invset-reset-btn");
+    if (saveBtn) saveBtn.addEventListener("click", _invSetSave);
+    if (resetBtn) resetBtn.addEventListener("click", _invSetResetToDefault);
+
+    var addUnitBtn = document.getElementById("invset-add-unit-btn");
+    if (addUnitBtn) {
+      addUnitBtn.addEventListener("click", function () {
+        var current = _invGatherUnits();
+        current.push({ name: "", count: 1 });
+        _invRenderUnitsList(current);
+      });
+    }
+    var addReceiptBtn = document.getElementById("invset-add-receipt-btn");
+    if (addReceiptBtn) {
+      addReceiptBtn.addEventListener("click", function () {
+        var current = _invGatherPermits("receipt");
+        current.push({ name: "", ledger_account: "", active: true });
+        _invRenderPermitsList("receipt", current);
+      });
+    }
+    var addIssueBtn = document.getElementById("invset-add-issue-btn");
+    if (addIssueBtn) {
+      addIssueBtn.addEventListener("click", function () {
+        var current = _invGatherPermits("issue");
+        current.push({ name: "", ledger_account: "", active: true });
+        _invRenderPermitsList("issue", current);
+      });
+    }
+    var addFormulaBtn = document.getElementById("invset-add-price-formula-btn");
+    if (addFormulaBtn) {
+      addFormulaBtn.addEventListener("click", function () {
+        var current = _invGatherPriceFormulas();
+        current.push({ name: "", active: true });
+        _invRenderPriceFormulasList(current);
+      });
+    }
+
+    // تاب السجل lazy — يتحمّل بس أول ما حد يضغط عليه، مش مع باقي الإعدادات
+    _invSetLogLoaded = false;
+    var logTabBtn = document.querySelector('.invset-tab[data-tab="log"]');
+    if (logTabBtn) {
+      logTabBtn.addEventListener("click", _invSetLoadLogIfNeeded);
+    }
+
+    _invSetLoad();
+  }
+
+  // ── تطبيق القيم المحمّلة على كل حقول الـ DOM (data-inv-key) ──────
+  function _invSetApplyToUI(data) {
+    if (!data) return;
+    var root = document.getElementById("invset-panels");
+    if (!root) return;
+    root.querySelectorAll("[data-inv-key]").forEach(function (el) {
+      var key = el.dataset.invKey;
+      if (!(key in data)) return;
+      if (el.dataset.invType === "bool") {
+        el.checked = !!data[key];
+      } else {
+        el.value = data[key] == null ? "" : data[key];
+      }
+    });
+    // جدول الترقيم (كائن متداخل — معاملة خاصة)
+    var numbering = data.numbering || {};
+    root.querySelectorAll("[data-numbering-doc]").forEach(function (tr) {
+      var docKey = tr.dataset.numberingDoc;
+      var cfg = numbering[docKey] || {};
+      var prefixEl = tr.querySelector('[data-num-field="prefix"]');
+      var suffixEl = tr.querySelector('[data-num-field="suffix"]');
+      var digitsEl = tr.querySelector('[data-num-field="digits"]');
+      if (prefixEl) prefixEl.value = cfg.prefix || "";
+      if (suffixEl) suffixEl.value = cfg.suffix || "";
+      if (digitsEl) digitsEl.value = cfg.digits != null ? cfg.digits : 5;
+    });
+    _invRenderUnitsList(data.measurement_units || []);
+    _invRenderPermitsList("receipt", data.receipt_permits || []);
+    _invRenderPermitsList("issue", data.issue_permits || []);
+    _invRenderPriceFormulasList(data.price_formulas || []);
+  }
+
+  // ── تجميع القيم الحالية من كل حقول الـ DOM لصياغة payload الحفظ ──
+  function _invSetGatherFromUI() {
+    var root = document.getElementById("invset-panels");
+    var out = {};
+    if (!root) return out;
+    root.querySelectorAll("[data-inv-key]").forEach(function (el) {
+      var key = el.dataset.invKey;
+      if (el.dataset.invType === "bool") {
+        out[key] = !!el.checked;
+      } else if (el.dataset.invType === "number") {
+        out[key] = Number(el.value || 0);
+      } else {
+        out[key] = el.value || "";
+      }
+    });
+    var numbering = {};
+    root.querySelectorAll("[data-numbering-doc]").forEach(function (tr) {
+      var docKey = tr.dataset.numberingDoc;
+      var prefixEl = tr.querySelector('[data-num-field="prefix"]');
+      var suffixEl = tr.querySelector('[data-num-field="suffix"]');
+      var digitsEl = tr.querySelector('[data-num-field="digits"]');
+      numbering[docKey] = {
+        prefix: prefixEl ? prefixEl.value || "" : "",
+        suffix: suffixEl ? suffixEl.value || "" : "",
+        digits: digitsEl ? Number(digitsEl.value || 5) : 5,
+      };
+    });
+    out.numbering = numbering;
+    out.measurement_units = _invGatherUnits();
+    out.receipt_permits = _invGatherPermits("receipt");
+    out.issue_permits = _invGatherPermits("issue");
+    out.price_formulas = _invGatherPriceFormulas();
+    return out;
+  }
+
+  // ── تاب السجل (Lazy — يتحمّل أول ما التاب يتفتح، مش مع باقي الإعدادات) ──
+  function _invSetLoadLogIfNeeded() {
+    if (_invSetLogLoaded) return;
+    var listEl = document.getElementById("invset-log-list");
+    if (!listEl) return;
+    _invSetLogLoaded = true;
+    _gsr("getAuditLog", [50, { table: "InventorySettings" }], {
+      label: "InventorySettings.auditLog",
+      onSuccess: function (res) {
+        var rows = (res && res.success && res.data) || [];
+        if (!rows.length) {
+          listEl.innerHTML =
+            '<div class="invset-panel-placeholder"><p>لا يوجد تغييرات مسجّلة بعد</p></div>';
+          return;
+        }
+        listEl.innerHTML =
+          '<table class="invset-num-table"><thead><tr>' +
+          "<th>التاريخ</th><th>المستخدم</th><th>التفاصيل</th>" +
+          "</tr></thead><tbody>" +
+          rows
+            .map(function (r) {
+              return (
+                "<tr><td>" +
+                (r.timestamp || "") +
+                "</td><td>" +
+                (r.user || "") +
+                "</td><td>" +
+                (r.details || "") +
+                "</td></tr>"
+              );
+            })
+            .join("") +
+          "</tbody></table>";
+      },
+      onError: function () {
+        _invSetLogLoaded = false; // يسمح بمحاولة تانية لو فشل
+        listEl.innerHTML =
+          '<div class="invset-panel-placeholder"><p>تعذّر تحميل السجل</p></div>';
+      },
+    });
+  }
+
+  function _invSetLoad() {
+    _gsr("getInventorySettings", [APP.currentUser.username, SESSION ? SESSION.token : null], {
+      label: "InventorySettings.get",
+      onSuccess: function (res) {
+        if (res && res.success) {
+          _invSetCurrentData = res.data;
+          _invSetApplyToUI(_invSetCurrentData);
+        }
+      },
+      onError: function () {
+        if (typeof showToast === "function") {
+          showToast("تعذّر تحميل إعدادات المخزون", "error");
+        }
+      },
+    });
+  }
+
+  function _invSetSave() {
+    var gathered = _invSetGatherFromUI();
+    var payload = {
+      callerUser: APP.currentUser.username,
+      settings: gathered,
+    };
+    _gsr("saveInventorySettings", [payload, SESSION ? SESSION.token : null], {
+      label: "InventorySettings.save",
+      onSuccess: function (res) {
+        if (res && res.success) {
+          _invSetCurrentData = res.data;
+          _invSetApplyToUI(_invSetCurrentData);
+          if (typeof showToast === "function") {
+            showToast("تم حفظ إعدادات المخزون", "success");
+          }
+        } else {
+          if (typeof showToast === "function") {
+            showToast((res && res.message) || "فشل الحفظ", "error");
+          }
+        }
+      },
+      onError: function () {
+        if (typeof showToast === "function") {
+          showToast("خطأ في الاتصال أثناء الحفظ", "error");
+        }
+      },
+    });
+  }
+
+  function _invSetResetToDefault() {
+    showConfirm({
+      title: "استرجاع الإعدادات الافتراضية",
+      message: "هل تريد استرجاع كل إعدادات المخزون للقيم الافتراضية؟",
+      confirmText: "استرجاع",
+      confirmClass: "btn-danger",
+      onConfirm: function () {
+        _gsr(
+          "resetInventorySettings",
+          [{ callerUser: APP.currentUser.username }, SESSION ? SESSION.token : null],
+          {
+            label: "InventorySettings.reset",
+            onSuccess: function (res) {
+              if (res && res.success) {
+                _invSetCurrentData = res.data;
+                _invSetApplyToUI(_invSetCurrentData);
+                if (typeof showToast === "function") {
+                  showToast("تم استرجاع الإعدادات الافتراضية", "success");
+                }
+              } else {
+                if (typeof showToast === "function") {
+                  showToast((res && res.message) || "فشل الاسترجاع", "error");
+                }
+              }
+            },
+            onError: function () {
+              if (typeof showToast === "function") {
+                showToast("خطأ في الاتصال", "error");
+              }
+            },
+          },
+        );
+      },
+    });
+  }
+</script>
+
+<style>
+  .invset-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .invset-header-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .invset-body {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+  }
+  .invset-tabs {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 240px;
+    flex-shrink: 0;
+    background: var(--surface, #fff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 10px;
+    padding: 6px;
+  }
+  .invset-tab {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: right;
+    font-size: 13.5px;
+    color: var(--text-secondary, #475569);
+    width: 100%;
+  }
+  .invset-tab:hover {
+    background: var(--surface-hover, #f1f5f9);
+  }
+  .invset-tab.active {
+    background: var(--primary-light, #eff6ff);
+    color: var(--primary, #2563eb);
+    font-weight: 600;
+  }
+  .invset-panels {
+    flex: 1;
+    background: var(--surface, #fff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 10px;
+    min-height: 400px;
+    padding: 20px;
+  }
+  .invset-panel {
+    display: none;
+  }
+  .invset-panel.active {
+    display: block;
+  }
+  .invset-panel-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 60px 20px;
+    color: var(--text-muted, #94a3b8);
+    text-align: center;
+  }
+  .invset-section-heading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+  }
+  .invset-section-heading h3 {
+    font-size: 15px;
+    margin: 0;
+  }
+  .invset-section-title {
+    font-size: 12.5px;
+    color: var(--text-muted, #94a3b8);
+    margin: 4px 0 12px;
+  }
+  .invset-field-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 0;
+    border-bottom: 1px dashed var(--border, #e5e7eb);
+  }
+  .invset-field-row:last-child {
+    border-bottom: none;
+  }
+  .invset-field-label label {
+    font-size: 13.5px;
+    font-weight: 600;
+    display: block;
+  }
+  .invset-field-hint {
+    font-size: 11.5px;
+    color: var(--text-muted, #94a3b8);
+    display: block;
+    margin-top: 2px;
+    max-width: 420px;
+  }
+  .invset-field-control {
+    flex-shrink: 0;
+  }
+  .invset-input-sm {
+    width: 150px;
+  }
+  /* توجل مستقل بصريًا (مش معتمد على .toggle-switch القديمة اللي legacy/معطلة) */
+  .invset-switch {
+    position: relative;
+    display: inline-block;
+    width: 42px;
+    height: 24px;
+  }
+  .invset-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+  }
+  .invset-switch-track {
+    position: absolute;
+    inset: 0;
+    background: var(--border, #cbd5e1);
+    border-radius: 999px;
+    transition: background 0.15s;
+    cursor: pointer;
+    display: block;
+  }
+  .invset-switch-thumb {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 18px;
+    height: 18px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.15s;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  }
+  .invset-switch input:checked ~ .invset-switch-track {
+    background: var(--primary, #2563eb);
+  }
+  .invset-switch input:checked ~ .invset-switch-track .invset-switch-thumb {
+    transform: translateX(-18px);
+  }
+  .invset-num-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .invset-num-table th,
+  .invset-num-table td {
+    padding: 8px 10px;
+    text-align: right;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+  }
+  .invset-num-table .invset-input-sm {
+    width: 100%;
+    min-width: 70px;
+  }
+  .invset-log-list {
+    max-height: 500px;
+    overflow: auto;
+  }
+  @media (max-width: 900px) {
+    .invset-body {
+      flex-direction: column;
+    }
+    .invset-tabs {
+      flex-direction: row;
+      overflow-x: auto;
+      min-width: 0;
+      width: 100%;
+    }
+  }
+</style>

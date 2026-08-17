@@ -1,0 +1,158 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 47_JS_PreferenceEngine.html — محرك التفضيلات المركزي (PreferenceEngine)
+  // ═══════════════════════════════════════════════════════════════════
+  // [PREFERENCE-ENGINE-DESIGN] PreferenceService (24_JS_UserPreferences.html)
+  // هو المصدر الفعلي لتخزين/مزامنة تفضيلات المستخدم مع السيرفر — لا
+  // يُستبدَل. PreferenceEngine طبقة أعلى فوقه فقط، بالضبط زي ما هو مطلوب:
+  //   - Caching       → تفويض كامل لكاش PreferenceService الداخلي
+  //                      (_cache/_ready) — مفيش كاش تاني موازي.
+  //   - Lazy Loading   → get() بينتظر PreferenceService.whenReady() قبل
+  //                      إرجاع القيمة لو لسه بيحمّل (بدل قيمة افتراضية
+  //                      مؤقتة قد تكون خطأ).
+  //   - Validation     → schema اختياري لكل مفتاح (type/min/max/enum)
+  //                      قبل الحفظ، عشان محدش يحفظ قيمة فاسدة (زي
+  //                      items_per_page = "abc").
+  //   - Default Values → دمج مركزي مع نفس DEFAULTS الموجودة في
+  //                      PreferenceService (بدون تكرارها).
+  //   - Synchronization / Change Notification → تفويض لـ
+  //                      PreferenceService.subscribe() الموجودة بالفعل.
+  //   - Central Access → PreferenceEngine.get/set هي نقطة الدخول
+  //                      المستحسنة لأي شاشة جديدة (PreferenceService
+  //                      يفضل شغال زي ما هو لأي كود قديم — Backward
+  //                      Compatible 100%).
+  //
+  //   PreferenceEngine.get("items_per_page");
+  //   PreferenceEngine.set("items_per_page", 50);
+  //   PreferenceEngine.onChange("theme", function (val) { ... });
+  //   PreferenceEngine.registerSchema("items_per_page", { type: "number", min: 10, max: 200 });
+  // ═══════════════════════════════════════════════════════════════════
+
+  var PreferenceEngine = (function () {
+    "use strict";
+
+    var _schemas = {};
+    var _readyCallbacks = [];
+    var _isReady = false;
+
+    function _svc() {
+      return typeof PreferenceService !== "undefined" ? PreferenceService : null;
+    }
+
+    // ── Lazy Loading: PreferenceEngine يعتبر نفسه جاهز بمجرد ما
+    // PreferenceService تبقى جاهزة (نفس آلية whenReady الموجودة فيها
+    // بالفعل، فقط بنعمل عليها Wrapper بدل تكرارها) ─────────────────────
+    function whenReady(cb) {
+      var svc = _svc();
+      if (!svc) {
+        // PreferenceService لسه معملتش include (نادر، ترتيب تحميل) —
+        // حاول تاني بعد لحظة بدل فشل صامت.
+        setTimeout(function () {
+          whenReady(cb);
+        }, 50);
+        return;
+      }
+      if (typeof svc.onReady === "function") {
+        svc.onReady(cb);
+      } else {
+        // fallback لو النسخة المتاحة من PreferenceService بدون onReady
+        cb();
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §1 — Validation Schema
+    // ══════════════════════════════════════════════════════════════════
+    /** registerSchema — تعريف قواعد تحقق اختيارية لمفتاح معيّن قبل الحفظ */
+    function registerSchema(key, schema) {
+      _schemas[key] = schema || {};
+    }
+
+    function _validate(key, value) {
+      var schema = _schemas[key];
+      if (!schema) return { valid: true };
+
+      if (schema.type === "number") {
+        var n = Number(value);
+        if (isNaN(n)) return { valid: false, message: "قيمة غير رقمية" };
+        if (schema.min !== undefined && n < schema.min)
+          return { valid: false, message: "أقل من الحد الأدنى (" + schema.min + ")" };
+        if (schema.max !== undefined && n > schema.max)
+          return { valid: false, message: "أكبر من الحد الأقصى (" + schema.max + ")" };
+      }
+      if (schema.type === "enum" && schema.values) {
+        if (schema.values.indexOf(value) === -1)
+          return { valid: false, message: "قيمة غير مسموحة" };
+      }
+      if (schema.type === "boolean" && typeof value !== "boolean") {
+        return { valid: false, message: "يجب أن تكون true/false" };
+      }
+      return { valid: true };
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §2 — Central Access (Get/Set) — تفويض لـ PreferenceService
+    // ══════════════════════════════════════════════════════════════════
+    function get(key, defaultValue) {
+      var svc = _svc();
+      if (!svc) return defaultValue;
+      return svc.get(key, defaultValue);
+    }
+
+    /**
+     * getAsync — لو الشاشة محتاجة تضمن إن التفضيلات اتحمّلت فعليًا من
+     * السيرفر قبل القراءة (أول تحميل للصفحة مثلاً) بدل قيمة افتراضية
+     * مؤقتة ممكن تُستبدَل خلال أجزاء من الثانية.
+     */
+    function getAsync(key, defaultValue, cb) {
+      whenReady(function () {
+        cb(get(key, defaultValue));
+      });
+    }
+
+    function set(key, value) {
+      var check = _validate(key, value);
+      if (!check.valid) {
+        if (typeof NotificationEngine !== "undefined") {
+          NotificationEngine.warning("تفضيل غير صالح (" + key + "): " + check.message);
+        } else {
+          console.warn("[PreferenceEngine] rejected", key, check.message);
+        }
+        return false;
+      }
+      var svc = _svc();
+      if (!svc) return false;
+      svc.set(key, value);
+      return true;
+    }
+
+    function getAll() {
+      var svc = _svc();
+      return svc && typeof svc.getAll === "function" ? svc.getAll() : {};
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §3 — Synchronization / Change Notification — تفويض لـ subscribe()
+    // ══════════════════════════════════════════════════════════════════
+    function onChange(key, callback) {
+      var svc = _svc();
+      if (!svc || typeof svc.subscribe !== "function") return function () {};
+      return svc.subscribe(key, callback);
+    }
+
+    function onAnyChange(callback) {
+      return onChange("*", callback);
+    }
+
+    return {
+      get: get,
+      getAsync: getAsync,
+      set: set,
+      getAll: getAll,
+      whenReady: whenReady,
+      registerSchema: registerSchema,
+      onChange: onChange,
+      onAnyChange: onAnyChange,
+    };
+  })();
+</script>

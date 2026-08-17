@@ -1,0 +1,589 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 42_JS_DateEngine.html — محرك التاريخ/الوقت الموحّد (DateEngine)
+  // ═══════════════════════════════════════════════════════════════════
+  // [DATE-ENGINE-DESIGN] fmtDate() / fmtDateInput() / fmtTime() موجودين
+  // بالفعل وناضجين في 02_JS_UI_Shell.html (بيقروا date_format/time_format
+  // من PreferenceService فعليًا). DateEngine *لا يعيد تنفيذهم* — بيغلّفهم
+  // كنقطة دخول واحدة (Single Source of Truth) ويضيف فوقهم كل ما هو ناقص:
+  // Parsing، Validation، Comparison، Date Math، ISO/Timestamp Conversion،
+  // ودعم Date Picker — عشان أي شاشة محتاجة أي عملية تاريخ متعامل معها
+  // مباشرة من DateEngine بدل new Date()/toLocaleDateString()/
+  // Intl.DateTimeFormat المباشرة.
+  //
+  // الاعتماديات: fmtDate/fmtDateInput/fmtTime (02_JS_UI_Shell.html)،
+  // PreferenceService (24_JS_UserPreferences.html) — كلاهما محمّل قبل هذا
+  // الملف في قائمة lazyScriptFiles (Code_12_Core.gs).
+  //
+  // طريقة الاستخدام من أي شاشة:
+  //   DateEngine.format(order.date)                 // عرض حسب تفضيل المستخدم
+  //   DateEngine.formatTime(order.time)
+  //   DateEngine.formatDateTime(order.createdAt)
+  //   DateEngine.toISO(new Date())                   // "2026-07-22"
+  //   DateEngine.today()                              // Date object لبداية اليوم
+  //   DateEngine.isValid("2026-13-40")                // false
+  //   DateEngine.compare(d1, d2)                       // -1 | 0 | 1
+  //   DateEngine.addDays(d, 30)
+  //   DateEngine.diffDays(d1, d2)
+  //   DateEngine.forPicker(d)                          // "yyyy-mm-dd" لـ <input type=date>
+  // ═══════════════════════════════════════════════════════════════════
+
+  var DateEngine = (function () {
+    "use strict";
+
+    // ── تحويل مرن لأي مدخل (Date | ISO string | timestamp) إلى Date ─────
+    function _toDate(val) {
+      if (val === null || val === undefined || val === "") return null;
+      if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+      if (typeof val === "number") {
+        var dNum = new Date(val);
+        return isNaN(dNum.getTime()) ? null : dNum;
+      }
+      var d = new Date(String(val));
+      return isNaN(d.getTime()) ? null : d;
+    }
+
+    function _tz() {
+      try {
+        return typeof PreferenceService !== "undefined"
+          ? PreferenceService.get("timezone", "Africa/Cairo")
+          : "Africa/Cairo";
+      } catch (e) {
+        return "Africa/Cairo";
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §1 — Formatting (تفويض لـ fmtDate/fmtTime الموجودين بالفعل)
+    // ══════════════════════════════════════════════════════════════════
+    function format(val) {
+      if (typeof fmtDate !== "function") return _isoFallback(val);
+      return fmtDate(val);
+    }
+
+    function formatTime(val) {
+      if (typeof fmtTime !== "function") {
+        var d = _toDate(val);
+        return d
+          ? String(d.getHours()).padStart(2, "0") +
+              ":" +
+              String(d.getMinutes()).padStart(2, "0")
+          : "—";
+      }
+      return fmtTime(val);
+    }
+
+    function formatDateTime(val) {
+      var d = _toDate(val);
+      if (!d) return "—";
+      return format(d) + " " + formatTime(d);
+    }
+
+    function forPicker(val) {
+      var d = _toDate(val) || new Date();
+      var y = d.getFullYear();
+      var m = String(d.getMonth() + 1).padStart(2, "0");
+      var day = String(d.getDate()).padStart(2, "0");
+      return y + "-" + m + "-" + day;
+    }
+
+    function _isoFallback(val) {
+      var d = _toDate(val);
+      return d ? forPicker(d) : "—";
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §2 — Parsing / Validation
+    // ══════════════════════════════════════════════════════════════════
+    function parse(val) {
+      return _toDate(val);
+    }
+
+    function isValid(val) {
+      return _toDate(val) !== null;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §3 — ISO / Timestamp Conversion
+    // ══════════════════════════════════════════════════════════════════
+    function toISO(val) {
+      var d = _toDate(val);
+      return d ? d.toISOString() : null;
+    }
+
+    function toTimestamp(val) {
+      var d = _toDate(val);
+      return d ? d.getTime() : null;
+    }
+
+    function fromTimestamp(ts) {
+      return _toDate(Number(ts));
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §4 — Comparison / Math
+    // ══════════════════════════════════════════════════════════════════
+    function compare(a, b) {
+      var da = _toDate(a),
+        db = _toDate(b);
+      if (!da || !db) return NaN;
+      if (da.getTime() < db.getTime()) return -1;
+      if (da.getTime() > db.getTime()) return 1;
+      return 0;
+    }
+
+    function isSameDay(a, b) {
+      var da = _toDate(a),
+        db = _toDate(b);
+      if (!da || !db) return false;
+      return (
+        da.getFullYear() === db.getFullYear() &&
+        da.getMonth() === db.getMonth() &&
+        da.getDate() === db.getDate()
+      );
+    }
+
+    function isBefore(a, b) {
+      return compare(a, b) === -1;
+    }
+    function isAfter(a, b) {
+      return compare(a, b) === 1;
+    }
+
+    function isBetween(val, start, end) {
+      var c1 = compare(val, start);
+      var c2 = compare(val, end);
+      if (isNaN(c1) || isNaN(c2)) return false;
+      return c1 >= 0 && c2 <= 0;
+    }
+
+    function addDays(val, days) {
+      var d = _toDate(val);
+      if (!d) return null;
+      var r = new Date(d.getTime());
+      r.setDate(r.getDate() + Number(days || 0));
+      return r;
+    }
+
+    function addMonths(val, months) {
+      var d = _toDate(val);
+      if (!d) return null;
+      var r = new Date(d.getTime());
+      r.setMonth(r.getMonth() + Number(months || 0));
+      return r;
+    }
+
+    function diffDays(a, b) {
+      var da = _toDate(a),
+        db = _toDate(b);
+      if (!da || !db) return NaN;
+      var MS_PER_DAY = 86400000;
+      var utcA = Date.UTC(da.getFullYear(), da.getMonth(), da.getDate());
+      var utcB = Date.UTC(db.getFullYear(), db.getMonth(), db.getDate());
+      return Math.round((utcB - utcA) / MS_PER_DAY);
+    }
+
+    function startOfDay(val) {
+      var d = _toDate(val) || new Date();
+      var r = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+      return r;
+    }
+
+    function endOfDay(val) {
+      var d = _toDate(val) || new Date();
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+    }
+
+    function today() {
+      return startOfDay(new Date());
+    }
+
+    function now() {
+      return new Date();
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §5 — دعم التقارير/الطباعة/التصدير/الاستيراد (نصوص جاهزة للعرض)
+    // ══════════════════════════════════════════════════════════════════
+    function forReport(val) {
+      return formatDateTime(val);
+    }
+
+    function forExport(val) {
+      // صيغة ثابتة غير معتمدة على تفضيل العرض — مناسبة لملفات Excel/CSV
+      // اللي بتتفتح بأنظمة تانية ومحتاجة صيغة قياسية غير قابلة للالتباس.
+      return _isoFallback(val);
+    }
+
+    function forImport(str) {
+      // يقبل أي صيغة شائعة قادمة من ملفات Excel/CSV مستوردة ويرجعها Date
+      return _toDate(str);
+    }
+
+    // اسم الشهر بالعربي (نمط مكرر كان معاد تنفيذه في أكتر من شاشة عبر
+    // toLocaleDateString("ar-EG-u-nu-latn", {month:"long"}) مباشرة)
+    function monthName(val, withYear) {
+      var d = _toDate(val) || new Date();
+      var opts = { month: "long" };
+      if (withYear) opts.year = "numeric";
+      try {
+        return d.toLocaleDateString("ar-EG-u-nu-latn", opts);
+      } catch (e) {
+        return _isoFallback(d);
+      }
+    }
+
+    // [PERF/UNIFY] اسم الشهر المختصر — كان بيتكرر مباشرة كـ
+    // d.toLocaleDateString("ar-EG", {month:"short"}) في شاشات الرسوم
+    // البيانية (المحاسبة، لوحة التنفيذي، إلخ). نضيفه هنا عشان توحيد
+    // نقطة الدخول الوحيدة لكل تنسيقات التاريخ.
+    function monthShort(val) {
+      var d = _toDate(val) || new Date();
+      try {
+        return d.toLocaleDateString("ar-EG-u-nu-latn", { month: "short" });
+      } catch (e) {
+        return String(d.getMonth() + 1);
+      }
+    }
+
+    // [PERF/UNIFY] اسم اليوم المختصر (السبت، الأحد...) — نفس فكرة
+    // monthShort أعلاه، لتوحيد تنسيقات labels الرسوم البيانية اليومية.
+    function weekdayName(val) {
+      var d = _toDate(val) || new Date();
+      try {
+        return d.toLocaleDateString("ar-EG-u-nu-latn", { weekday: "short" });
+      } catch (e) {
+        return String(d.getDay());
+      }
+    }
+
+    // السنة الحالية — نقطة دخول واحدة بدل new Date().getFullYear() المباشر
+    function currentYear() {
+      return new Date().getFullYear();
+    }
+
+    return {
+      // formatting
+      format: format,
+      formatTime: formatTime,
+      formatDateTime: formatDateTime,
+      monthName: monthName,
+      monthShort: monthShort,
+      weekdayName: weekdayName,
+      forPicker: forPicker,
+      currentYear: currentYear,
+      // parsing/validation
+      parse: parse,
+      isValid: isValid,
+      // conversion
+      toISO: toISO,
+      toTimestamp: toTimestamp,
+      fromTimestamp: fromTimestamp,
+      // comparison/math
+      compare: compare,
+      isSameDay: isSameDay,
+      isBefore: isBefore,
+      isAfter: isAfter,
+      isBetween: isBetween,
+      addDays: addDays,
+      addMonths: addMonths,
+      diffDays: diffDays,
+      startOfDay: startOfDay,
+      endOfDay: endOfDay,
+      today: today,
+      now: now,
+      // reports/print/export/import
+      forReport: forReport,
+      forExport: forExport,
+      forImport: forImport,
+      // timezone (يُقرأ من PreferenceService — لا يُخزَّن هنا)
+      timezone: _tz,
+    };
+  })();
+
+  // ═══════════════════════════════════════════════════════════════════
+  // §6 — تقويم مخصّص (Custom Date Picker) بتصميم النظام
+  // ═══════════════════════════════════════════════════════════════════
+  // [DATE-PICKER-UI] لحد دلوقتي DateEngine كان بيجهّز القيمة بس (منطق)،
+  // وشكل التقويم اللي بيفتح كان تقويم المتصفح الأصلي (native) اللي
+  // مفيش عليه أي سيطرة تصميمية. الجزء ده بيبني تقويم بديل بالكامل
+  // بتصميم النظام (ألوان/خطوط متطابقة مع باقي الواجهة) ويحقنه تلقائيًا
+  // مكان أي <input type="date"> في الصفحة — من غير ما نحتاج نلمس كل
+  // شاشة على حدة. الـ input الأصلي بيفضل موجود (مخفي) بنفس الـ
+  // id/name وبنفس الـ value، فكل الكود الحالي اللي بيقرأ
+  // .value منه أو بيسمع change/oninput يفضل شغال زي ما هو تمامًا.
+  (function () {
+    "use strict";
+
+    var _dpStyleInjected = false;
+    function _dpInjectStyle() {
+      if (_dpStyleInjected) return;
+      _dpStyleInjected = true;
+      var css =
+        ".de-dp-wrap{position:relative;display:inline-block;width:100%}" +
+        ".de-dp-display{display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;user-select:none}" +
+        ".de-dp-display.is-disabled{cursor:not-allowed;opacity:.6}" +
+        ".de-dp-display i{font-size:16px;color:var(--text2);flex-shrink:0}" +
+        ".de-dp-panel{position:absolute;z-index:2000;top:calc(100% + 6px);inset-inline-start:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:0 12px 32px rgba(0,0,0,.35);padding:12px;width:280px;font-family:inherit}" +
+        ".de-dp-panel.dp-hidden{display:none}" +
+        ".de-dp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}" +
+        ".de-dp-head .de-dp-title{font-weight:700;font-size:14px;color:var(--text)}" +
+        ".de-dp-nav{display:flex;gap:4px}" +
+        ".de-dp-nav button{width:28px;height:28px;border-radius:var(--radius-xs);border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:center}" +
+        ".de-dp-nav button:hover{background:var(--bg2)}" +
+        ".de-dp-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center}" +
+        ".de-dp-wd{font-size:11px;color:var(--text2);font-weight:700;padding:4px 0}" +
+        ".de-dp-day{height:32px;border-radius:var(--radius-xs);border:1px solid transparent;background:none;color:var(--text);cursor:pointer;font-size:13px}" +
+        ".de-dp-day:hover{background:var(--surface2)}" +
+        ".de-dp-day.dp-muted{color:var(--text2);opacity:.4}" +
+        ".de-dp-day.dp-today{border-color:var(--accent)}" +
+        ".de-dp-day.dp-selected{background:var(--accent);color:#fff;font-weight:700}" +
+        ".de-dp-foot{display:flex;justify-content:space-between;margin-top:10px;border-top:1px solid var(--border);padding-top:8px}" +
+        ".de-dp-foot button{background:none;border:none;color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;padding:4px 6px}" +
+        ".de-dp-foot button:hover{text-decoration:underline}";
+      var styleEl = document.createElement("style");
+      styleEl.id = "de-datepicker-style";
+      styleEl.textContent = css;
+      document.head.appendChild(styleEl);
+    }
+
+    var _dpOpenPanel = null; // الـ panel المفتوح حاليًا (واحد بس في نفس الوقت)
+
+    function _dpClose() {
+      if (_dpOpenPanel && _dpOpenPanel.parentNode) {
+        _dpOpenPanel.parentNode.removeChild(_dpOpenPanel);
+      }
+      _dpOpenPanel = null;
+      document.removeEventListener("mousedown", _dpOutsideClick, true);
+      document.removeEventListener("keydown", _dpEscClose, true);
+    }
+
+    function _dpOutsideClick(e) {
+      if (_dpOpenPanel && !_dpOpenPanel.contains(e.target)) _dpClose();
+    }
+
+    function _dpEscClose(e) {
+      if (e.key === "Escape") _dpClose();
+    }
+
+    // بيبني شبكة أيام شهر معيّن (viewYear/viewMonth: 0-indexed للشهر)
+    function _dpBuildGrid(wrap, input, display, viewYear, viewMonth) {
+      var panel = _dpOpenPanel;
+      var selected = input.value ? DateEngine.parse(input.value) : null;
+      var today = new Date();
+
+      var head = panel.querySelector(".de-dp-title");
+      var monthLabel = DateEngine.monthName(
+        new Date(viewYear, viewMonth, 1),
+        true,
+      );
+      head.textContent = monthLabel;
+
+      var grid = panel.querySelector(".de-dp-grid");
+      grid.innerHTML = "";
+
+      // رؤوس الأيام (نبدأ بالأحد زي التقويم الميلادي القياسي)
+      var wdBase = new Date(2026, 0, 4); // الأحد
+      for (var w = 0; w < 7; w++) {
+        var wd = document.createElement("div");
+        wd.className = "de-dp-wd";
+        wd.textContent = DateEngine.weekdayName(DateEngine.addDays(wdBase, w));
+        grid.appendChild(wd);
+      }
+
+      var firstOfMonth = new Date(viewYear, viewMonth, 1);
+      var startOffset = firstOfMonth.getDay(); // 0=أحد
+      var gridStart = DateEngine.addDays(firstOfMonth, -startOffset);
+
+      for (var i = 0; i < 42; i++) {
+        var cellDate = DateEngine.addDays(gridStart, i);
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "de-dp-day";
+        btn.textContent = cellDate.getDate();
+        if (cellDate.getMonth() !== viewMonth) btn.classList.add("dp-muted");
+        if (DateEngine.isSameDay(cellDate, today))
+          btn.classList.add("dp-today");
+        if (selected && DateEngine.isSameDay(cellDate, selected))
+          btn.classList.add("dp-selected");
+        (function (d) {
+          btn.onclick = function () {
+            var iso = DateEngine.forPicker(d);
+            input.value = iso;
+            display.querySelector(".de-dp-text").textContent =
+              DateEngine.format(iso);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+            _dpClose();
+          };
+        })(cellDate);
+        grid.appendChild(btn);
+      }
+    }
+
+    function _dpOpen(wrap, input, display) {
+      if (_dpOpenPanel) _dpClose();
+      _dpInjectStyle();
+
+      var base = input.value ? DateEngine.parse(input.value) : new Date();
+      if (!base) base = new Date();
+      var viewYear = base.getFullYear();
+      var viewMonth = base.getMonth();
+
+      var panel = document.createElement("div");
+      panel.className = "de-dp-panel";
+      panel.innerHTML =
+        '<div class="de-dp-head">' +
+        '<div class="de-dp-nav"><button type="button" data-dp-nav="prev">‹</button></div>' +
+        '<div class="de-dp-title"></div>' +
+        '<div class="de-dp-nav"><button type="button" data-dp-nav="next">›</button></div>' +
+        "</div>" +
+        '<div class="de-dp-grid"></div>' +
+        '<div class="de-dp-foot">' +
+        '<button type="button" data-dp-action="clear">مسح</button>' +
+        '<button type="button" data-dp-action="today">النهاردة</button>' +
+        "</div>";
+      wrap.appendChild(panel);
+      _dpOpenPanel = panel;
+
+      panel
+        .querySelector('[data-dp-nav="prev"]')
+        .addEventListener("click", function () {
+          viewMonth--;
+          if (viewMonth < 0) {
+            viewMonth = 11;
+            viewYear--;
+          }
+          _dpBuildGrid(wrap, input, display, viewYear, viewMonth);
+        });
+      panel
+        .querySelector('[data-dp-nav="next"]')
+        .addEventListener("click", function () {
+          viewMonth++;
+          if (viewMonth > 11) {
+            viewMonth = 0;
+            viewYear++;
+          }
+          _dpBuildGrid(wrap, input, display, viewYear, viewMonth);
+        });
+      panel
+        .querySelector('[data-dp-action="clear"]')
+        .addEventListener("click", function () {
+          input.value = "";
+          display.querySelector(".de-dp-text").textContent = "—";
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          _dpClose();
+        });
+      panel
+        .querySelector('[data-dp-action="today"]')
+        .addEventListener("click", function () {
+          var iso = DateEngine.forPicker(new Date());
+          input.value = iso;
+          display.querySelector(".de-dp-text").textContent =
+            DateEngine.format(iso);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          _dpClose();
+        });
+
+      _dpBuildGrid(wrap, input, display, viewYear, viewMonth);
+
+      setTimeout(function () {
+        document.addEventListener("mousedown", _dpOutsideClick, true);
+        document.addEventListener("keydown", _dpEscClose, true);
+      }, 0);
+    }
+
+    // بيحوّل input[type=date] واحد لتقويم مخصّص — الـ input الأصلي بيفضل
+    // موجود (مخفي) بنفس الـ id/value عشان أي كود موجود يفضل شغال.
+    function _dpEnhance(input) {
+      if (!input || input.dataset.deEnhanced) return;
+      input.dataset.deEnhanced = "1";
+      _dpInjectStyle();
+
+      var wrap = document.createElement("div");
+      wrap.className = "de-dp-wrap";
+      input.parentNode.insertBefore(wrap, input);
+      wrap.appendChild(input);
+
+      // الـ input الأصلي: نخفيه بصريًا بس نسيبه شغال جوه الـ DOM
+      // (مش display:none) عشان أي focus()/validation عليه يفضل ممكن.
+      input.style.cssText +=
+        ";position:absolute;inset:0;opacity:0;pointer-events:none;width:100%;height:100%;";
+      input.tabIndex = -1;
+
+      var display = document.createElement("div");
+      display.className =
+        "input de-dp-display" +
+        (input.disabled || input.readOnly ? " is-disabled" : "");
+      var span = document.createElement("span");
+      span.className = "de-dp-text";
+      span.textContent = input.value ? DateEngine.format(input.value) : "—";
+      display.appendChild(span);
+      var icon = document.createElement("i");
+      icon.className = "ti ti-calendar";
+      icon.setAttribute("aria-hidden", "true");
+      display.appendChild(icon);
+      wrap.appendChild(display);
+
+      if (!input.disabled && !input.readOnly) {
+        display.addEventListener("click", function () {
+          if (_dpOpenPanel && wrap.contains(_dpOpenPanel)) {
+            _dpClose();
+          } else {
+            _dpOpen(wrap, input, display);
+          }
+        });
+      }
+
+      // لو قيمة الـ input اتغيّرت من كود تاني (مش من التقويم نفسه)
+      // زي renderPage أو تعبئة تلقائية، نحدّث النص المعروض.
+      input.addEventListener("input", function () {
+        span.textContent = input.value ? DateEngine.format(input.value) : "—";
+      });
+    }
+
+    function enhanceAll(root) {
+      var scope = root || document;
+      var inputs = scope.querySelectorAll(
+        'input[type="date"]:not([data-de-enhanced])',
+      );
+      for (var i = 0; i < inputs.length; i++) _dpEnhance(inputs[i]);
+    }
+
+    DateEngine.enhanceInputs = enhanceAll;
+
+    // مراقبة أي حقول تاريخ جديدة بتتحقن ديناميكيًا (renderPage بيبني
+    // شاشات كتير عبر innerHTML) وتحويلها تلقائيًا بدون أي تعديل يدوي
+    // في كل شاشة على حدة.
+    function _dpBoot() {
+      enhanceAll(document);
+      try {
+        var mo = new MutationObserver(function (mutations) {
+          for (var i = 0; i < mutations.length; i++) {
+            var added = mutations[i].addedNodes;
+            for (var j = 0; j < added.length; j++) {
+              var node = added[j];
+              if (node.nodeType !== 1) continue;
+              if (node.matches && node.matches('input[type="date"]')) {
+                _dpEnhance(node);
+              } else if (node.querySelectorAll) {
+                enhanceAll(node);
+              }
+            }
+          }
+        });
+        mo.observe(document.body, { childList: true, subtree: true });
+      } catch (e) {
+        // fallback نادر — لو MutationObserver مش متاح لأي سبب
+      }
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", _dpBoot);
+    } else {
+      _dpBoot();
+    }
+  })();
+</script>

@@ -1,0 +1,1812 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════
+  // Templates_06.html — جزء من Templates.html الأصلي (تقسيم آلي نصي بحت، 2026-07-04)
+  // النطاق: renderRoleModal → renderShippingCompanies (Roles + Shipping Companies)
+  // راجع Architecture Audit 2026-07-03، المرحلة 5 — تقسيم بحسب الحجم،
+  // على حدود دوال كاملة فقط (لا قطع لأي دالة في نص). تحقق برمجيًا:
+  // التركيب النهائي لكل الأجزاء الـ10 مطابق 100% لمحتوى Templates.html
+  // القديم حرفيًا (نفس الترتيب، بدون فقد أو تكرار).
+  // يُحمَّل بالترتيب عبر <script> في Index.html مع باقي الأجزاء.
+  // ═══════════════════════════════════════════════════════════════
+  function renderRoleModal(role, allPerms) {
+    role = role || {};
+    allPerms = allPerms || [];
+
+    var isNew = !role.id;
+    var isBuiltin = role.is_builtin;
+    var rolePerms = role.permissions || [];
+    var roleColor = role.color || "#6b7280";
+
+    // ── glow class from color ──
+    function _glowClass(hex) {
+      if (!hex) return "glow-gray";
+      var h = hex.toLowerCase();
+      if (h === "#ef4444" || h === "#dc2626" || h === "#f87171")
+        return "glow-red";
+      if (h === "#2563eb" || h === "#3b82f6" || h === "#1d4ed8")
+        return "glow-blue";
+      if (h === "#f59e0b" || h === "#d97706" || h === "#fbbf24")
+        return "glow-amber";
+      if (h === "#10b981" || h === "#059669" || h === "#34d399")
+        return "glow-green";
+      return "glow-gray";
+    }
+
+    // ── تجميع الصلاحيات في فئات ──
+    var cats = {};
+    allPerms.forEach(function (p) {
+      if (!cats[p.cat]) cats[p.cat] = { label: p.catLabel, perms: [] };
+      cats[p.cat].perms.push(p);
+    });
+    var catKeys = Object.keys(cats);
+
+    // ── أيقونات الفئات ──
+    var CAT_ICONS = {
+      items: { icon: "ti-package", bg: "#eff6ff", color: "#2563eb" },
+      groups: { icon: "ti-folders", bg: "#f5f3ff", color: "#7c3aed" },
+      warehouses: {
+        icon: "ti-building-warehouse",
+        bg: "#ecfdf5",
+        color: "#059669",
+      },
+      stock: { icon: "ti-chart-bar", bg: "#fff7ed", color: "#d97706" },
+      transactions: {
+        icon: "ti-arrows-exchange",
+        bg: "#fdf4ff",
+        color: "#9333ea",
+      },
+      production: {
+        icon: "ti-building-factory-2",
+        bg: "#fefce8",
+        color: "#ca8a04",
+      },
+      shipping: { icon: "ti-truck-delivery", bg: "#f0f9ff", color: "#0369a1" },
+      users: { icon: "ti-users", bg: "#fff1f2", color: "#e11d48" },
+      reports: { icon: "ti-report-analytics", bg: "#f0fdf4", color: "#15803d" },
+      system: { icon: "ti-settings", bg: "#f8fafc", color: "#475569" },
+      customers: { icon: "ti-user-circle", bg: "#fef3c7", color: "#b45309" },
+    };
+
+    // ── حساب نسبة الصلاحيات ──
+    var totalPerms = allPerms.length;
+    var activePerms = rolePerms.length;
+    var pct = totalPerms > 0 ? Math.round((activePerms / totalPerms) * 100) : 0;
+
+    // ── بناء صفوف الصلاحيات ──
+    var permsHtml = catKeys
+      .map(function (catKey) {
+        var cat = cats[catKey];
+        var meta = CAT_ICONS[catKey] || {
+          icon: "ti-folder",
+          bg: "#f1f5f9",
+          color: "#64748b",
+        };
+        var rows = cat.perms
+          .map(function (p) {
+            var checked = rolePerms.indexOf(p.key) !== -1;
+            var clickAttr = isBuiltin
+              ? ""
+              : "onclick=\"_roleTogglePerm(this,'" + p.key + "')\"";
+            return (
+              '<div class="perm-row-pro' +
+              (isBuiltin ? " builtin" : "") +
+              '" data-perm-key="' +
+              p.key +
+              '">' +
+              '<span class="perm-row-label" ' +
+              clickAttr +
+              ">" +
+              esc(p.label) +
+              "</span>" +
+              '<div class="perm-checkbox-custom' +
+              (checked ? " checked" : "") +
+              (isBuiltin ? " disabled" : "") +
+              '" data-key="' +
+              p.key +
+              '"' +
+              (isBuiltin
+                ? ""
+                : " onclick=\"_roleTogglePerm(this,'" + p.key + "')\"") +
+              "></div>" +
+              "</div>"
+            );
+          })
+          .join("");
+
+        return (
+          '<div class="perm-cat-header">' +
+          '<span class="cat-icon" style="background:' +
+          meta.bg +
+          '">' +
+          '<i class="ti ' +
+          meta.icon +
+          '" style="font-size:13px;color:' +
+          meta.color +
+          '" aria-hidden="true"></i>' +
+          "</span>" +
+          esc(cat.label) +
+          "</div>" +
+          rows
+        );
+      })
+      .join("");
+
+    // ── عنوان المودال ──
+    var roleIconClass = isNew
+      ? "ti-shield-plus"
+      : isBuiltin
+        ? "ti-eye"
+        : "ti-shield-check";
+    var headerTitle = isNew ? "دور جديد" : esc(role.label || role.name || "");
+    var headerSub = isNew
+      ? "تخصيص الصلاحيات يدوياً"
+      : esc(role.name || "") +
+        " — " +
+        (isBuiltin ? "دور ثابت في النظام" : "دور مخصص");
+
+    return (
+      // ── Header ──────────────────────────────────────────────
+      '<div class="modal-header">' +
+      '<div class="modal-header-left">' +
+      '<div class="role-modal-header-icon ' +
+      _glowClass(roleColor) +
+      '" style="background:' +
+      roleColor +
+      '1a">' +
+      '<i class="ti ' +
+      roleIconClass +
+      '" style="font-size:22px;color:' +
+      roleColor +
+      '" aria-hidden="true"></i>' +
+      "</div>" +
+      "<div>" +
+      '<div style="font-size:16px;font-weight:800;color:var(--text)">' +
+      headerTitle +
+      "</div>" +
+      '<div class="modal-header-sub">' +
+      headerSub +
+      "</div>" +
+      "</div>" +
+      (isBuiltin
+        ? '<span class="badge-builtin-pro"><i class="ti ti-lock" style="font-size:11px"></i> ثابت</span>'
+        : "") +
+      "</div>" +
+      '<button class="modal-close" onclick="closeDrawer()" aria-label="إغلاق"><i class="ti ti-x"></i></button>' +
+      "</div>" +
+      // ── Body ─────────────────────────────────────────────────
+      '<div class="modal-body">' +
+      // الحقول
+      '<div class="role-modal-fields">' +
+      // اسم الدور
+      "<div>" +
+      '<div class="role-modal-field-label">' +
+      '<i class="ti ti-tag" style="font-size:13px;color:var(--accent)"></i>' +
+      'اسم الدور <span style="font-size:10px;color:var(--text3);font-weight:400">(بدون مسافات)</span>' +
+      "</div>" +
+      '<input id="role-name" class="form-input" placeholder="مثال: store_manager"' +
+      " style=\"direction:ltr;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px\"" +
+      ' value="' +
+      esc(role.name || "") +
+      '"' +
+      (isBuiltin ? " readonly" : "") +
+      ">" +
+      "</div>" +
+      // اللون
+      '<div class="role-modal-color-wrap">' +
+      '<div class="role-modal-field-label" style="justify-content:center">اللون</div>' +
+      '<div class="role-modal-color-btn" id="role-color-swatch" style="background:' +
+      roleColor +
+      '" title="اختر لون الدور">' +
+      '<input type="color" id="role-color" value="' +
+      roleColor +
+      '"' +
+      (isBuiltin
+        ? " disabled"
+        : " onchange=\"document.getElementById('role-color-swatch').style.background=this.value\"") +
+      ">" +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // الاسم العربي
+      '<div style="margin-bottom:16px">' +
+      '<div class="role-modal-field-label">' +
+      '<i class="ti ti-language" style="font-size:13px;color:var(--accent)"></i>' +
+      "الاسم الظاهر بالعربي" +
+      "</div>" +
+      '<input id="role-label" class="form-input" placeholder="مثال: مدير المخزن"' +
+      ' value="' +
+      esc(role.label || "") +
+      '"' +
+      (isBuiltin ? " readonly" : "") +
+      ">" +
+      "</div>" +
+      // شريط التقدم
+      '<div class="role-perm-progress-wrap">' +
+      '<div class="role-perm-progress-icon">' +
+      '<i class="ti ti-shield-check" style="font-size:18px;color:var(--accent)" aria-hidden="true"></i>' +
+      "</div>" +
+      '<div class="role-perm-progress-info">' +
+      '<div class="role-perm-progress-label">' +
+      "<span>الصلاحيات الممنوحة</span>" +
+      '<span class="perm-count-badge" id="role-perm-badge">' +
+      activePerms +
+      " من " +
+      totalPerms +
+      "</span>" +
+      "</div>" +
+      '<div class="role-perm-progress-bar">' +
+      '<div class="role-perm-progress-fill" id="role-perm-bar" style="width:' +
+      pct +
+      '%"></div>' +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // أزرار تحديد الكل
+      (isBuiltin
+        ? ""
+        : '<div class="perm-quick-btns">' +
+          '<button onclick="_roleCheckAll(true)" class="perm-quick-btn">' +
+          '<i class="ti ti-checkbox" style="font-size:14px" aria-hidden="true"></i> تحديد الكل' +
+          "</button>" +
+          '<button onclick="_roleCheckAll(false)" class="perm-quick-btn">' +
+          '<i class="ti ti-square" style="font-size:14px" aria-hidden="true"></i> إلغاء الكل' +
+          "</button>" +
+          "</div>") +
+      // قائمة الصلاحيات
+      '<div class="perm-list-wrap" id="role-perm-list">' +
+      permsHtml +
+      "</div>" +
+      '<input type="hidden" id="role-id" value="' +
+      esc(role.id || "") +
+      '">' +
+      "</div>" +
+      // ── Footer ───────────────────────────────────────────────
+      '<div class="modal-actions">' +
+      (isBuiltin
+        ? '<button onclick="closeDrawer()" class="btn btn-outline" style="flex:1;justify-content:center">' +
+          '<i class="ti ti-x" style="font-size:15px"></i> إغلاق' +
+          "</button>"
+        : '<button onclick="closeDrawer()" class="btn btn-outline">' +
+          '<i class="ti ti-x" style="font-size:15px"></i> إلغاء' +
+          "</button>" +
+          '<button onclick="saveRoleFromModal()" class="btn btn-primary">' +
+          '<i class="ti ti-device-floppy" style="font-size:15px"></i> حفظ الدور' +
+          "</button>") +
+      "</div>"
+    );
+  }
+
+  // ── مساعد: toggle صلاحية مع تحديث الشريط ──
+
+  // ============================================================
+  // مودال Override صلاحيات مستخدم (تصميم محترف v2)
+  // ============================================================
+  function renderUserOverrideModal(user, allPerms, overrides, rolePerms) {
+    overrides = overrides || { extra: [], denied: [] };
+    rolePerms = rolePerms || [];
+    var extra = overrides.extra || [];
+    var denied = overrides.denied || [];
+
+    // ── تجميع الصلاحيات في فئات ──
+    var cats = {};
+    allPerms.forEach(function (p) {
+      if (!cats[p.cat]) cats[p.cat] = { label: p.catLabel, perms: [] };
+      cats[p.cat].perms.push(p);
+    });
+    var catKeys = Object.keys(cats);
+
+    // ── بناء صفوف الصلاحيات ──
+    var permsHtml = catKeys
+      .map(function (catKey) {
+        var cat = cats[catKey];
+        var rows = cat.perms
+          .map(function (p) {
+            var hasRole = rolePerms.indexOf(p.key) !== -1;
+            var isExtra = extra.indexOf(p.key) !== -1;
+            var isDenied = denied.indexOf(p.key) !== -1;
+            var cbGranted = hasRole || isExtra;
+
+            var rowState = isDenied
+              ? " state-denied"
+              : isExtra
+                ? " state-extra"
+                : hasRole
+                  ? " state-role"
+                  : "";
+            var statusIcon = isDenied
+              ? '<span class="perm-status-icon"></span>'
+              : isExtra
+                ? '<span class="perm-status-icon" style="color:var(--primary)"><span style="display:inline-flex;align-items:center;gap:5px"><i class="ti ti-plus" style="font-size:15px" aria-hidden="true"></i></span></span>'
+                : hasRole
+                  ? '<span class="perm-status-icon" style="color:var(--success)"></span>'
+                  : "";
+            var cbClass =
+              "perm-checkbox-custom" +
+              (cbGranted ? " checked" : "") +
+              (hasRole ? " disabled" : "");
+
+            return (
+              '<div class="perm-row-pro' +
+              rowState +
+              '" data-perm-key="' +
+              p.key +
+              '">' +
+              '<span class="perm-row-label">' +
+              esc(p.label) +
+              statusIcon +
+              "</span>" +
+              // Grant checkbox
+              '<div class="' +
+              cbClass +
+              '" data-key="' +
+              p.key +
+              '"' +
+              (hasRole
+                ? ' title="من الدور — ثابت"'
+                : " onclick=\"_ovToggleGrant(this,'" + p.key + "')\"") +
+              "></div>" +
+              // Deny toggle
+              '<label class="perm-deny-label" title="حجب هذه الصلاحية">' +
+              '<input type="checkbox" class="ov-deny-cb" data-key="' +
+              p.key +
+              '"' +
+              (isDenied ? " checked" : "") +
+              " onchange=\"_ovToggleDeny(this,'" +
+              p.key +
+              "')\">" +
+              "حجب" +
+              "</label>" +
+              "</div>"
+            );
+          })
+          .join("");
+
+        return (
+          '<div class="perm-cat-header">' +
+          '<span class="cat-icon" style="background:#eff6ff">' +
+          '<i class="ti ti-folder" style="font-size:13px;color:#2563eb" aria-hidden="true"></i>' +
+          "</span>" +
+          esc(cat.label) +
+          "</div>" +
+          rows
+        );
+      })
+      .join("");
+
+    return (
+      // ── Header ──
+      '<div class="modal-header">' +
+      '<div class="modal-header-left">' +
+      '<div class="ov-user-avatar" style="width:34px;height:34px;font-size:14px;background:' +
+      _pmAvatarColor(user.username) +
+      '">' +
+      (String(user.username || "?")[0] || "?").toUpperCase() +
+      "</div>" +
+      '<div class="d">' +
+      '<div style="font-size:16px;font-weight:800;color:var(--text)"> Override الصلاحيات</div>' +
+      '<div class="modal-header-sub">' +
+      esc(user.full_name || user.username) +
+      " · @" +
+      esc(user.username) +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      '<div class="modal-close" onclick="closeModal()" title="إغلاق"></div>' +
+      "</div>" +
+      // ── Legend ──
+      '<div class="perm-legend" style="margin-bottom:12px">' +
+      '<div class="perm-legend-item"><div class="perm-legend-dot" style="background:var(--success)"></div><span>من الدور (ثابت)</span></div>' +
+      '<div class="perm-legend-item"><div class="perm-legend-dot" style="background:var(--primary)"></div><span>إضافة فردية</span></div>' +
+      '<div class="perm-legend-item"><div class="perm-legend-dot" style="background:var(--danger)"></div><span>محجوبة</span></div>' +
+      "</div>" +
+      // ── قائمة الصلاحيات ──
+      '<div class="perm-list-wrap">' +
+      permsHtml +
+      "</div>" +
+      // ── Footer ──
+      '<div class="modal-footer-pro">' +
+      '<button onclick="saveUserOverrideFromModal()" class="btn btn-primary"> حفظ الصلاحيات</button>' +
+      '<button onclick="closeDrawer()" class="btn" style="background:var(--surface2);color:var(--text2)">إلغاء</button>' +
+      "</div>" +
+      '<input type="hidden" id="ov-username" value="' +
+      esc(user.username) +
+      '">' +
+      '<input type="hidden" id="ov-role-perms" value=\'' +
+      JSON.stringify(rolePerms) +
+      "'>"
+    );
+  }
+
+  // ── مساعدات Override ──
+
+  /**
+   * renderSystemSettings — شاشة إعدادات النظام الشاملة
+   * تُعرض في #page-content عبر renderPage('system_settings')
+   */
+  function renderSystemSettings() {
+    var s = APP.companySettings || {};
+
+    // ── Preview Live ──
+    var logoSrc = s.logo_url || "";
+    var logoHtml = logoSrc
+      ? '<img src="' +
+        esc(logoSrc) +
+        '" alt="لوجو الشركة" onerror="this.style.display=\'none\'">'
+      : '<span class="logo-placeholder"></span>';
+
+    var previewLogoHtml = logoSrc
+      ? '<img src="' + esc(logoSrc) + '" alt="لوجو">'
+      : '<span class="preview-logo-placeholder"></span>';
+
+    var primaryColor = s.primary_color || "#2563eb";
+
+    return (
+      '<div class="page-header">' +
+      "<div>" +
+      "<h2 style='display:flex;align-items:center;gap:10px'>" +
+      iconBadge("ti-settings", "var(--surface2)", "var(--text2)") +
+      "<span>إعدادات النظام</span></h2>" +
+      '<p class="page-subtitle">بيانات الشركة، الهوية البصرية، وإعدادات التشغيل</p>' +
+      "</div>" +
+      '<div class="header-actions">' +
+      '<button class="btn btn-secondary" onclick="loadAllData(function(){ renderPage(\'system_settings\'); })"> تحديث</button>' +
+      "</div>" +
+      "</div>" +
+      // ── Preview Card العلوية ──
+      '<div class="company-preview-card" id="settings-preview-card" style="--preview-primary:' +
+      esc(primaryColor) +
+      ";--preview-secondary:" +
+      _darkenHex(primaryColor) +
+      '">' +
+      '<div class="preview-logo-wrap" id="preview-logo-wrap">' +
+      previewLogoHtml +
+      "</div>" +
+      '<div class="preview-info">' +
+      '<div class="preview-company-name" id="preview-company-name">' +
+      esc(s.company_name || "اسم الشركة") +
+      "</div>" +
+      '<div class="preview-tagline" id="preview-tagline">' +
+      esc(s.tagline || "Enterprise Resource Planning") +
+      "</div>" +
+      '<div class="preview-meta">' +
+      (s.phone
+        ? '<div class="preview-meta-item"> <span id="preview-phone">' +
+          esc(s.phone) +
+          "</span></div>"
+        : '<div class="preview-meta-item" id="preview-phone-wrap" style="display:none"> <span id="preview-phone"></span></div>') +
+      (s.email
+        ? '<div class="preview-meta-item"> <span id="preview-email">' +
+          esc(s.email) +
+          "</span></div>"
+        : '<div class="preview-meta-item" id="preview-email-wrap" style="display:none"> <span id="preview-email"></span></div>') +
+      (s.address
+        ? '<div class="preview-meta-item"> <span id="preview-address">' +
+          esc(s.address) +
+          "</span></div>"
+        : '<div class="preview-meta-item" id="preview-address-wrap" style="display:none"> <span id="preview-address"></span></div>') +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // ── Layout رئيسي ──
+      '<div class="settings-layout">' +
+      // ── Sidebar التنقل ──
+      '<div class="settings-nav">' +
+      '<div class="settings-nav-title">أقسام الإعدادات</div>' +
+      _settingsNavItem(
+        "company",
+        '<i class="ti ti-building" style="font-size:16px;color:#2563eb"></i>',
+        "بيانات الشركة",
+        true,
+      ) +
+      _settingsNavItem(
+        "branding",
+        '<i class="ti ti-palette" style="font-size:16px;color:#9D174D"></i>',
+        "الهوية البصرية",
+      ) +
+      _settingsNavItem(
+        "operations",
+        '<i class="ti ti-settings" style="font-size:16px;color:#374151"></i>',
+        "إعدادات التشغيل",
+      ) +
+      (canDo("manageRoles")
+        ? _settingsNavItem(
+            "security",
+            '<i class="ti ti-shield-lock" style="font-size:16px;color:#B91C1C"></i>',
+            "تنبيهات الأمان",
+          )
+        : "") +
+      _settingsNavItem(
+        "system",
+        '<i class="ti ti-device-desktop" style="font-size:16px;color:#374151"></i>',
+        "معلومات النظام",
+      ) +
+      _settingsNavItem(
+        "ai_voice",
+        '<i class="ti ti-microphone" style="font-size:16px;color:#7C3AED"></i>',
+        "صوت المساعد الذكي",
+      ) +
+      _settingsNavItem(
+        "audio",
+        '<i class="ti ti-volume" style="font-size:16px;color:#0891b2"></i>',
+        "أصوات النظام",
+      ) +
+      _settingsNavItem(
+        "whatsapp",
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.126.556 4.12 1.523 5.847L0 24l6.332-1.494A11.945 11.945 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.793 9.793 0 01-5.023-1.378l-.36-.213-3.727.879.936-3.606-.235-.37A9.793 9.793 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182S21.818 6.57 21.818 12 17.43 21.818 12 21.818z"/></svg>',
+        "إعدادات واتساب",
+      ) +
+      (canDo("createBackup")
+        ? _settingsNavItem(
+            "backup",
+            '<i class="ti ti-device-floppy" style="font-size:16px;color:#0369A1"></i>',
+            "النسخ الاحتياطي",
+          )
+        : "") +
+      (canDo("deleteItem")
+        ? _settingsNavItem(
+            "danger",
+            '<i class="ti ti-alert-triangle" style="font-size:16px;color:#ef4444"></i>',
+            "منطقة الخطر",
+          )
+        : "") +
+      "</div>" +
+      // ── محتوى الأقسام ──
+      '<div class="settings-content">' +
+      // ─── §A: بيانات الشركة ───────────────────────────────
+      '<div class="settings-section active" id="settings-section-company">' +
+      // بطاقة الاسم والبيانات الأساسية
+      '<div class="settings-card">' +
+      '<div class="settings-card-header">' +
+      '<div class="settings-card-header-icon"><i class="ti ti-building" style="font-size:22px;color:var(--primary)" aria-hidden="true"></i></div>' +
+      "<div><h3>البيانات الأساسية</h3><p>الاسم الرسمي للشركة والمعلومات التعريفية</p></div>" +
+      "</div>" +
+      '<div class="settings-card-body">' +
+      '<div class="settings-fields-grid">' +
+      _settingsField(
+        "company_name",
+        "اسم الشركة",
+        "<i class='ti ti-building' style='color:#2563eb' aria-hidden='true'></i>",
+        s.company_name || "",
+        "text",
+        "MOO.ERP للأعمال",
+        true,
+      ) +
+      _settingsField(
+        "tagline",
+        "الشعار / التاغلاين",
+        "<i class='ti ti-sparkles' style='color:#A16207' aria-hidden='true'></i>",
+        s.tagline || "",
+        "text",
+        "نظام تخطيط موارد المؤسسات",
+      ) +
+      _settingsField(
+        "phone",
+        "رقم الهاتف",
+        "<i class='ti ti-phone' style='color:#166534' aria-hidden='true'></i>",
+        s.phone || "",
+        "tel",
+        "+20 10 0000 0000",
+      ) +
+      _settingsField(
+        "email",
+        "البريد الإلكتروني",
+        "",
+        s.email || "",
+        "email",
+        "info@company.com",
+      ) +
+      _settingsField(
+        "website",
+        "الموقع الإلكتروني",
+        "<i class='ti ti-world' style='color:#0369A1' aria-hidden='true'></i>",
+        s.website || "",
+        "url",
+        "https://company.com",
+      ) +
+      _settingsField(
+        "tax_id",
+        "الرقم الضريبي",
+        "<i class='ti ti-receipt' style='color:#374151' aria-hidden='true'></i>",
+        s.tax_id || "",
+        "text",
+        "XXX-XXX-XXXX",
+      ) +
+      _settingsField(
+        "commercial_reg",
+        "السجل التجاري",
+        "<i class='ti ti-clipboard' style='color:#374151' aria-hidden='true'></i>",
+        s.commercial_reg || "",
+        "text",
+        "رقم السجل التجاري",
+      ) +
+      _settingsField(
+        "currency",
+        "العملة",
+        "<i class='ti ti-coin' style='color:#D97706' aria-hidden='true'></i>",
+        s.currency || "جنيه مصري",
+        "text",
+        "جنيه مصري",
+      ) +
+      "</div>" +
+      // حقل العنوان كامل العرض
+      '<div class="settings-fields-grid one-col" style="margin-top:16px">' +
+      '<div class="settings-field full-width">' +
+      '<label><span class="field-icon"></span> العنوان</label>' +
+      '<textarea id="sf-address" rows="2" placeholder="العنوان الكامل للشركة">' +
+      esc(s.address || "") +
+      "</textarea>" +
+      "</div>" +
+      '<div class="settings-field full-width">' +
+      '<label><span class="field-icon"></span> ملاحظات عامة</label>' +
+      '<textarea id="sf-notes" rows="3" placeholder="أي ملاحظات أو معلومات إضافية عن الشركة">' +
+      esc(s.notes || "") +
+      "</textarea>" +
+      "</div>" +
+      "</div>" +
+      _settingsSaveBar("company") +
+      "</div>" +
+      "</div>" + // end settings-card
+      "</div>" + // end section company
+      // ─── §B: الهوية البصرية ──────────────────────────────
+      '<div class="settings-section" id="settings-section-branding">' +
+      // اللوجو
+      '<div class="settings-card">' +
+      '<div class="settings-card-header">' +
+      '<div class="settings-card-header-icon"><i class="ti ti-photo" style="font-size:22px;color:#9D174D" aria-hidden="true"></i></div>' +
+      "<div><h3>شعار الشركة (اللوجو)</h3><p>الصورة التي تظهر في الواجهات والمستندات</p></div>" +
+      "</div>" +
+      '<div class="settings-card-body">' +
+      // تابز (رابط / رفع)
+      '<div class="logo-tabs">' +
+      '<div class="logo-tab active" id="logo-tab-url" onclick="_switchLogoTab(\'url\')"> رابط URL</div>' +
+      '<div class="logo-tab" id="logo-tab-upload" onclick="_switchLogoTab(\'upload\')"> رفع ملف</div>' +
+      "</div>" +
+      // Tab 1: URL
+      '<div class="logo-tab-panel active" id="logo-panel-url">' +
+      '<div class="settings-field">' +
+      '<label><span class="field-icon"></span> رابط صورة اللوجو</label>' +
+      '<input type="url" id="sf-logo_url" value="' +
+      esc(s.logo_url || "") +
+      '" placeholder="https://i.imgur.com/xxxxx.png">' +
+      "</div>" +
+      '<div style="margin-top:12px;display:flex;align-items:center;gap:10px">' +
+      '<button class="btn btn-secondary btn-sm" onclick="_previewLogoFromUrl()"> معاينة</button>' +
+      '<button class="btn btn-ghost btn-sm" onclick="_clearLogo()"> إزالة اللوجو</button>' +
+      "</div>" +
+      "</div>" +
+      // Tab 2: Upload
+      '<div class="logo-tab-panel" id="logo-panel-upload">' +
+      '<div class="logo-upload-zone" id="logo-drop-zone" ondragover="_logoDragOver(event)" ondragleave="_logoDragLeave(event)" ondrop="_logoDrop(event)" onclick="document.getElementById(\'logo-file-input\').click()">' +
+      '<div class="logo-preview-wrap" id="logo-upload-preview">' +
+      (logoSrc
+        ? '<img src="' + esc(logoSrc) + '" alt="اللوجو">'
+        : '<span class="logo-placeholder"></span>') +
+      "</div>" +
+      '<div class="logo-upload-info">' +
+      "<h4>اسحب صورة اللوجو هنا أو اضغط للاختيار</h4>" +
+      "<p>PNG أو JPG أو SVG · الحجم الأقصى 2MB · يُفضّل خلفية شفافة (PNG)</p>" +
+      '<div class="logo-upload-actions">' +
+      '<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();document.getElementById(\'logo-file-input\').click()"> اختر ملف</button>' +
+      '<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();_clearLogo()"> إزالة</button>' +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      '<input type="file" id="logo-file-input" accept="image/*" style="display:none" onchange="_handleLogoFile(event)">' +
+      '<p style="font-size:11px;color:var(--text3);margin-top:8px"> سيتم رفع الصورة وتحويلها لرابط تلقائياً</p>' +
+      "</div>" +
+      "</div>" +
+      "</div>" + // end settings-card logo
+      // الألوان
+      '<div class="settings-card">' +
+      '<div class="settings-card-header">' +
+      '<div class="settings-card-header-icon"><i class="ti ti-palette" style="font-size:22px;color:#9D174D" aria-hidden="true"></i></div>' +
+      "<div><h3>ألوان الهوية البصرية</h3><p>الألوان الأساسية للواجهة والمستندات</p></div>" +
+      "</div>" +
+      '<div class="settings-card-body">' +
+      '<div class="settings-fields-grid three-col">' +
+      _colorField(
+        "primary_color",
+        "اللون الرئيسي",
+        s.primary_color || "#2563eb",
+      ) +
+      _colorField(
+        "secondary_color",
+        "اللون الثانوي",
+        s.secondary_color || "#1d4ed8",
+      ) +
+      _colorField("accent_color", "لون التمييز", s.accent_color || "#0ea5e9") +
+      "</div>" +
+      '<div style="margin-top:16px;padding:14px;background:var(--surface2);border-radius:var(--radius-sm);display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
+      '<span style="font-size:12px;color:var(--text3)">معاينة سريعة:</span>' +
+      '<div id="color-preview-primary" style="width:32px;height:32px;border-radius:8px;background:' +
+      esc(s.primary_color || "#2563eb") +
+      ';box-shadow:0 2px 8px rgba(0,0,0,0.15)"></div>' +
+      '<div id="color-preview-secondary" style="width:32px;height:32px;border-radius:8px;background:' +
+      esc(s.secondary_color || "#1d4ed8") +
+      ';box-shadow:0 2px 8px rgba(0,0,0,0.15)"></div>' +
+      '<div id="color-preview-accent" style="width:32px;height:32px;border-radius:8px;background:' +
+      esc(s.accent_color || "#0ea5e9") +
+      ';box-shadow:0 2px 8px rgba(0,0,0,0.15)"></div>' +
+      '<button class="btn btn-ghost btn-sm" onclick="_resetColors()" style="margin-right:auto">↺ إعادة الافتراضي</button>' +
+      "</div>" +
+      _settingsSaveBar("branding") +
+      "</div>" +
+      "</div>" + // end settings-card colors
+      "</div>" + // end section branding
+      // ─── §C: إعدادات التشغيل ─────────────────────────────
+      '<div class="settings-section" id="settings-section-operations">' +
+      '<div class="settings-card">' +
+      '<div class="settings-card-header">' +
+      '<div class="settings-card-header-icon ops-header-icon-animated"><i class="ti ti-settings" style="font-size:22px;color:#374151" aria-hidden="true"></i></div>' +
+      "<div><h3>إعدادات النظام والتشغيل</h3><p>ضبط سلوك النظام وقواعد العمل</p></div>" +
+      "</div>" +
+      '<div class="settings-card-body">' +
+      // ── قسم: إعدادات المخزون والوقت ──
+      '<div class="ops-section-label"><i class="ti ti-adjustments-horizontal" aria-hidden="true"></i> إعدادات المخزون والوقت</div>' +
+      '<div class="settings-fields-grid ops-fields-enhanced">' +
+      // حقل النسبة مع المؤشر البصري
+      '<div class="settings-field">' +
+      "<label><span class=\"field-icon\"><i class='ti ti-bell' style='color:#B91C1C' aria-hidden='true'></i></span> تنبيه المخزون عند (%)</label>" +
+      '<div class="ops-pct-wrap">' +
+      '<input type="number" id="sf-min_stock_alert_pct" value="' +
+      esc(String(s.min_stock_alert_pct || "20")) +
+      '" min="0" max="100" placeholder="20" ' +
+      'oninput="_opsUpdateStockBar(this.value)">' +
+      '<span class="ops-pct-suffix">%</span>' +
+      "</div>" +
+      '<div class="ops-stock-indicator">' +
+      '<div class="ops-stock-bar"><div class="ops-stock-fill" id="ops-stock-fill" style="width:' +
+      esc(String(Math.min(100, parseInt(s.min_stock_alert_pct || 20)))) +
+      '%"></div></div>' +
+      '<span class="ops-stock-val" id="ops-stock-val">' +
+      esc(String(s.min_stock_alert_pct || "20")) +
+      "%</span>" +
+      "</div>" +
+      '<div class="ops-field-hint">عند وصول المخزون لهذه النسبة يُرسل تنبيه تلقائي</div>' +
+      "</div>" +
+      // حقل المخزن الافتراضي
+      '<div class="settings-field">' +
+      "<label><span class=\"field-icon\"><i class='ti ti-building-store' style='color:#166534' aria-hidden='true'></i></span> المخزن الافتراضي</label>" +
+      '<div class="ops-input-icon-wrap">' +
+      '<input type="text" id="sf-default_warehouse" value="' +
+      esc(s.default_warehouse || "") +
+      '" placeholder="اسم المخزن الرئيسي">' +
+      '<i class="ti ti-chevron-left ops-input-chevron" aria-hidden="true"></i>' +
+      "</div>" +
+      '<div class="ops-field-hint">يُستخدم تلقائياً عند إنشاء حركات جديدة</div>' +
+      "</div>" +
+      // حقل بداية السنة المالية — select بدل نص
+      '<div class="settings-field">' +
+      "<label><span class=\"field-icon\"><i class='ti ti-calendar' style='color:#0369A1' aria-hidden='true'></i></span> بداية السنة المالية</label>" +
+      '<select id="sf-fiscal_year_start">' +
+      '<option value="01/01"' +
+      ((s.fiscal_year_start || "01/01") === "01/01" ? " selected" : "") +
+      ">يناير — 01/01</option>" +
+      '<option value="04/01"' +
+      (s.fiscal_year_start === "04/01" ? " selected" : "") +
+      ">أبريل — 04/01</option>" +
+      '<option value="07/01"' +
+      (s.fiscal_year_start === "07/01" ? " selected" : "") +
+      ">يوليو — 07/01</option>" +
+      '<option value="10/01"' +
+      (s.fiscal_year_start === "10/01" ? " selected" : "") +
+      ">أكتوبر — 10/01</option>" +
+      "</select>" +
+      '<div class="ops-field-hint">بداية الدورة المحاسبية السنوية</div>' +
+      "</div>" +
+      // حقل المنطقة الزمنية — select بدل نص
+      '<div class="settings-field">' +
+      "<label><span class=\"field-icon\"><i class='ti ti-clock' style='color:#374151' aria-hidden='true'></i></span> المنطقة الزمنية</label>" +
+      '<select id="sf-timezone">' +
+      '<option value="Africa/Cairo"' +
+      (!s.timezone || s.timezone === "Africa/Cairo" ? " selected" : "") +
+      ">Africa/Cairo (UTC+2/+3)</option>" +
+      '<option value="Asia/Riyadh"' +
+      (s.timezone === "Asia/Riyadh" ? " selected" : "") +
+      ">Asia/Riyadh (UTC+3)</option>" +
+      '<option value="Asia/Dubai"' +
+      (s.timezone === "Asia/Dubai" ? " selected" : "") +
+      ">Asia/Dubai (UTC+4)</option>" +
+      '<option value="Asia/Kuwait"' +
+      (s.timezone === "Asia/Kuwait" ? " selected" : "") +
+      ">Asia/Kuwait (UTC+3)</option>" +
+      '<option value="Africa/Casablanca"' +
+      (s.timezone === "Africa/Casablanca" ? " selected" : "") +
+      ">Africa/Casablanca (UTC+1)</option>" +
+      '<option value="Europe/London"' +
+      (s.timezone === "Europe/London" ? " selected" : "") +
+      ">Europe/London (UTC+0/+1)</option>" +
+      "</select>" +
+      '<div class="ops-field-hint">تُستخدم في توقيت الحركات والتقارير</div>' +
+      "</div>" +
+      "</div>" + // end fields-grid
+      // ── فاصل ──
+      '<div class="ops-divider"></div>' +
+      // ── قسم: الخيارات المتقدمة ──
+      '<div class="ops-section-label"><i class="ti ti-toggle-right" aria-hidden="true"></i> الخيارات المتقدمة</div>' +
+      '<div class="ops-toggles-list">' +
+      _settingsToggleV2(
+        "allow_negative_stock",
+        "ti-trending-down",
+        "#B91C1C",
+        "rgba(185,28,28,.08)",
+        "السماح بالمخزون السالب",
+        "يسمح بالصرف حتى لو الرصيد صفر أو أقل — مفيد عند تسجيل حركات بأثر رجعي",
+        s.allow_negative_stock,
+        "",
+      ) +
+      _settingsToggleV2(
+        "require_notes_on_tx",
+        "ti-notes",
+        "#0369A1",
+        "rgba(3,105,161,.08)",
+        "إلزامية الملاحظات في الحركات",
+        "يُلزم المستخدم بكتابة ملاحظة مع كل حركة — يُحسّن دقة سجل العمليات",
+        s.require_notes_on_tx,
+        "",
+      ) +
+      _settingsToggleV2(
+        "auto_backup",
+        "ti-device-floppy",
+        "#166534",
+        "rgba(22,101,52,.08)",
+        "النسخ الاحتياطي التلقائي",
+        "إنشاء نسخة احتياطية أسبوعياً تلقائياً وحفظها في Google Drive",
+        s.auto_backup,
+        "أسبوعي",
+      ) +
+      _settingsToggleV2(
+        "show_cost_price",
+        "ti-eye",
+        "#92400E",
+        "rgba(146,64,14,.08)",
+        "إظهار سعر التكلفة للمشرفين",
+        "يُظهر سعر التكلفة لمستوى المشرف وما فوق فقط",
+        s.show_cost_price,
+        "",
+      ) +
+      _settingsToggleV2(
+        "enable_production",
+        "ti-building-factory-2",
+        "#7C3AED",
+        "rgba(124,58,237,.08)",
+        "تفعيل وحدة الإنتاج",
+        "يُظهر قائمة أوامر الإنتاج في الشريط الجانبي ويُفعّل إدارة تكاليف التصنيع",
+        s.enable_production,
+        "يتطلب إعداداً",
+      ) +
+      "</div>" + // end ops-toggles-list
+      _settingsSaveBar("operations") +
+      "</div>" + // end settings-card-body
+      "</div>" + // end settings-card
+      "</div>" + // end section operations
+      // ─── §SEC: تنبيهات الأمان (إيميل/واتساب الأدمن عند حظر حساب) ──
+      // [SEC-ALERT-UI] القسم ده بيربط واجهة إعدادات النظام بحقلين كانوا
+      // موجودين بالباك اند من غير أي واجهة أصلاً:
+      //  - admin_alert_email (Code_12_Core.gs) — تنبيه إيميل عند حظر حساب
+      //  - admin_alert_phone (جديد) — تنبيه واتساب عبر نفس Bridge بتاع
+      //    قناة الواتساب (WhatsApp Communication Hub)، إن كانت مُعدّة
+      (canDo("manageRoles")
+        ? '<div class="settings-section" id="settings-section-security">' +
+          '<div class="settings-card">' +
+          '<div class="settings-card-header">' +
+          '<div class="settings-card-header-icon"><i class="ti ti-shield-lock" style="font-size:22px;color:#B91C1C" aria-hidden="true"></i></div>' +
+          "<div><h3>تنبيهات الأمان</h3><p>لمين يوصل التنبيه لما حساب يتحظر بسبب محاولات دخول متكررة</p></div>" +
+          "</div>" +
+          '<div class="settings-card-body">' +
+          '<div class="settings-fields-grid">' +
+          _settingsField(
+            "admin_alert_email",
+            "إيميل تنبيهات الأمان",
+            '<i class="ti ti-mail" style="color:#2563eb" aria-hidden="true"></i>',
+            s.admin_alert_email || "",
+            "email",
+            "admin@example.com",
+            false,
+          ) +
+          _settingsField(
+            "admin_alert_phone",
+            "رقم واتساب تنبيهات الأمان",
+            '<i class="ti ti-brand-whatsapp" style="color:#25D366" aria-hidden="true"></i>',
+            s.admin_alert_phone || "",
+            "text",
+            "201025306678 (بالمفتاح الدولي، بدون +)",
+            false,
+          ) +
+          "</div>" +
+          '<div class="ops-field-hint" style="margin-top:-6px">' +
+          " لازم قناة الواتساب (WhatsApp Communication Hub) تكون مُعدّة ومتصلة عشان تنبيه الواتساب يوصل — لو مش متصلة، هيوصل الإيميل بس تلقائياً من غير أي خطأ." +
+          "</div>" +
+          _settingsSaveBar("security") +
+          "</div>" + // end settings-card-body
+          "</div>" + // end settings-card
+          "</div>" // end section security
+        : "") +
+      // ─── §D: معلومات النظام ──────────────────────────────
+      '<div class="settings-section" id="settings-section-system">' +
+      '<div class="settings-card">' +
+      '<div class="settings-card-header">' +
+      '<div class="settings-card-header-icon"><i class="ti ti-device-desktop" style="font-size:22px;color:#374151" aria-hidden="true"></i></div>' +
+      "<div><h3>معلومات النظام</h3><p>الإصدار الحالي وإحصائيات قاعدة البيانات</p></div>" +
+      "</div>" +
+      '<div class="settings-card-body">' +
+      '<div class="sys-info-grid">' +
+      _sysInfoItem(
+        '<i class="ti ti-rocket" style="color:#2563eb"></i>',
+        "الإصدار",
+        "v" + ((window.__PREFETCH__ && window.__PREFETCH__.appVersion) || "?"),
+        "#2563eb",
+      ) +
+      _sysInfoItem(
+        '<i class="ti ti-package" style="color:#0E7490"></i>',
+        "الأصناف",
+        String(APP.data.items.length),
+        "#0E7490",
+      ) +
+      _sysInfoItem(
+        '<i class="ti ti-building-store" style="color:#166534"></i>',
+        "المخازن",
+        String(APP.data.warehouses.length),
+        "#166534",
+      ) +
+      _sysInfoItem(
+        '<i class="ti ti-users" style="color:#2563eb"></i>',
+        "المستخدمون",
+        String(APP.data.users.length),
+        "#2563eb",
+      ) +
+      _sysInfoItem(
+        '<i class="ti ti-history" style="color:#5B21B6"></i>',
+        "الحركات",
+        String(APP.data.transactions.length),
+        "#5B21B6",
+      ) +
+      _sysInfoItem(
+        '<i class="ti ti-palette" style="color:#9D174D"></i>',
+        "الألوان المعرّفة",
+        String(APP.data.colors.length),
+        "#9D174D",
+      ) +
+      _sysInfoItem(
+        '<i class="ti ti-folders" style="color:#5B21B6"></i>',
+        "المجموعات",
+        String(APP.data.groups.length),
+        "#5B21B6",
+      ) +
+      _sysInfoItem(
+        '<i class="ti ti-building-factory-2" style="color:#92400E"></i>',
+        "أوامر الإنتاج",
+        String(APP.data.productionOrders.length),
+        "#92400E",
+      ) +
+      _sysInfoItem(
+        '<i class="ti ti-clipboard" style="color:#374151"></i>',
+        "رصيد أول المدة",
+        String(APP.data.openingStock.length),
+        "#374151",
+      ) +
+      "</div>" +
+      '<div style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap">' +
+      "<button class=\"btn btn-secondary\" onclick=\"loadAllData(null, true); NotificationEngine.info('جاري تحديث البيانات...')\">" +
+      " إعادة تحميل كل البيانات" +
+      "</button>" +
+      '<button class="btn btn-secondary" onclick="_clearCacheAndReload()">' +
+      " مسح الكاش" +
+      "</button>" +
+      '<button class="btn btn-secondary" onclick="renderPage(\'audit_log\')">' +
+      " سجل العمليات" +
+      "</button>" +
+      "</div>" +
+      "</div>" +
+      "</div>" + // end settings-card
+      "</div>" + // end section system
+      // ─── §E: منطقة الخطر ─────────────────────────────────
+      (canDo("deleteItem")
+        ? '<div class="settings-section" id="settings-section-danger">' +
+          '<div class="settings-card" style="border-color:var(--danger)">' +
+          '<div class="settings-card-header" style="background:var(--danger-soft);border-bottom:1px solid rgba(239,68,68,0.2)">' +
+          '<div class="settings-card-header-icon" style="background:rgba(239,68,68,0.12)">' +
+          '<i class="ti ti-alert-triangle" style="font-size:22px;color:var(--danger)" aria-hidden="true"></i>' +
+          "</div>" +
+          "<div>" +
+          '<h3 style="color:var(--danger)">منطقة الخطر</h3>' +
+          '<p style="color:var(--danger-dark);opacity:.7">إجراءات لا يمكن التراجع عنها — تصرّف بحذر</p>' +
+          "</div>" +
+          "</div>" +
+          '<div class="settings-card-body">' +
+          '<div class="danger-action-row">' +
+          '<div style="display:flex;align-items:center;gap:14px">' +
+          '<div style="width:44px;height:44px;border-radius:12px;background:rgba(239,68,68,0.1);display:flex;align-items:center;justify-content:center;flex-shrink:0">' +
+          '<i class="ti ti-trash" style="font-size:22px;color:var(--danger)" aria-hidden="true"></i>' +
+          "</div>" +
+          '<div class="danger-action-info">' +
+          "<h4>مسح الكاش والبيانات المؤقتة</h4>" +
+          "<p>يمسح بيانات الجلسة المؤقتة ويُعيد التحميل من الخادم</p>" +
+          '<p style="font-size:11px;color:var(--text3);margin-top:3px"> لن تُحذف أي بيانات من الـ Spreadsheet</p>' +
+          "</div>" +
+          "</div>" +
+          '<button class="btn btn-danger btn-sm" onclick="_clearCacheAndReload()"> مسح الكاش</button>' +
+          "</div>" +
+          "</div>" +
+          "</div>" +
+          "</div>"
+        : "") +
+      // ─── §F: النسخ الاحتياطي ─────────────────────────────
+      (canDo("createBackup")
+        ? '<div class="settings-section" id="settings-section-backup">' +
+          '<div class="settings-card">' +
+          '<div class="settings-card-header">' +
+          '<div class="settings-card-header-icon"><i class="ti ti-device-floppy" style="font-size:22px;color:#0369A1" aria-hidden="true"></i></div>' +
+          "<div><h3>النسخ الاحتياطي</h3><p>إدارة النسخ الاحتياطية وجدولتها</p></div>" +
+          "</div>" +
+          '<div class="settings-card-body">' +
+          '<div style="background:var(--surface2);border-radius:10px;padding:16px;margin-bottom:16px">' +
+          '<div style="font-size:12px;color:var(--text3);margin-bottom:8px"> آخر نسخة احتياطية</div>' +
+          '<div id="backup-last-info" style="font-size:13px;font-weight:600;color:var(--text2)">' +
+          _loadingInline() +
+          "</div>" +
+          '<div id="backup-count-info" style="font-size:11px;color:var(--text3);margin-top:4px"></div>' +
+          "</div>" +
+          '<div style="background:var(--accent-soft);border-radius:10px;padding:16px;border:1px solid var(--accent);margin-bottom:20px">' +
+          '<div style="font-size:12px;color:var(--accent);font-weight:700;margin-bottom:12px">⏰ جدول الباكاب التلقائي</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">' +
+          "<div>" +
+          '<label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">التكرار</label>' +
+          '<select id="backup-frequency" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:13px;font-family:inherit">' +
+          '<option value="daily"> يومياً</option>' +
+          '<option value="weekly"> أسبوعياً</option>' +
+          '<option value="monthly"> شهرياً</option>' +
+          "</select>" +
+          "</div>" +
+          "<div>" +
+          '<label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">الساعة</label>' +
+          '<select id="backup-hour" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:13px;font-family:inherit">' +
+          [0, 1, 2, 3, 4, 5, 6, 12, 18, 21, 23]
+            .map(function (h) {
+              return (
+                '<option value="' +
+                h +
+                '">' +
+                (h === 0
+                  ? "12 منتصف الليل"
+                  : h < 12
+                    ? h + " صباحاً"
+                    : h === 12
+                      ? "12 ظهراً"
+                      : h - 12 + " مساءً") +
+                "</option>"
+              );
+            })
+            .join("") +
+          "</select>" +
+          "</div>" +
+          "</div>" +
+          '<div id="backup-day-wrap" style="margin-bottom:12px;display:none">' +
+          '<label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px" id="backup-day-label">اليوم</label>' +
+          '<select id="backup-day" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:13px;font-family:inherit">' +
+          '<option value="1">الاثنين</option><option value="2">الثلاثاء</option><option value="3">الأربعاء</option>' +
+          '<option value="4">الخميس</option><option value="5">الجمعة</option><option value="6">السبت</option><option value="7">الأحد</option>' +
+          "</select>" +
+          "</div>" +
+          '<div style="font-size:11px;color:var(--text3);margin-bottom:12px">آخر 30 نسخة تُحفظ تلقائياً، والأقدم تُحذف</div>' +
+          '<button class="btn btn-secondary btn-sm" onclick="saveBackupSchedule()"> حفظ الجدول</button>' +
+          "</div>" +
+          // ── فولدر Drive مخصص (اختياري، للأدمن فقط) ──
+          '<div style="background:var(--surface2);border-radius:10px;padding:16px;margin-bottom:20px">' +
+          '<div style="font-size:12px;color:var(--text2);font-weight:700;margin-bottom:6px">📁 فولدر Drive مخصص (اختياري)</div>' +
+          '<div style="font-size:11px;color:var(--text3);margin-bottom:10px">اتركه فارغًا لاستخدام الفولدر الافتراضي "مخازن - نسخ احتياطية". الصق ID الفولدر (الجزء الأخير من رابط Drive) لو عايز تخزّن الباكاب في فولدر مختلف تملكه.</div>' +
+          '<div style="display:flex;gap:8px">' +
+          '<input id="backup-folder-input" type="text" placeholder="Folder ID من رابط Drive" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:13px;font-family:inherit" />' +
+          '<button class="btn btn-outline btn-sm" onclick="_saveBackupFolder()" style="white-space:nowrap">حفظ</button>' +
+          "</div>" +
+          "</div>" +
+          '<button class="btn btn-secondary btn-sm" onclick="openBackupList()" style="margin-left:8px"> النسخ المحفوظة</button>' +
+          '<button class="btn btn-primary" onclick="doCreateBackup()"> إنشاء نسخة احتياطية الآن</button>' +
+          "</div>" +
+          "</div>" +
+          "</div>"
+        : "") +
+      // ─── §G: صوت المساعد الذكي ───────────────────────────
+      '<div class="settings-section" id="settings-section-ai_voice">' +
+      '<div class="settings-card">' +
+      '<div class="settings-card-header">' +
+      '<div class="settings-card-header-icon"><i class="ti ti-microphone" style="font-size:22px;color:#7C3AED" aria-hidden="true"></i></div>' +
+      "<div><h3>صوت المساعد الذكي</h3><p>اختر صوت المساعد عند الرد بالصوت</p></div>" +
+      "</div>" +
+      '<div class="settings-card-body">' +
+      '<div style="background:linear-gradient(135deg,#F5F3FF,#EDE9FE);border:1px solid #DDD6FE;border-radius:12px;padding:18px;margin-bottom:20px;display:flex;align-items:center;gap:14px">' +
+      '<div style="width:44px;height:44px;background:#7C3AED;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0">' +
+      '<i class="ti ti-volume" style="font-size:22px;color:#fff"></i>' +
+      "</div>" +
+      "<div style='flex:1'>" +
+      '<div style="font-size:13px;font-weight:700;color:#4C1D95">الصوت الحالي</div>' +
+      '<div id="ai-voice-current-label" style="font-size:12px;color:#6D28D9;margin-top:2px">' +
+      _loadingInline() +
+      "</div>" +
+      "</div>" +
+      '<button onclick="_previewCurrentVoice()" style="background:#7C3AED;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:12px;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:6px">' +
+      '<i class="ti ti-player-play" style="font-size:14px"></i> معاينة' +
+      "</button>" +
+      "</div>" +
+      '<div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:12px"> اختر صوتاً</div>' +
+      '<div id="ai-voice-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px">' +
+      _voiceCard(
+        "Kore",
+        "كور",
+        "صوت نسائي هادئ واحترافي",
+        "#7C3AED",
+        "ti-user",
+      ) +
+      _voiceCard(
+        "Charon",
+        "شارون",
+        "صوت رجالي عميق وواثق",
+        "#1D4ED8",
+        "ti-user",
+      ) +
+      _voiceCard(
+        "Fenrir",
+        "فنرير",
+        "صوت رجالي حيوي وسريع",
+        "#065F46",
+        "ti-user",
+      ) +
+      _voiceCard(
+        "Aoede",
+        "أويدي",
+        "صوت نسائي دافئ وناعم",
+        "#9D174D",
+        "ti-user",
+      ) +
+      _voiceCard("Puck", "باك", "صوت محايد خفيف وذكي", "#92400E", "ti-user") +
+      _voiceCard("Leda", "ليدا", "صوت نسائي رسمي وواضح", "#1E3A5F", "ti-user") +
+      _voiceCard("Orus", "أوروس", "صوت رجالي قوي وحازم", "#374151", "ti-user") +
+      _voiceCard(
+        "Zephyr",
+        "زيفير",
+        "صوت ناعم وهادئ للغاية",
+        "#0F766E",
+        "ti-user",
+      ) +
+      "</div>" +
+      '<div class="settings-save-bar" style="margin-top:24px">' +
+      '<span class="save-hint" id="save-hint-ai_voice">ℹ️ اختر صوتاً ثم احفظ</span>' +
+      '<div style="display:flex;gap:8px">' +
+      '<button class="btn btn-primary" onclick="saveAiVoiceSetting()"> حفظ الاختيار</button>' +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      "</div>" + // end settings-section-ai_voice (كان ناقص ده وبيخلي audio/whatsapp يتداخلوا جواه)
+      // ── §AS: إعدادات الأصوات ──────────────────────────────────
+      '<div class="settings-section" id="settings-section-audio">' +
+      '<div class="settings-card">' +
+      '<div class="settings-card-header">' +
+      '<div class="settings-card-header-icon"><i class="ti ti-volume" style="font-size:22px;color:#0891b2" aria-hidden="true"></i></div>' +
+      "<div><h3>أصوات النظام</h3><p>تخصيص أصوات التغذية الراجعة لجميع عمليات النظام</p></div>" +
+      "</div>" +
+      '<div class="settings-card-body">' +
+      // ── تفعيل / كتم ──
+      '<div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:20px">' +
+      _settingsToggleV2(
+        "as_enabled",
+        "ti-volume",
+        "#0891b2",
+        "rgba(8,145,178,.08)",
+        "تفعيل الأصوات",
+        "تشغيل أصوات التغذية الراجعة في جميع عمليات النظام",
+        true,
+        "",
+      ) +
+      _settingsToggleV2(
+        "as_muted",
+        "ti-volume-off",
+        "#64748b",
+        "rgba(100,116,139,.08)",
+        "كتم كل الأصوات",
+        "إيقاف جميع الأصوات مؤقتاً بدون تغيير الإعدادات",
+        false,
+        "",
+      ) +
+      "</div>" +
+      // ── مستوى الصوت ──
+      '<div style="margin-bottom:20px;padding:16px;background:var(--surface2);border-radius:12px">' +
+      '<label style="font-size:12px;color:var(--text3);font-weight:600;display:block;margin-bottom:10px"> مستوى الصوت</label>' +
+      '<div style="display:flex;align-items:center;gap:12px">' +
+      '<i class="ti ti-volume-2" style="color:var(--text3);font-size:18px"></i>' +
+      '<input type="range" id="as_volume_slider" min="0" max="100" value="55" ' +
+      "oninput=\"document.getElementById('as_vol_pct').textContent=this.value+'%';if(typeof AS!=='undefined')AS.setSettings({volume:this.value/100})\" " +
+      'style="flex:1;accent-color:#0891b2">' +
+      '<span id="as_vol_pct" style="font-size:13px;font-weight:700;color:#0891b2;min-width:40px;text-align:center">55%</span>' +
+      "</div>" +
+      "</div>" +
+      // ── تصنيفات الأصوات ──
+      '<div style="margin-bottom:20px">' +
+      '<div style="font-size:12px;color:var(--text3);font-weight:700;margin-bottom:12px;text-transform:uppercase;letter-spacing:.05em">تصنيفات الأصوات</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px">' +
+      _settingsToggleV2(
+        "as_enableButtons",
+        "ti-cursor",
+        "#6366f1",
+        "rgba(99,102,241,.08)",
+        "أزرار وواجهة",
+        "أصوات النقر والتفاعل مع العناصر",
+        true,
+        "",
+      ) +
+      _settingsToggleV2(
+        "as_enableSuccess",
+        "ti-circle-check",
+        "#10b981",
+        "rgba(16,185,129,.08)",
+        "عمليات ناجحة",
+        "أصوات الحفظ والتعديل والحذف الناجح",
+        true,
+        "",
+      ) +
+      _settingsToggleV2(
+        "as_enableError",
+        "ti-circle-x",
+        "#ef4444",
+        "rgba(239,68,68,.08)",
+        "أخطاء",
+        "أصوات الأخطاء ورسائل الفشل",
+        true,
+        "",
+      ) +
+      _settingsToggleV2(
+        "as_enableWarning",
+        "ti-alert-triangle",
+        "#f59e0b",
+        "rgba(245,158,11,.08)",
+        "تحذيرات",
+        "أصوات التحذيرات وتأكيدات الحذف",
+        true,
+        "",
+      ) +
+      _settingsToggleV2(
+        "as_enableNotif",
+        "ti-bell",
+        "#8b5cf6",
+        "rgba(139,92,246,.08)",
+        "إشعارات",
+        "أصوات الإشعارات العامة",
+        true,
+        "",
+      ) +
+      _settingsToggleV2(
+        "as_enableSystem",
+        "ti-settings",
+        "#0369a1",
+        "rgba(3,105,161,.08)",
+        "نظام (دخول/خروج)",
+        "أصوات تسجيل الدخول والخروج",
+        true,
+        "",
+      ) +
+      "</div></div>" +
+      // ── [VARIANTS] اختيار نغمة كل تصنيف ──
+      '<div style="margin-bottom:20px">' +
+      '<div style="font-size:12px;color:var(--text3);font-weight:700;margin-bottom:12px;text-transform:uppercase;letter-spacing:.05em">نغمة كل نوع تنبيه</div>' +
+      '<div id="as-variant-picker" style="display:grid;gap:10px"></div>' +
+      "</div>" +
+      // ── اختبار الأصوات ──
+      "<div>" +
+      '<div style="font-size:12px;color:var(--text3);font-weight:700;margin-bottom:12px;text-transform:uppercase;letter-spacing:.05em">اختبار الأصوات</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:8px">' +
+      '<button onclick="_asTest(\'ui.click\')" class="btn btn-secondary btn-sm">نقرة زر</button>' +
+      '<button onclick="_asTest(\'success.save\')" class="btn btn-secondary btn-sm">حفظ ناجح</button>' +
+      '<button onclick="_asTest(\'success.update\')" class="btn btn-secondary btn-sm">تعديل ناجح</button>' +
+      '<button onclick="_asTest(\'warning.delete_confirm\')" class="btn btn-secondary btn-sm">تأكيد حذف</button>' +
+      '<button onclick="_asTest(\'success.delete\')" class="btn btn-secondary btn-sm">حذف ناجح</button>' +
+      '<button onclick="_asTest(\'error.general\')" class="btn btn-secondary btn-sm">خطأ</button>' +
+      '<button onclick="_asTest(\'warning.general\')" class="btn btn-secondary btn-sm">تحذير</button>' +
+      '<button onclick="_asTest(\'notif.general\')" class="btn btn-secondary btn-sm">إشعار</button>' +
+      '<button onclick="_asTest(\'system.login\')" class="btn btn-secondary btn-sm">دخول</button>' +
+      '<button onclick="_asTest(\'system.logout\')" class="btn btn-secondary btn-sm">خروج</button>' +
+      '<button onclick="_asTest(\'success.import\')" class="btn btn-secondary btn-sm">استيراد</button>' +
+      '<button onclick="_asTest(\'success.export\')" class="btn btn-secondary btn-sm">تصدير</button>' +
+      "</div></div>" +
+      "</div>" + // end settings-card-body
+      "</div>" + // end settings-card
+      "</div>" + // end settings-section-audio
+      // ── §WA: إعدادات الواتساب (lazy render عند الضغط) ───────
+      '<div class="settings-section" id="settings-section-whatsapp">' +
+      '<div id="whatsapp-settings-container">' +
+      '<div style="padding:40px;text-align:center;color:var(--text3)">⏳ جاري تحميل إعدادات واتساب...</div>' +
+      "</div>" +
+      "</div>" +
+      "</div>" + // end settings-content
+      "</div>" // end settings-layout
+    );
+  }
+
+  // ── مساعدات renderSystemSettings ──
+
+  function _settingsNavItem(id, icon, label, isActive) {
+    return (
+      '<div class="settings-nav-item' +
+      (isActive ? " active" : "") +
+      '" data-sid="' +
+      id +
+      '" id="snav-' +
+      id +
+      '" onclick="var sid=this.getAttribute(\'data-sid\');_switchSettingsSection(sid);">' +
+      '<span class="sni-icon">' +
+      icon +
+      "</span>" +
+      label +
+      "</div>"
+    );
+  }
+
+  function _settingsField(id, label, icon, value, type, placeholder, required) {
+    return (
+      '<div class="settings-field">' +
+      "<label>" +
+      '<span class="field-icon">' +
+      icon +
+      "</span> " +
+      label +
+      (required ? ' <span class="field-required">*</span>' : "") +
+      "</label>" +
+      '<input type="' +
+      (type || "text") +
+      '" id="sf-' +
+      id +
+      '" ' +
+      'value="' +
+      esc(String(value || "")) +
+      '" ' +
+      'placeholder="' +
+      esc(placeholder || "") +
+      '">' +
+      "</div>"
+    );
+  }
+
+  function _colorField(id, label, value) {
+    return (
+      '<div class="settings-field">' +
+      "<label>" +
+      label +
+      "</label>" +
+      '<div class="color-input-wrap" onclick="document.getElementById(\'cp-' +
+      id +
+      "').click()\">" +
+      '<div class="color-swatch" id="cs-' +
+      id +
+      '" style="background:' +
+      esc(value) +
+      '"></div>' +
+      '<input class="color-hex-input" id="sf-' +
+      id +
+      '" type="text" value="' +
+      esc(value) +
+      '" ' +
+      "oninput=\"_onColorHexInput('" +
+      id +
+      '\',this.value)" maxlength="7">' +
+      '<input type="color" id="cp-' +
+      id +
+      '" value="' +
+      esc(value) +
+      '" ' +
+      "oninput=\"_onColorPickerInput('" +
+      id +
+      "',this.value)\">" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function _settingsToggle(id, title, desc, checked) {
+    return (
+      '<div class="settings-toggle-row">' +
+      '<div class="settings-toggle-info">' +
+      "<h4>" +
+      title +
+      "</h4>" +
+      "<p>" +
+      desc +
+      "</p>" +
+      "</div>" +
+      '<label class="toggle-switch">' +
+      '<input type="checkbox" id="sf-' +
+      id +
+      '"' +
+      (checked ? " checked" : "") +
+      ">" +
+      '<span class="toggle-track"></span>' +
+      "</label>" +
+      "</div>"
+    );
+  }
+
+  // ── Toggle محسّن مع أيقونة ملونة وبادج ──
+  function _settingsToggleV2(
+    id,
+    iconClass,
+    iconColor,
+    iconBg,
+    title,
+    desc,
+    checked,
+    badge,
+  ) {
+    var badgeHtml = badge ? '<span class="ops-badge">' + badge + "</span>" : "";
+    return (
+      '<div class="ops-toggle-row">' +
+      '<div class="ops-toggle-left">' +
+      '<div class="ops-toggle-icon" style="background:' +
+      iconBg +
+      ";border-color:" +
+      iconColor +
+      '22">' +
+      '<i class="ti ' +
+      iconClass +
+      '" style="font-size:16px;color:' +
+      iconColor +
+      '" aria-hidden="true"></i>' +
+      "</div>" +
+      '<div class="ops-toggle-text">' +
+      "<h4>" +
+      title +
+      badgeHtml +
+      "</h4>" +
+      "<p>" +
+      desc +
+      "</p>" +
+      "</div>" +
+      "</div>" +
+      '<label class="ops-toggle-switch" aria-label="' +
+      title +
+      '">' +
+      '<input type="checkbox" id="sf-' +
+      id +
+      '"' +
+      (checked ? " checked" : "") +
+      ">" +
+      '<span class="ops-toggle-track">' +
+      '<span class="ops-toggle-thumb"></span>' +
+      "</span>" +
+      "</label>" +
+      "</div>"
+    );
+  }
+
+  function _settingsSaveBar(section) {
+    return (
+      '<div class="settings-save-bar">' +
+      '<span class="save-hint" id="save-hint-' +
+      section +
+      '">ℹ️ أي تعديل يحتاج حفظ</span>' +
+      '<div style="display:flex;gap:8px">' +
+      '<button class="btn btn-ghost btn-sm" onclick="_resetSettingsSection(\'' +
+      section +
+      "')\">↺ إلغاء</button>" +
+      '<button class="btn btn-primary" onclick="saveSettingsSection(\'' +
+      section +
+      "')\">" +
+      " حفظ التغييرات" +
+      "</button>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function _voiceCard(voiceId, nameAr, desc, color, iconClass) {
+    var saved =
+      typeof AI_CHAT !== "undefined" && AI_CHAT.geminiVoice
+        ? AI_CHAT.geminiVoice
+        : "Kore";
+    var isActive = saved === voiceId;
+    return (
+      '<div class="ai-voice-card' +
+      (isActive ? " active" : "") +
+      '" ' +
+      'id="vc-' +
+      voiceId +
+      '" ' +
+      "onclick=\"_selectVoiceCard('" +
+      voiceId +
+      "')\" " +
+      'style="border:2px solid ' +
+      (isActive ? color : "var(--border)") +
+      ";border-radius:12px;padding:14px;cursor:pointer;transition:all 0.2s;background:" +
+      (isActive ? "rgba(0,0,0,0.03)" : "var(--surface)") +
+      '">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
+      '<div style="width:36px;height:36px;background:' +
+      color +
+      '22;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0">' +
+      '<i class="ti ' +
+      iconClass +
+      '" style="font-size:18px;color:' +
+      color +
+      '"></i>' +
+      "</div>" +
+      "<div>" +
+      '<div style="font-size:13px;font-weight:700;color:var(--text1)">' +
+      nameAr +
+      ' <span style="font-size:10px;color:var(--text3);font-weight:400">(' +
+      voiceId +
+      ")</span></div>" +
+      '<div style="font-size:11px;color:var(--text3)">' +
+      desc +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      "<button onclick=\"event.stopPropagation();_previewVoice('" +
+      voiceId +
+      "')\" " +
+      'style="width:100%;background:' +
+      color +
+      "11;color:" +
+      color +
+      ";border:1px solid " +
+      color +
+      '33;border-radius:6px;padding:5px;font-size:11px;cursor:pointer;font-family:inherit">' +
+      " معاينة الصوت" +
+      "</button>" +
+      "</div>"
+    );
+  }
+
+  // استبدل الدالة بالكاملة
+  function _sysInfoItem(icon, label, value, color, bg) {
+    var style = color
+      ? 'style="--si-color:' + color + ";--si-bg:" + (bg || color + "18") + '"'
+      : "";
+    return (
+      '<div class="sys-info-item" ' +
+      style +
+      ">" +
+      '<div class="si-icon">' +
+      icon +
+      "</div>" +
+      '<div class="si-label">' +
+      label +
+      "</div>" +
+      '<div class="si-value">' +
+      esc(value) +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  /**
+   * تحويل hex إلى نسخة أغمق بنسبة 15%
+   * مثال: #2563eb → #1d4ed8
+   */
+  function _darkenHex(hex) {
+    try {
+      hex = hex.replace("#", "");
+      if (hex.length === 3)
+        hex = hex
+          .split("")
+          .map(function (c) {
+            return c + c;
+          })
+          .join("");
+      var r = Math.max(0, parseInt(hex.slice(0, 2), 16) - 20);
+      var g = Math.max(0, parseInt(hex.slice(2, 4), 16) - 20);
+      var b = Math.max(0, parseInt(hex.slice(4, 6), 16) - 20);
+      return (
+        "#" +
+        [r, g, b]
+          .map(function (x) {
+            return x.toString(16).padStart(2, "0");
+          })
+          .join("")
+      );
+    } catch (e) {
+      return "#1d4ed8";
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §renderCustomers — شاشة العملاء
+  // ─────────────────────────────────────────────────────────────
+  function renderCustomers() {
+    var customers = (APP.data.customers || []).slice().reverse();
+    var total = customers.length;
+    var withPhone = customers.filter(function (c) {
+      return c.phone;
+    }).length;
+    var totalReceivable = customers.reduce(function (sum, c) {
+      var b = Number(c.balance || 0);
+      return sum + (b > 0 ? b : 0);
+    }, 0);
+    var withCategory = customers.filter(function (c) {
+      return c.category_id;
+    }).length;
+    var statsHtml =
+      '<div class="stat-grid" style="margin-bottom:20px">' +
+      statCard(
+        iconBadge("ti-users", "var(--accent-soft)", "var(--primary)"),
+        "إجمالي العملاء",
+        total,
+        "عميل",
+        "var(--accent-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-cash", "var(--success-soft)", "var(--success)"),
+        "إجمالي المستحق",
+        '<span class="sensitive-balance">' +
+          (typeof formatMoney === "function"
+            ? formatMoney(totalReceivable, { decimals: 0 })
+            : NumberEngine.currency(totalReceivable)) +
+          "</span>",
+        "على العملاء",
+        "var(--success-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-phone", "var(--accent-soft)", "var(--primary)"),
+        "لديهم رقم هاتف",
+        withPhone,
+        "عميل",
+        "var(--accent-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-tags", "var(--warning-soft)", "var(--warning)"),
+        "مصنّفون",
+        withCategory,
+        "من إجمالي " + total,
+        "var(--warning-soft)",
+      ) +
+      "</div>";
+
+    var filterHtml =
+      '<div class="card" style="margin-bottom:16px"><div class="search-bar">' +
+      '<select class="input" id="cust-category-filter" style="max-width:260px" onchange="filterCustomersTable()"><option value="">كل التصنيفات</option></select>' +
+      "</div></div>";
+
+    // [COLUMN-ENGINE] جدول العملاء انتقل لمحرك الأعمدة الديناميكي —
+    // راجع _customersRegisterColumns / _renderCustomersTableCE في
+    // 10_JS_Settings_Search_Parties.html. البحث النصي أصبح مدمجًا في
+    // شريط أدوات المحرك نفسه، وفلتر التصنيف بيعيد رسم الجدول بالبيانات
+    // المفلترة فقط (نفس أسلوب فلتر المجموعات في شاشة الأصناف).
+    var tableHtml =
+      '<div class="card"><div id="customers-ce-container"></div></div>';
+
+    return (
+      '<div class="page-header">' +
+      '<div><h1 style="display:flex;align-items:center;gap:10px">' +
+      iconBadge("ti-users", "var(--accent-soft)", "var(--primary)") +
+      "<span>إدارة العملاء</span></h1>" +
+      "<p>سجل بيانات العملاء وأرصدتهم وبيانات التواصل</p></div>" +
+      '<div class="header-actions">' +
+      withPermission(
+        '<button class="btn btn-primary" id="btn-new-customer">+ عميل جديد</button>',
+        "addCustomer",
+      ) +
+      "</div></div>" +
+      statsHtml +
+      filterHtml +
+      tableHtml
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §renderShippingCompanies — شاشة شركات الشحن (المرحلة 1 من موديول الشحن)
+  // ─────────────────────────────────────────────────────────────
+  var SHIPPING_TYPE_LABELS = {
+    internal: { label: "داخلي", color: "#0369a1", bg: "#e0f2fe" },
+    external: { label: "خارجي", color: "#9A3412", bg: "#FFF7ED" },
+    international: { label: "دولي", color: "#7C3AED", bg: "#F5F3FF" },
+  };
+  var SHIPPING_COSTING_LABELS = {
+    fixed: "مبلغ ثابت",
+    by_weight: "حسب الوزن",
+    by_volume: "حسب الحجم",
+    by_distance: "حسب المسافة",
+    by_invoice_value: "حسب قيمة الفاتورة",
+    tiers: "شرائح أسعار",
+  };
+  // محافظات مصر — تُستخدم في تحديد مناطق خدمة كل شركة شحن
+  var EGYPT_GOVERNORATES = [
+    "القاهرة",
+    "الجيزة",
+    "الإسكندرية",
+    "القليوبية",
+    "الشرقية",
+    "الدقهلية",
+    "الغربية",
+    "المنوفية",
+    "البحيرة",
+    "كفر الشيخ",
+    "دمياط",
+    "بورسعيد",
+    "الإسماعيلية",
+    "السويس",
+    "شمال سيناء",
+    "جنوب سيناء",
+    "الفيوم",
+    "بني سويف",
+    "المنيا",
+    "أسيوط",
+    "سوهاج",
+    "قنا",
+    "الأقصر",
+    "أسوان",
+    "البحر الأحمر",
+    "الوادي الجديد",
+    "مطروح",
+  ];
+
+  function renderShippingCompanies() {
+    var companies = (APP.data.shippingCompanies || []).slice().reverse();
+    var total = companies.length;
+    var activeCount = companies.filter(function (c) {
+      return c.active !== false && c.active !== "false" && c.active !== "FALSE";
+    }).length;
+    var linkedCount = companies.filter(function (c) {
+      return c.supplier_account_id || c.expense_account_id;
+    }).length;
+
+    var statsHtml =
+      '<div class="stat-grid" style="margin-bottom:20px">' +
+      statCard(
+        iconBadge(
+          "ti-building-warehouse",
+          "var(--orange-soft)",
+          "var(--orange)",
+        ),
+        "إجمالي شركات الشحن",
+        total,
+        "شركة",
+        "var(--warning-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-circle-check", "var(--success-soft)", "var(--success)"),
+        "نشطة",
+        activeCount,
+        "شركة",
+        "var(--success-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-link", "var(--accent-soft)", "var(--primary)"),
+        "مرتبطة محاسبياً",
+        linkedCount,
+        "شركة",
+        "var(--accent-soft)",
+      ) +
+      "</div>";
+
+    var filterHtml = "";
+
+    // [COLUMN-ENGINE] جدول شركات الشحن انتقل لمحرك الأعمدة الديناميكي —
+    // راجع _shippingCompaniesRegisterColumns في
+    // 07_JS_Shipping_Colors_Excel.html. البحث بقى مدمجًا في شريط أدوات
+    // المحرك نفسه، والعرض/التعديل/الحذف بقوا عبر القائمة السياقية (زر
+    // يمين) بدل عمود الإجراءات الثابت.
+    var tableHtml =
+      '<div class="card"><div id="shipping-companies-ce-container"></div></div>';
+
+    return (
+      '<div class="page-header">' +
+      '<div><h1 style="display:flex;align-items:center;gap:10px">' +
+      iconBadge(
+        "ti-building-warehouse",
+        "var(--orange-soft)",
+        "var(--orange)",
+      ) +
+      "<span>شركات الشحن</span></h1>" +
+      "<p>إدارة شركات الشحن، الربط المحاسبي، وإعدادات احتساب تكلفة الشحن</p></div>" +
+      '<div class="header-actions">' +
+      withPermission(
+        '<button class="btn btn-primary" id="btn-new-shipping-company">+ شركة شحن جديدة</button>',
+        "addShippingCompany",
+      ) +
+      "</div></div>" +
+      statsHtml +
+      filterHtml +
+      tableHtml
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §renderShippingCompanyModal — نموذج إضافة/تعديل شركة شحن
+  // ─────────────────────────────────────────────────────────────
+</script>

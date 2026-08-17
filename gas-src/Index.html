@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <? var _brandLogoUrl = getCompanyLogoUrlForSplash(); ?>
+    <!-- ═══════════════════════════════════════════════════════
+         MOO.ERP — Brand & PWA Meta Tags v5.0
+         ═══════════════════════════════════════════════════════ -->
+    <meta name="application-name" content="MOO.ERP" />
+    <meta
+      name="description"
+      content="MOO.ERP — Enterprise Resource Planning System | نظام تخطيط موارد المؤسسات المتكامل"
+    />
+    <meta
+      name="keywords"
+      content="ERP, MOO.ERP, Enterprise Resource Planning, نظام محاسبة, مخازن, موارد بشرية, مبيعات"
+    />
+    <meta name="theme-color" content="#0F172A" />
+    <meta name="msapplication-TileColor" content="#0F172A" />
+    <meta
+      name="msapplication-TileImage"
+      content="<?!= _brandLogoUrl || getMooLogoDataURI(144) ?>"
+    />
+
+    <!-- [ROOT-FIX-2026-08-13] اتشال <link rel="manifest" href="/manifest.json">
+         من هنا: مش من الممكن تقنيًا تقديم ملف static على مسار جذري زي ده من
+         داخل Google Apps Script Web App (كل الطلبات بتمر حصريًا عبر doGet()،
+         مفيش مسارات ثابتة) — كانت بترجع 404 دايمًا بدون أي استثناء. راجع
+         نفس الملاحظة أسفل تسجيل Service Worker في نهاية هذا الملف. -->
+
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="MOO.ERP" />
+
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- [ROOT-FIX-2026-08-13] اتشالت روابط /icons/icon-192.png و /icons/icon-512.png
+         من هنا لنفس السبب فوق (404 مضمون — لا يوجد ملف static حقيقي على هذا
+         المسار ولا يمكن لـ GAS يقدّمه). الأيقونة الفعلية اللي شغالة فعلاً هي
+         الـ inline SVG data URI تحت (favicon + apple-touch-icon) — دي مش
+         محتاجة أي طلب شبكة خارجي فبتشتغل 100% دايمًا. -->
+
+    <meta
+      property="og:title"
+      content="MOO.ERP — Enterprise Resource Planning"
+    />
+    <meta
+      property="og:description"
+      content="نظام تخطيط موارد المؤسسات المتكامل — محاسبة، مخازن، مبيعات، موارد بشرية"
+    />
+    <meta property="og:type" content="website" />
+    <title>MOO.ERP — Enterprise Resource Planning</title>
+
+    <!-- ═══════════════════════════════════════════════════════
+         Favicon — أيقونة المتصفح (نفس شعار صفحة Login وجوه النظام)
+         [FIX-LOGIN-LOGO-2] لو فيه شعار شركة مخصص (logo_url) نستخدمه
+         هنا كمان بدل ما الفافيكون يفضل دايمًا الشعار الافتراضي بينما
+         باقي النظام (السايدبار) بيعرض شعار مختلف.
+         ═══════════════════════════════════════════════════════ -->
+    <!-- SVG inline favicon — متوافق مع جميع المتصفحات الحديثة -->
+    <link
+      rel="icon"
+      type="<?!= _brandLogoUrl ? '' : 'image/svg+xml' ?>"
+      href="<?!= _brandLogoUrl || getMooLogoDataURI(72) ?>"
+    />
+    <!-- PNG fallback للمتصفحات القديمة — [FIX-OFFLINE] replaced imgur with inline SVG -->
+    <link
+      rel="icon"
+      href="<?!= _brandLogoUrl || getMooLogoDataURI(72) ?>"
+      type="<?!= _brandLogoUrl ? '' : 'image/svg+xml' ?>"
+      sizes="32x32"
+    />
+    <link
+      rel="shortcut icon"
+      href="<?!= _brandLogoUrl || getMooLogoDataURI(72) ?>"
+      type="<?!= _brandLogoUrl ? '' : 'image/svg+xml' ?>"
+    />
+    <!-- Apple Touch Icon للأجهزة Apple والـ PWA -->
+    <link
+      rel="apple-touch-icon"
+      sizes="180x180"
+      href="<?!= _brandLogoUrl || getMooLogoDataURI(180) ?>"
+    />
+
+    <!-- ═══════════════════════════════════════════════════════
+         Fonts
+         IBM Plex Sans Arabic — واجهة المستخدم
+         JetBrains Mono — الأكواد والأرقام
+         ═══════════════════════════════════════════════════════ -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- ═══════════════════════════════════════════════════════
+         Styles (مُضمَّن عبر Apps Script include)
+         [REFACTOR-P5] Style.html القديم (23,463 سطر) اتقسّم لـ11 ملف
+         بنفس الترتيب الأصلي حرفيًا (تحقق برمجيًا: التركيب النهائي
+         مطابق 100% لمحتوى Style.html القديم) — راجع Architecture
+         Audit 2026-07-03، المرحلة 5. كل الملفات لازم تفضل بنفس
+         الترتيب هنا (الـ cascade في CSS بيعتمد على ترتيب التحميل).
+         ═══════════════════════════════════════════════════════ -->
+    <!-- ═══════════════════════════════════════════════════════
+         [PERF-LAZY-LOAD] بس الـ Style الضرورية لشاشة اللوجين هنا.
+         باقي ستايلات الموديولات (Dashboard/Accounting/Settings/...)
+         بتتحمل lazy بعد أول رسم — راجع getLazyAppBundle() في
+         Code_12_Core.gs و 01_JS_Core_Auth.html (_loadLazyAppBundle).
+          لو حد ضاف Style جديد، حدّد بوضوح: لازم لشاشة اللوجين
+         (هنا) ولا موديول تاني (يتحقن في getLazyAppBundle بدل كده).
+         ═══════════════════════════════════════════════════════ -->
+    <style>
+      <?!= include('Style_01_Tokens') ?>
+      <?!= include('Style_02_Base') ?>
+      <?!= include('Style_03_Layout') ?>
+      <?!= include('Style_04_Components') ?>
+      <?!= include('Style_05_Login') ?>
+    </style>
+
+    <!-- ═══════════════════════════════════════════════════════
+         Tabler Icons — مضمّنة داخلياً (Self-hosted)
+         [PERF-FIX-BLACKSCREEN] اتنقلت لـ Lazy Bundle (getLazyAppBundle
+         في Code_12_Core.gs) بدل ما تتحقن هنا Eager. الملف ده وحده
+         ~891 KB (فونط أيقونات Tabler كامل base64) وكان بيتسبب في
+         الشاشة السودا لعدة ثواني قبل ظهور اللوجين، لأن HtmlService
+         مبيعملش streaming ولازم يبني ويبعت الصفحة كاملة دفعة واحدة.
+         الأيقونات دلوقتي بتتحقن ديناميكيًا خلال جزء من الثانية بعد
+         أول رسم (نفس آلية 01_JS_Core_Auth.html → _loadLazyAppBundle).
+         شوف ملف TablerIconsEmbedded.html لطريقة التوليد.
+         ═══════════════════════════════════════════════════════ -->
+
+    <!-- ═══════════════════════════════════════════════════════
+         External Libraries
+         SheetJS — لقراءة ملفات Excel في المتصفح
+         [CONSOLE-FIX] اتشالت من هنا (كانت <script src="https://cdnjs...">
+         Eager) — بقت مضمّنة داخلياً ومحمّلة Lazy عبر getLazyAppBundle
+         (شوف SheetJS_Embedded.html + التعليق في Code_12_Core.gs) بنفس
+         منطق TablerIconsEmbedded بالظبط: (1) بتقفل رسائل Tracking
+         Prevention في الكونسول لأنها بقت Same-Origin، (2) وبتفادي حجب
+         ظهور الصفحة لأنها ~880 KB ومحتاجة تتحمّل بعد أول رسم مش قبله.
+         ═══════════════════════════════════════════════════════ -->
+  </head>
+
+  <body>
+    <!-- ═══════════════════════════════════════════════════════
+         Splash Screen — يظهر فوراً ريثما يحمل JS
+         ═══════════════════════════════════════════════════════ -->
+    <div
+      id="app-splash"
+      style="
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        background: #0f172a;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        font-family: &quot;IBM Plex Sans Arabic&quot;, sans-serif;
+        direction: rtl;
+        transition: opacity 0.4s ease;
+      "
+    >
+      <div
+        style="
+          width: 72px;
+          height: 72px;
+          border-radius: 16px;
+          box-shadow: 0 8px 24px rgba(37, 99, 235, 0.25);
+          background: linear-gradient(135deg, #0f172a, #1e293b);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
+        "
+      >
+        <!-- [FIX-LOGIN-LOGO-2] نفس _brandLogoUrl المحسوبة فوق في <head> -->
+        <? if (_brandLogoUrl) { ?>
+        <img
+          src="<?!= _brandLogoUrl ?>"
+          alt=""
+          style="width: 100%; height: 100%; object-fit: contain; padding: 6px"
+          onerror="this.outerHTML='<?!= getMooLogoSVG(72).replace(/'/g, '&#39;') ?>'"
+        />
+        <? } else { ?> <?!= getMooLogoSVG(72) ?> <? } ?>
+      </div>
+      <div style="text-align: center">
+        <div
+          style="
+            font-size: 22px;
+            font-weight: 900;
+            color: #f8fafc;
+            margin-bottom: 4px;
+          "
+        >
+          MOO.ERP
+        </div>
+        <div
+          data-i18n="MSG_STARTING_SYSTEM"
+          style="font-size: 13px; color: #64748b"
+        ></div>
+      </div>
+      <div
+        style="
+          width: 200px;
+          height: 4px;
+          background: #1e293b;
+          border-radius: 99px;
+          overflow: hidden;
+        "
+      >
+        <div
+          style="
+            height: 100%;
+            width: 0%;
+            background: #2563eb;
+            border-radius: 99px;
+            animation: splashProgress 2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+          "
+        ></div>
+      </div>
+    </div>
+    <style>
+      @keyframes splashProgress {
+        0% {
+          width: 0%;
+        }
+        30% {
+          width: 55%;
+        }
+        70% {
+          width: 80%;
+        }
+        100% {
+          width: 95%;
+        }
+      }
+    </style>
+
+    <!-- ═══════════════════════════════════════════════════════
+         البيانات المحقونة مسبقاً من السيرفر
+         تُخزَّن فوراً قبل ما يشتغل أي JS
+         ═══════════════════════════════════════════════════════ -->
+
+    <script>
+      /* ── Console Suppressor (Production) ──────────────────────────
+         يُخفي console.log / info / debug في الإنتاج
+         ويُبقي console.warn و console.error لأغراض التشخيص
+      ──────────────────────────────────────────────────────────── */
+      (function () {
+        var noop = function () {};
+        console.log = noop;
+        console.info = noop;
+        console.debug = noop;
+        console.group = noop;
+        console.groupEnd = noop;
+        console.groupCollapsed = noop;
+      })();
+    </script>
+
+    <script>
+      window.__PREFETCH__ = {
+        users: <?!= prefetchedUsers ?>,
+        items: <?!= prefetchedItems ?>,
+        appVersion: <?!= JSON.stringify(appVersion) ?>,
+        // [LICENSE-STATUS] حالة الترخيص/الاشتراك — جاهزة من الـ Hub
+        // (Backend هو مصدر الحقيقة)، محقونة من doGet كـ JSON خام عشان
+        // تكون متاحة قبل تسجيل الدخول (شاشة اللوجين). راجع
+        // Code_12c_WebEntry.js و_getLicenseStatusCacheOnly في
+        // Code_41_UpdateManagement.js.
+        license: <?!= licenseStatus ?>
+      };
+    </script>
+
+    <!-- نقطة تركيب التطبيق — يتم رسمها بالكامل عبر JavaScript -->
+    <div id="root"></div>
+
+    <!-- ═══════════════════════════════════════════════════════
+         [PERF-LAZY-LOAD] EAGER BUNDLE — بس اللي شاشة اللوجين والـ
+         Shell الأساسي محتاجينه عشان يظهروا بسرعة. باقي موديولات
+         النظام (كل الـ Templates من 02 لـ10، وكل ملفات الجزء 03
+         فما فوق) بقت بتتحمل lazy بعد أول رسم للصفحة عن طريق
+         getLazyAppBundle() (Code_12_Core.gs) — شوف
+         _loadLazyAppBundle() جوه 01_JS_Core_Auth.html.
+
+          ده كان أكبر سبب في تأخر ظهور شاشة اللوجين (شاشة سودا
+         لعدة ثواني): كل الموديولات (محاسبة/HR/تصنيع/فواتير...)
+         كانت بتتحقن في نفس صفحة اللوجين من الأول (~6.5 ميجا نص
+         خام) وHtmlService مبيعملش streaming — يعني المتصفح ما
+         بيستقبلش ولا بايت لحد ما السيرفر يخلص الصفحة كاملة.
+
+          Templates_01 فضلت هنا (مش lazy) لأنها بتعرّف renderLogin/
+         renderLayout/renderTopBar المطلوبين مباشرة لعرض اللوجين
+         والـ Shell بعد الدخول.
+         ═══════════════════════════════════════════════════════ -->
+    <?!= include('Templates_01') ?>
+
+    <!-- [DATA-LAYER] طبقة البيانات الموحدة — يجب أن تُحمَّل قبل أي موديول آخر -->
+    <!-- يحتوي على: _gsr() wrapper + DL Repositories + DataModule state manager -->
+    <?!= include('31_JS_DataLayer') ?> <?!= include('32_JS_SaveEngine') ?>
+
+    <!-- [REBUILD-2026-08-07] UDE — محرك تحميل بيانات الشاشات الموحّد.
+         بديل كامل لمنظومة _prefetch/ensureLevelData/PAGE_REQUIRED_FIELDS
+         القديمة في 01_JS_Core_Auth.html. يجب أن يُحمَّل بعد 31_JS_DataLayer
+         (يعتمد على DL.Core.getAllDataByLevel) وقبل 01_JS_Core_Auth. -->
+    <?!= include('53_JS_UnifiedDataEngine') ?>
+
+    <!-- [I18N] محرك تعدد اللغات على الفرونت-إند — يجب أن يُحمَّل قبل أي شاشة تستخدم I18N.t() -->
+    <!-- يعتمد على _gsr() من 31_JS_DataLayer (مُحمَّل بالأعلى مباشرة) -->
+    <?!= include('38_JS_i18n_Client') ?>
+
+    <!-- [CORE-UTILITIES] دوال مشتركة بسيطة (تنسيق تاريخ/escape/رابط درايف) -->
+    <?!= include('Core_Utilities') ?>
+
+    <!-- [VALIDATION] نظام التحقق الموحّد — يجب أن يُحمَّل قبل باقي الموديولات -->
+    <!-- يحتوي على: VF.validate · VF.validateForm · VF.bind · VF.quickSave + RULES -->
+    <?!= include('VF_JS_Validation') ?>
+
+    <!-- JavaScript — جزء 1/13: أساسيات + صلاحيات + State + Router + Cache + Session + Auth -->
+    <?!= include('01_JS_Core_Auth') ?>
+    <!-- JavaScript — جزء 2/13: واجهة عامة (Layout/Nav) + Toast/Modal + إشعارات + باكاب + Utilities -->
+    <?!= include('02_JS_UI_Shell') ?>
+
+    <!-- [CORE-UI-MANAGERS] Toast/Modal/Drawer/Dropdown/Sidebar — نُقلت من 02_JS_UI_Shell.html -->
+    <?!= include('Core_UIManagers') ?>
+
+    <!-- [SESSION-LIFECYCLE-P1] محرك إدارة دورة حياة الجلسة — خروج منظّم -->
+    <?!= include('48_JS_SessionLifecycleEngine') ?>
+
+    <!-- [FORGOT-PW-1] استعادة كلمة المرور الذاتية من شاشة اللوجين -->
+    <?!= include('39_JS_ForgotPassword') ?>
+
+    <!-- ═══════════════════════════════════════════════════════
+         [PERF-LAZY-LOAD] هنا بيتحدد أونلاين الحزمة المؤجلة (باقي
+         كل موديولات النظام) وتُحقن ديناميكيًا بعد أول رسم — راجع
+         تفاصيل الآلية في 01_JS_Core_Auth.html.
+         ═══════════════════════════════════════════════════════ -->
+    <script>
+      window.__LAZY_READY__ = false;
+      window.__LAZY_PENDING_CB__ = [];
+    </script>
+    <!-- ERP v5: امتدادات الصلاحيات والتنقل والـ Router -->
+    <!-- [UNIFIED] Core_Auth_Extensions مدموجة في 01_JS_Core_Auth مباشرةً - لا تحتاج include منفصل -->
+
+    <!-- [ROOT-FIX-2026-08-13] اتشال تسجيل Service Worker من هنا نهائيًا.
+         مستحيل ينجح في معمارية GAS Web App: مفيش أي طريقة تقدّم بيها ملف
+         static على مسار جذري ثابت زي /sw.js (كل الطلبات بتمر حصريًا عبر
+         doGet() اللي مش بيتعامل مع مسارات زي دي أصلًا)، وكان بيفشل بـ 404
+         في كل مرة (راجع [PWA] SW registration failed في الكونسول). مفيش
+         بديل حقيقي لـ Service Worker/offline caching داخل GAS نفسها —
+         لو محتاج PWA فعلي مستقبلاً، الحل الوحيد استضافة الملفات الثابتة
+         (sw.js + manifest.json + الأيقونات) على دومين منفصل زي Firebase
+         Hosting بدل الاعتماد على GAS لتقديمها. -->
+  </body>
+</html>

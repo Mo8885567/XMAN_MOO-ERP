@@ -1,0 +1,303 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════
+  //  Core_Utilities.html
+  //  [REFACTOR-P2] طبقة الـ Utilities المشتركة — نُقلت هنا من نسخ
+  //  مكررة كانت موزعة على أكثر من ملف (راجع Architecture Audit،
+  //  قسم 6 و8). نقل نصي بحت — صفر تغيير في السلوك الفعلي الحالي
+  //  للنظام الرئيسي (Index.html)، باستثناء توحيد فراغ بسيط جدًا في
+  //  _fmtRelTime (راجع الملاحظة أسفل تعريفها).
+  //
+  // لا تُعرَّف أي نسخة جديدة من هذه الدوال في أي ملف موديول —
+  //  استخدم النسخة الموجودة هنا مباشرة (كلها Global بنفس الأسماء
+  //  القديمة، فلا حاجة لتعديل أي استدعاء موجود).
+  //
+  //  ملاحظة: CatalogPublic.html صفحة مستقلة (doGet منفصل، مش جزء
+  //  من Index.html include chain)، فاحتفظت بنسخها الخاصة من _esc
+  //  و_fixDriveUrl زي ما هي دون تعديل، لتفادي أي كسر لصفحة الكتالوج
+  //  العامة المستقلة.
+  // ═══════════════════════════════════════════════════════════════
+
+  // ── runChunked — معالجة مصفوفة كبيرة على دفعات بدون تجميد المتصفح ──
+  // [PERF-PROGRESSIVE-LOAD-2026-08] بعض الجداول (أصناف/مجموعات...) بتعمل
+  // معالجة لكل صف (زي حساب رصيد المخزون من كل المخازن) قبل ما تتعرض —
+  // لو اتعمل مرة واحدة على آلاف الصفوف، بيجمّد المتصفح لحظياً قبل أول
+  // ظهور للشاشة. runChunked بتقسّم الشغل على دفعات صغيرة، كل دفعة تتنفذ
+  // في جولة event-loop منفصلة (setTimeout 0) عشان المتصفح ياخد فرصة يرسم
+  // ويستجيب للمستخدم بين كل دفعة والتانية.
+  //   items      : المصفوفة الكاملة المطلوب معالجتها
+  //   chunkSize  : حجم كل دفعة (افتراضي 200)
+  //   workFn(chunkItems) : بيتنادى لكل دفعة، لازم يرجع نتيجة المعالجة
+  //   onChunk(processedChunk) : بيتنادى بنتيجة كل دفعة أول ما تخلص
+  //   onDone() : اختياري — بيتنادى بعد آخر دفعة
+  function runChunked(items, chunkSize, workFn, onChunk, onDone) {
+    items = items || [];
+    chunkSize = chunkSize || 200;
+    var i = 0;
+    function step() {
+      if (i >= items.length) {
+        if (typeof onDone === "function") onDone();
+        return;
+      }
+      var chunk = items.slice(i, i + chunkSize);
+      i += chunkSize;
+      var processed;
+      try {
+        processed = workFn(chunk);
+      } catch (e) {
+        console.error("[runChunked] خطأ أثناء معالجة دفعة:", e.message || e);
+        processed = null;
+      }
+      if (processed && typeof onChunk === "function") onChunk(processed);
+      setTimeout(step, 0);
+    }
+    setTimeout(step, 0);
+  }
+
+  // ── _esc — HTML escaping ─────────────────────────────────────
+  // كانت مكررة في: 20_JS_ContextMenu.html (Global)
+  // + نسخة محلية Scoped داخل 00_JS_DataLayer.html/toPrint() لغرض
+  //   أمان محدد (document.write) — تُركت كما هي عمدًا، مش مصدر تعارض.
+
+  // [PREFS-WIRING] paper_size / print_orientation كانا معرَّفين في شاشة
+  // التفضيلات (تبويب الطباعة) بدون أي تأثير فعلي — كل شاشة كانت تبني
+  // نافذة الطباعة بـ @page ثابت (A4 portrait) يدويًا. هذه الدالة المشتركة
+  // تبني قاعدة @page ديناميكية من تفضيل المستخدم، تُستدعى من داخل أي
+  // <style> في نوافذ الطباعة بدل النص الثابت.
+  // ملحوظة: print_copies (عدد النسخ) لا يوجد له API في المتصفح يسمح
+  // بالتحكم فيه برمجيًا من صفحة الويب — قيمته تُعرض للمستخدم كـ"تلميح"
+  // فقط، والتحكم الفعلي في عدد النسخ يبقى من نافذة الطباعة القياسية
+  // للمتصفح (Ctrl+P) وليس Dead Setting قابل للحل من جهة الفرونت إند.
+  function _getPrintPageCSS() {
+    var size = "A4";
+    var orientation = "portrait";
+    try {
+      if (typeof PreferenceService !== "undefined") {
+        size = PreferenceService.get("paper_size", "A4") || "A4";
+        orientation =
+          PreferenceService.get("print_orientation", "portrait") ||
+          "portrait";
+      }
+    } catch (e) {}
+    return (
+      "@media print{@page{size:" +
+      size +
+      " " +
+      orientation +
+      ";margin:8mm}body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}"
+    );
+  }
+  function _esc(str) {
+    return String(str || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  // ── _fmtDate — [DATE-UNIFY 2026-07-14] توحيد مع fmtDate المركزية ──
+  // كانت مكررة في: 11_JS_Accounting.html, 18_JS_Reports.html,
+  // 23_JS_PostingConfig_FixedAssets.html، وكانت **لا** تحترم تفضيل
+  // date_format للمستخدم — دايمًا dd/mm/yyyy ثابت بغض النظر عن اختياره
+  // في شاشة التفضيلات (كانت المحاسبة/التقارير/الأصول الثابتة الاستثناء
+  // الوحيد اللي بيتجاهل التفضيل رغم وجوده).
+  //
+  // الحل: بدل تكرار منطق التنسيق، _fmtDate بقت غلاف رفيع فوق fmtDate()
+  // (المعرّفة في 02_JS_UI_Shell.html وهي المصدر الرسمي الوحيد لمنطق
+  // date_format) — فأي شاشة تستخدم _fmtDate هتحترم التفضيل تلقائيًا
+  // بدون الحاجة لتعديل كل نقطة استدعاء على حدة.
+  // لا تُعرَّف منطق تنسيق تاريخ مستقل هنا مرة أخرى — أي تعديل مطلوب
+  // على شكل عرض التاريخ يتم في fmtDate() فقط.
+  function _fmtDate(val) {
+    if (!val) return "—";
+    if (typeof fmtDate === "function") return fmtDate(val);
+    // fallback نادر لو استُدعيت قبل تحميل 02_JS_UI_Shell.html
+    var d = String(val).split("T")[0];
+    if (!d || d === "undefined") return "—";
+    var parts = d.split("-");
+    if (parts.length !== 3) return d;
+    return parts[2] + "/" + parts[1] + "/" + parts[0];
+  }
+
+  // ── _fmtRelTime — وقت نسبي ("منذ 5 د") ──────────────────────────
+  // كانت معرَّفة مرتين داخل نفس الملف 19_JS_WhatsApp.html (بفروق
+  // فراغ بسيطة فقط بين الرقم والحرف: "5 د" مقابل "5د"). وحّدت على
+  // شكل النسخة بفراغ (الأكثر انتشارًا في باقي الشاشات) — الفرق
+  // شكلي بحت (مسافة واحدة) ولا يغيّر أي منطق أو بيانات.
+  function _fmtRelTime(date) {
+    if (!date || isNaN(date)) return "";
+    var diff = (Date.now() - date.getTime()) / 1000;
+    if (diff < 60) return I18N.t("UTIL_TIME_NOW");
+    if (diff < 3600)
+      return Math.floor(diff / 60) + " " + I18N.t("UTIL_TIME_MIN_SHORT");
+    if (diff < 86400)
+      return Math.floor(diff / 3600) + " " + I18N.t("UTIL_TIME_HOUR_SHORT");
+    return Math.floor(diff / 86400) + " " + I18N.t("UTIL_TIME_DAY_SHORT");
+  }
+
+  // ── _fixDriveUrl — تحويل رابط Google Drive لصيغة thumbnail قابلة للعرض ──
+  // كانت معرَّفة في: 08_JS_Users_Branding.html فقط ضمن Index.html
+  // (نسخة CatalogPublic.html مستقلة ومختلفة قليلًا في المنطق — تُركت
+  // كما هي في ملفها لأنها صفحة منفصلة تمامًا).
+  function _fixDriveUrl(url) {
+    if (!url) return url;
+    if (url.indexOf("drive.google.com") === -1) return url;
+    var m =
+      url.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
+      url.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
+      url.match(/thumbnail\?id=([a-zA-Z0-9_-]+)/);
+    if (m) return "https://drive.google.com/thumbnail?id=" + m[1] + "&sz=w400";
+    return url;
+  }
+
+  // ── callServer — [BUG-FIX 2026-07-04] دالة عامة لاستدعاء الباك-إند ──
+  // كانت مُستخدَمة بالفعل في saveSaleReturn() و savePurchaseReturn()
+  // (15_JS_Invoices.html) بصيغة callServer(fnName, payload, callback)
+  // لكنها لم تكن معرَّفة في أي ملف بكل المشروع — أي أن حفظ مرتجع
+  // البيع/الشراء كان يفشل دائمًا بخطأ "callServer is not a function"
+  // (لا تظهر رسالة خطأ واضحة للمستخدم لأن withFailureHandler لم يكن
+  // ليُستدعى أصلاً — الخطأ يحدث قبل الوصول لأي google.script.run).
+  //
+  // [DL-UNIFY] كانت هذه الدالة wrapper مستقل ثالث حول google.script.run
+  // (بجانب _gsr في 00_JS_DataLayer.html وSaveEngine) — دلوقتي بقت مجرد
+  // غلاف رفيع فوق _gsr نفسها بنفس التوقيع القديم (callServer(fn,payload,cb))
+  // عشان مواقع الاستدعاء الحالية في 15_JS_Invoices.html ما تتغيرش، لكن
+  // بدون تكرار منطق retry/timeout/رسائل الخطأ — كله بقى من _gsr فقط.
+  function callServer(fnName, payload, callback) {
+    if (!fnName) {
+      if (typeof callback === "function") {
+        callback({
+          success: false,
+          message: I18N.t("UTIL_MSG_SERVER_UNREACHABLE"),
+        });
+      }
+      return;
+    }
+    if (typeof _gsr !== "function") {
+      if (typeof callback === "function") {
+        callback({
+          success: false,
+          message: I18N.t("UTIL_MSG_SERVER_UNREACHABLE"),
+        });
+      }
+      return;
+    }
+    _gsr(fnName, [payload, SESSION.token], {
+      label: "callServer:" + fnName,
+      onSuccess: function (res) {
+        if (typeof callback === "function") callback(res);
+      },
+      onError: function (res) {
+        // [SESSION-FIX] لو جلسة منتهية، _gsr بالفعل نادت _handleSessionExpired
+        // مركزيًا — هنا فقط نعرض توست عادي لباقي أنواع الفشل زي السلوك القديم.
+        if (
+          typeof _isSessionErrorResponse !== "function" ||
+          !_isSessionErrorResponse(res)
+        ) {
+          NotificationEngine.error(I18N.t("MSG_ERROR_PREFIX") +
+            " " +
+            (res && res.message ? res.message : ""));
+        }
+        if (typeof callback === "function") callback(res);
+      },
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  [UNIFY-LOADING] مؤشر تحميل موحّد لكل الشاشات — سبينر دائري + نص
+  //  ═══════════════════════════════════════════════════════════════
+  //  قبل كده كل شاشة كانت بتكتب حالة التحميل بتاعتها يدوي جوه renderX()
+  //  الخاصة بيها بأشكال مختلفة (نص مجرد / أيقونة ti-loader-2 / spinner
+  //  مباشر ببصمات inline مختلفة) — أكتر من 30 موضع متفرق. الدالتين دول
+  //  بيبنوا على نفس CSS classes الموجودة أصلاً (.spinner / .loading-overlay
+  //  في Style_04_Components.html) عشان يبقى الشكل والسلوك موحّد في كل
+  //  مكان، من غير أي CSS جديد.
+  //
+  //  _loadingBlock(text) — لأي حاوية/كارت/سكشن (div) بينتظر بيانات.
+  //  _loadingRow(colspan, text) — لصف <tr> جوه جدول (tbody) بينتظر بيانات.
+  //
+  //  الاستخدام لسه بنفس منطق كل شاشة القديم: بيتحط كـ innerHTML مبدئي
+  //  وقت استدعاء _gsr()/callServer()، وبعدين onSuccess بيستبدله بالمحتوى
+  //  الحقيقي — الدالتين دول بس بيوحّدوا شكل الـ placeholder نفسه.
+  function _loadingBlock(text) {
+    var label = text || I18N.t("UTIL_LOADING_TEXT") || "جاري التحميل...";
+    return (
+      '<div class="loading-overlay"><div class="spinner"></div><p>' +
+      _esc(label) +
+      "</p></div>"
+    );
+  }
+
+  function _loadingRow(colspan, text) {
+    var label = text || I18N.t("UTIL_LOADING_TEXT") || "جاري التحميل...";
+    return (
+      '<tr class="loading-row"><td colspan="' +
+      (colspan || 1) +
+      '" style="text-align:center;padding:24px;color:var(--text3)">' +
+      '<div class="spinner spinner-sm" style="margin:0 auto 8px"></div>' +
+      _esc(label) +
+      "</td></tr>"
+    );
+  }
+
+  // نسخة مضغوطة (سطر واحد) لأماكن ضيقة زي تسميات صغيرة/سطور تفاصيل —
+  // بديل .loading-overlay اللي بها padding كبير (60px) مش مناسب هنا.
+  function _loadingInline(text) {
+    var label = text || I18N.t("UTIL_LOADING_TEXT") || "جاري التحميل...";
+    return (
+      '<span style="display:inline-flex;align-items:center;gap:6px;color:var(--text3)">' +
+      '<span class="spinner spinner-sm"></span>' +
+      _esc(label) +
+      "</span>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // [WA-POLL-UNIFY] createTabPolling — نمط Polling موحّد لأي تاب
+  // ─────────────────────────────────────────────────────────────
+  // كان النمط ده منسوخ حرفيًا مرتين: _waStartCenterPolling
+  // (19_JS_WhatsApp.html) وCH_INBOX.startPolling (30_JS_CommunicationHub.html)
+  // — نفس المنطق بالظبط: setInterval بيفحص وجود المستخدم/التوكن/عنصر
+  // الصفحة في الـ DOM، ولو أي شرط فشل بيوقف نفسه تلقائيًا.
+  //
+  // ده Helper عام بيرجع {start, stop} — مش تغيير سلوك، بس توحيد الكود
+  // المكرر. الاستخدام:
+  //
+  //   var poller = createTabPolling({
+  //     intervalMs: 30 * 1000,
+  //     domId: "wa-center-page",
+  //     callback: function () { WA_CENTER.silentRefreshConversations(); }
+  //   });
+  //   poller.start();  // عند bind التاب
+  //   poller.stop();    // عند unbind التاب
+  function createTabPolling(opts) {
+    var _timer = null;
+    var intervalMs = (opts && opts.intervalMs) || 30 * 1000;
+    var domId = opts && opts.domId;
+    var callback = opts && opts.callback;
+
+    function stop() {
+      if (_timer) {
+        clearInterval(_timer);
+        _timer = null;
+      }
+    }
+
+    function start() {
+      stop(); // لا نبدأ مرتين
+      _timer = setInterval(function () {
+        if (
+          !APP.currentUser ||
+          !SESSION.token ||
+          (domId && !document.getElementById(domId))
+        ) {
+          stop();
+          return;
+        }
+        if (typeof callback === "function") callback();
+      }, intervalMs);
+    }
+
+    return { start: start, stop: stop };
+  }
+</script>

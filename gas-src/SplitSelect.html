@@ -1,0 +1,41 @@
+<!-- ============================================================
+     [SELECTION-ENGINE] SplitSelect — كان مكوّن دروب داون بحث مستقل
+     (وقبله wh-dropdown) وبقى دلوقتي delegator رفيع فوق محرك الاختيار
+     الموحّد AppSelect (راجع 49_JS_SelectionEngine.html +
+     Style_14_AppSelect.html). الاسم والتوقيع القديم (SplitSelect.init /
+     SplitSelect.refresh) فضلوا زي ما هم بالظبط عشان الشاشات اللي
+     بتستخدمهم أصلاً (03_JS_Dashboard_Items، 07_JS_Shipping_Colors_Excel،
+     22_JS_PurchaseOrders، 15_JS_Invoices، 08_JS_Users_Branding،
+     29_JS_InvoiceWorkspace، 04_JS_Transactions، 40_JS_PurchaseRequests)
+     ما تحتاجش أي تعديل، لكن الشكل/السلوك الفعلي بقى نفسه بالظبط بتاع
+     أي select تاني اتحوّل بـ AppSelect — مفيش نظامين تصميم متوازيين.
+     الاستخدام لسه زي الأول تمامًا:
+       SplitSelect.init('item-filter-wh', { label: 'المخزن', icon: 'ti-building-warehouse', searchable: true });
+       SplitSelect.refresh('item-filter-wh');
+     ============================================================ -->
+<script>
+  (function () {
+    window.SplitSelect = {
+      init: function (idOrEl, opts) {
+        if (typeof AppSelect === "undefined") return null;
+        var select =
+          typeof idOrEl === "string" ? document.getElementById(idOrEl) : idOrEl;
+        if (!select || select.tagName !== "SELECT") return null;
+        opts = opts || {};
+        return AppSelect.upgrade(select, {
+          icon: opts.icon,
+          searchable: opts.searchable,
+          searchPlaceholder: opts.searchPlaceholder,
+          placeholder: opts.label,
+          // [INLINE-ADD-2026-08-06] { icon, title, onClick(instance) } —
+          // بيظهر كزرار "+" جوه صندوق الـ select جنب السهم المنسد.
+          addAction: opts.addAction,
+        });
+      },
+      refresh: function (idOrEl) {
+        if (typeof AppSelect === "undefined") return;
+        AppSelect.refresh(idOrEl);
+      },
+    };
+  })();
+</script>

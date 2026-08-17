@@ -1,0 +1,1757 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════════
+  // 29_JS_InvoiceWorkspace.html — شاشة إنشاء الفاتورة/المرتجع (صفحة كاملة)
+  // ─────────────────────────────────────────────────────────────────────
+  // أُضيف 2026-07-04 بناءً على طلب استبدال شاشات المودال الحالية
+  // (openCreateSaleInvoiceModal / openCreatePurchaseInvoiceModal /
+  //  openCreateSaleReturnModal / openCreatePurchaseReturnModal) بشاشة
+  // كاملة الصفحة على غرار صورة مرجعية (تصميم شبكي كثيف، شريط جانبي
+  // بإجراءات سريعة، جدول أصناف موسّع، شريط إجماليات + دفع سفلي).
+  //
+  // المرحلة 1 (هذا الملف): الشكل العام + جدول الأصناف الرئيسي — بالكامل
+  // فعّال ومربوط بالباك-إند الحقيقي (بدون أي بيانات وهمية).
+  // المرحلة 2 (لاحقًا): تفاصيل الألوان/المقاسات كنظام متغيرات كامل،
+  // قوائم أسعار متعددة (طريقة العرض)، أنواع تعامل متعددة.
+  //
+  // مبدأ التصميم: أعِد استخدام نفس عناصر الـ DOM (id/class) التي تتوقعها
+  // الدوال الحالية (_collectInvoiceData / _calcInvoiceTotals /
+  // saveSaleInvoice / savePurchaseInvoice / _collectReturnLines /
+  // saveSaleReturn / savePurchaseReturn) — فلا داعي لإعادة كتابة منطق
+  // الحفظ أو الحساب من الصفر، فقط شكل جديد للواجهة يغذّي نفس العناصر.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+  // §IW-0  إعدادات كل نوع مستند
+  // ─────────────────────────────────────────────────────────────
+  // ملاحظة i18n: القيم هنا مفاتيح ترجمة (Keys) وليست نصوصًا نهائية —
+  // تُحل فعليًا بـ I18N.t() وقت الرندر (عبر _iwCfgText) حتى تُقرأ دائمًا
+  // باللغة الحالية، حتى لو تغيّرت بعد تحميل هذا الملف.
+  var IW_DOC_CFG = {
+    sinv: {
+      kind: "invoice",
+      docLabelKey: "IW_DOC_LABEL_SALE",
+      titleKey: "IW_TITLE_SALES",
+      subtitleKey: "IW_SUBTITLE_NEW_SALE_INVOICE",
+      color: "#2563EB",
+      partyLabelKey: "LBL_CUSTOMER",
+      partyKey: "customers",
+      permKey: "addSaleInvoice",
+      saveFn: "saveSaleInvoice",
+      listPage: "sale-invoices",
+      arrayKey: "saleInvoices",
+    },
+    pinv: {
+      kind: "invoice",
+      docLabelKey: "IW_DOC_LABEL_PURCHASE",
+      titleKey: "IW_TITLE_PURCHASES",
+      subtitleKey: "IW_SUBTITLE_NEW_PURCHASE_INVOICE",
+      color: "#5B21B6",
+      partyLabelKey: "LBL_SUPPLIER",
+      partyKey: "suppliers",
+      permKey: "addPurchaseInvoice",
+      saveFn: "savePurchaseInvoice",
+      listPage: "purchase-invoices",
+      arrayKey: "purchaseInvoices",
+    },
+    sret: {
+      kind: "return",
+      docLabelKey: "IW_DOC_LABEL_SALE_RETURN",
+      titleKey: "IW_TITLE_SALE_RETURNS",
+      subtitleKey: "IW_SUBTITLE_NEW_SALE_RETURN",
+      color: "#DC2626",
+      partyLabelKey: "LBL_CUSTOMER",
+      partyKey: "customers",
+      permKey: "addSaleInvoice",
+      saveFn: "saveSaleReturn",
+      listPage: "sale-returns",
+      arrayKey: "saleReturns",
+      sourceArrayKey: "saleInvoices",
+    },
+    pret: {
+      kind: "return",
+      docLabelKey: "IW_DOC_LABEL_PURCHASE_RETURN",
+      titleKey: "IW_TITLE_PURCHASE_RETURNS",
+      subtitleKey: "IW_SUBTITLE_NEW_PURCHASE_RETURN",
+      color: "#7C3AED",
+      partyLabelKey: "LBL_SUPPLIER",
+      partyKey: "suppliers",
+      permKey: "addPurchaseInvoice",
+      saveFn: "savePurchaseReturn",
+      listPage: "purchase-returns",
+      arrayKey: "purchaseReturns",
+      sourceArrayKey: "purchaseInvoices",
+    },
+  };
+
+  // يقرأ نصوص cfg المترجمة وقت الاستدعاء (مش وقت تعريف الأوبجكت) —
+  // لو I18N لسه مش جاهز (نادر جدًا) بيرجع المفتاح نفسه كـ fallback بسيط.
+  function _iwCfgText(cfg) {
+    var tt =
+      typeof I18N !== "undefined" && I18N.t
+        ? I18N.t
+        : function (k) {
+            return k;
+          };
+    return {
+      docLabel: tt(cfg.docLabelKey),
+      title: tt(cfg.titleKey),
+      subtitle: tt(cfg.subtitleKey),
+      partyLabel: tt(cfg.partyLabelKey),
+    };
+  }
+
+  // فتح الشاشة (بديل مباشر للفتح القديم عبر مودال) ─────────────
+  function openSaleInvoiceWorkspace(permitId) {
+    APP._iwPrefillPermitId = permitId || null;
+    APP._iwPrefillInvoiceId = null;
+    renderPage("sale_invoice_workspace");
+  }
+  function openPurchaseInvoiceWorkspace(permitId) {
+    APP._iwPrefillPermitId = permitId || null;
+    APP._iwPrefillInvoiceId = null;
+    renderPage("purchase_invoice_workspace");
+  }
+
+  // [PO-INVOICE-LINK] فتح شاشة فاتورة الشراء من أمر شراء بعد استلامه —
+  // بتستخدم نفس إذن الاستلام (permit_id بصيغة RECV-{poId}-...) اللي
+  // بيتسجل تلقائيًا في receivePurchaseOrder (Code_27) عشان تجيب البنود
+  // والمورد، وكمان بتسجّل po_id عشان يترابط أمر الشراء بالفاتورة بعد الحفظ.
+  function openPurchaseInvoiceWorkspaceFromPO(poId, permitId) {
+    APP._iwPrefillPoId = poId || null;
+    APP._iwPrefillPermitId = permitId || null;
+    APP._iwPrefillInvoiceId = null;
+    renderPage("purchase_invoice_workspace");
+  }
+  function openSaleReturnWorkspace(invoiceId) {
+    APP._iwPrefillInvoiceId = invoiceId || null;
+    renderPage("sale_return_workspace");
+  }
+  function openPurchaseReturnWorkspace(invoiceId) {
+    APP._iwPrefillInvoiceId = invoiceId || null;
+    renderPage("purchase_return_workspace");
+  }
+
+  // [BUG-FIX] createReturnFromInvoice كانت تُستدعى من قائمة الكليك اليمين
+  // (20_JS_ContextMenu.html) لكنها لم تكن معرّفة في أي ملف — فكان الزر
+  // صامتًا تمامًا (typeof check يمنع الكراش لكنه لا يفعل شيئًا). الآن
+  // تفتح شاشة المرتجع المناسبة تلقائيًا حسب نوع الفاتورة.
+  function createReturnFromInvoice(invoiceId) {
+    if (!invoiceId) return;
+    var isSale = (APP.data.saleInvoices || []).some(function (i) {
+      return i.id === invoiceId;
+    });
+    if (isSale) {
+      openSaleReturnWorkspace(invoiceId);
+      return;
+    }
+    var isPurchase = (APP.data.purchaseInvoices || []).some(function (i) {
+      return i.id === invoiceId;
+    });
+    if (isPurchase) {
+      openPurchaseReturnWorkspace(invoiceId);
+      return;
+    }
+    NotificationEngine.error(I18N.t("MSG_INVOICE_NOT_FOUND"));
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §IW-1  أدوات مشتركة
+  // ─────────────────────────────────────────────────────────────
+  function _iwCurrentStock(itemId, warehouseName) {
+    if (!itemId) return 0;
+    var stock = (APP.data.stock || []).filter(function (s) {
+      return (
+        String(s.item_id) === String(itemId) &&
+        (!warehouseName || s.warehouse === warehouseName)
+      );
+    });
+    var opening = (APP.data.openingStock || []).filter(function (o) {
+      return (
+        String(o.item_id) === String(itemId) &&
+        (!warehouseName || o.warehouse === warehouseName)
+      );
+    });
+    var total = stock.concat(opening).reduce(function (s, r) {
+      return s + Number(r.quantity || 0);
+    }, 0);
+    return total;
+  }
+
+  function _iwPartyName(prefix) {
+    var el = document.getElementById(prefix + "-party");
+    return el ? el.value.trim() : "";
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §IW-2  الشريط العلوي + شريط الأدوات + رأس الفاتورة
+  // ─────────────────────────────────────────────────────────────
+  function _iwTopbar(cfg, prefix) {
+    var t = _iwCfgText(cfg);
+    return (
+      '<div class="iw-topbar" style="background:' +
+      cfg.color +
+      '">' +
+      '<div class="iw-topbar-title-wrap"><h1><i class="ti ti-file-invoice"></i>' +
+      esc(t.title) +
+      "</h1>" +
+      '<div class="iw-topbar-sub">' +
+      esc(t.subtitle) +
+      " — " +
+      esc(I18N.t("IW_NOT_SAVED_YET")) +
+      "</div></div>" +
+      '<div class="iw-topbar-actions">' +
+      '<button class="btn btn-sm" onclick="_iwGotoList(\'' +
+      prefix +
+      "','" +
+      cfg.listPage +
+      '\')"><i class="ti ti-list"></i> ' +
+      esc(I18N.t("BTN_DOCS_LIST")) +
+      "</button>" +
+      "</div></div>"
+    );
+  }
+
+  function _iwToolbar(prefix, cfg) {
+    var soon = ' title="' + esc(I18N.t("TT_FEATURE_SOON")) + '" disabled';
+    return (
+      '<div class="iw-toolbar">' +
+      '<button class="iw-tool-btn" onclick="_iwFocusAddItem(\'' +
+      prefix +
+      '\')"><i class="ti ti-square-plus"></i>' +
+      esc(I18N.t("BTN_ADD_ITEM")) +
+      "</button>" +
+      '<button class="iw-tool-btn" onclick="_iwClearAllLines(\'' +
+      prefix +
+      '\')"><i class="ti ti-eraser"></i>' +
+      esc(I18N.t("BTN_CLEAR_ITEMS")) +
+      "</button>" +
+      '<div class="iw-tool-sep"></div>' +
+      '<button class="iw-tool-btn" id="' +
+      prefix +
+      '-print-btn"' +
+      soon +
+      '><i class="ti ti-printer"></i>' +
+      esc(I18N.t("BTN_PRINT")) +
+      "</button>" +
+      '<button class="iw-tool-btn"' +
+      soon +
+      '><i class="ti ti-file-import"></i>' +
+      esc(I18N.t("BTN_IMPORT_EXCEL")) +
+      "</button>" +
+      '<button class="iw-tool-btn"' +
+      soon +
+      '><i class="ti ti-file-export"></i>' +
+      esc(I18N.t("BTN_EXPORT_EXCEL")) +
+      "</button>" +
+      '<button class="iw-tool-btn"' +
+      soon +
+      '><i class="ti ti-paperclip"></i>' +
+      esc(I18N.t("BTN_ATTACHMENTS")) +
+      "</button>" +
+      '<div class="iw-tool-sep"></div>' +
+      '<button class="iw-tool-btn" onclick="_iwOpenCalculator()"><i class="ti ti-calculator"></i>' +
+      esc(I18N.t("BTN_CALCULATOR")) +
+      "</button>" +
+      "</div>"
+    );
+  }
+
+  // رأس الفاتورة — النسخة الخاصة بالفواتير (sinv/pinv)
+  function _iwInvoiceHeader(prefix, cfg) {
+    var t = _iwCfgText(cfg);
+    var permitPrefill =
+      cfg.kind === "invoice" && APP._iwPrefillPermitId
+        ? APP._iwPrefillPermitId
+        : "";
+    var today = (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().split("T")[0]);
+    var cos = (APP.data.shippingCompanies || []).filter(function (c) {
+      return c.active !== false && c.active !== "FALSE";
+    });
+    var coOpts =
+      '<option value="">' +
+      esc(I18N.t("OPT_NO_SHIPPING")) +
+      "</option>" +
+      cos
+        .map(function (c) {
+          return (
+            '<option value="' +
+            esc(c.id) +
+            '" data-method="' +
+            esc(c.costing_method || "fixed") +
+            '">' +
+            esc(c.name) +
+            "</option>"
+          );
+        })
+        .join("");
+
+    return (
+      '<div class="iw-header-card">' +
+      '<div class="iw-header-row">' +
+      '<div class="iw-field" style="grid-column:span 2">' +
+      '<label><i class="ti ti-user"></i> ' +
+      esc(t.partyLabel) +
+      "</label>" +
+      '<input class="input" id="' +
+      prefix +
+      '-party" data-placeholder="' +
+      esc(I18N.t("PH_SEARCH_BY_NAME")) +
+      '" placeholder="' +
+      esc(I18N.t("PH_SEARCH_BY_NAME")) +
+      '" autocomplete="off">' +
+      '<input type="hidden" id="' +
+      prefix +
+      '-party-id">' +
+      "</div>" +
+      '<div class="iw-field"><label><i class="ti ti-calendar"></i> ' +
+      esc(I18N.t("LBL_DATE")) +
+      "</label>" +
+      '<input class="input" type="date" id="' +
+      prefix +
+      '-date" value="' +
+      today +
+      '"></div>' +
+      '<div class="iw-field"><label><i class="ti ti-building-warehouse"></i> ' +
+      esc(I18N.t("LBL_WAREHOUSE")) +
+      "</label>" +
+      '<select class="input" id="' +
+      prefix +
+      '-warehouse" onchange="_iwHeaderWarehouseChanged(\'' +
+      prefix +
+      "')\">" +
+      _txWarehouseOpts() +
+      "</select></div>" +
+      '<div class="iw-field"><label><i class="ti ti-cash"></i> ' +
+      esc(I18N.t("LBL_PAYMENT_METHOD")) +
+      "</label>" +
+      '<div class="iw-payment-toggle">' +
+      // ملاحظة: value="كاش"/"آجل" أكواد داخلية تُقارَن بها القيمة في
+      // _iwBindInvoicePage (this.value === "آجل") — لا تُترجم القيمة
+      // نفسها، فقط النص المعروض بجوار كل زر اختيار.
+      '<label><input type="radio" name="' +
+      prefix +
+      '-payment" value="كاش" checked> ' +
+      esc(I18N.t("LBL_PAYMENT_CASH")) +
+      "</label>" +
+      '<label><input type="radio" name="' +
+      prefix +
+      '-payment" value="آجل"> ' +
+      esc(I18N.t("LBL_PAYMENT_DEFERRED")) +
+      "</label>" +
+      "</div></div>" +
+      '<div class="iw-field" id="' +
+      prefix +
+      '-due-wrap" style="display:none"><label><i class="ti ti-calendar-due"></i> ' +
+      esc(I18N.t("LBL_DUE_DATE")) +
+      "</label>" +
+      '<input class="input" type="date" id="' +
+      prefix +
+      '-due-date"></div>' +
+      '<div class="iw-field"><label><i class="ti ti-file-barcode"></i> ' +
+      esc(I18N.t("LBL_LINKED_PERMIT_OPT")) +
+      "</label>" +
+      '<input class="input" id="' +
+      prefix +
+      '-permit" value="' +
+      esc(permitPrefill) +
+      '" placeholder="' +
+      esc(I18N.t("PH_PERMIT_NUMBER")) +
+      '"></div>' +
+      "</div>" +
+      '<div class="iw-header-row">' +
+      '<div class="iw-field"><label><i class="ti ti-truck"></i> ' +
+      esc(I18N.t("LBL_SHIPPING_CO_OPT")) +
+      "</label>" +
+      '<select class="input" id="' +
+      prefix +
+      '-shipping-co" onchange="_onSinvShippingCoChange(\'' +
+      prefix +
+      "')\">" +
+      coOpts +
+      "</select></div>" +
+      '<div class="iw-field"><label>' +
+      esc(I18N.t("LBL_SHIPPING_COST")) +
+      ' <span id="' +
+      prefix +
+      '-ship-cost-hint" style="color:var(--text3);font-weight:400"></span></label>' +
+      '<input class="input" type="number" id="' +
+      prefix +
+      '-shipping-cost" placeholder="0.00" min="0" step="0.01" oninput="_calcInvoiceTotals(\'' +
+      prefix +
+      "')\"></div>" +
+      '<div class="iw-field"><label>' +
+      esc(I18N.t("LBL_SHIPPING_BEARER")) +
+      "</label>" +
+      '<select class="input" id="' +
+      prefix +
+      '-shipping-on"><option value="company">' +
+      esc(I18N.t("OPT_OUR_COMPANY")) +
+      '</option><option value="customer">' +
+      esc(t.partyLabel) +
+      "</option></select></div>" +
+      '<div class="iw-field" style="grid-column:span 2"><label><i class="ti ti-note"></i> ' +
+      esc(I18N.t("LBL_NOTES")) +
+      "</label>" +
+      '<input class="input" id="' +
+      prefix +
+      '-notes" placeholder="' +
+      esc(I18N.t("PH_INVOICE_NOTES")) +
+      '"></div>' +
+      "</div></div>"
+    );
+  }
+
+  // رأس المستند — النسخة الخاصة بالمرتجعات (sret/pret)
+  function _iwReturnHeader(prefix, cfg) {
+    var t = _iwCfgText(cfg);
+    var today = (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().split("T")[0]);
+    var srcInv = "";
+    var prefillParty = "";
+    if (APP._iwPrefillInvoiceId) {
+      var srcArr = APP.data[cfg.sourceArrayKey] || [];
+      var found = srcArr.find(function (i) {
+        return i.id === APP._iwPrefillInvoiceId;
+      });
+      if (found) {
+        srcInv = found.id;
+        prefillParty = found.party || "";
+      }
+    }
+    return (
+      '<div class="iw-header-card">' +
+      '<div class="iw-header-row">' +
+      '<div class="iw-field" style="grid-column:span 2">' +
+      '<label><i class="ti ti-user"></i> ' +
+      esc(t.partyLabel) +
+      "</label>" +
+      '<input class="input" id="' +
+      prefix +
+      '-party" value="' +
+      esc(prefillParty) +
+      '" placeholder="' +
+      esc(I18N.t("PH_SEARCH_BY_NAME")) +
+      '" autocomplete="off">' +
+      '<input type="hidden" id="' +
+      prefix +
+      '-party-id">' +
+      "</div>" +
+      '<div class="iw-field"><label><i class="ti ti-calendar"></i> ' +
+      esc(I18N.t("LBL_DATE")) +
+      "</label>" +
+      '<input class="input" type="date" id="' +
+      prefix +
+      '-date" value="' +
+      today +
+      '"></div>' +
+      '<div class="iw-field"><label><i class="ti ti-building-warehouse"></i> ' +
+      esc(I18N.t("LBL_WAREHOUSE")) +
+      "</label>" +
+      '<select class="input" id="' +
+      prefix +
+      '-warehouse">' +
+      _txWarehouseOpts() +
+      "</select></div>" +
+      '<div class="iw-field"><label><i class="ti ti-file-invoice"></i> ' +
+      esc(I18N.t("LBL_ORIGINAL_INVOICE_NO")) +
+      "</label>" +
+      '<input class="input" id="' +
+      prefix +
+      '-orig-inv" value="' +
+      esc(srcInv) +
+      '" placeholder="' +
+      esc(I18N.t("PH_OPTIONAL")) +
+      '"></div>' +
+      '<div class="iw-field" style="grid-column:span 2"><label><i class="ti ti-message-report"></i> ' +
+      esc(I18N.t("LBL_RETURN_REASON")) +
+      "</label>" +
+      '<input class="input" id="' +
+      prefix +
+      '-reason" placeholder="' +
+      esc(I18N.t("PH_RETURN_REASON_EXAMPLE")) +
+      '"></div>' +
+      "</div>" +
+      '<div class="iw-header-row">' +
+      '<div class="iw-field" style="grid-column:span 2"><label><i class="ti ti-note"></i> ' +
+      esc(I18N.t("LBL_NOTES")) +
+      "</label>" +
+      '<input class="input" id="' +
+      prefix +
+      '-notes" placeholder="' +
+      esc(I18N.t("PH_NOTES_DOTS")) +
+      '"></div>' +
+      "</div></div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §IW-3  الشريط الجانبي (إجراءات سريعة)
+  // ─────────────────────────────────────────────────────────────
+  function _iwSidebar(prefix, cfg) {
+    var itemActions =
+      '<button class="iw-sb-btn" onclick="_iwSafeOpenItemModal(\'' +
+      prefix +
+      '\')"><i class="ti ti-package-import"></i> ' +
+      esc(I18N.t("BTN_ADD_NEW_ITEM")) +
+      "</button>" +
+      '<button class="iw-sb-btn" onclick="_iwGotoItemsPricing(\'' +
+      prefix +
+      '\')"><i class="ti ti-tags"></i> ' +
+      esc(I18N.t("BTN_EDIT_ITEM_PRICES")) +
+      "</button>" +
+      '<button class="iw-sb-btn" onclick="_iwPrintLastSelectedBarcode(\'' +
+      prefix +
+      '\')"><i class="ti ti-barcode"></i> ' +
+      esc(I18N.t("BTN_PRINT_ITEM_BARCODE")) +
+      "</button>";
+
+    var docActions =
+      '<button class="iw-sb-btn success" onclick="_iwFocusAddItem(\'' +
+      prefix +
+      '\')"><i class="ti ti-bolt"></i> ' +
+      esc(I18N.t("BTN_QUICK_ADD_SCANNER")) +
+      "</button>";
+
+    var otherActions =
+      '<button class="iw-sb-btn purple" onclick="_iwOpenDiscountShortcut(\'' +
+      prefix +
+      '\')"><i class="ti ti-discount-2"></i> ' +
+      esc(I18N.t("BTN_APPLY_INVOICE_DISCOUNT")) +
+      "</button>" +
+      '<button class="iw-sb-btn" onclick="_iwOpenCalculator()"><i class="ti ti-calculator"></i> ' +
+      esc(I18N.t("BTN_CALCULATOR")) +
+      "</button>" +
+      '<button class="iw-sb-btn" disabled title="' +
+      esc(I18N.t("TT_NO_ITEM_PHOTOS")) +
+      '"><i class="ti ti-photo"></i> ' +
+      esc(I18N.t("BTN_ITEM_PHOTOS")) +
+      "</button>";
+
+    return (
+      '<div class="iw-sidebar" style="--iw-sb-accent:' +
+      cfg.color +
+      '">' +
+      '<div class="iw-sb-tabs">' +
+      '<div class="iw-sb-tab active" data-tab="actions" title="' +
+      esc(I18N.t("SB_TAB_ACTIONS")) +
+      '" onclick="_iwSwitchSidebarTab(\'' +
+      prefix +
+      "','actions')\"><i class=\"ti ti-bolt\"></i></div>" +
+      '<div class="iw-sb-tab" data-tab="iteminfo" title="' +
+      esc(I18N.t("SB_TAB_ITEM_INFO")) +
+      '" onclick="_iwSwitchSidebarTab(\'' +
+      prefix +
+      "','iteminfo')\"><i class=\"ti ti-info-circle\"></i></div>" +
+      '<div class="iw-sb-tab" data-tab="partyinfo" title="' +
+      esc(I18N.t("SB_TAB_PARTY_INFO")) +
+      '" onclick="_iwSwitchSidebarTab(\'' +
+      prefix +
+      "','partyinfo')\"><i class=\"ti ti-address-book\"></i></div>" +
+      "</div>" +
+      '<div class="iw-sb-tabpanel active" id="' +
+      prefix +
+      '-sb-panel-actions">' +
+      '<div class="iw-sb-section"><div class="iw-sb-title">' +
+      esc(I18N.t("SB_SECTION_ITEMS")) +
+      "</div>" +
+      itemActions +
+      "</div>" +
+      '<div class="iw-sb-section"><div class="iw-sb-title">' +
+      esc(I18N.t("SB_SECTION_DOCUMENT")) +
+      "</div>" +
+      docActions +
+      "</div>" +
+      '<div class="iw-sb-section"><div class="iw-sb-title">' +
+      esc(I18N.t("SB_SECTION_OTHER")) +
+      "</div>" +
+      otherActions +
+      "</div>" +
+      "</div>" +
+      '<div class="iw-sb-tabpanel" id="' +
+      prefix +
+      '-sb-panel-iteminfo">' +
+      '<div class="iw-sb-section" id="' +
+      prefix +
+      '-iteminfo-box">' +
+      '<div class="iw-sb-iteminfo-empty"><i class="ti ti-mouse" style="font-size:20px;display:block;margin-bottom:6px"></i>' +
+      esc(I18N.t("SB_ITEM_INFO_EMPTY")) +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      '<div class="iw-sb-tabpanel" id="' +
+      prefix +
+      '-sb-panel-partyinfo">' +
+      '<div class="iw-sb-section" id="' +
+      prefix +
+      '-partyinfo-box">' +
+      '<div class="iw-sb-iteminfo-empty"><i class="ti ti-user-search" style="font-size:20px;display:block;margin-bottom:6px"></i>' +
+      esc(I18N.t("SB_PARTY_INFO_EMPTY")) +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  // [IW-SIDEBAR-TABS] تبديل تبويبات السايد بار
+  function _iwSwitchSidebarTab(prefix, tab) {
+    var sidebar = document
+      .getElementById(prefix + "-sb-panel-" + tab)
+      ?.closest(".iw-sidebar");
+    if (!sidebar) return;
+    sidebar.querySelectorAll(".iw-sb-tab").forEach(function (el) {
+      el.classList.toggle("active", el.dataset.tab === tab);
+    });
+    sidebar.querySelectorAll(".iw-sb-tabpanel").forEach(function (el) {
+      el.classList.toggle("active", el.id === prefix + "-sb-panel-" + tab);
+    });
+  }
+
+  // [IW-SIDEBAR-ITEM-INFO] بناء/تحديث بانل معلومات الصنف الديناميكي
+  function _iwUpdateItemInfoPanel(prefix, item) {
+    var box = document.getElementById(prefix + "-iteminfo-box");
+    if (!box || !item) return;
+
+    var totalStock = _iwCurrentStock(item.id, "");
+    var minQty = Number(item.min_qty || 0);
+    var stockCls = minQty && totalStock <= minQty ? "warn" : "ok";
+
+    // توزيع الرصيد على المخازن
+    var whMap = {};
+    (APP.data.stock || [])
+      .concat(APP.data.openingStock || [])
+      .filter(function (r) {
+        return String(r.item_id) === String(item.id);
+      })
+      .forEach(function (r) {
+        var wh = r.warehouse || I18N.t("LBL_UNSPECIFIED");
+        whMap[wh] = (whMap[wh] || 0) + Number(r.quantity || 0);
+      });
+    var whRows = Object.keys(whMap)
+      .filter(function (wh) {
+        return whMap[wh] !== 0;
+      })
+      .map(function (wh) {
+        return (
+          '<div class="iw-sb-iteminfo-wh-row"><span class="wh-name">' +
+          esc(wh) +
+          '</span><span class="wh-qty">' +
+          _fmtNum(whMap[wh]) +
+          "</span></div>"
+        );
+      })
+      .join("");
+
+    box.innerHTML =
+      '<div class="iw-sb-iteminfo-name"><i class="ti ti-package" style="color:var(--iw-sb-accent,var(--accent));margin-left:4px"></i>' +
+      esc(item.name || "") +
+      "</div>" +
+      '<div class="iw-sb-iteminfo-row"><span class="lbl">' +
+      esc(I18N.t("COL_CURRENT_BALANCE")) +
+      '</span><span class="val ' +
+      stockCls +
+      '">' +
+      _fmtNum(totalStock) +
+      " " +
+      esc(item.unit || I18N.t("UNIT_PIECE")) +
+      "</span></div>" +
+      '<div class="iw-sb-iteminfo-row"><span class="lbl">' +
+      esc(I18N.t("LBL_COST_PRICE")) +
+      '</span><span class="val">' +
+      _fmtNum(item.cost_price || 0) +
+      "</span></div>" +
+      '<div class="iw-sb-iteminfo-row"><span class="lbl">' +
+      esc(I18N.t("LBL_SELLING_PRICE")) +
+      '</span><span class="val">' +
+      _fmtNum(item.selling_price || 0) +
+      "</span></div>" +
+      '<div class="iw-sb-iteminfo-row"><span class="lbl">' +
+      esc(I18N.t("LBL_REORDER_POINT")) +
+      '</span><span class="val">' +
+      _fmtNum(minQty) +
+      "</span></div>" +
+      (whRows
+        ? '<div class="iw-sb-iteminfo-wh-title">' +
+          esc(I18N.t("LBL_STOCK_PER_WAREHOUSE")) +
+          "</div>" +
+          whRows
+        : "");
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §IW-4  جدول الأصناف — نسخة الفواتير (sinv/pinv) بحقل بحث حقيقي
+  // ─────────────────────────────────────────────────────────────
+  var _iwLineSeq = { sinv: 0, pinv: 0 };
+
+  function _iwInvGridHead() {
+    return (
+      "<thead><tr>" +
+      "<th>#</th><th>" +
+      esc(I18N.t("COL_CODE")) +
+      "</th><th>" +
+      esc(I18N.t("COL_ITEM_NAME")) +
+      "</th><th>" +
+      esc(I18N.t("COL_UNIT")) +
+      "</th>" +
+      "<th>" +
+      esc(I18N.t("COL_CURRENT_BALANCE")) +
+      "</th><th>" +
+      esc(I18N.t("COL_QTY")) +
+      "</th><th>" +
+      esc(I18N.t("COL_PRICE")) +
+      "</th><th>" +
+      esc(I18N.t("COL_DISCOUNT")) +
+      "</th>" +
+      "<th>" +
+      esc(I18N.t("COL_TOTAL")) +
+      "</th><th>" +
+      esc(I18N.t("LBL_WAREHOUSE")) +
+      "</th><th>" +
+      esc(I18N.t("COL_NOTES_SIZE_COLOR")) +
+      "</th><th></th>" +
+      "</tr></thead>"
+    );
+  }
+
+  function _iwBuildInvLineRow(prefix, idx) {
+    var whOpts = _txWarehouseOpts();
+    return (
+      '<tr id="' +
+      prefix +
+      "-line-" +
+      idx +
+      '">' +
+      '<td><span class="iw-row-num">' +
+      (idx + 1) +
+      "</span></td>" +
+      '<td><span class="iw-code-pill" id="' +
+      prefix +
+      "-line-code-" +
+      idx +
+      '">—</span></td>' +
+      '<td class="iw-cell-name"><div class="iw-item-search-wrap">' +
+      '<input class="iw-input-cell ' +
+      prefix +
+      '-line-item" data-idx="' +
+      idx +
+      '" data-item-id="" placeholder="' +
+      esc(I18N.t("PH_ITEM_NAME_OR_CODE")) +
+      '" autocomplete="off" ' +
+      "oninput=\"_iwOnLineItemInput(this,'" +
+      prefix +
+      "'," +
+      idx +
+      ')" onfocus="_iwOnLineItemInput(this,\'' +
+      prefix +
+      "'," +
+      idx +
+      ')" onkeydown="_iwLineItemKeydown(event,this,\'' +
+      prefix +
+      "'," +
+      idx +
+      ')">' +
+      '<div class="iw-item-search-list" id="' +
+      prefix +
+      "-line-" +
+      idx +
+      '-list"></div></div>' +
+      '<input type="hidden" class="' +
+      prefix +
+      '-line-color" value=""></td>' +
+      '<td><span class="iw-readonly-cell" id="' +
+      prefix +
+      "-line-unit-" +
+      idx +
+      '">—</span></td>' +
+      '<td><span class="iw-readonly-cell" id="' +
+      prefix +
+      "-line-stock-" +
+      idx +
+      '">0</span></td>' +
+      '<td><input type="number" class="iw-input-cell ' +
+      prefix +
+      '-line-qty" data-idx="' +
+      idx +
+      '" value="1" min="0" step="0.01" oninput="_calcInvoiceTotals(\'' +
+      prefix +
+      "')\"></td>" +
+      '<td><input type="number" class="iw-input-cell ' +
+      prefix +
+      '-line-price" data-idx="' +
+      idx +
+      '" value="0" min="0" step="0.01" oninput="_calcInvoiceTotals(\'' +
+      prefix +
+      "')\"></td>" +
+      '<td><div class="iw-disc-cell">' +
+      '<input type="number" class="iw-input-cell ' +
+      prefix +
+      '-line-disc" value="0" min="0" step="0.01" oninput="_calcInvoiceTotals(\'' +
+      prefix +
+      "')\">" +
+      '<select class="iw-input-cell ' +
+      prefix +
+      '-line-disc-type" onchange="_calcInvoiceTotals(\'' +
+      prefix +
+      "')\">" +
+      '<option value="fixed">' +
+      esc(I18N.t("CURRENCY_EGP")) +
+      '</option><option value="percent">%</option>' +
+      "</select></div></td>" +
+      '<td class="iw-line-total" id="' +
+      prefix +
+      "-line-total-" +
+      idx +
+      '">0.00</td>' +
+      '<td><select class="iw-input-cell ' +
+      prefix +
+      '-line-warehouse">' +
+      whOpts +
+      "</select></td>" +
+      '<td><input class="iw-input-cell ' +
+      prefix +
+      '-line-desc" placeholder="' +
+      esc(I18N.t("PH_SIZE_COLOR_NOTE")) +
+      '"></td>' +
+      '<td><button class="iw-row-del" onclick="_removeInvLine(\'' +
+      prefix +
+      "'," +
+      idx +
+      ')" title="' +
+      esc(I18N.t("TT_DELETE")) +
+      '"><i class="ti ti-x"></i></button></td>' +
+      "</tr>"
+    );
+  }
+
+  function _iwInvGrid(prefix, cfg) {
+    _iwLineSeq[prefix] = 0;
+    return (
+      '<div class="iw-grid-card">' +
+      '<div class="iw-grid-head"><h3><i class="ti ti-list-details"></i> ' +
+      esc(I18N.t("LBL_INVOICE_ITEMS_HEADER")) +
+      "</h3>" +
+      '<span class="badge" id="' +
+      prefix +
+      '-items-count">' +
+      esc(I18N.t("LBL_ITEMS_COUNT_ZERO")) +
+      "</span></div>" +
+      '<div class="iw-table-wrap"><table class="iw-table">' +
+      _iwInvGridHead() +
+      '<tbody id="' +
+      prefix +
+      '-lines-body">' +
+      _iwBuildInvLineRow(prefix, 0) +
+      "</tbody></table></div>" +
+      '<div class="iw-add-row-bar">' +
+      '<button class="btn btn-outline btn-sm" onclick="_iwAddInvLine(\'' +
+      prefix +
+      '\')"><i class="ti ti-plus"></i> ' +
+      esc(I18N.t("BTN_ADD_ITEM")) +
+      "</button>" +
+      '<span class="iw-hint"><i class="ti ti-keyboard"></i> ' +
+      esc(I18N.t("HINT_ADD_ITEM_KEYBOARD")) +
+      "</span>" +
+      "</div></div>"
+    );
+  }
+
+  function _iwAddInvLine(prefix) {
+    _iwLineSeq[prefix]++;
+    var idx = _iwLineSeq[prefix];
+    var tbody = document.getElementById(prefix + "-lines-body");
+    if (!tbody) return;
+    tbody.insertAdjacentHTML("beforeend", _iwBuildInvLineRow(prefix, idx));
+    var newInput = tbody.querySelector(
+      "#" + prefix + "-line-" + idx + " ." + prefix + "-line-item",
+    );
+    if (newInput) newInput.focus();
+    _calcInvoiceTotals(prefix);
+  }
+
+  function _iwClearAllLines(prefix) {
+    confirmDelete(
+      I18N.t("BTN_CLEAR_ITEMS"),
+      I18N.t("CONFIRM_CLEAR_ITEMS_MSG"),
+      function () {
+        var tbody = document.getElementById(prefix + "-lines-body");
+        if (!tbody) return;
+        tbody.innerHTML = "";
+        _iwLineSeq[prefix] = 0;
+        tbody.insertAdjacentHTML("beforeend", _iwBuildInvLineRow(prefix, 0));
+        _calcInvoiceTotals(prefix);
+      },
+    );
+  }
+
+  function _iwFocusAddItem(prefix) {
+    var tbody = document.getElementById(prefix + "-lines-body");
+    if (!tbody) return;
+    var lastRow = tbody.querySelector(
+      "tr:last-child ." + prefix + "-line-item",
+    );
+    if (lastRow) lastRow.focus();
+  }
+
+  // ── بحث الصنف داخل الخلية (خفيف، بدون الاعتماد على select مخفي) ──
+  var _iwLastSelectedItemId = {};
+
+  function _iwOnLineItemInput(inputEl, prefix, idx) {
+    var q = (inputEl.value || "").trim().toLowerCase();
+    var listEl = document.getElementById(prefix + "-line-" + idx + "-list");
+    if (!listEl) return;
+    var items = APP.data.items || [];
+    var filtered = q
+      ? items.filter(function (it) {
+          return (
+            String(it.name || "")
+              .toLowerCase()
+              .indexOf(q) !== -1 ||
+            String(it.code || "")
+              .toLowerCase()
+              .indexOf(q) !== -1
+          );
+        })
+      : items.slice(0, 30);
+
+    if (!filtered.length) {
+      listEl.innerHTML =
+        '<div class="iw-isr-empty">' +
+        esc(I18N.t("MSG_NO_MATCHING_RESULTS")) +
+        "</div>";
+    } else {
+      listEl.innerHTML = filtered
+        .slice(0, 40)
+        .map(function (it) {
+          return (
+            '<div class="iw-isr-opt" data-id="' +
+            esc(it.id) +
+            '"><span>' +
+            esc(it.name) +
+            '</span><span class="iw-isr-code">' +
+            esc(it.code || it.id) +
+            "</span></div>"
+          );
+        })
+        .join("");
+      listEl.querySelectorAll(".iw-isr-opt").forEach(function (opt) {
+        opt.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+          _iwSelectLineItem(prefix, idx, opt.dataset.id);
+        });
+      });
+    }
+    listEl.classList.add("open");
+
+    if (!listEl._iwOutsideBound) {
+      listEl._iwOutsideBound = true;
+      document.addEventListener("click", function (e) {
+        if (!listEl.contains(e.target) && e.target !== inputEl) {
+          listEl.classList.remove("open");
+        }
+      });
+    }
+  }
+
+  function _iwLineItemKeydown(e, inputEl, prefix, idx) {
+    if (e.key === "Escape") {
+      var listEl = document.getElementById(prefix + "-line-" + idx + "-list");
+      if (listEl) listEl.classList.remove("open");
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      var row = document.getElementById(prefix + "-line-" + idx);
+      var qtyEl = row ? row.querySelector("." + prefix + "-line-qty") : null;
+      if (qtyEl) {
+        qtyEl.focus();
+        qtyEl.select();
+      }
+    }
+  }
+
+  // [IW-SIDEBAR-PARTY-CARD] بطاقة العميل/المورد السريعة — بتتحدث لما
+  // يتم اختيار عميل/مورد في حقل الفاتورة. فكرة من شاشة X-MAN المرجعية.
+  var _iwPartyCardSeq = {};
+  function _iwLoadPartyCard(prefix, partyType) {
+    var idEl = document.getElementById(prefix + "-party-id");
+    var partyId = idEl ? idEl.value : "";
+    var box = document.getElementById(prefix + "-partyinfo-box");
+    if (!box) return;
+
+    if (!partyId) {
+      box.innerHTML =
+        '<div class="iw-sb-iteminfo-empty"><i class="ti ti-user-search" style="font-size:20px;display:block;margin-bottom:6px"></i>' +
+        esc(I18N.t("SB_PARTY_INFO_EMPTY")) +
+        "</div>";
+      return;
+    }
+
+    box.innerHTML =
+      '<div class="iw-sb-iteminfo-empty"><i class="ti ti-loader-2" style="font-size:18px;display:block;margin-bottom:6px"></i>' +
+      esc(I18N.t("MSG_LOADING_ELLIPSIS")) +
+      "</div>";
+
+    var mySeq = (_iwPartyCardSeq[prefix] = (_iwPartyCardSeq[prefix] || 0) + 1);
+
+    // [UNIFY-DATALAYER] استُبدل google.script.run المباشر بـ _gsr الموحّدة —
+    // نفس منطق success/failure بالحرف، فقط أُعيد تغليفه ضمن الطبقة الموحّدة.
+    _gsr("getPartyQuickCard", [partyId, partyType], {
+      label: "IW.partyQuickCard",
+      onSuccess: function (r) {
+        // تجاهل الرد لو المستخدم غيّر العميل قبل ما الرد يوصل
+        if (_iwPartyCardSeq[prefix] !== mySeq) return;
+        var box2 = document.getElementById(prefix + "-partyinfo-box");
+        if (!box2) return;
+        if (!r || !r.success) {
+          box2.innerHTML =
+            '<div class="iw-sb-iteminfo-empty">' +
+            esc((r && r.message) || I18N.t("MSG_ERROR_OCCURRED")) +
+            "</div>";
+          return;
+        }
+        box2.innerHTML = _iwRenderPartyCard(r.data, partyType);
+      },
+      onError: function (e) {
+        if (_iwPartyCardSeq[prefix] !== mySeq) return;
+        var box2 = document.getElementById(prefix + "-partyinfo-box");
+        if (box2)
+          box2.innerHTML =
+            '<div class="iw-sb-iteminfo-empty">' +
+            esc(I18N.t("MSG_ERROR_OCCURRED")) +
+            ": " +
+            esc(e.message) +
+            "</div>";
+      },
+    });
+  }
+
+  function _iwRenderPartyCard(d, partyType) {
+    var statusOk = d.status === "نشط";
+    var overLimit = d.credit_limit > 0 && Math.abs(d.balance) > d.credit_limit;
+
+    var lastInvoiceHtml = d.last_invoice
+      ? esc(d.last_invoice.date) +
+        " — " +
+        _fmtNum(d.last_invoice.total) +
+        " " +
+        esc(I18N.t("CURRENCY_EGP"))
+      : I18N.t("LBL_NO_DATA");
+
+    var lastPaymentHtml = d.last_payment
+      ? esc(d.last_payment.date) +
+        " — " +
+        _fmtNum(d.last_payment.amount) +
+        " " +
+        esc(I18N.t("CURRENCY_EGP"))
+      : I18N.t("LBL_NO_DATA");
+
+    return (
+      '<div class="iw-sb-iteminfo-name"><i class="ti ti-user-circle" style="color:var(--iw-sb-accent,var(--accent));margin-left:4px"></i>' +
+      esc(d.name || "") +
+      "</div>" +
+      '<div class="iw-sb-iteminfo-row"><span class="lbl">' +
+      esc(I18N.t("LBL_BALANCE")) +
+      '</span><span class="val ' +
+      (overLimit ? "warn" : "") +
+      '">' +
+      _fmtNum(d.balance) +
+      "</span></div>" +
+      '<div class="iw-sb-iteminfo-row"><span class="lbl">' +
+      esc(I18N.t("LBL_CREDIT_LIMIT")) +
+      '</span><span class="val">' +
+      (d.credit_limit > 0 ? _fmtNum(d.credit_limit) : I18N.t("LBL_UNLIMITED")) +
+      "</span></div>" +
+      '<div class="iw-sb-iteminfo-row"><span class="lbl">' +
+      esc(I18N.t("LBL_PARTY_STATUS")) +
+      '</span><span class="val ' +
+      (statusOk ? "ok" : "warn") +
+      '">' +
+      esc(d.status || "") +
+      "</span></div>" +
+      '<div class="iw-sb-iteminfo-wh-title">' +
+      esc(I18N.t("LBL_LAST_INVOICE")) +
+      "</div>" +
+      '<div class="iw-sb-iteminfo-wh-row"><span class="wh-name">' +
+      lastInvoiceHtml +
+      "</span></div>" +
+      '<div class="iw-sb-iteminfo-wh-title">' +
+      esc(I18N.t("LBL_LAST_PAYMENT")) +
+      "</div>" +
+      '<div class="iw-sb-iteminfo-wh-row"><span class="wh-name">' +
+      lastPaymentHtml +
+      "</span></div>" +
+      '<div class="iw-sb-iteminfo-wh-title">' +
+      esc(I18N.t("LBL_LOYALTY_POINTS")) +
+      "</div>" +
+      '<div class="iw-sb-iteminfo-wh-row"><span class="wh-name">' +
+      esc(I18N.t("LBL_FEATURE_NOT_ENABLED")) +
+      "</span></div>" +
+      '<button class="iw-sb-btn" style="margin-top:10px" onclick="_iwOpenPartyStatement(\'' +
+      d.party_id +
+      "','" +
+      partyType +
+      '\')"><i class="ti ti-file-text"></i> ' +
+      esc(I18N.t("BTN_QUICK_STATEMENT")) +
+      "</button>"
+    );
+  }
+
+  // فتح كشف حساب سريع للعميل/المورد الحالي في الفاتورة
+  function _iwOpenPartyStatement(partyId, partyType) {
+    if (typeof navigateTo !== "function") return;
+    navigateTo(
+      partyType === "supplier" ? "supplier_statement" : "customer_statement",
+    );
+    if (typeof pmpLoadParty === "function") {
+      setTimeout(function () {
+        pmpLoadParty(partyId, partyType);
+      }, 60);
+    }
+  }
+
+  function _iwSelectLineItem(prefix, idx, itemId) {
+    var item = (APP.data.items || []).find(function (it) {
+      return String(it.id) === String(itemId);
+    });
+    if (!item) return;
+    var row = document.getElementById(prefix + "-line-" + idx);
+    if (!row) return;
+
+    var nameInput = row.querySelector("." + prefix + "-line-item");
+    nameInput.value = item.name || "";
+    nameInput.dataset.itemId = item.id;
+    _iwLastSelectedItemId[prefix] = item.id;
+
+    var codeEl = document.getElementById(prefix + "-line-code-" + idx);
+    if (codeEl) codeEl.textContent = item.code || item.id;
+
+    var unitEl = document.getElementById(prefix + "-line-unit-" + idx);
+    if (unitEl) unitEl.textContent = item.unit || I18N.t("UNIT_PIECE");
+
+    var whSel = row.querySelector("." + prefix + "-line-warehouse");
+    var headerWh = document.getElementById(prefix + "-warehouse");
+    var whVal =
+      whSel && whSel.value ? whSel.value : headerWh ? headerWh.value : "";
+    var stockEl = document.getElementById(prefix + "-line-stock-" + idx);
+    if (stockEl) stockEl.textContent = _iwCurrentStock(item.id, whVal);
+
+    var priceEl = row.querySelector("." + prefix + "-line-price");
+    if (priceEl && (!priceEl.value || Number(priceEl.value) === 0)) {
+      priceEl.value = Number(item.selling_price || item.cost_price || 0);
+    }
+
+    var listEl = document.getElementById(prefix + "-line-" + idx + "-list");
+    if (listEl) listEl.classList.remove("open");
+
+    _iwUpdateItemInfoPanel(prefix, item);
+    _calcInvoiceTotals(prefix);
+  }
+
+  function _iwHeaderWarehouseChanged(prefix) {
+    // تحديث الرصيد الحالي المعروض لكل صنف مُختار عند تغيير المخزن الرئيسي
+    var tbody = document.getElementById(prefix + "-lines-body");
+    if (!tbody) return;
+    var headerWh = document.getElementById(prefix + "-warehouse");
+    var whVal = headerWh ? headerWh.value : "";
+    tbody.querySelectorAll("tr").forEach(function (row) {
+      var whSel = row.querySelector("." + prefix + "-line-warehouse");
+      if (whSel && !whSel.value) whSel.value = whVal;
+      var nameInput = row.querySelector("." + prefix + "-line-item");
+      var itemId = nameInput ? nameInput.dataset.itemId : "";
+      if (!itemId) return;
+      var idx = nameInput.dataset.idx;
+      var stockEl = document.getElementById(prefix + "-line-stock-" + idx);
+      if (stockEl) stockEl.textContent = _iwCurrentStock(itemId, whVal);
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §IW-5  الشريط السفلي — الإجماليات + الدفع
+  // ─────────────────────────────────────────────────────────────
+  function _iwFooter(prefix, cfg) {
+    return (
+      '<div class="iw-footer">' +
+      /* [X-MAN-STYLE] عمود مصغّر من سطور تفصيلية (label + نقطة فاصلة
+         + قيمة بخط تحتي منقط) + رقم كبير بارز واحد بس (الصافي المطلوب)
+         عايم بجنب العمود ده — بدل الكروت المنفصلة اللي كانت قبل كده.
+          [X-MAN-LAYOUT-SWAP] بناءً على صورة مرجعية تانية بعتها العميل:
+         ضفنا سطرين "المدفوع" و"المتبقي" في نفس القايمة (بيتغذوا من حقل
+         المبلغ في جدول طريقة الدفع)، وشلنا سطر "عدد الأصناف" و"الإجمالي
+         بعد الخصم" عشان القايمة تفضل مختصرة زي المرجع (لسه القيم دي
+         بتتحسب وبتتحدّث في الشريط العلوي الثابت لو موجود). كل الـ ids
+         والمنطق البرمجي (oninput/onchange) اتسابوا زي ما هم بالظبط. */
+      '<div class="iw-totals-list">' +
+      '<div class="iw-totals-mini">' +
+      '<div class="iw-tmr"><span class="iw-tmr-label">' +
+      esc(I18N.t("LBL_SUBTOTAL_BEFORE_DISCOUNT")) +
+      '</span><span class="iw-tmr-dot"></span><b class="iw-tmr-value" id="' +
+      prefix +
+      '-subtotal">0.00 ' +
+      esc(I18N.t("CURRENCY_EGP")) +
+      "</b></div>" +
+      '<div class="iw-tmr"><span class="iw-tmr-label">' +
+      esc(I18N.t("LBL_EXTRA_DISCOUNT")) +
+      '</span><span class="iw-tmr-dot"></span>' +
+      '<span class="iw-tmr-value-input">' +
+      '<input class="input" type="number" id="' +
+      prefix +
+      '-discount-val" value="0" min="0" step="0.01" oninput="_calcInvoiceTotals(\'' +
+      prefix +
+      "')\">" +
+      '<select class="input" id="' +
+      prefix +
+      '-discount-type" onchange="_calcInvoiceTotals(\'' +
+      prefix +
+      '\')"><option value="percent">%</option><option value="fixed">' +
+      esc(I18N.t("CURRENCY_EGP")) +
+      "</option></select>" +
+      "</span></div>" +
+      '<div class="iw-tmr"><span class="iw-tmr-label">' +
+      esc(I18N.t("LBL_VAT")) +
+      '</span><span class="iw-tmr-dot"></span>' +
+      '<span class="iw-tmr-value-input">' +
+      '<input class="input" type="number" id="' +
+      prefix +
+      '-vat" value="0" min="0" max="100" step="0.01" oninput="_calcInvoiceTotals(\'' +
+      prefix +
+      '\')"><span class="iw-tmr-suffix">%</span></span></div>' +
+      '<div class="iw-tmr"><span class="iw-tmr-label">' +
+      esc(I18N.t("LBL_PAID")) +
+      '</span><span class="iw-tmr-dot"></span><b class="iw-tmr-value" id="' +
+      prefix +
+      '-paid-display">0.00 ' +
+      esc(I18N.t("CURRENCY_EGP")) +
+      "</b></div>" +
+      '<div class="iw-tmr"><span class="iw-tmr-label">' +
+      esc(I18N.t("LBL_REMAINING")) +
+      '</span><span class="iw-tmr-dot"></span><b class="iw-tmr-value" id="' +
+      prefix +
+      '-remaining">0.00 ' +
+      esc(I18N.t("CURRENCY_EGP")) +
+      "</b></div>" +
+      "</div>" +
+      '<div class="iw-totals-big">' +
+      '<span class="iw-totals-big-label">' +
+      esc(I18N.t("LBL_NET_REQUIRED")) +
+      '</span><span class="iw-net-display" id="' +
+      prefix +
+      '-nettotal">0.00</span></div>' +
+      "</div>" +
+      /* [X-MAN-PAY-TABLE] جدول طريقة الدفع (النوع/اسم الحساب/المبلغ)
+         بدل صناديق منفصلة — نفس المرجع. حقل "النوع" (نوع المستند
+         بيع/شراء) اتشال من هنا لأنه أصلاً ظاهر في عنوان الصفحة فوق،
+         فمبقاش له داعي يتكرر. */
+      '<div class="iw-pay-table">' +
+      '<div class="iw-pay-row iw-pay-head">' +
+      "<span></span>" +
+      "<span>" +
+      esc(I18N.t("LBL_TYPE")) +
+      "</span>" +
+      "<span>" +
+      esc(I18N.t("LBL_CASH_ACCOUNT_NAME")) +
+      "</span>" +
+      "<span>" +
+      esc(I18N.t("LBL_PAID_NOW")) +
+      "</span>" +
+      "</div>" +
+      '<div class="iw-pay-row">' +
+      '<span class="iw-pay-row-label">' +
+      esc(I18N.t("LBL_PAYMENT_METHOD")) +
+      "</span>" +
+      '<span class="iw-pay-type">' +
+      '<i class="ti ti-cash-banknote" id="' +
+      prefix +
+      '-pay-method-icon"></i>' +
+      '<span id="' +
+      prefix +
+      // القيمة الابتدائية هنا نص عرض فقط (يُستبدل لاحقًا عبر مستمع تغيير
+      // زر الدفع في _iwBindInvoicePage الذي يترجم القيمة الفعلية إلى
+      // النص المعروض بدل عرض القيمة الداخلية الخام).
+      '-pay-method-display">' +
+      esc(I18N.t("LBL_PAYMENT_CASH")) +
+      "</span></span>" +
+      '<input class="input" id="' +
+      prefix +
+      '-cash-account" placeholder="' +
+      esc(I18N.t("PH_MAIN_TREASURY")) +
+      '">' +
+      '<input class="input" type="number" id="' +
+      prefix +
+      '-paid-now" value="0" min="0" step="0.01" oninput="_calcInvoiceTotals(\'' +
+      prefix +
+      "')\">" +
+      "</div>" +
+      "</div>" +
+      _iwActionsBar(prefix, cfg) +
+      "</div>"
+    );
+  }
+
+  function _iwActionsBar(prefix, cfg) {
+    return (
+      '<div class="iw-actions-bar">' +
+      withPermission(
+        '<button class="btn btn-success" onclick="_iwSave(\'' +
+          prefix +
+          "','new')\"><i class=\"ti ti-device-floppy\"></i> " +
+          esc(I18N.t("BTN_SAVE_AND_NEW")) +
+          "</button>",
+        cfg.permKey,
+      ) +
+      withPermission(
+        '<button class="btn btn-success" onclick="_iwSave(\'' +
+          prefix +
+          "','print')\"><i class=\"ti ti-printer\"></i> " +
+          esc(I18N.t("BTN_SAVE_AND_PRINT")) +
+          "</button>",
+        cfg.permKey,
+      ) +
+      withPermission(
+        '<button class="btn btn-primary" id="' +
+          prefix +
+          '-save-btn" onclick="_iwSave(\'' +
+          prefix +
+          '\',\'close\')"><span class="inv-tbtn-label"><i class="ti ti-check"></i> ' +
+          esc(I18N.t("BTN_SAVE_AND_CLOSE")) +
+          "</span></button>",
+        cfg.permKey,
+      ) +
+      "</div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §IW-6  رندر الصفحات الأربع
+  // ─────────────────────────────────────────────────────────────
+  function _iwRenderInvoicePage(prefix) {
+    var cfg = IW_DOC_CFG[prefix];
+    return (
+      '<div class="iw-page">' +
+      _iwToolbar(prefix, cfg) +
+      '<div class="iw-body">' +
+      _iwSidebar(prefix, cfg) +
+      '<div class="iw-main">' +
+      _iwInvoiceHeader(prefix, cfg) +
+      _iwInvGrid(prefix, cfg) +
+      _iwFooter(prefix, cfg) +
+      "</div></div></div>"
+    );
+  }
+
+  function renderSaleInvoiceWorkspace() {
+    return _iwRenderInvoicePage("sinv");
+  }
+  function renderPurchaseInvoiceWorkspace() {
+    return _iwRenderInvoicePage("pinv");
+  }
+
+  function _iwBindInvoicePage(prefix) {
+    var cfg = IW_DOC_CFG[prefix];
+    _bindPartyAutocomplete(prefix + "-party", cfg.partyKey);
+    var _iwPartyType = cfg.partyKey === "suppliers" ? "supplier" : "customer";
+    var _iwPartyEl = document.getElementById(prefix + "-party");
+    if (_iwPartyEl) {
+      _iwPartyEl.addEventListener("blur", function () {
+        setTimeout(function () {
+          _iwLoadPartyCard(prefix, _iwPartyType);
+        }, 30);
+      });
+    }
+
+    document
+      .querySelectorAll('input[name="' + prefix + '-payment"]')
+      .forEach(function (radio) {
+        radio.addEventListener("change", function () {
+          var isDeferred = this.value === "آجل"; // قيمة داخلية ثابتة، لا تُترجم
+          document.getElementById(prefix + "-due-wrap").style.display =
+            isDeferred ? "" : "none";
+          var disp = document.getElementById(prefix + "-pay-method-display");
+          if (disp)
+            disp.textContent = I18N.t(
+              isDeferred ? "LBL_PAYMENT_DEFERRED" : "LBL_PAYMENT_CASH",
+            );
+          var icon = document.getElementById(prefix + "-pay-method-icon");
+          if (icon)
+            icon.className = isDeferred
+              ? "ti ti-calendar-due"
+              : "ti ti-cash-banknote";
+        });
+      });
+
+    if (window.SplitSelect) {
+      SplitSelect.init(prefix + "-warehouse", {
+        label: I18N.t("LBL_WAREHOUSE"),
+        icon: "ti-building-warehouse",
+        searchable: true,
+      });
+    }
+
+    // معالجة إذن الصرف/الاستلام المرتبط (لو جاي من زر "إنشاء فاتورة" في شاشة الأذونات)
+    if (APP._iwPrefillPermitId) {
+      var txType = prefix === "sinv" ? "OUT" : "IN";
+      var lines = _buildInvoiceLinesFromPermit(APP._iwPrefillPermitId, txType);
+      if (lines.length) {
+        var tbody = document.getElementById(prefix + "-lines-body");
+        tbody.innerHTML = "";
+        _iwLineSeq[prefix] = -1;
+        lines.forEach(function (line) {
+          _iwLineSeq[prefix]++;
+          var idx = _iwLineSeq[prefix];
+          tbody.insertAdjacentHTML(
+            "beforeend",
+            _iwBuildInvLineRow(prefix, idx),
+          );
+          if (line.item_id) _iwSelectLineItem(prefix, idx, line.item_id);
+          var row = document.getElementById(prefix + "-line-" + idx);
+          var qtyEl = row.querySelector("." + prefix + "-line-qty");
+          if (qtyEl) qtyEl.value = line.qty;
+        });
+        if (lines[0] && lines[0]._tx && lines[0]._tx.party) {
+          var partyInput = document.getElementById(prefix + "-party");
+          if (partyInput) partyInput.value = lines[0]._tx.party;
+        }
+      }
+      APP._iwPrefillPermitId = null;
+    }
+
+    _calcInvoiceTotals(prefix);
+  }
+
+  function bindSaleInvoiceWorkspace() {
+    _iwBindInvoicePage("sinv");
+  }
+  function bindPurchaseInvoiceWorkspace() {
+    _iwBindInvoicePage("pinv");
+  }
+
+  // ── صفحات المرتجعات — تعيد استخدام صفوف/دوال المرتجع الأصلية حرفيًا ──
+  function _iwReturnGrid(prefix, cfg) {
+    var t = _iwCfgText(cfg);
+    var prefillRows = "";
+    if (APP._iwPrefillInvoiceId) {
+      var srcArr = APP.data[cfg.sourceArrayKey] || [];
+      var inv = srcArr.find(function (i) {
+        return i.id === APP._iwPrefillInvoiceId;
+      });
+      if (inv) {
+        var invLines = Array.isArray(inv.lines_json) ? inv.lines_json : [];
+        prefillRows = invLines
+          .map(function (l, idx) {
+            return _renderReturnLineRow(l, idx, prefix);
+          })
+          .join("");
+      }
+    }
+    if (!prefillRows) prefillRows = _renderReturnLineRow({}, 0, prefix);
+
+    return (
+      '<div class="iw-grid-card">' +
+      '<div class="iw-grid-head"><h3><i class="ti ti-arrow-back-up"></i> ' +
+      esc(I18N.t("MSG_RETURN_ITEMS_HEADER", { doc: t.docLabel })) +
+      "</h3></div>" +
+      '<div class="iw-table-wrap"><table class="iw-table" style="min-width:820px">' +
+      "<thead><tr><th>" +
+      esc(I18N.t("COL_ITEM")) +
+      "</th><th>" +
+      esc(I18N.t("COL_COLOR")) +
+      "</th><th>" +
+      esc(I18N.t("COL_QTY")) +
+      "</th><th>" +
+      esc(I18N.t("COL_UNIT_PRICE")) +
+      "</th><th>" +
+      esc(I18N.t("COL_TOTAL")) +
+      "</th><th></th></tr></thead>" +
+      '<tbody id="' +
+      prefix +
+      '-lines-body">' +
+      prefillRows +
+      "</tbody></table></div>" +
+      '<div class="iw-add-row-bar">' +
+      '<button class="btn btn-outline btn-sm" onclick="_addReturnLine(\'' +
+      prefix +
+      '\')"><i class="ti ti-plus"></i> ' +
+      esc(I18N.t("BTN_ADD_ITEM")) +
+      "</button>" +
+      "<span></span></div></div>"
+    );
+  }
+
+  function _iwRenderReturnPage(prefix) {
+    var cfg = IW_DOC_CFG[prefix];
+    return (
+      '<div class="iw-page">' +
+      '<div class="iw-body">' +
+      _iwSidebar(prefix, cfg) +
+      '<div class="iw-main">' +
+      _iwReturnHeader(prefix, cfg) +
+      _iwReturnGrid(prefix, cfg) +
+      _renderInvoiceTotalsSection(prefix) +
+      _iwActionsBarReturn(prefix, cfg) +
+      "</div></div></div>"
+    );
+  }
+
+  function _iwActionsBarReturn(prefix, cfg) {
+    var t = _iwCfgText(cfg);
+    return (
+      '<div class="iw-actions-bar">' +
+      withPermission(
+        '<button class="btn btn-primary" onclick="' +
+          cfg.saveFn +
+          '()"><i class="ti ti-device-floppy"></i> ' +
+          esc(I18N.t("BTN_SAVE")) +
+          " " +
+          esc(t.docLabel) +
+          "</button>",
+        cfg.permKey,
+      ) +
+      "</div>"
+    );
+  }
+
+  function renderSaleReturnWorkspace() {
+    return _iwRenderReturnPage("sret");
+  }
+  function renderPurchaseReturnWorkspace() {
+    return _iwRenderReturnPage("pret");
+  }
+
+  function _iwBindReturnPage(prefix) {
+    var cfg = IW_DOC_CFG[prefix];
+    _bindPartyAutocomplete(prefix + "-party", cfg.partyKey);
+    var _iwPartyType2 = cfg.partyKey === "suppliers" ? "supplier" : "customer";
+    var _iwPartyEl2 = document.getElementById(prefix + "-party");
+    if (_iwPartyEl2) {
+      _iwPartyEl2.addEventListener("blur", function () {
+        setTimeout(function () {
+          _iwLoadPartyCard(prefix, _iwPartyType2);
+        }, 30);
+      });
+    }
+    if (window.SplitSelect) {
+      SplitSelect.init(prefix + "-warehouse", {
+        label: I18N.t("LBL_WAREHOUSE"),
+        icon: "ti-building-warehouse",
+        searchable: true,
+      });
+    }
+    APP._iwPrefillInvoiceId = null;
+    _bindInvoiceTotalsCalc(prefix);
+    _calcInvoiceTotals(prefix);
+  }
+
+  function bindSaleReturnWorkspace() {
+    _iwBindReturnPage("sret");
+  }
+  function bindPurchaseReturnWorkspace() {
+    _iwBindReturnPage("pret");
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §IW-7  الحفظ (حفظ وجديد / حفظ وطباعة / حفظ وإغلاق)
+  // ─────────────────────────────────────────────────────────────
+  function _iwSave(prefix, mode) {
+    APP._iwSaveMode = mode; // يُقرأ داخل saveSaleInvoice/savePurchaseInvoice بعد النجاح
+    if (prefix === "sinv") saveSaleInvoice();
+    else if (prefix === "pinv") savePurchaseInvoice();
+  }
+
+  // يُستدعى من داخل saveSaleInvoice/savePurchaseInvoice (15_JS_Invoices.html)
+  // بعد نجاح الحفظ ليحدد السلوك التالي حسب الزر المستخدم.
+  function _iwAfterSave(prefix, cfg, savedId) {
+    var mode = APP._iwSaveMode || "close";
+    APP._iwSaveMode = null;
+    if (mode === "new") {
+      renderPage(APP.currentPage); // إعادة رسم نفس شاشة الإدخال فارغة
+      NotificationEngine.info(I18N.t("MSG_READY_NEW_INVOICE"));
+    } else if (mode === "print") {
+      renderPage(cfg.listPage);
+      setTimeout(function () {
+        if (prefix === "sinv") printSaleInvoice(savedId);
+        else printPurchaseInvoice(savedId);
+      }, 200);
+    } else {
+      renderPage(cfg.listPage);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §IW-8  أدوات الشريط الجانبي: باركود / خصم سريع / آلة حاسبة
+  // ─────────────────────────────────────────────────────────────
+  function _iwConfirmLeave(prefix, thenFn) {
+    var hasData = false;
+    var tbody = document.getElementById(prefix + "-lines-body");
+    if (tbody) {
+      hasData = Array.prototype.some.call(
+        tbody.querySelectorAll("." + prefix + "-line-item"),
+        function (el) {
+          return el.value && el.value.trim();
+        },
+      );
+    }
+    if (!hasData) {
+      thenFn();
+      return;
+    }
+    showConfirm({
+      title: I18N.t("TITLE_LEAVE_INVOICE"),
+      message: I18N.t("MSG_LEAVE_INVOICE_CONFIRM"),
+      icon: "ti-alert-triangle",
+      iconColor: "#e11d48",
+      confirmText: I18N.t("BTN_CONTINUE"),
+      confirmClass: "btn-danger",
+      onConfirm: thenFn,
+    });
+  }
+
+  function _iwSafeOpenItemModal(prefix) {
+    _iwConfirmLeave(prefix, function () {
+      openItemModal();
+    });
+  }
+
+  function _iwGotoItemsPricing(prefix) {
+    _iwConfirmLeave(prefix, function () {
+      renderPage("items");
+    });
+  }
+
+  function _iwGotoList(prefix, listPage) {
+    _iwConfirmLeave(prefix, function () {
+      renderPage(listPage);
+    });
+  }
+
+  function _iwPrintLastSelectedBarcode(prefix) {
+    var itemId = _iwLastSelectedItemId[prefix];
+    if (!itemId) {
+      NotificationEngine.info(I18N.t("MSG_SELECT_ITEM_FIRST"));
+      return;
+    }
+    if (typeof printItemBarcode === "function") {
+      printItemBarcode(itemId);
+    } else if (typeof _printBarcodeBuiltIn === "function") {
+      _printBarcodeBuiltIn(itemId);
+    } else {
+      NotificationEngine.error(I18N.t("MSG_BARCODE_SCREEN_ERROR"));
+    }
+  }
+
+  function _iwOpenDiscountShortcut(prefix) {
+    var current = document.getElementById(prefix + "-discount-val");
+    var currentVal = current ? current.value : 0;
+    openModal(
+      I18N.t("BTN_APPLY_INVOICE_DISCOUNT"),
+      '<div style="padding:4px 2px">' +
+        '<label class="form-label">' +
+        esc(I18N.t("LBL_DISCOUNT_PERCENT_VALUE")) +
+        "</label>" +
+        '<div style="display:flex;gap:8px;margin-top:6px">' +
+        '<input class="input" type="number" id="iw-disc-shortcut-val" value="' +
+        esc(currentVal) +
+        '" min="0" step="0.01" style="flex:1">' +
+        '<select class="input" id="iw-disc-shortcut-type" style="width:100px">' +
+        '<option value="percent">%</option><option value="fixed">' +
+        esc(I18N.t("CURRENCY_EGP")) +
+        "</option>" +
+        "</select></div>" +
+        '<button class="btn btn-primary" style="margin-top:14px;width:100%" ' +
+        "onclick=\"_iwApplyDiscountShortcut('" +
+        prefix +
+        "')\">" +
+        esc(I18N.t("BTN_APPLY")) +
+        "</button></div>",
+    );
+  }
+
+  function _iwApplyDiscountShortcut(prefix) {
+    var val = document.getElementById("iw-disc-shortcut-val");
+    var type = document.getElementById("iw-disc-shortcut-type");
+    var targetVal = document.getElementById(prefix + "-discount-val");
+    var targetType = document.getElementById(prefix + "-discount-type");
+    if (targetVal) targetVal.value = val ? val.value : 0;
+    if (targetType) targetType.value = type ? type.value : "percent";
+    _calcInvoiceTotals(prefix);
+    closeModal();
+    NotificationEngine.success(I18N.t("MSG_DISCOUNT_APPLIED"));
+  }
+
+  function _iwOpenCalculator() {
+    openStyledDrawer({
+      title: I18N.t("BTN_CALCULATOR"),
+      icon: "ti-calculator",
+      color: "blue",
+      width: 520, // [UX] أوسع من الـ 860 الافتراضي عشان الآلة الحاسبة الأكبر تتمركز كويس
+      body:
+        '<div class="iw-calc">' +
+        '<div class="iw-calc-screen" id="iw-calc-screen">0</div>' +
+        '<div class="iw-calc-grid">' +
+        [
+          "7",
+          "8",
+          "9",
+          "÷",
+          "4",
+          "5",
+          "6",
+          "×",
+          "1",
+          "2",
+          "3",
+          "−",
+          "0",
+          ".",
+          "=",
+          "+",
+        ]
+          .map(function (k) {
+            var cls =
+              k === "="
+                ? "eq"
+                : ["÷", "×", "−", "+"].indexOf(k) !== -1
+                  ? "op"
+                  : "";
+            return (
+              '<button class="iw-calc-btn ' +
+              cls +
+              '" onclick="_iwCalcPress(\'' +
+              k +
+              "')\">" +
+              k +
+              "</button>"
+            );
+          })
+          .join("") +
+        "</div>" +
+        '<button class="iw-calc-btn clear" style="width:100%;margin-top:6px" onclick="_iwCalcPress(\'C\')">C</button>' +
+        "</div>",
+    });
+    _iwCalcState = { expr: "" };
+  }
+
+  var _iwCalcState = { expr: "" };
+  function _iwCalcPress(key) {
+    var screen = document.getElementById("iw-calc-screen");
+    if (!screen) return;
+    if (key === "C") {
+      _iwCalcState.expr = "";
+    } else if (key === "=") {
+      try {
+        var safeExpr = _iwCalcState.expr
+          .replace(/×/g, "*")
+          .replace(/÷/g, "/")
+          .replace(/−/g, "-");
+        if (!/^[0-9+\-*/.\s]+$/.test(safeExpr)) throw new Error("invalid");
+        var result = Function('"use strict";return (' + safeExpr + ")")();
+        _iwCalcState.expr = String(
+          Math.round((result + Number.EPSILON) * 100) / 100,
+        );
+      } catch (e) {
+        _iwCalcState.expr = I18N.t("MSG_CALC_ERROR");
+      }
+    } else {
+      if (_iwCalcState.expr === I18N.t("MSG_CALC_ERROR"))
+        _iwCalcState.expr = "";
+      _iwCalcState.expr += key;
+    }
+    screen.textContent = _iwCalcState.expr || "0";
+  }
+</script>

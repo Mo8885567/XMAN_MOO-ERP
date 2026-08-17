@@ -1,0 +1,2281 @@
+<script>
+  // ════════════════════════════════════════════════════════════════
+  // 16_JS_VodafoneCash.html
+  // مركز عمليات المحافظ الإلكترونية — منطق الربط (bind) + الحالة
+  // الـ render functions (renderVodafoneCash + _vfcRender*) موجودة
+  // في Templates.html طبقاً لاتفاقية المشروع.
+  // ════════════════════════════════════════════════════════════════
+
+  var VC_STATE = {
+    lines: [],
+    stats: null,
+    insights: null,
+    alerts: [],
+    liveTx: [],
+    providerFilter: "",
+    filters: { search: "", status: "", branch: "", employee: "" },
+    detailLineId: null,
+    detailCache: {},
+    loaded: false,
+  };
+
+  var _vcPollTimer = null;
+  var _vcPollCounter = 0;
+  var _vcFilteredMode = false;
+  var _vcKnownTxIds = {};
+
+  // ── [VC-CACHE] كاش بيانات المحافظ في sessionStorage (5 دقائق) ────
+  var _vcCacheKey = "wms_vc_cache_v1";
+  var _vcCacheTTL = 300000; // 5 دقائق
+
+  function _vcSaveCache(data) {
+    try {
+      sessionStorage.setItem(
+        _vcCacheKey,
+        JSON.stringify({ data: data, ts: Date.now() }),
+      );
+    } catch (e) {}
+  }
+
+  function _vcLoadCache() {
+    try {
+      var raw = sessionStorage.getItem(_vcCacheKey);
+      if (!raw) return null;
+      var c = JSON.parse(raw);
+      if (Date.now() - c.ts > _vcCacheTTL) return null;
+      return c.data;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function _vcApplyCache(res) {
+    if (res.stats && res.stats.success) {
+      VC_STATE.stats = res.stats;
+      var grid = document.getElementById("vc-kpi-grid");
+      if (grid) {
+        grid.innerHTML = _vfcRenderKpis(res.stats);
+        grid.style.opacity = "1";
+      }
+      var tabsEl = document.getElementById("vc-provider-tabs");
+      if (tabsEl)
+        tabsEl.innerHTML = _vfcRenderProviderTabs(
+          VC_STATE.providerFilter,
+          res.stats.providerUsage,
+        );
+      var chartWeek = document.getElementById("vc-chart-week");
+      if (chartWeek) {
+        chartWeek.innerHTML =
+          res.stats.weekSeries && res.stats.weekSeries.length
+            ? _vfcSvgBarChart(
+                res.stats.weekSeries.map(function (s) {
+                  return {
+                    label: s.date.slice(5),
+                    a: s.deposit,
+                    b: s.withdraw,
+                  };
+                }),
+                {
+                  width: 560,
+                  height: 170,
+                  colorA: "#10B981",
+                  colorB: "#EF4444",
+                },
+              )
+            : '<div class="vc-empty-mini">لا توجد بيانات بعد</div>';
+      }
+      var chartProv = document.getElementById("vc-chart-providers");
+      if (chartProv) {
+        var slices = (res.stats.providerUsage || [])
+          .filter(function (p) {
+            return p.linesCount > 0;
+          })
+          .map(function (p) {
+            return { label: p.name, value: p.linesCount, color: p.color };
+          });
+        chartProv.innerHTML = slices.length
+          ? _vfcSvgDonut(slices, { size: 150 }) +
+            '<div class="vc-donut-legend">' +
+            slices
+              .map(function (s) {
+                return (
+                  '<div class="vc-legend-item"><span class="vc-legend-dot" style="background:' +
+                  s.color +
+                  '"></span>' +
+                  esc(s.label) +
+                  " (" +
+                  s.value +
+                  ")</div>"
+                );
+              })
+              .join("") +
+            "</div>"
+          : '<div class="vc-empty-mini">لا توجد بيانات</div>';
+      }
+      var topLines = document.getElementById("vc-top-lines");
+      if (topLines)
+        topLines.innerHTML = _vfcRenderTopList(
+          res.stats.topLines,
+          "txCount",
+          function (i) {
+            return i.customer_name + " (" + i.vf_number + ")";
+          },
+        );
+      var topEmp = document.getElementById("vc-top-employees");
+      if (topEmp)
+        topEmp.innerHTML = _vfcRenderTopList(
+          res.stats.topEmployees,
+          "count",
+          function (i) {
+            return i.user;
+          },
+        );
+    }
+    if (res.lines && res.lines.success) {
+      VC_STATE.lines = res.lines.lines;
+      VC_STATE.loaded = true;
+      _vcPopulateBranchEmployeeFilters(res.lines.lines);
+      _vcRenderTable();
+    }
+    if (res.alerts && res.alerts.success) {
+      VC_STATE.alerts = res.alerts.alerts;
+      var alertEl = document.getElementById("vc-alerts-wrap");
+      if (alertEl) alertEl.innerHTML = _vfcRenderAlerts(res.alerts.alerts);
+      var cnt = document.getElementById("vc-alerts-count");
+      if (cnt) cnt.textContent = res.alerts.alerts.length;
+    }
+    if (res.insights && res.insights.success) {
+      VC_STATE.insights = res.insights;
+      var insEl = document.getElementById("vc-insights-wrap");
+      if (insEl) insEl.innerHTML = _vfcRenderInsights(res.insights);
+    }
+  }
+
+  // [VC-PRELOAD] يُستدعى بعد اللوجين لتحميل بيانات المحافظ في الخلفية
+  var _vcPreloading = false;
+  function _vcPreload() {
+    if (_vcPreloading || VC_STATE.loaded) return;
+    var cached = _vcLoadCache();
+    if (cached) {
+      VC_STATE._cachedData = cached;
+      return;
+    }
+    _vcPreloading = true;
+    _gsr(
+      "getVodafoneCashAllData",
+      [
+        {
+          provider: "",
+          filters: { status: "", branch: "", employee: "", search: "" },
+        },
+      ],
+      {
+        label: "getVodafoneCashAllData:preload",
+        rawResponse: true,
+        onSuccess: function (r) {
+          _vcPreloading = false;
+          var res = r && r.data;
+          if (res && res.success) {
+            VC_STATE._cachedData = res;
+            _vcSaveCache(res);
+          }
+        },
+        onError: function () {
+          _vcPreloading = false;
+        },
+      },
+    );
+  }
+
+  // ── نقطة الدخول — يستدعيها الراوتر في 01_JS_Core_Auth ──────────
+  function bindVodafoneCash() {
+    _vcKnownTxIds = {};
+    _vcFilteredMode = false;
+    VC_STATE.providerFilter = "";
+    VC_STATE.filters = { search: "", status: "", branch: "", employee: "" };
+
+    // [VC-CACHE] لو في بيانات محملة مسبقاً (preload أو كاش) → اعرضها فوراً
+    var preloaded = VC_STATE._cachedData || _vcLoadCache();
+    if (preloaded) {
+      VC_STATE._cachedData = null;
+      _vcApplyCache(preloaded);
+      _vcSetLoading(false);
+      // تحديث صامت في الخلفية لضمان حداثة البيانات
+      setTimeout(function () {
+        _vcLoadAll(true);
+      }, 800);
+    } else {
+      _vcLoadAll();
+    }
+    _vcBindToolbar();
+    _vcStartPolling();
+  }
+
+  var _vcLoading = false;
+
+  function _vcSetLoading(on) {
+    _vcLoading = on;
+    var tabs = document.getElementById("vc-provider-tabs");
+    if (tabs) tabs.style.opacity = on ? "0.6" : "1";
+    var grid = document.getElementById("vc-kpi-grid");
+    if (grid) grid.style.opacity = on ? "0.5" : "1";
+    var tbody = document.getElementById("vc-lines-table-wrap");
+    if (tbody) {
+      if (on) {
+        tbody.innerHTML =
+          '<div class="vc-empty-mini"><div class="spinner" style="margin:auto"></div></div>';
+      } else {
+        // [FIX-VC-SPINNER] لو الـ spinner موجود بعد إيقاف التحميل — نوضح حالة فارغة بدل ما يفضل
+        // هذا يُصلح البق: لما res.success=false كان الـ spinner يفضل للأبد في الجدول
+        var spinnerRow = tbody.querySelector(".vc-empty-mini .spinner");
+        if (spinnerRow) {
+          tbody.innerHTML =
+            '<div class="vc-empty-mini" style="color:var(--text3);padding:20px">' +
+            '<i class="ti ti-inbox" style="font-size:20px;display:block;text-align:center;margin-bottom:6px"></i>' +
+            '<div style="text-align:center;font-size:12px">لا توجد بيانات</div>' +
+            "</div>";
+        }
+      }
+    }
+  }
+
+  // silent=true → تحديث خلفي بدون أي loading state أو وميض
+  function _vcLoadAll(silent) {
+    if (_vcLoading) return;
+    if (!silent) _vcSetLoading(true);
+    _gsr(
+      "getVodafoneCashAllData",
+      [
+        {
+          provider: VC_STATE.providerFilter,
+          filters: {
+            status: VC_STATE.filters.status,
+            branch: VC_STATE.filters.branch,
+            employee: VC_STATE.filters.employee,
+            search: VC_STATE.filters.search,
+          },
+        },
+      ],
+      {
+        label: "getVodafoneCashAllData",
+        rawResponse: true,
+        onSuccess: function (r) {
+          var res = r && r.data;
+          if (!silent) _vcSetLoading(false);
+          _vcLoading = false;
+          // [FIX-VC-SILENT-FAIL] بدل الصمت — نوضح خطأ للمستخدم غير الصامت
+          if (!res || !res.success) {
+            if (!silent && typeof showToast === "function") {
+              NotificationEngine.error((res && res.message) || "تعذر تحميل البيانات");
+            }
+            return;
+          }
+          // Stats
+          if (res.stats && res.stats.success) {
+            VC_STATE.stats = res.stats;
+            var grid = document.getElementById("vc-kpi-grid");
+            if (grid) {
+              grid.innerHTML = _vfcRenderKpis(res.stats);
+              grid.style.opacity = "1";
+            }
+            var tabsEl = document.getElementById("vc-provider-tabs");
+            if (tabsEl)
+              tabsEl.innerHTML = _vfcRenderProviderTabs(
+                VC_STATE.providerFilter,
+                res.stats.providerUsage,
+              );
+            var chartWeek = document.getElementById("vc-chart-week");
+            if (chartWeek) {
+              chartWeek.innerHTML =
+                res.stats.weekSeries && res.stats.weekSeries.length
+                  ? _vfcSvgBarChart(
+                      res.stats.weekSeries.map(function (s) {
+                        return {
+                          label: s.date.slice(5),
+                          a: s.deposit,
+                          b: s.withdraw,
+                        };
+                      }),
+                      {
+                        width: 560,
+                        height: 170,
+                        colorA: "#10B981",
+                        colorB: "#EF4444",
+                      },
+                    )
+                  : '<div class="vc-empty-mini">لا توجد بيانات بعد</div>';
+            }
+            var chartProv = document.getElementById("vc-chart-providers");
+            if (chartProv) {
+              var slices = (res.stats.providerUsage || [])
+                .filter(function (p) {
+                  return p.linesCount > 0;
+                })
+                .map(function (p) {
+                  return { label: p.name, value: p.linesCount, color: p.color };
+                });
+              chartProv.innerHTML = slices.length
+                ? _vfcSvgDonut(slices, { size: 150 }) +
+                  '<div class="vc-donut-legend">' +
+                  slices
+                    .map(function (s) {
+                      return (
+                        '<div class="vc-legend-item"><span class="vc-legend-dot" style="background:' +
+                        s.color +
+                        '"></span>' +
+                        esc(s.label) +
+                        " (" +
+                        s.value +
+                        ")</div>"
+                      );
+                    })
+                    .join("") +
+                  "</div>"
+                : '<div class="vc-empty-mini">لا توجد بيانات</div>';
+            }
+            var topLines = document.getElementById("vc-top-lines");
+            if (topLines)
+              topLines.innerHTML = _vfcRenderTopList(
+                res.stats.topLines,
+                "txCount",
+                function (i) {
+                  return i.customer_name + " (" + i.vf_number + ")";
+                },
+              );
+            var topEmp = document.getElementById("vc-top-employees");
+            if (topEmp)
+              topEmp.innerHTML = _vfcRenderTopList(
+                res.stats.topEmployees,
+                "count",
+                function (i) {
+                  return i.user;
+                },
+              );
+          }
+          // Lines
+          if (res.lines && res.lines.success) {
+            VC_STATE.lines = res.lines.lines;
+            VC_STATE.loaded = true;
+            _vcPopulateBranchEmployeeFilters(res.lines.lines);
+            _vcRenderTable();
+          }
+          // Alerts
+          if (res.alerts && res.alerts.success) {
+            VC_STATE.alerts = res.alerts.alerts;
+            var alertEl = document.getElementById("vc-alerts-wrap");
+            if (alertEl)
+              alertEl.innerHTML = _vfcRenderAlerts(res.alerts.alerts);
+            var cnt = document.getElementById("vc-alerts-count");
+            if (cnt) cnt.textContent = res.alerts.alerts.length;
+          }
+          // Insights
+          if (res.insights && res.insights.success) {
+            VC_STATE.insights = res.insights;
+            var insEl = document.getElementById("vc-insights-wrap");
+            if (insEl) insEl.innerHTML = _vfcRenderInsights(res.insights);
+          }
+          // [VC-CACHE] احفظ الـ response كاملاً لو الفلاتر افتراضية
+          if (
+            !VC_STATE.providerFilter &&
+            !VC_STATE.filters.status &&
+            !VC_STATE.filters.branch &&
+            !VC_STATE.filters.employee &&
+            !VC_STATE.filters.search
+          ) {
+            _vcSaveCache(res);
+          }
+        },
+        onError: function () {
+          if (!silent) {
+            _vcSetLoading(false);
+            NotificationEngine.error("تعذر تحميل البيانات، حاول مرة أخرى");
+          }
+          _vcLoading = false;
+        },
+      },
+    );
+    if (!_vcFilteredMode) _vcLoadLiveFeed();
+  }
+
+  function _vcLoadStats() {
+    _gsr("getVodafoneCashDashboardStats", [VC_STATE.providerFilter], {
+      label: "getVodafoneCashDashboardStats",
+      onSuccess: function (r) {
+        var res = r.data;
+        if (!res) return;
+        VC_STATE.stats = res;
+        var grid = document.getElementById("vc-kpi-grid");
+        if (grid) grid.innerHTML = _vfcRenderKpis(res);
+        var tabsEl = document.getElementById("vc-provider-tabs");
+        if (tabsEl)
+          tabsEl.innerHTML = _vfcRenderProviderTabs(
+            VC_STATE.providerFilter,
+            res.providerUsage,
+          );
+        var chartWeek = document.getElementById("vc-chart-week");
+        if (chartWeek) {
+          chartWeek.innerHTML =
+            res.weekSeries && res.weekSeries.length
+              ? _vfcSvgBarChart(
+                  res.weekSeries.map(function (s) {
+                    return {
+                      label: s.date.slice(5),
+                      a: s.deposit,
+                      b: s.withdraw,
+                    };
+                  }),
+                  {
+                    width: 560,
+                    height: 170,
+                    colorA: "#10B981",
+                    colorB: "#EF4444",
+                  },
+                )
+              : '<div class="vc-empty-mini">لا توجد بيانات بعد</div>';
+        }
+        var chartProv = document.getElementById("vc-chart-providers");
+        if (chartProv) {
+          var slices = (res.providerUsage || [])
+            .filter(function (p) {
+              return p.linesCount > 0;
+            })
+            .map(function (p) {
+              return { label: p.name, value: p.linesCount, color: p.color };
+            });
+          chartProv.innerHTML = slices.length
+            ? _vfcSvgDonut(slices, { size: 150 }) +
+              '<div class="vc-donut-legend">' +
+              slices
+                .map(function (s) {
+                  return (
+                    '<div class="vc-legend-item"><span class="vc-legend-dot" style="background:' +
+                    s.color +
+                    '"></span>' +
+                    esc(s.label) +
+                    " (" +
+                    s.value +
+                    ")</div>"
+                  );
+                })
+                .join("") +
+              "</div>"
+            : '<div class="vc-empty-mini">لا توجد بيانات بعد</div>';
+        }
+        var topLines = document.getElementById("vc-top-lines");
+        if (topLines)
+          topLines.innerHTML = _vfcRenderTopList(
+            res.topLines,
+            "txCount",
+            function (i) {
+              return i.name + " (" + i.vf_number + ")";
+            },
+          );
+        var topEmp = document.getElementById("vc-top-employees");
+        if (topEmp)
+          topEmp.innerHTML = _vfcRenderTopList(
+            res.topEmployees,
+            "count",
+            function (i) {
+              return i.user;
+            },
+          );
+      },
+      onError: function (r) {
+        console.warn("[VC] stats refresh failed:", r && r.message);
+      },
+    });
+  }
+
+  function _vcLoadInsights() {
+    _gsr("getVodafoneCashInsights", [VC_STATE.providerFilter], {
+      label: "getVodafoneCashInsights",
+      onSuccess: function (r) {
+        var res = r.data;
+        if (!res) return;
+        VC_STATE.insights = res;
+        var el = document.getElementById("vc-insights-wrap");
+        if (el) el.innerHTML = _vfcRenderInsights(res);
+      },
+      onError: function (r) {
+        console.warn("[VC] insights load failed:", r && r.message);
+      },
+    });
+  }
+
+  function _vcLoadAlerts() {
+    _gsr("getVodafoneCashAlerts", [VC_STATE.providerFilter], {
+      label: "getVodafoneCashAlerts",
+      onSuccess: function (r) {
+        var res = r.data;
+        if (!res) return;
+        VC_STATE.alerts = res.alerts;
+        var el = document.getElementById("vc-alerts-wrap");
+        if (el) el.innerHTML = _vfcRenderAlerts(res.alerts);
+        var count = document.getElementById("vc-alerts-count");
+        if (count) count.textContent = res.alerts.length;
+      },
+      onError: function (r) {
+        console.warn("[VC] alerts load failed:", r && r.message);
+      },
+    });
+  }
+
+  function _vcLoadLines() {
+    _gsr(
+      "getVodafoneCashLines",
+      [
+        {
+          provider: VC_STATE.providerFilter,
+          status: VC_STATE.filters.status,
+          branch: VC_STATE.filters.branch,
+          employee: VC_STATE.filters.employee,
+          search: VC_STATE.filters.search,
+        },
+      ],
+      {
+        label: "getVodafoneCashLines",
+        rawResponse: true,
+        onSuccess: function (r) {
+          var res = r && r.data;
+          if (res && res.success) {
+            VC_STATE.lines = res.lines;
+            VC_STATE.loaded = true;
+            _vcPopulateBranchEmployeeFilters(res.lines);
+            _vcRenderTable();
+          } else if (res) {
+            NotificationEngine.error(res.message);
+          }
+        },
+        onError: function () {
+          NotificationEngine.error("تعذر تحميل بيانات الخطوط");
+        },
+      },
+    );
+  }
+
+  function _vcPopulateBranchEmployeeFilters(lines) {
+    var branches = [],
+      employees = [];
+    lines.forEach(function (l) {
+      if (l.branch && branches.indexOf(l.branch) === -1)
+        branches.push(l.branch);
+      if (l.employee && employees.indexOf(l.employee) === -1)
+        employees.push(l.employee);
+    });
+    var bSel = document.getElementById("vc-filter-branch");
+    if (bSel && bSel.options.length <= 1) {
+      branches.forEach(function (b) {
+        var o = document.createElement("option");
+        o.value = b;
+        o.textContent = b;
+        bSel.appendChild(o);
+      });
+    }
+    var eSel = document.getElementById("vc-filter-employee");
+    if (eSel && eSel.options.length <= 1) {
+      employees.forEach(function (e) {
+        var o = document.createElement("option");
+        o.value = e;
+        o.textContent = e;
+        eSel.appendChild(o);
+      });
+    }
+  }
+
+  function _vcLoadLiveFeed() {
+    _gsr("getVodafoneCashTransactions", [{ limit: 20 }], {
+      label: "getVodafoneCashTransactions",
+      onSuccess: function (r) {
+        var res = r.data;
+        if (res) _vcMergeLiveFeed(res.transactions);
+      },
+      onError: function () {
+        /* Live feed polling — silent on error */
+      },
+    });
+  }
+
+  function _vcMergeLiveFeed(txs) {
+    var el = document.getElementById("vc-live-feed");
+    if (!el) return;
+    var isFirstLoad = Object.keys(_vcKnownTxIds).length === 0;
+    var html = "";
+    txs.forEach(function (t) {
+      var isNew = !isFirstLoad && !_vcKnownTxIds[t.id];
+      _vcKnownTxIds[t.id] = true;
+      html += _vfcRenderLiveFeedItem(t, isNew);
+    });
+    el.innerHTML = html || _vfcRenderLiveFeed([]);
+    VC_STATE.liveTx = txs;
+  }
+
+  // ── جدول الخطوط عبر ColumnEngine ──────────────────────────────
+  // [COLUMN-ENGINE] الفلترة (بحث/حالة/فرع/موظف) تحصل Server-side بالفعل
+  // في _vcLoadLines (getVodafoneCashLines) قبل ما توصل هنا — نفس نمط
+  // Catalog_Stock (فلتر خارجي يضيّق المصفوفة، والمحرك بيعرضها بس).
+  var _vfcLinesColumnsRegistered = false;
+
+  function _vfcRegisterLineColumns() {
+    if (_vfcLinesColumnsRegistered) return;
+    _vfcLinesColumnsRegistered = true;
+    ColumnEngine.register(
+      "vfc_lines",
+      [
+        {
+          key: "customer_name",
+          label: "الخط",
+          type: "text",
+          width: 170,
+          frozen: "right",
+          format: function (v, row) {
+            return (
+              '<div class="vc-line-cell"><b>' +
+              esc(v || "") +
+              "</b><span>" +
+              esc(row.vf_number || "") +
+              "</span></div>"
+            );
+          },
+        },
+        {
+          key: "provider",
+          label: "الشركة",
+          type: "text",
+          width: 100,
+          format: function (v) {
+            var meta = VFC_PROVIDER_META[v] || VFC_PROVIDER_META.vodafone;
+            return (
+              '<span class="vc-provider-pill" style="--pc:' +
+              meta.color +
+              '">' +
+              (meta.logo
+                ? '<img class="vc-pill-logo" src="' + meta.logo + '" alt=""/>'
+                : "") +
+              meta.short +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "branch",
+          label: "الفرع / الموظف",
+          type: "text",
+          width: 150,
+          format: function (v, row) {
+            return (
+              '<div class="vc-meta-cell"><span>' +
+              esc(v || "—") +
+              "</span><span>" +
+              esc(row.employee || "—") +
+              "</span></div>"
+            );
+          },
+        },
+        {
+          key: "balance",
+          label: "الرصيد",
+          type: "number",
+          width: 110,
+          format: function (v) {
+            return '<b class="sensitive-balance">' + _vfcFmtMoney(v) + "</b>";
+          },
+        },
+        {
+          key: "dailyRemaining",
+          label: "الحد اليومي",
+          type: "text",
+          width: 140,
+          sortable: false,
+          format: function (v, row) {
+            return _vfcLimitBar(
+              row.dailyPct,
+              row.dailyRemaining,
+              row.dailyLimit,
+              "#2563EB",
+            );
+          },
+        },
+        {
+          key: "monthlyRemaining",
+          label: "الحد الشهري",
+          type: "text",
+          width: 140,
+          sortable: false,
+          format: function (v, row) {
+            return _vfcLimitBar(
+              row.monthlyPct,
+              row.monthlyRemaining,
+              row.monthlyLimit,
+              "#7C3AED",
+            );
+          },
+        },
+        {
+          key: "txCount",
+          label: "العمليات",
+          type: "number",
+          width: 90,
+          align: "center",
+        },
+        {
+          key: "totalDeposit",
+          label: "الإيداع / السحب",
+          type: "text",
+          width: 140,
+          sortable: false,
+          format: function (v, row) {
+            return (
+              '<div class="vc-inout sensitive-balance"><span class="in">+' +
+              _vfcFmtMoney(row.totalDeposit) +
+              '</span><span class="out">-' +
+              _vfcFmtMoney(row.totalWithdraw) +
+              "</span></div>"
+            );
+          },
+        },
+        {
+          key: "totalCommission",
+          label: "العمولات",
+          type: "number",
+          width: 100,
+          format: function (v) {
+            return (
+              '<span class="sensitive-balance">' + _vfcFmtMoney(v) + "</span>"
+            );
+          },
+        },
+        {
+          key: "lastTxDate",
+          label: "آخر عملية",
+          type: "text",
+          width: 110,
+          format: function (v) {
+            return _vfcTimeAgo(v);
+          },
+        },
+        {
+          key: "computedStatus",
+          label: "الحالة",
+          type: "badge",
+          width: 110,
+          format: function (v, row) {
+            var sm =
+              row.statusMeta ||
+              VFC_STATUS_META_FE[row.computedStatus] ||
+              VFC_STATUS_META_FE.available;
+            return (
+              '<span class="vc-status-pill" style="--sc:' +
+              sm.color +
+              '">' +
+              sm.dot +
+              " " +
+              sm.label +
+              "</span>"
+            );
+          },
+        },
+        // [COLUMN-ENGINE-FULL-FIELDS] حقول موجودة فعليًا في الصف المُثرى
+        // (_vfcEnrichLine في Code_20d_VodafoneCash.gs) لكنها لم تكن معروضة
+        // كأعمدة اختيارية — بعضها معروض حاليًا فقط جوّه أعمدة مركّبة
+        // (dailyRemaining/monthlyRemaining كأشرطة تقدّم) بدون رقمها الخام.
+        {
+          key: "status",
+          label: "الحالة الخام (نشط/موقوف)",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "party_id",
+          label: "العميل المرتبط",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "dailyLimit",
+          label: "الحد اليومي (رقم)",
+          type: "number",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "monthlyLimit",
+          label: "الحد الشهري (رقم)",
+          type: "number",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "lowBalanceThreshold",
+          label: "حد تنبيه انخفاض الرصيد",
+          type: "number",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "notes",
+          label: "ملاحظات",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "created_at",
+          label: "تاريخ الإضافة",
+          type: "date",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "updated_at",
+          label: "تاريخ آخر تعديل",
+          type: "date",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+      ],
+      {
+        title: "لوحة متابعة الخطوط",
+        rowKey: "id",
+      },
+    );
+  }
+
+  function _vcRenderTable() {
+    var wrap = document.getElementById("vc-lines-table-wrap");
+    if (!wrap) return;
+    _vfcRegisterLineColumns();
+    ColumnEngine.renderTable("vfc_lines", wrap, VC_STATE.lines || [], {
+      onRowClick: function (row) {
+        openVCLineDetail(row.id);
+      },
+    });
+  }
+
+  // ── شريط الأدوات ──────────────────────────────────────────────
+  function _vcBindToolbar() {
+    var search = document.getElementById("vc-search");
+    if (search) {
+      search.addEventListener(
+        "input",
+        _vcDebounce(function () {
+          VC_STATE.filters.search = search.value;
+          _vcLoadLines();
+        }, 300),
+      );
+    }
+
+    var statusSel = document.getElementById("vc-filter-status");
+    if (statusSel) {
+      statusSel.addEventListener("change", function () {
+        VC_STATE.filters.status = statusSel.value;
+        _vcLoadLines();
+      });
+      if (window.AppSelect) {
+        AppSelect.upgrade("vc-filter-status", { icon: "ti-list-check" });
+      }
+    }
+
+    ["vc-filter-branch", "vc-filter-employee"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el)
+        el.addEventListener("change", function () {
+          VC_STATE.filters.branch =
+            (document.getElementById("vc-filter-branch") || {}).value || "";
+          VC_STATE.filters.employee =
+            (document.getElementById("vc-filter-employee") || {}).value || "";
+          _vcLoadLines();
+        });
+    });
+
+    var toggleBtn = document.getElementById("vc-filters-toggle");
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", function () {
+        var panel = document.getElementById("vc-advanced-filters");
+        if (!panel) return;
+        panel.style.display = panel.style.display === "none" ? "flex" : "none";
+      });
+    }
+
+    var clearBtn = document.getElementById("vc-filters-clear");
+    if (clearBtn) {
+      clearBtn.addEventListener("click", function () {
+        VC_STATE.filters = { search: "", status: "", branch: "", employee: "" };
+        ["vc-search"].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.value = "";
+        });
+        ["vc-filter-status", "vc-filter-branch", "vc-filter-employee"].forEach(
+          function (id) {
+            var el = document.getElementById(id);
+            if (el) el.value = "";
+          },
+        );
+        _vcLoadLines();
+      });
+    }
+
+    var refreshBtn = document.getElementById("vc-refresh-btn");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", function () {
+        NotificationEngine.info("جاري تحديث البيانات...");
+        _vcLoadAll();
+      });
+    }
+
+    var addBtn = document.getElementById("vc-add-line-btn");
+    if (addBtn) addBtn.addEventListener("click", openVCLineForm);
+
+    var exportBtn = document.getElementById("vc-export-excel-btn");
+    if (exportBtn) exportBtn.addEventListener("click", exportVCAllExcel);
+
+    var tabsEl = document.getElementById("vc-provider-tabs");
+    if (tabsEl) {
+      tabsEl.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-provider]");
+        if (!btn) return;
+        VC_STATE.providerFilter = btn.getAttribute("data-provider") || "";
+        tabsEl.querySelectorAll(".vc-ptab").forEach(function (b) {
+          b.classList.remove("active");
+        });
+        btn.classList.add("active");
+        _vcLoadAll();
+      });
+    }
+
+    // [COLUMN-ENGINE] فتح تفاصيل الخط بقى عبر onRowClick في
+    // ColumnEngine.renderTable('vfc_lines', ...) — راجع _vcRenderTable.
+
+    var alertsWrap = document.getElementById("vc-alerts-wrap");
+    if (alertsWrap) {
+      alertsWrap.addEventListener("click", function (e) {
+        var item = e.target.closest("[data-line-id]");
+        if (!item || !item.getAttribute("data-line-id")) return;
+        openVCLineDetail(item.getAttribute("data-line-id"));
+      });
+    }
+  }
+
+  function _vcDebounce(fn, wait) {
+    var t;
+    return function () {
+      var args = arguments,
+        ctx = this;
+      clearTimeout(t);
+      t = setTimeout(function () {
+        fn.apply(ctx, args);
+      }, wait);
+    };
+  }
+
+  // ── Polling حي — يوقف نفسه عند مغادرة الصفحة ────────────────────
+  function _vcStartPolling() {
+    if (_vcPollTimer) clearInterval(_vcPollTimer);
+    _vcPollCounter = 0;
+    _vcPollTimer = setInterval(function () {
+      if (!APP.currentUser || !SESSION.token || APP.currentPage !== "vodafone_cash") {
+        clearInterval(_vcPollTimer);
+        _vcPollTimer = null;
+        return;
+      }
+      _vcLoadLiveFeed();
+      _vcPollCounter++;
+      if (_vcPollCounter % 2 === 0) {
+        _vcLoading = false;
+        _vcLoadAll(true); // silent — تحديث خلفي بدون وميض
+      }
+      if (VC_STATE.detailLineId && _vcPollCounter % 2 === 0) {
+        _vcLoadDetail(VC_STATE.detailLineId, true);
+      }
+    }, 15000);
+  }
+
+  // ── صفحة تفاصيل الخط (Drawer كامل) ───────────────────────────────
+  function openVCLineDetail(lineId) {
+    VC_STATE.detailLineId = lineId;
+    openACDrawer({
+      title: "تفاصيل الخط",
+      icon: "ti-wallet",
+      color: "blue",
+      width: 860,
+      body: '<div id="vc-detail-mount">' + _loadingBlock() + "</div>",
+    });
+    _vcLoadDetail(lineId, false);
+  }
+
+  function _vcLoadDetail(lineId, silent) {
+    _gsr("getVodafoneCashLineDetail", [lineId], {
+      label: "getVodafoneCashLineDetail",
+      onSuccess: function (r) {
+        var res = r.data;
+        if (!res) {
+          if (!silent)
+            NotificationEngine.error((res && res.message) || "تعذر تحميل بيانات الخط");
+          return;
+        }
+        VC_STATE.detailCache[lineId] = res;
+        var mount = document.getElementById("vc-detail-mount");
+        if (mount && VC_STATE.detailLineId === lineId)
+          mount.innerHTML = _vfcRenderLineDetail(res);
+      },
+      onError: function () {
+        if (!silent) NotificationEngine.error("تعذر تحميل بيانات الخط");
+      },
+    });
+  }
+
+  // ── إضافة خط جديد ─────────────────────────────────────────────
+  // ── Custom Provider Dropdown (بالـ Logo) ─────────────────────
+  // يبني custom dropdown بدل <select> العادي ويعمل hidden input بنفس الـ id
+  // fieldId   : id المستخدم لقراءة القيمة (hidden input)
+  // activeKey : مفتاح الشركة المحدد مسبقاً (أو "" لأول عنصر)
+  function _vfcProviderDropdown(fieldId, activeKey) {
+    var keys = Object.keys(VFC_PROVIDER_META);
+    if (!activeKey || !VFC_PROVIDER_META[activeKey]) activeKey = keys[0];
+    var activeM = VFC_PROVIDER_META[activeKey];
+    var dropId = "vfcdrop-" + fieldId;
+
+    var optionsHtml = keys
+      .map(function (k) {
+        var m = VFC_PROVIDER_META[k];
+        return (
+          '<div class="vfcd-option' +
+          (k === activeKey ? " vfcd-active" : "") +
+          '" data-key="' +
+          k +
+          '">' +
+          '<img src="' +
+          m.logo +
+          '" class="vfcd-logo" alt=""/>' +
+          '<span class="vfcd-name">' +
+          esc(m.name) +
+          "</span>" +
+          '<span class="vfcd-dot" style="background:' +
+          m.color +
+          '"></span>' +
+          "</div>"
+        );
+      })
+      .join("");
+
+    return (
+      '<input type="hidden" id="' +
+      fieldId +
+      '" value="' +
+      activeKey +
+      '"/>' +
+      '<div class="vfcd-wrap" id="' +
+      dropId +
+      '">' +
+      '<div class="vfcd-trigger">' +
+      '<img src="' +
+      activeM.logo +
+      '" class="vfcd-logo" alt=""/>' +
+      '<span class="vfcd-name">' +
+      esc(activeM.name) +
+      "</span>" +
+      '<span class="vfcd-dot" style="background:' +
+      activeM.color +
+      '"></span>' +
+      '<i class="ti ti-chevron-down vfcd-arrow"></i>' +
+      "</div>" +
+      '<div class="vfcd-menu">' +
+      optionsHtml +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  // init event delegation للـ custom dropdowns بعد إدراجهم في DOM
+  function _vfcInitDropdowns() {
+    document.querySelectorAll(".vfcd-wrap").forEach(function (wrap) {
+      var trigger = wrap.querySelector(".vfcd-trigger");
+      var menu = wrap.querySelector(".vfcd-menu");
+      var arrow = wrap.querySelector(".vfcd-arrow");
+      var fieldId = wrap.id.replace("vfcdrop-", "");
+      var hidden = document.getElementById(fieldId);
+      if (!trigger || !menu || !hidden) return;
+
+      trigger.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var open = menu.classList.toggle("vfcd-open");
+        arrow.style.transform = open ? "rotate(180deg)" : "";
+        if (open) {
+          // close other open dropdowns
+          document
+            .querySelectorAll(".vfcd-menu.vfcd-open")
+            .forEach(function (m) {
+              if (m !== menu) {
+                m.classList.remove("vfcd-open");
+              }
+            });
+        }
+      });
+
+      menu.addEventListener("click", function (e) {
+        var opt = e.target.closest(".vfcd-option");
+        if (!opt) return;
+        var key = opt.getAttribute("data-key");
+        var m = VFC_PROVIDER_META[key];
+        if (!m) return;
+
+        // update hidden value
+        hidden.value = key;
+
+        // update trigger display
+        trigger.querySelector(".vfcd-logo").src = m.logo;
+        trigger.querySelector(".vfcd-name").textContent = m.name;
+        trigger.querySelector(".vfcd-dot").style.background = m.color;
+
+        // mark active
+        menu.querySelectorAll(".vfcd-option").forEach(function (o) {
+          o.classList.toggle("vfcd-active", o.getAttribute("data-key") === key);
+        });
+
+        menu.classList.remove("vfcd-open");
+        arrow.style.transform = "";
+      });
+    });
+
+    // close on outside click
+    document.addEventListener("click", function () {
+      document.querySelectorAll(".vfcd-menu.vfcd-open").forEach(function (m) {
+        m.classList.remove("vfcd-open");
+        var w = m.closest(".vfcd-wrap");
+        if (w) {
+          var a = w.querySelector(".vfcd-arrow");
+          if (a) a.style.transform = "";
+        }
+      });
+    });
+  }
+
+  function openVCLineForm() {
+    var body =
+      // ── قسم: بيانات الخط الأساسية ───────────────────────────────
+      '<div class="vc-form-section">' +
+      '<div class="vc-section-title"><i class="ti ti-sim-card"></i> بيانات الخط الأساسية</div>' +
+      '<div class="vc-form-grid">' +
+      '<div class="vc-field">' +
+      '<label class="vc-label"><i class="ti ti-building"></i> الشركة</label>' +
+      _vfcProviderDropdown("vc-f-provider", "") +
+      "</div>" +
+      '<div class="vc-field">' +
+      '<label class="vc-label"><i class="ti ti-user"></i> اسم صاحب الخط <span class="vc-required">*</span></label>' +
+      '<input type="text" id="vc-f-name" class="vc-input" placeholder="اسم صاحب الخط الكامل"/>' +
+      "</div>" +
+      '<div class="vc-field">' +
+      '<label class="vc-label"><i class="ti ti-phone"></i> رقم الهاتف <span class="vc-required">*</span></label>' +
+      '<input type="text" id="vc-f-number" class="vc-input vc-input-ltr" placeholder="01xxxxxxxxx" maxlength="11"/>' +
+      "</div>" +
+      '<div class="vc-field">' +
+      '<label class="vc-label"><i class="ti ti-coin"></i> الرصيد الافتتاحي</label>' +
+      '<div class="vc-input-suffix"><input type="text" id="vc-f-opening" class="vc-input vc-currency" value="0"/><span>ج.م</span></div>' +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // ── قسم: بيانات تنظيمية ──────────────────────────────────────
+      '<div class="vc-form-section">' +
+      '<div class="vc-section-title"><i class="ti ti-building-bank"></i> البيانات التنظيمية</div>' +
+      '<div class="vc-form-grid">' +
+      '<div class="vc-field">' +
+      '<label class="vc-label"><i class="ti ti-map-pin"></i> الفرع</label>' +
+      '<input type="text" id="vc-f-branch" class="vc-input" placeholder="اسم الفرع"/>' +
+      "</div>" +
+      '<div class="vc-field">' +
+      '<label class="vc-label"><i class="ti ti-id-badge"></i> الموظف المسؤول</label>' +
+      '<input type="text" id="vc-f-employee" class="vc-input" placeholder="اسم الموظف"/>' +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // ── قسم: الحدود والتنبيهات ───────────────────────────────────
+      '<div class="vc-form-section">' +
+      '<div class="vc-section-title"><i class="ti ti-gauge"></i> الحدود والتنبيهات</div>' +
+      '<div class="vc-form-grid vc-form-grid-3">' +
+      '<div class="vc-field">' +
+      '<label class="vc-label"><i class="ti ti-calendar-day"></i> الحد اليومي</label>' +
+      '<div class="vc-input-suffix"><input type="text" id="vc-f-daily" class="vc-input vc-currency" value="60,000"/><span>ج.م</span></div>' +
+      '<div class="vc-hint" id="vc-hint-daily">افتراضي: 60,000 ج.م (انستاباي: 120,000)</div>' +
+      "</div>" +
+      '<div class="vc-field">' +
+      '<label class="vc-label"><i class="ti ti-calendar-month"></i> الحد الشهري</label>' +
+      '<div class="vc-input-suffix"><input type="text" id="vc-f-monthly" class="vc-input vc-currency" value="200,000"/><span>ج.م</span></div>' +
+      '<div class="vc-hint" id="vc-hint-monthly">افتراضي: 200,000 ج.م (انستاباي: 400,000)</div>' +
+      "</div>" +
+      '<div class="vc-field">' +
+      '<label class="vc-label"><i class="ti ti-bell-ringing"></i> حد تنبيه انخفاض الرصيد</label>' +
+      '<div class="vc-input-suffix"><input type="text" id="vc-f-threshold" class="vc-input vc-currency" value="0"/><span>ج.م</span></div>' +
+      '<div class="vc-hint">تنبيه لما الرصيد يوصل لهذا المبلغ</div>' +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // ── ملاحظات ───────────────────────────────────────────────────
+      '<div class="vc-form-section">' +
+      '<div class="vc-field">' +
+      '<label class="vc-label"><i class="ti ti-notes"></i> ملاحظات</label>' +
+      '<textarea id="vc-f-notes" class="vc-input vc-textarea" rows="3" placeholder="أي ملاحظات إضافية على الخط..."></textarea>' +
+      "</div>" +
+      "</div>" +
+      _acFooter("vc-line-save", "إضافة الخط");
+
+    openACDrawer({
+      title: "إضافة خط/عميل جديد",
+      icon: "ti-plus",
+      color: "green",
+      width: 860,
+      body: body,
+    });
+
+    setTimeout(function () {
+      _vfcInitDropdowns();
+
+      // ── تحديث الحدود تلقائياً لما يغير الشركة ──────────────────
+      var VFC_DEFAULTS = {
+        vodafone: { daily: 60000, monthly: 200000 },
+        orange: { daily: 60000, monthly: 200000 },
+        etisalat: { daily: 60000, monthly: 200000 },
+        we: { daily: 60000, monthly: 200000 },
+        instapay: { daily: 120000, monthly: 400000 },
+      };
+      var providerHidden = document.getElementById("vc-f-provider");
+      var dailyInput = document.getElementById("vc-f-daily");
+      var monthlyInput = document.getElementById("vc-f-monthly");
+      var hintDaily = document.getElementById("vc-hint-daily");
+      var hintMonthly = document.getElementById("vc-hint-monthly");
+
+      // ── تنسيق الأرقام بفواصل ─────────────────────────────────────
+      function _numFmt(val) {
+        var n = parseFloat(String(val).replace(/,/g, "")) || 0;
+        return n === 0
+          ? "0"
+          : n.toLocaleString("en-US", {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 0,
+            });
+      }
+      function _numVal(el) {
+        return parseFloat(String(el.value).replace(/,/g, "")) || 0;
+      }
+      function _bindCurrencyInput(el) {
+        if (!el) return;
+        el.value = _numFmt(el.value);
+        el.addEventListener("focus", function () {
+          var raw = _numVal(this);
+          this.value = raw === 0 ? "" : String(raw);
+        });
+        el.addEventListener("blur", function () {
+          this.value = _numFmt(this.value);
+        });
+        el.addEventListener("input", function () {
+          // منع أي حرف غير رقم أو نقطة
+          this.value = this.value.replace(/[^0-9.]/g, "");
+        });
+      }
+      // ربط كل حقول العملة
+      [
+        document.getElementById("vc-f-opening"),
+        dailyInput,
+        monthlyInput,
+        document.getElementById("vc-f-threshold"),
+      ].forEach(_bindCurrencyInput);
+
+      function _applyProviderDefaults(key) {
+        var def = VFC_DEFAULTS[key] || VFC_DEFAULTS.vodafone;
+        dailyInput.value = _numFmt(def.daily);
+        monthlyInput.value = _numFmt(def.monthly);
+        if (hintDaily)
+          hintDaily.textContent =
+            "افتراضي: " + formatMoney(def.daily, { decimals: 0 });
+        if (hintMonthly)
+          hintMonthly.textContent =
+            "افتراضي: " + formatMoney(def.monthly, { decimals: 0 });
+      }
+
+      // تطبيق القيم الافتراضية فور فتح الفورم
+      if (providerHidden)
+        _applyProviderDefaults(providerHidden.value || "vodafone");
+
+      // متابعة تغيير الشركة عبر الـ custom dropdown
+      var providerWrap = document.querySelector(
+        "#vfcdrop-vc-f-provider .vfcd-menu",
+      );
+      if (providerWrap) {
+        providerWrap.addEventListener("click", function (e) {
+          var opt = e.target.closest(".vfcd-option");
+          if (opt) _applyProviderDefaults(opt.getAttribute("data-key"));
+        });
+      }
+
+      var saveBtn = document.getElementById("vc-line-save");
+      if (!saveBtn) return;
+      saveBtn.addEventListener("click", function () {
+        var name = document.getElementById("vc-f-name").value.trim();
+        var number = document.getElementById("vc-f-number").value.trim();
+        if (!name) {
+          NotificationEngine.error("اسم صاحب الخط مطلوب");
+          return;
+        }
+        if (!VF.isValidEgyptPhone(number)) {
+          NotificationEngine.error("رقم الهاتف غير صالح");
+          return;
+        }
+
+        var payload = _authPayload({
+          provider: document.getElementById("vc-f-provider").value,
+          customer_name: name,
+          vf_number: number,
+          branch: document.getElementById("vc-f-branch").value.trim(),
+          employee: document.getElementById("vc-f-employee").value.trim(),
+          opening_balance: _numVal(document.getElementById("vc-f-opening")),
+          daily_limit: _numVal(document.getElementById("vc-f-daily")),
+          monthly_limit: _numVal(document.getElementById("vc-f-monthly")),
+          low_balance_threshold: _numVal(
+            document.getElementById("vc-f-threshold"),
+          ),
+          notes: document.getElementById("vc-f-notes").value.trim(),
+        });
+
+        // [SAVE-ENGINE] soft-save موحّد عبر SaveButtonController (00b_JS_SaveEngine.html)
+        var _sbc = SaveButtonController.attachEl(saveBtn);
+        _sbc.setSaving();
+        NotificationEngine.loading("جاري إضافة الخط...");
+        _gsr("addVodafoneCashLine", [payload], {
+          label: "addVodafoneCashLine",
+          onSuccess: function (res) {
+            _acCloseAll();
+            finishLoadingToast(res.message, "success");
+            _vcLoadAll();
+          },
+          onError: function (res) {
+            _sbc.restore();
+            finishLoadingToast("خطأ: " + res.message, "error");
+          },
+        });
+      });
+    }, 0);
+  }
+
+  function _acFieldRow(fields) {
+    return '<div class="form-row">' + fields.join("") + "</div>";
+  }
+
+  // ── helpers — wrappers حول openStyledDrawer الموحّدة ────────────
+  function openACDrawer(opts) {
+    // لو الـ body فيه sd-footer-inline نفصله ونحطه في opts.footer
+    var body = opts.body || "";
+    var footerMatch = body.match(
+      /<div class="sd-footer-inline">([\s\S]*?)<\/div>\s*$/,
+    );
+    if (footerMatch) {
+      opts.footer = footerMatch[1];
+      opts.body = body.replace(
+        /<div class="sd-footer-inline">[\s\S]*?<\/div>\s*$/,
+        "",
+      );
+    }
+    openStyledDrawer(opts);
+  }
+
+  function _acFooter(btnId, label) {
+    // ترجع HTML زر الحفظ — يُفصل تلقائياً بواسطة openACDrawer
+    return (
+      '<div class="sd-footer-inline">' +
+      '<button id="' +
+      btnId +
+      '" class="btn btn-primary">' +
+      '<i class="ti ti-device-floppy"></i> ' +
+      label +
+      "</button>" +
+      "</div>"
+    );
+  }
+
+  function _acCloseAll() {
+    closeStyledDrawer();
+  }
+  // ────────────────────────────────────────────────────────────────
+
+  // ── تسجيل عملية (إيداع/سحب/شحن/تحويل) ───────────────────────────
+  function openVCTxForm(lineId, presetType) {
+    var cache = VC_STATE.detailCache[lineId];
+    var line = cache
+      ? cache.line
+      : VC_STATE.lines.find(function (l) {
+          return l.id === lineId;
+        });
+    if (!line) {
+      NotificationEngine.error("تعذر العثور على هذا الخط");
+      return;
+    }
+
+    var body =
+      '<input type="hidden" id="vc-tx-line-id" value="' +
+      lineId +
+      '"/>' +
+      _acFieldRow([
+        '<div class="form-group"><label>نوع العملية</label><select id="vc-tx-type">' +
+          ["deposit", "withdraw", "transfer_in", "transfer_out", "recharge"]
+            .map(function (t) {
+              return (
+                '<option value="' +
+                t +
+                '"' +
+                (t === presetType ? " selected" : "") +
+                ">" +
+                _vfcTypeLabel(t) +
+                "</option>"
+              );
+            })
+            .join("") +
+          "</select></div>",
+        '<div class="form-group"><label>المبلغ *</label><input type="number" id="vc-tx-amount" placeholder="0.00"/></div>',
+      ]) +
+      _acFieldRow([
+        '<div class="form-group"><label>العمولة</label><input type="number" id="vc-tx-commission" value="0"/></div>',
+        '<div class="form-group"><label>الحالة</label><select id="vc-tx-status"><option value="success">ناجحة</option><option value="pending">معلّقة</option><option value="failed">فاشلة</option></select></div>',
+      ]) +
+      _acFieldRow([
+        '<div class="form-group"><label>رقم العملية المرجعي</label><input type="text" id="vc-tx-ref"/></div>',
+        '<div class="form-group"><label>الطرف الآخر</label><input type="text" id="vc-tx-counterparty"/></div>',
+      ]) +
+      '<div class="form-group"><label>التاريخ</label><input type="datetime-local" id="vc-tx-date" value="' +
+      new Date().toISOString().slice(0, 16) +
+      '"/></div>' +
+      '<div class="form-group"><label>ملاحظات</label><textarea id="vc-tx-notes" rows="2"></textarea></div>' +
+      _acFooter("vc-tx-save", "تسجيل العملية");
+
+    openACDrawer({
+      title: "تسجيل عملية",
+      subtitle: esc(line.customer_name) + " — " + esc(line.vf_number),
+      icon: "ti-receipt-2",
+      color: "teal",
+      width: 860,
+      body: body,
+    });
+
+    setTimeout(function () {
+      var saveBtn = document.getElementById("vc-tx-save");
+      if (!saveBtn) return;
+      saveBtn.addEventListener("click", function () {
+        var amount = parseFloat(document.getElementById("vc-tx-amount").value);
+        if (!amount || amount <= 0) {
+          NotificationEngine.error("من فضلك أدخل مبلغاً صحيحاً أكبر من صفر");
+          return;
+        }
+
+        var payload = _authPayload({
+          line_id: lineId,
+          type: document.getElementById("vc-tx-type").value,
+          amount: amount,
+          commission:
+            parseFloat(document.getElementById("vc-tx-commission").value) || 0,
+          status: document.getElementById("vc-tx-status").value,
+          date: document.getElementById("vc-tx-date").value,
+          ref_number: document.getElementById("vc-tx-ref").value.trim(),
+          counterparty: document
+            .getElementById("vc-tx-counterparty")
+            .value.trim(),
+          notes: document.getElementById("vc-tx-notes").value.trim(),
+        });
+
+        // [SAVE-ENGINE] soft-save موحّد
+        var _sbc = SaveButtonController.attachEl(saveBtn);
+        _sbc.setSaving();
+        NotificationEngine.loading("جاري حفظ الحركة...");
+        _gsr("addVodafoneCashTransaction", [payload], {
+          label: "addVodafoneCashTransaction",
+          onSuccess: function (res) {
+            finishLoadingToast(res.message, "success");
+            _acCloseAll();
+            _vcLoadAll();
+            if (VC_STATE.detailLineId === lineId) _vcLoadDetail(lineId, true);
+          },
+          onError: function (res) {
+            _sbc.restore();
+            finishLoadingToast("خطأ: " + res.message, "error");
+          },
+        });
+      });
+    }, 0);
+  }
+
+  // ── تعديل الحدود اليومية/الشهرية ─────────────────────────────────
+  function openVCLimitsForm(lineId) {
+    var cache = VC_STATE.detailCache[lineId];
+    var line = cache
+      ? cache.line
+      : VC_STATE.lines.find(function (l) {
+          return l.id === lineId;
+        });
+    if (!line) return;
+
+    var body =
+      _acFieldRow([
+        '<div class="form-group"><label>الحد اليومي (0 = بدون حد)</label><input type="number" id="vc-lim-daily" value="' +
+          (line.dailyLimit || 0) +
+          '"/></div>',
+        '<div class="form-group"><label>الحد الشهري (0 = بدون حد)</label><input type="number" id="vc-lim-monthly" value="' +
+          (line.monthlyLimit || 0) +
+          '"/></div>',
+      ]) + _acFooter("vc-lim-save", "حفظ الحدود");
+
+    openACDrawer({
+      title: "تعديل الحدود",
+      subtitle: esc(line.customer_name),
+      icon: "ti-gauge",
+      color: "amber",
+      width: 860,
+      body: body,
+    });
+
+    setTimeout(function () {
+      var saveBtn = document.getElementById("vc-lim-save");
+      if (!saveBtn) return;
+      saveBtn.addEventListener("click", function () {
+        var payload = _authPayload({
+          daily_limit:
+            parseFloat(document.getElementById("vc-lim-daily").value) || 0,
+          monthly_limit:
+            parseFloat(document.getElementById("vc-lim-monthly").value) || 0,
+        });
+        saveBtn.disabled = true;
+        NotificationEngine.loading("جاري حفظ الحدود...");
+        _gsr("setVodafoneCashLineLimits", [lineId, payload], {
+          label: "setVodafoneCashLineLimits",
+          onSuccess: function (r) {
+            _acCloseAll();
+            finishLoadingToast(r.message, "success");
+            _vcLoadAll();
+            if (VC_STATE.detailLineId === lineId) _vcLoadDetail(lineId, true);
+          },
+          onError: function (r) {
+            saveBtn.disabled = false;
+            finishLoadingToast(r.message, "error");
+          },
+        });
+      });
+    }, 0);
+  }
+
+  // ── إيقاف / تشغيل خط ──────────────────────────────────────────
+  function toggleVCLineStatus(id, newStatus) {
+    var line =
+      VC_STATE.lines.find(function (l) {
+        return l.id === id;
+      }) || (VC_STATE.detailCache[id] ? VC_STATE.detailCache[id].line : null);
+    var isSuspend = newStatus === "suspended";
+    showConfirm({
+      title: isSuspend ? "إيقاف الخط" : "تشغيل الخط",
+      message: isSuspend
+        ? "هل تريد إيقاف الخط " +
+          (line ? esc(line.vf_number) : "") +
+          "؟ لن يمكن تسجيل عمليات عليه بعد الإيقاف."
+        : "هل تريد إعادة تشغيل هذا الخط؟",
+      confirmText: isSuspend ? "إيقاف" : "تشغيل",
+      confirmClass: isSuspend ? "btn-danger" : "btn-success",
+      icon: isSuspend ? "ti-player-stop" : "ti-player-play",
+      onConfirm: function (unfreezeUI) {
+        _gsr("setVodafoneCashLineStatus", [id, newStatus, _authPayload({})], {
+          label: "setVodafoneCashLineStatus",
+          onSuccess: function (r) {
+            if (typeof unfreezeUI === "function") unfreezeUI();
+            NotificationEngine.success(r.message);
+            _vcLoadAll();
+            if (VC_STATE.detailLineId === id) _vcLoadDetail(id, true);
+          },
+          onError: function (r) {
+            if (typeof unfreezeUI === "function") unfreezeUI();
+            NotificationEngine.error(r.message);
+          },
+        });
+      },
+    });
+  }
+
+  // ── حذف خط ─────────────────────────────────────────────────────
+  function deleteVCLine(id) {
+    showConfirm({
+      title: "حذف الخط",
+      message: "هل أنت متأكد من حذف هذا الخط؟ لا يمكن التراجع عن هذا الإجراء.",
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      icon: "ti-trash",
+      onConfirm: function (unfreezeUI) {
+        _gsr("deleteVodafoneCashLine", [id, _authPayload({})], {
+          label: "deleteVodafoneCashLine",
+          onSuccess: function (r) {
+            if (typeof unfreezeUI === "function") unfreezeUI();
+            NotificationEngine.success(r.message);
+            _acCloseAll();
+            _vcLoadAll();
+          },
+          onError: function (r) {
+            if (typeof unfreezeUI === "function") unfreezeUI();
+            NotificationEngine.error(r.message);
+          },
+        });
+      },
+    });
+  }
+
+  // ── تعديل بيانات الخط الأساسية ────────────────────────────────
+  function openVCLineEditForm(lineId) {
+    var cache = VC_STATE.detailCache[lineId];
+    var line = cache
+      ? cache.line
+      : VC_STATE.lines.find(function (l) {
+          return l.id === lineId;
+        });
+    if (!line) {
+      NotificationEngine.error("تعذر العثور على بيانات الخط");
+      return;
+    }
+
+    var body =
+      '<div class="vc-form-section">' +
+      '<div class="vc-section-title"><i class="ti ti-sim-card"></i> بيانات الخط</div>' +
+      '<div class="vc-form-grid">' +
+      '<div class="vc-field"><label class="vc-label">الشركة</label>' +
+      _vfcProviderDropdown("vce-f-provider", line.provider) +
+      "</div>" +
+      '<div class="vc-field"><label class="vc-label">اسم صاحب الخط <span class="vc-required">*</span></label>' +
+      '<input type="text" id="vce-f-name" class="vc-input" value="' +
+      esc(line.customer_name) +
+      '"/></div>' +
+      '<div class="vc-field"><label class="vc-label">رقم الهاتف <span class="vc-required">*</span></label>' +
+      '<input type="text" id="vce-f-number" class="vc-input vc-input-ltr" value="' +
+      esc(line.vf_number) +
+      '" maxlength="11"/></div>' +
+      '<div class="vc-field"><label class="vc-label">الفرع</label>' +
+      '<input type="text" id="vce-f-branch" class="vc-input" value="' +
+      esc(line.branch || "") +
+      '"/></div>' +
+      '<div class="vc-field"><label class="vc-label">الموظف المسؤول</label>' +
+      '<input type="text" id="vce-f-employee" class="vc-input" value="' +
+      esc(line.employee || "") +
+      '"/></div>' +
+      '<div class="vc-field"><label class="vc-label">حد تنبيه انخفاض الرصيد</label>' +
+      '<div class="vc-input-suffix"><input type="number" id="vce-f-threshold" class="vc-input" value="' +
+      (line.lowBalanceThreshold || 0) +
+      '"/><span>ج.م</span></div></div>' +
+      "</div></div>" +
+      '<div class="vc-form-section"><div class="vc-field"><label class="vc-label">ملاحظات</label>' +
+      '<textarea id="vce-f-notes" class="vc-input vc-textarea" rows="3">' +
+      esc(line.notes || "") +
+      "</textarea></div></div>" +
+      _acFooter("vce-line-save", "حفظ التعديلات");
+
+    openACDrawer({
+      title: "تعديل بيانات الخط",
+      subtitle: esc(line.customer_name),
+      icon: "ti-edit",
+      color: "blue",
+      width: 860,
+      body: body,
+    });
+
+    setTimeout(function () {
+      _vfcInitDropdowns();
+      var saveBtn = document.getElementById("vce-line-save");
+      if (!saveBtn) return;
+      saveBtn.addEventListener("click", function () {
+        var name = document.getElementById("vce-f-name").value.trim();
+        var number = document.getElementById("vce-f-number").value.trim();
+        if (!name) {
+          NotificationEngine.error("اسم صاحب الخط مطلوب");
+          return;
+        }
+        if (!VF.isValidEgyptPhone(number)) {
+          NotificationEngine.error("رقم الهاتف غير صالح");
+          return;
+        }
+
+        var payload = _authPayload({
+          provider: document.getElementById("vce-f-provider").value,
+          customer_name: name,
+          vf_number: number,
+          branch: document.getElementById("vce-f-branch").value.trim(),
+          employee: document.getElementById("vce-f-employee").value.trim(),
+          low_balance_threshold:
+            parseFloat(document.getElementById("vce-f-threshold").value) || 0,
+          notes: document.getElementById("vce-f-notes").value.trim(),
+        });
+
+        // [ENGINE-UNIFY-FIX] كان هنا تنفيذ يدوي مكرر لنفس اللي SaveEngine.run
+        // بيعمله (قفل الزرار + Loading + نداء _gsr) بدل استخدام المحرك
+        // الموحد فعليًا رغم إن التعليق القديم كان بيقول "soft-save موحّد".
+        // التحقق اليدوي فوق (اسم الخط/رقم الهاتف) اتسيب زي ما هو لأنه
+        // منطق عمل خاص بالشاشة، مش جزء من التكرار.
+        SaveEngine.run({
+          screen: "VodafoneCash",
+          entity: "vodafoneCashLine",
+          recordId: lineId,
+          buttonId: "vce-line-save",
+          data: payload,
+          fn: "updateVodafoneCashLine",
+          params: function (data) {
+            return [lineId, data];
+          },
+          savingLabel: "جاري حفظ التعديلات...",
+          successMessage: "تم حفظ التعديلات بنجاح",
+          onSuccess: function (r) {
+            _acCloseAll();
+            _vcLoadAll();
+            if (VC_STATE.detailLineId === lineId) _vcLoadDetail(lineId, true);
+          },
+          onError: function () {},
+        });
+      });
+    }, 0);
+  }
+
+  // ── تغيير حالة عملية ──────────────────────────────────────────
+  function openVCTxStatusForm(txId, currentStatus, lineId) {
+    var body =
+      '<div class="vc-form-section">' +
+      '<div class="vc-field"><label class="vc-label">الحالة الجديدة</label>' +
+      '<select id="vcs-status" class="vc-input">' +
+      '<option value="success"' +
+      (currentStatus === "success" ? " selected" : "") +
+      ">ناجحة</option>" +
+      '<option value="pending"' +
+      (currentStatus === "pending" ? " selected" : "") +
+      ">معلّقة</option>" +
+      '<option value="failed"' +
+      (currentStatus === "failed" ? " selected" : "") +
+      ">فاشلة</option>" +
+      "</select></div></div>" +
+      _acFooter("vcs-save", "تغيير الحالة");
+
+    openACDrawer({
+      title: "تغيير حالة العملية",
+      icon: "ti-refresh",
+      color: "amber",
+      width: 860,
+      body: body,
+    });
+
+    setTimeout(function () {
+      var saveBtn = document.getElementById("vcs-save");
+      if (!saveBtn) return;
+      saveBtn.addEventListener("click", function () {
+        var newStatus = document.getElementById("vcs-status").value;
+        // [SAVE-ENGINE] soft-save موحّد
+        var _sbc = SaveButtonController.attachEl(saveBtn);
+        _sbc.setSaving();
+        NotificationEngine.loading("جاري تغيير الحالة...");
+        _gsr(
+          "updateVodafoneCashTransactionStatus",
+          [txId, newStatus, _authPayload({})],
+          {
+            label: "updateVodafoneCashTransactionStatus",
+            onSuccess: function (r) {
+              finishLoadingToast(r.message, "success");
+              _acCloseAll();
+              _vcLoadAll();
+              if (VC_STATE.detailLineId === lineId) _vcLoadDetail(lineId, true);
+            },
+            onError: function (r) {
+              _sbc.restore();
+              finishLoadingToast(r.message, "error");
+            },
+          },
+        );
+      });
+    }, 0);
+  }
+
+  // ── حذف عملية ─────────────────────────────────────────────────
+  function deleteVCTransaction(txId, lineId) {
+    showConfirm({
+      title: "حذف العملية",
+      message:
+        "هل أنت متأكد من حذف هذه العملية؟ لا يمكن التراجع عن هذا الإجراء.",
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      icon: "ti-trash",
+      onConfirm: function (unfreezeUI) {
+        _gsr("deleteVodafoneCashTransaction", [txId, _authPayload({})], {
+          label: "deleteVodafoneCashTransaction",
+          onSuccess: function (r) {
+            if (typeof unfreezeUI === "function") unfreezeUI();
+            NotificationEngine.success(r.message);
+            _vcLoadAll();
+            if (VC_STATE.detailLineId === lineId) _vcLoadDetail(lineId, true);
+          },
+          onError: function (r) {
+            if (typeof unfreezeUI === "function") unfreezeUI();
+            NotificationEngine.error(r.message);
+          },
+        });
+      },
+    });
+  }
+
+  // ── تصدير Excel — كل الخطوط ───────────────────────────────────
+  function exportVCAllExcel() {
+    if (typeof XLSX === "undefined") {
+      NotificationEngine.error("مكتبة تصدير Excel غير محمّلة");
+      return;
+    }
+    if (!VC_STATE.lines.length) {
+      NotificationEngine.warning("لا توجد بيانات لتصديرها");
+      return;
+    }
+    var rows = [
+      [
+        "اسم صاحب الخط",
+        "رقم الخط",
+        "الشركة",
+        "الفرع",
+        "الموظف",
+        "الحالة",
+        "الرصيد الحالي",
+        "الحد اليومي",
+        "الحد الشهري",
+        "إجمالي الإيداع",
+        "إجمالي السحب",
+        "العمولات",
+        "عدد العمليات",
+        "آخر عملية",
+      ],
+    ];
+    VC_STATE.lines.forEach(function (l) {
+      rows.push([
+        l.customer_name,
+        l.vf_number,
+        l.providerName,
+        l.branch,
+        l.employee,
+        l.statusMeta ? l.statusMeta.label : l.status,
+        l.balance,
+        l.dailyLimit,
+        l.monthlyLimit,
+        l.totalDeposit,
+        l.totalWithdraw,
+        l.totalCommission,
+        l.txCount,
+        l.lastTxDate ? _vfcFmtDateTime(l.lastTxDate) : "",
+      ]);
+    });
+    var ws = XLSX.utils.aoa_to_sheet(rows);
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "المحافظ الإلكترونية");
+    XLSX.writeFile(
+      wb,
+      "المحافظ_الإلكترونية_" + new Date().toISOString().slice(0, 10) + ".xlsx",
+    );
+    NotificationEngine.success(" تم تصدير البيانات بنجاح");
+  }
+
+  // ── تصدير Excel — عميل واحد ───────────────────────────────────
+  function exportVCCustomerExcel(lineId) {
+    var cache = VC_STATE.detailCache[lineId];
+    if (!cache) {
+      NotificationEngine.warning("جاري تحميل بيانات العميل، حاول مرة أخرى...");
+      return;
+    }
+    if (typeof XLSX === "undefined") {
+      NotificationEngine.error("مكتبة تصدير Excel غير محمّلة");
+      return;
+    }
+    var rows = [
+      [
+        "نوع العملية",
+        "المبلغ",
+        "العمولة",
+        "الحالة",
+        "التاريخ",
+        "رقم العملية",
+        "الطرف الآخر",
+        "بواسطة",
+        "ملاحظات",
+      ],
+    ];
+    cache.transactions.forEach(function (t) {
+      rows.push([
+        _vfcTypeLabel(t.type),
+        t.amount,
+        t.commission || 0,
+        t.status === "success"
+          ? "ناجحة"
+          : t.status === "failed"
+            ? "فاشلة"
+            : "معلّقة",
+        _vfcFmtDateTime(t.date),
+        t.ref_number || "",
+        t.counterparty || "",
+        t.user || "",
+        t.notes || "",
+      ]);
+    });
+    var ws = XLSX.utils.aoa_to_sheet(rows);
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "العمليات");
+    XLSX.writeFile(
+      wb,
+      "عمليات_" + (cache.line.customer_name || "عميل") + ".xlsx",
+    );
+    NotificationEngine.success(" تم التصدير بنجاح");
+  }
+
+  // ── تصدير PDF (طباعة) — كشف حساب عميل ─────────────────────────
+  function exportVCCustomerPDF(lineId) {
+    var cache = VC_STATE.detailCache[lineId];
+    if (!cache) {
+      NotificationEngine.warning("جاري تحميل بيانات العميل، حاول مرة أخرى...");
+      return;
+    }
+    var line = cache.line,
+      txs = cache.transactions;
+    var net = (line.totalDeposit || 0) - (line.totalWithdraw || 0);
+
+    var rowsHtml = txs
+      .map(function (t) {
+        return (
+          "<tr><td>" +
+          _vfcTypeLabel(t.type) +
+          "</td><td>" +
+          _vfcFmtMoney(t.amount) +
+          "</td><td>" +
+          (t.status === "success"
+            ? "ناجحة"
+            : t.status === "failed"
+              ? "فاشلة"
+              : "معلّقة") +
+          "</td><td>" +
+          _vfcFmtDateTime(t.date) +
+          "</td><td>" +
+          esc(t.ref_number || "—") +
+          "</td></tr>"
+        );
+      })
+      .join("");
+
+    var printWin = window.open("", "_blank", "width=900,height=720");
+    if (!printWin) {
+      NotificationEngine.warning("يرجى السماح بالنوافذ المنبثقة لطباعة الكشف");
+      return;
+    }
+
+    printWin.document.write(
+      '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">' +
+        "<title>كشف حساب — " +
+        esc(line.customer_name || "") +
+        "</title>" +
+        "<style>" +
+        "body{font-family:Arial,sans-serif;margin:0;padding:26px;direction:rtl;color:#0a1120}" +
+        "h1{font-size:20px;margin:0 0 4px}" +
+        ".sub{color:#555;font-size:13px;margin-bottom:18px}" +
+        ".stats{display:flex;gap:14px;margin-bottom:22px}" +
+        ".stat{flex:1;border:1px solid #ddd;border-radius:10px;padding:12px;text-align:center}" +
+        ".stat span{font-size:11.5px;color:#666}" +
+        ".stat b{display:block;font-size:17px;margin-top:4px}" +
+        "table{width:100%;border-collapse:collapse;font-size:12.5px}" +
+        "th,td{border:1px solid #ddd;padding:8px;text-align:center}" +
+        "th{background:#f4f4f4}" +
+        ".footer-note{margin-top:20px;font-size:11px;color:#888;text-align:center}" +
+        _getPrintPageCSS() +
+        "</style></head><body>" +
+        "<h1>كشف حساب — " +
+        (line.providerName || "محفظة إلكترونية") +
+        "</h1>" +
+        '<div class="sub">' +
+        esc(line.customer_name || "") +
+        " — " +
+        esc(line.vf_number || "") +
+        " — " +
+        (line.status === "active" ? "نشط" : "موقوف") +
+        "</div>" +
+        '<div class="stats">' +
+        '<div class="stat sensitive-balance"><span>الرصيد الحالي</span><b>' +
+        _vfcFmtMoney(line.balance) +
+        "</b></div>" +
+        '<div class="stat"><span>إجمالي الإيداع</span><b>' +
+        _vfcFmtMoney(line.totalDeposit) +
+        "</b></div>" +
+        '<div class="stat"><span>إجمالي السحب</span><b>' +
+        _vfcFmtMoney(line.totalWithdraw) +
+        "</b></div>" +
+        '<div class="stat"><span>صافي الحركة</span><b>' +
+        _vfcFmtMoney(net) +
+        "</b></div>" +
+        "</div>" +
+        "<table><thead><tr><th>نوع العملية</th><th>المبلغ</th><th>الحالة</th><th>التاريخ</th><th>رقم العملية</th></tr></thead><tbody>" +
+        (rowsHtml || '<tr><td colspan="5">لا توجد عمليات</td></tr>') +
+        "</tbody></table>" +
+        '<div class="footer-note">تم الإنشاء بواسطة MOO.ERP — ' +
+        fmtDateTime(new Date()) +
+        "</div>" +
+        "<script>window.onload=function(){window.print();}<\/script>" +
+        "</body></html>",
+    );
+    printWin.document.close();
+  }
+</script>
+
+<style>
+  /* ══════════════════════════════════════════════════════════
+   vc-form — تصميم موحّد لنماذج فودافون كاش
+   ══════════════════════════════════════════════════════════ */
+
+  /* القسم */
+  .vc-form-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 14px;
+  }
+
+  /* عنوان القسم */
+  .vc-section-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .vc-section-title i {
+    font-size: 14px;
+    color: var(--accent);
+  }
+
+  /* الجريد */
+  .vc-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px 16px;
+  }
+  .vc-form-grid-3 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  /* الحقل */
+  .vc-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  /* الـ label */
+  .vc-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text2);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .vc-label i {
+    font-size: 13px;
+    color: var(--text3);
+  }
+  .vc-required {
+    color: #ef4444;
+    font-size: 13px;
+    line-height: 1;
+  }
+
+  /* الـ input الأساسي */
+  .vc-input {
+    width: 100%;
+    padding: 9px 13px;
+    background: var(--bg);
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 13.5px;
+    font-family: var(--font-arabic);
+    transition:
+      border-color 0.18s,
+      box-shadow 0.18s,
+      background 0.18s;
+    appearance: none;
+    -webkit-appearance: none;
+    box-sizing: border-box;
+  }
+  .vc-input:hover:not(:disabled):not(:focus) {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+    background: var(--surface2);
+  }
+  .vc-input:focus {
+    border-color: var(--accent);
+    background: var(--bg);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    outline: none;
+  }
+  .vc-input::placeholder {
+    color: var(--text3);
+    font-size: 12.5px;
+  }
+  select.vc-input {
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a0aec0' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: left 12px center;
+    padding-left: 32px;
+  }
+  textarea.vc-input {
+    resize: vertical;
+    min-height: 80px;
+    line-height: 1.7;
+  }
+  .vc-input-ltr {
+    direction: ltr;
+    text-align: left;
+    letter-spacing: 0.04em;
+  }
+
+  /* input مع suffix (ج.م) */
+  .vc-input-suffix {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .vc-input-suffix .vc-input {
+    padding-left: 42px;
+  }
+  .vc-input-suffix span {
+    position: absolute;
+    left: 12px;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--text3);
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  /* ── Custom Provider Dropdown ─────────────────────────────── */
+  .vfcd-wrap {
+    position: relative;
+    user-select: none;
+  }
+  .vfcd-trigger {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition:
+      border-color 0.18s,
+      background 0.18s;
+    min-height: 40px;
+  }
+  .vfcd-trigger:hover {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+    background: var(--surface2);
+  }
+  .vfcd-logo {
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+  .vfcd-name {
+    flex: 1;
+    font-size: 13.5px;
+    color: var(--text);
+    font-family: var(--font-arabic);
+  }
+  .vfcd-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .vfcd-arrow {
+    font-size: 14px;
+    color: var(--text3);
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+  .vfcd-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    left: 0;
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    z-index: 9999;
+    overflow: hidden;
+  }
+  .vfcd-menu.vfcd-open {
+    display: block;
+  }
+  .vfcd-option {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 12px;
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .vfcd-option:hover {
+    background: var(--surface2);
+  }
+  .vfcd-option.vfcd-active {
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+  .vfcd-option .vfcd-name {
+    font-size: 13px;
+  }
+  [data-theme="dark"] .vfcd-menu {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  /* hint text */
+  .vc-hint {
+    font-size: 11px;
+    color: var(--text3);
+    margin-top: 2px;
+  }
+
+  /* أزرار إجراءات العمليات */
+  .vc-tx-actions {
+    white-space: nowrap;
+    text-align: center;
+    width: 64px;
+  }
+  .vc-tx-action-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 4px 5px;
+    border-radius: 6px;
+    color: var(--text3);
+    font-size: 13px;
+    transition:
+      background 0.15s,
+      color 0.15s;
+  }
+  .vc-tx-action-btn:hover {
+    background: var(--surface2);
+    color: var(--accent);
+  }
+  .vc-tx-del-btn:hover {
+    background: #fef2f2;
+    color: #ef4444;
+  }
+
+  /* dark mode tweaks */
+  [data-theme="dark"] .vc-input {
+    background: var(--surface2);
+  }
+  [data-theme="dark"] .vc-input:focus {
+    background: var(--surface);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22);
+  }
+  [data-theme="dark"] .vc-form-section {
+    background: var(--surface2);
+  }
+</style>

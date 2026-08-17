@@ -1,0 +1,380 @@
+<style>
+  /* ═══════════════════════════════════════════════════════════════
+   Style_02_Base.html — جزء من Style.html الأصلي (تقسيم آلي نصي بحت، 2026-07-04)
+   راجع Architecture Audit 2026-07-03، المرحلة 5 — تقسيم بحسب الحجم
+   لا تقسيم دلالي بحت (الملف الأصلي كان منظّم بالفعل بترقيم أقسام
+   داخلي، فالتقسيم هنا اتبع نفس الترتيب الأصلي حرفيًا بدون أي تغيير
+   أو إعادة ترتيب لتفادي أي كسر في cascade/specificity الخاص بـ CSS).
+   يُحمَّل بالترتيب عبر  في Index.html مع باقي أجزاء Style.
+   ═══════════════════════════════════════════════════════════════ */
+
+  /* ===== 2. RESET & BASE ===== */
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+  }
+
+  /* ===== GLOBAL PERFORMANCE — GPU Compositing ===== */
+  /* Force drawers and overlays to their own GPU layers */
+  .edit-drawer,
+  .drawer-backdrop,
+  .hr-drawer,
+  .hr-drawer-overlay,
+  .modal-overlay {
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+  }
+  /* Smooth font rendering during animations */
+  .edit-drawer *,
+  .hr-drawer * {
+    -webkit-font-smoothing: antialiased;
+  }
+
+  input,
+  textarea,
+  [contenteditable] {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+  }
+
+  html {
+    font-size: 13px;
+    scroll-behavior: smooth;
+    background: var(--palette-slate-900);
+  }
+
+  html {
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+  *,
+  *::before,
+  *::after {
+    box-sizing: inherit;
+  }
+  body {
+    font-family: var(--font-arabic);
+    background: var(--bg);
+    color: var(--text);
+    direction: rtl;
+    line-height: 1.5;
+    overflow: hidden;
+    max-width: 100vw;
+    height: 100vh;
+    -webkit-font-feature-settings: "lnum" 1;
+    font-feature-settings: "lnum" 1;
+    transition:
+      background var(--transition),
+      color var(--transition);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a {
+    text-decoration: none;
+    color: inherit;
+  }
+
+  button {
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    outline: none;
+    background: none;
+  }
+
+  input,
+  select,
+  textarea {
+    font-family: inherit;
+    outline: none;
+  }
+
+  img {
+    max-width: 100%;
+    display: block;
+  }
+
+  /* ===== 3. SCROLLBAR ===== */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text3);
+  }
+  [data-theme="dark"] ::-webkit-scrollbar-thumb {
+    background: var(--surface3);
+  }
+  [data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+    background: var(--border);
+  }
+
+  /* ===== 3.1 PRODUCTION ORDER CARDS — صف أفقي راقي ===== */
+  .po-cards-row {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    padding: 6px 2px 14px 2px;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+  }
+  .po-cards-row::-webkit-scrollbar {
+    height: 6px;
+  }
+  .po-card-h {
+    position: relative;
+    flex: 0 0 230px;
+    scroll-snap-align: start;
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    padding: 16px 14px 14px;
+    background: var(--surface2);
+    cursor: pointer;
+    overflow: hidden;
+    transition:
+      transform 0.18s ease,
+      box-shadow 0.18s ease,
+      border-color 0.18s ease,
+      background 0.18s ease;
+  }
+  .po-card-h:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.09);
+  }
+  .po-card-h-bar {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 4px;
+  }
+  .po-card-h-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .po-card-h-id {
+    font-family: var(--font-mono, monospace);
+    font-weight: 800;
+    font-size: 12.5px;
+  }
+  .po-card-h-badge {
+    font-size: 9.5px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 20px;
+    white-space: nowrap;
+  }
+  .po-card-h-name {
+    font-weight: 700;
+    font-size: 13.5px;
+    color: var(--text1);
+    margin-bottom: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .po-card-h-meta {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .po-card-h-code {
+    font-size: 10.5px;
+    color: var(--text3);
+    background: var(--surface3);
+    padding: 2px 7px;
+    border-radius: 5px;
+    font-family: var(--font-mono, monospace);
+  }
+  .po-card-h-patron {
+    font-size: 10.5px;
+    color: var(--text3);
+  }
+  .po-card-h-patron b {
+    color: var(--text2);
+    font-weight: 700;
+  }
+  @media (max-width: 640px) {
+    .po-card-h {
+      flex-basis: 200px;
+    }
+  }
+
+  /* ===== 4. ANIMATIONS & KEYFRAMES ===== */
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes fadeSlideIn {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes slideUp {
+    from {
+      transform: translateY(24px) scale(0.97);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0) scale(1);
+      opacity: 1;
+    }
+  }
+
+  @keyframes loginSlide {
+    from {
+      opacity: 0;
+      transform: translateY(30px) scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes floatBlob {
+    0%,
+    100% {
+      transform: translate(0, 0) scale(1);
+    }
+    33% {
+      transform: translate(30px, -20px) scale(1.05);
+    }
+    66% {
+      transform: translate(-20px, 15px) scale(0.95);
+    }
+  }
+
+  @keyframes shake {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    20% {
+      transform: translateX(-6px);
+    }
+    40% {
+      transform: translateX(6px);
+    }
+    60% {
+      transform: translateX(-4px);
+    }
+    80% {
+      transform: translateX(4px);
+    }
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes __spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes refresh-slide {
+    0% {
+      transform: translateX(-100%);
+    }
+    50% {
+      transform: translateX(0%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  @keyframes pulseBadge {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+    }
+    50% {
+      box-shadow: 0 0 0 4px rgba(239, 68, 68, 0);
+    }
+  }
+
+  @keyframes fadeInBadge {
+    from {
+      opacity: 0;
+      transform: translateY(-3px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes modalIn {
+    from {
+      opacity: 0;
+      transform: scale(0.92) translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  /* Page enter stagger */
+  .page-enter {
+    animation: fadeSlideIn 0.3s ease forwards;
+  }
+  .stagger-1 {
+    animation-delay: 0.05s;
+  }
+  .stagger-2 {
+    animation-delay: 0.1s;
+  }
+  .stagger-3 {
+    animation-delay: 0.15s;
+  }
+  .stagger-4 {
+    animation-delay: 0.2s;
+  }
+
+
+  /* ===== 5. LAYOUT ===== */
+  .app-layout {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+    /* RTL fix: يمنع أي عنصر ابن من التسرب أفقياً */
+    max-width: 100vw;
+  }
+</style>

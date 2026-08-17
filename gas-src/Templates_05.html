@@ -1,0 +1,1936 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════
+  // Templates_05.html — جزء من Templates.html الأصلي (تقسيم آلي نصي بحت، 2026-07-04)
+  // النطاق: renderReportUsersTable → renderPermissionsPage (Reports/Users/Permissions)
+  // راجع Architecture Audit 2026-07-03، المرحلة 5 — تقسيم بحسب الحجم،
+  // على حدود دوال كاملة فقط (لا قطع لأي دالة في نص). تحقق برمجيًا:
+  // التركيب النهائي لكل الأجزاء الـ10 مطابق 100% لمحتوى Templates.html
+  // القديم حرفيًا (نفس الترتيب، بدون فقد أو تكرار).
+  // يُحمَّل بالترتيب عبر <script> في Index.html مع باقي الأجزاء.
+  // ═══════════════════════════════════════════════════════════════
+  function renderReportUsersTable(users) {
+    var tableEl = document.getElementById("weekly-report-table");
+    if (!tableEl) return;
+
+    // تحديث العداد
+    var countEl = document.getElementById("wr-count");
+    if (countEl) {
+      var active = (users || []).filter(function (u) {
+        return u.active;
+      }).length;
+      countEl.textContent =
+        (users || []).length +
+        " مستخدم" +
+        (active > 0 ? " — " + active + " مفعّل" : "");
+    }
+
+    if (!users || users.length === 0) {
+      tableEl.innerHTML =
+        '<div style="padding:48px 20px;text-align:center">' +
+        '<div style="width:64px;height:64px;background:linear-gradient(135deg,#2b9fd6,#1a73a7);border-radius:20px;display:flex;align-items:center;justify-content:center;font-size:30px;margin:0 auto 14px"></div>' +
+        '<div style="font-weight:700;font-size:15px;margin-bottom:6px">' +
+        I18N.t("TG_NO_SUBSCRIBERS_YET") +
+        "</div>" +
+        '<div style="font-size:13px;color:var(--text3)">' +
+        I18N.t("TG_CLICK_ADD_USER_FIRST_SUB") +
+        "</div>" +
+        "</div>";
+      return;
+    }
+
+    var TYPES_LABELS = {
+      all: "الكل",
+      "summary,alerts": "ملخص + تنبيهات",
+      transactions: "حركات فقط",
+      alerts: "تنبيهات فقط",
+      "summary,stock,transactions": "ملخص + مخزون + حركات",
+    };
+
+    var TYPES_COLORS = {
+      all: "#2563eb",
+      "summary,alerts": "#f59e0b",
+      transactions: "#10b981",
+      alerts: "#ef4444",
+      "summary,stock,transactions": "#8b5cf6",
+    };
+
+    var cards = users
+      .map(function (u) {
+        var isActive =
+          u.active === true || String(u.active).toUpperCase() === "TRUE";
+        var lastSent = u.last_sent ? fmtDate(u.last_sent) : null;
+        var typesLabel =
+          TYPES_LABELS[u.report_types] || u.report_types || "الكل";
+        var typeColor = TYPES_COLORS[u.report_types] || "#2563eb";
+        var initials = (u.full_name || u.username || "?").charAt(0);
+
+        return (
+          '<div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;transition:.18s" ' +
+          "onmouseover=\"this.style.background='var(--surface2)'\" onmouseout=\"this.style.background=''\">" +
+          // Avatar
+          '<div style="width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,#2b9fd6,#1a73a7);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:15px;flex-shrink:0">' +
+          esc(initials) +
+          "</div>" +
+          // Info
+          '<div style="flex:1;min-width:0">' +
+          '<div style="font-weight:700;font-size:14px;margin-bottom:3px">' +
+          esc(u.full_name || u.username) +
+          "</div>" +
+          '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">' +
+          '<span style="font-size:12px;color:var(--text3);font-family:var(--font-mono)" dir="ltr">Chat ID: ' +
+          esc(u.phone || "—") +
+          "</span>" +
+          '<span style="width:3px;height:3px;border-radius:50%;background:var(--border);display:inline-block"></span>' +
+          '<span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;color:#fff;background:' +
+          typeColor +
+          '">' +
+          esc(typesLabel) +
+          "</span>" +
+          (lastSent
+            ? '<span style="font-size:11px;color:var(--text3)">آخر إرسال: ' +
+              esc(lastSent) +
+              "</span>"
+            : "") +
+          "</div>" +
+          '<div style="display:flex;align-items:center;gap:6px">' +
+          '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="#2b9fd6"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.17 13.67l-2.938-.916c-.638-.203-.651-.638.136-.943l11.57-4.461c.537-.194 1.006.131.956.871z"/></svg>' +
+          '<span style="font-size:11px;color:var(--text3)">Bot Token: </span>' +
+          '<span style="font-size:11px;font-family:var(--font-mono);color:var(--text2);direction:ltr;unicode-bidi:embed">' +
+          esc(_maskSecretDisplay(u.apikey)) +
+          "</span>" +
+          "</div>" +
+          "</div>" +
+          // Status toggle
+          '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0">' +
+          (isActive
+            ? '<span style="font-size:11px;font-weight:700;color:#10b981;background:#ecfdf5;padding:3px 10px;border-radius:20px;border:1px solid #a7f3d0">' +
+              I18N.t("LBL_ENABLED") +
+              "</span>"
+            : '<span style="font-size:11px;font-weight:700;color:#94a3b8;background:var(--surface2);padding:3px 10px;border-radius:20px;border:1px solid var(--border)">' +
+              I18N.t("STATUS_STOPPED") +
+              "</span>") +
+          // Actions
+          "<button onclick=\"editReportUser('" +
+          esc(u.username) +
+          "')\" " +
+          'style="width:30px;height:30px;background:var(--accent-soft);border:none;border-radius:8px;cursor:pointer;color:var(--accent);display:flex;align-items:center;justify-content:center" title="' +
+          I18N.t("BTN_EDIT") +
+          '">' +
+          '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
+          "</button>" +
+          "<button onclick=\"testReportUser('" +
+          esc(u.username) +
+          "')\" " +
+          'style="width:30px;height:30px;background:var(--success-soft);border:none;border-radius:8px;cursor:pointer;color:var(--success);display:flex;align-items:center;justify-content:center" title="' +
+          I18N.t("LBL_TRIAL_DEMO") +
+          '">' +
+          '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>' +
+          "</button>" +
+          "<button onclick=\"deleteReportUser('" +
+          esc(u.username) +
+          "')\" " +
+          'style="width:30px;height:30px;background:var(--danger-soft);border:none;border-radius:8px;cursor:pointer;color:var(--danger);display:flex;align-items:center;justify-content:center" title="' +
+          I18N.t("BTN_DELETE") +
+          '">' +
+          '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>' +
+          "</button>" +
+          "</div></div>"
+        );
+      })
+      .join("");
+
+    tableEl.innerHTML = "<div>" + cards + "</div>";
+  }
+
+  // ── renderAuditLog
+  function renderAuditLog() {
+    if (!canDo("viewAuditLog")) {
+      return (
+        '<div class="card">' +
+        '<div class="empty-state" style="padding:60px">' +
+        '<div class="empty-icon" style="font-size:60px"></div>' +
+        "<p>' + I18N.t('ERR_ACCESS_OPS_LOG') + '</p>" +
+        "</div></div>"
+      );
+    }
+    // إعادة التوجيه لصفحة المستخدمين مباشرة (تبويب السجل)
+    setTimeout(function () {
+      navigate("users");
+      setTimeout(function () {
+        switchUsersTab("audit");
+      }, 200);
+    }, 0);
+    return (
+      '<div style="padding:40px;text-align:center;color:var(--text3)">' +
+      I18N.t("MSG_REDIRECTING_AUDIT_LOG") +
+      "</div>"
+    );
+  }
+
+  // ── renderAIAssistant
+  function renderAIAssistant() {
+    return (
+      '<div class="page-header"><div>' +
+      "<h2>' + I18N.t('AI_ASSISTANT_ICON') + '</h2>" +
+      '<p class="page-subtitle">' +
+      I18N.t("AI_ASSISTANT_FLOATING_DESC") +
+      "</p>" +
+      "</div></div>" +
+      '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+      'padding:60px;gap:20px;text-align:center">' +
+      '<div style="font-size:72px;animation:ai-float 3s ease-in-out infinite"></div>' +
+      '<div style="font-size:18px;font-weight:700;color:var(--text)">' +
+      I18N.t("AI_FLOATING_ASSISTANT") +
+      "</div>" +
+      '<p style="color:var(--text3);max-width:360px">المساعد الذكي متاح الآن كزر عائم في أسفل الشاشة. ' +
+      "يمكنك استخدامه من أي صفحة في النظام!</p>" +
+      '<button class="btn btn-primary" onclick="toggleAIChat()" style="gap:8px">' +
+      " افتح المساعد الآن</button>" +
+      "</div>"
+    );
+  }
+</script>
+
+<template id="tpl-upload-modal">
+  <div class="modal-overlay" onclick="closeUploadModal()">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <div class="modal-icon">
+            <i class="ti ti-upload" style="font-size: 20px"></i>
+          </div>
+          <div>
+            <h2>' + I18N.t('LBL_UPLOAD_DOCUMENT_OR_IMAGE') + '</h2>
+            <div class="modal-header-sub">
+              ' + I18N.t('LBL_UPLOAD_IMAGE_OR_PDF') + '
+            </div>
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeUploadModal()">
+          <i class="ti ti-x"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <label class="upload-area" id="uploadArea">
+          <input
+            type="file"
+            id="fileInput"
+            accept="image/*,application/pdf"
+            capture="environment"
+            onchange="previewFile(this)"
+            hidden
+          />
+          <span id="uploadIcon"><i class="ti ti-point"></i></span>
+          <span id="uploadText"
+            >' + I18N.t('LBL_CLICK_TO_CHOOSE_IMAGE_FILE') + '</span
+          >
+          <img
+            id="previewImg"
+            style="
+              display: none;
+              max-width: 100%;
+              border-radius: 8px;
+              margin-top: 10px;
+            "
+          />
+        </label>
+
+        <input
+          type="text"
+          id="fileNote"
+          placeholder="' + I18N.t('LBL_PH_NOTE_OPTIONAL') + '"
+          class="input-field"
+        />
+
+        <div id="uploadProgress" style="display: none">
+          <div class="spinner"></div>
+          جاري الرفع...
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button onclick="submitUpload()" class="btn-primary">
+          <i class="ti ti-upload"></i> رفع
+        </button>
+        <button onclick="closeUploadModal()" class="btn-secondary">
+          ' + I18N.t('BTN_CANCEL') + '
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+  function renderCodeGuide() {
+    var warehouses = APP.data.warehouses || [];
+    var groups = APP.data.groups || [];
+    var items = APP.data.items || [];
+
+    // ── إحصائيات سريعة ──────────────────────────────────────────
+    var totalGroups = groups.length;
+    var totalItems = items.length;
+
+    var statsHtml =
+      '<div class="cg2-stats-row">' +
+      '<div class="cg2-stat">' +
+      '<div class="cg2-stat-icon cg2-blue"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg></div>' +
+      '<div><div class="cg2-stat-num">' +
+      warehouses.length +
+      '</div><div class="cg2-stat-lbl">' +
+      I18N.t("LBL_TOTAL_WAREHOUSES") +
+      "</div></div>" +
+      "</div>" +
+      '<div class="cg2-stat">' +
+      '<div class="cg2-stat-icon cg2-green"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>' +
+      '<div><div class="cg2-stat-num">' +
+      totalGroups +
+      '</div><div class="cg2-stat-lbl">' +
+      I18N.t("LBL_TOTAL_GROUPS") +
+      "</div></div>" +
+      "</div>" +
+      '<div class="cg2-stat">' +
+      '<div class="cg2-stat-icon cg2-amber"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg></div>' +
+      '<div><div class="cg2-stat-num">' +
+      totalItems +
+      '</div><div class="cg2-stat-lbl">' +
+      I18N.t("LBL_TOTAL_ITEMS") +
+      "</div></div>" +
+      "</div>" +
+      "</div>";
+
+    // ── شريط البحث والفلاتر ─────────────────────────────────────
+    var filterBtns =
+      '<button class="cg2-fbtn cg2-active" id="cg-btn-all" onclick="cgFilter(\'all\')">' +
+      I18N.t("LBL_ALL") +
+      "</button>" +
+      warehouses
+        .map(function (wh) {
+          return (
+            '<button class="cg2-fbtn" id="cg-btn-' +
+            esc(wh.id) +
+            '" onclick="cgFilter(\'' +
+            esc(wh.id) +
+            "')\">" +
+            esc(wh.name) +
+            "</button>"
+          );
+        })
+        .join("");
+
+    var toolbarHtml =
+      '<div class="cg2-toolbar">' +
+      '<div class="cg2-search-wrap">' +
+      '<span class="cg2-search-icon"></span>' +
+      '<input class="cg2-search" id="cg-search" type="text" placeholder="' +
+      I18N.t("LBL_PH_SEARCH_CODE_NAME") +
+      '" oninput="cgDoSearch()">' +
+      "</div>" +
+      '<div class="cg2-filter-btns">' +
+      filterBtns +
+      "</div>" +
+      "</div>";
+
+    // ── بناء بلوكات المخازن ─────────────────────────────────────
+    var whBlocksHtml = warehouses
+      .map(function (wh) {
+        var whGroups = groups.filter(function (g) {
+          return g.warehouse_id === wh.id || g.warehouse_id === wh.name;
+        });
+        var whItemCount = items.filter(function (it) {
+          return whGroups.some(function (g) {
+            return g.id === it.group || g.name === it.group;
+          });
+        }).length;
+
+        var groupsHtml = whGroups
+          .map(function (g) {
+            var groupItems = items.filter(function (it) {
+              return it.group === g.id || it.group === g.name;
+            });
+
+            var rowsHtml = groupItems
+              .map(function (it) {
+                return (
+                  '<tr class="cg2-item-row" data-search="' +
+                  esc(
+                    (
+                      it.id +
+                      " " +
+                      it.name +
+                      " " +
+                      (it.description || "")
+                    ).toLowerCase(),
+                  ) +
+                  '">' +
+                  '<td><span class="cg2-item-code">' +
+                  esc(it.code || it.id) +
+                  "</span></td>" +
+                  '<td class="cg2-item-name">' +
+                  esc(it.name) +
+                  "</td>" +
+                  '<td class="cg2-item-desc">' +
+                  esc(it.description || "—") +
+                  "</td>" +
+                  '<td><span class="cg2-unit-badge">' +
+                  esc(it.unit || "—") +
+                  "</span></td>" +
+                  "</tr>"
+                );
+              })
+              .join("");
+
+            return (
+              '<div class="cg2-group-block">' +
+              '<div class="cg2-group-header">' +
+              '<span class="cg2-group-prefix">' +
+              esc(g.prefix || g.id) +
+              "</span>" +
+              '<span class="cg2-group-name">' +
+              esc(g.name) +
+              "</span>" +
+              '<span class="cg2-group-count">' +
+              groupItems.length +
+              " صنف</span>" +
+              "</div>" +
+              (rowsHtml
+                ? '<table class="cg2-table">' +
+                  "<thead><tr>" +
+                  "<th>" +
+                  I18N.t("LBL_ITEM_CODE") +
+                  "</th><th>" +
+                  I18N.t("LBL_NAME") +
+                  "</th><th>" +
+                  I18N.t("LBL_DESCRIPTION") +
+                  "</th><th>" +
+                  I18N.t("LBL_UNIT") +
+                  "</th>" +
+                  "</tr></thead><tbody>" +
+                  rowsHtml +
+                  "</tbody></table>"
+                : '<div class="cg2-empty-group">' +
+                  I18N.t("MSG_NO_ITEMS_IN_GROUP") +
+                  "</div>") +
+              "</div>"
+            );
+          })
+          .join("");
+
+        return (
+          '<div class="cg2-wh-block" data-wh="' +
+          esc(wh.id) +
+          '">' +
+          '<div class="cg2-wh-header">' +
+          '<span class="cg2-wh-code">' +
+          esc(wh.code || wh.id) +
+          "</span>" +
+          '<span class="cg2-wh-name">' +
+          esc(wh.name) +
+          "</span>" +
+          '<span class="cg2-wh-meta">كود المخزن: ' +
+          esc(wh.code || wh.id) +
+          " — " +
+          whGroups.length +
+          " مجموعة — " +
+          whItemCount +
+          " صنف</span>" +
+          "</div>" +
+          (whGroups.length > 0
+            ? groupsHtml
+            : '<div class="cg2-empty-group" style="border:0.5px solid var(--border);border-radius:var(--radius);padding:14px">' +
+              I18N.t("MSG_NO_GROUPS_FOR_WAREHOUSE") +
+              "</div>") +
+          "</div>"
+        );
+      })
+      .join("");
+
+    // ── CSS موجود في Style.html (لا حاجة لإضافته هنا) ──────────
+
+    // ── header badge ───────────────────────────────────────────
+    var headerBadge =
+      '<span style="font-size:12px;font-weight:600;background:var(--accent-soft);color:var(--primary);padding:4px 12px;border-radius:20px;border:1px solid rgba(37,99,235,.15);white-space:nowrap">' +
+      warehouses.length +
+      " مخازن · " +
+      totalGroups +
+      " مجموعات · " +
+      totalItems +
+      " صنف" +
+      "</span>";
+
+    return (
+      '<div class="page-enter">' +
+      '<div class="page-header" style="align-items:flex-start;gap:12px;flex-wrap:wrap">' +
+      "<div>" +
+      '<h1 style="display:flex;align-items:center;gap:10px;margin-bottom:4px">' +
+      iconBadge("ti-book", "var(--accent-soft)", "var(--primary)") +
+      "<span>" +
+      I18N.t("PAGE_CODE_GUIDE") +
+      "</span></h1>" +
+      "<p>" +
+      I18N.t("LBL_COMPREHENSIVE_REFERENCE_LIVE_DATA") +
+      "</p>" +
+      "</div>" +
+      headerBadge +
+      '<div class="header-actions">' +
+      '<button class="btn btn-secondary" id="cg-pdf-btn" onclick="cgExportPDF()"><i class="ti ti-file-type-pdf" aria-hidden="true"></i> ' +
+      I18N.t("LBL_EXPORT_PDF") +
+      "</button>" +
+      "</div>" +
+      "</div>" +
+      statsHtml +
+      toolbarHtml +
+      '<div id="cg-container">' +
+      whBlocksHtml +
+      "</div>" +
+      "</div>"
+    );
+  }
+  // ============================================================
+  // تعريف الألوان — Color Definitions Page
+  // ============================================================
+
+  // ── صفحة إدارة الألوان العامة ──────────────────────────────
+  function renderColorDefinitions() {
+    var colors = APP.data.colors || [];
+    var items = APP.data.items || [];
+
+    var coloredItemsCount = items.filter(function (it) {
+      return getItemColors(it.id).length > 0;
+    }).length;
+
+    var statsHtml =
+      '<div class="cd-stats-row">' +
+      '<div class="cd-stat-box"><div class="cd-stat-icon">' +
+      iconBadge("ti-palette", "var(--purple-soft)", "var(--purple)") +
+      '</div><div><div class="cd-stat-val">' +
+      colors.length +
+      '</div><div class="cd-stat-lbl">' +
+      I18N.t("LBL_TOTAL_COLORS") +
+      "</div></div></div>" +
+      '<div class="cd-stat-box"><div class="cd-stat-icon">' +
+      iconBadge("ti-package", "var(--accent-soft)", "var(--teal)") +
+      '</div><div><div class="cd-stat-val">' +
+      coloredItemsCount +
+      '</div><div class="cd-stat-lbl">' +
+      I18N.t("LBL_ITEM_WITH_COLORS") +
+      "</div></div></div>" +
+      '<div class="cd-stat-box"><div class="cd-stat-icon">' +
+      iconBadge("ti-file-text", "var(--accent-soft)", "var(--primary)") +
+      '</div><div><div class="cd-stat-val">' +
+      items.length +
+      '</div><div class="cd-stat-lbl">' +
+      I18N.t("LBL_TOTAL_ITEMS") +
+      "</div></div></div>" +
+      "</div>";
+
+    // ── الجدول [COLUMN-ENGINE] — أعمدة ديناميكية بالكامل (Metadata-Driven)
+    // راجع _colorsRegisterColumns/_renderColorsTableCE في
+    // 07_JS_Shipping_Colors_Excel.html. البحث الآن عبر مربع البحث
+    // المدمج في التولبار الخاص بـ ColumnEngine بدل #cd-search اليدوي.
+    var tableHtml =
+      '<div class="card" style="padding:0;overflow:hidden">' +
+      '<div id="color-defs-ce-container"></div></div>';
+
+    return (
+      '<div class="page-enter">' +
+      '<div class="page-header">' +
+      "<div><h1 style='display:flex;align-items:center;gap:10px'>" +
+      iconBadge("ti-palette", "var(--purple-soft)", "var(--purple)") +
+      "<span>" +
+      I18N.t("PERM_MANAGE_COLORS") +
+      "</span></h1><p>" +
+      I18N.t("CATALOG_SYSTEM_COLORS_DESC") +
+      "</p></div>" +
+      '<div class="header-actions">' +
+      (canDo("addColor")
+        ? '<button class="btn btn-primary" id="btn-add-color-def">' +
+          I18N.t("LBL_ADD_NEW_COLOR") +
+          "</button>"
+        : "") +
+      "</div>" +
+      "</div>" +
+      statsHtml +
+      tableHtml +
+      "</div>"
+    );
+  }
+
+  /** تحويل اسم اللون العربي/الإنجليزي لـ hex تقريبي للعرض */
+
+  // ============================================================
+  // شاشة تعريف المقاسات
+  // ============================================================
+  // active tab state لشاشة المقاسات — "sizes" أو "groups"
+  var _sizePageTab = "sizes";
+
+  function _sizeGroupCardHtml(grp) {
+    var sizesById = {};
+    (APP.data.sizes || []).forEach(function (s) {
+      sizesById[String(s.id)] = s;
+    });
+    var ids = String(grp.size_ids || "")
+      .split(",")
+      .map(function (s) {
+        return s.trim();
+      })
+      .filter(Boolean);
+    var chips = ids
+      .map(function (id) {
+        var s = sizesById[id];
+        return s
+          ? '<span class="mono" style="font-size:11.5px;font-weight:700;background:var(--accent-soft);color:var(--accent);padding:3px 10px;border-radius:8px">' +
+              esc(s.code) +
+              "</span>"
+          : "";
+      })
+      .join(" ");
+    return (
+      '<div class="card" data-id="' +
+      esc(grp.id) +
+      '" style="padding:14px 16px;display:flex;flex-direction:column;gap:8px;cursor:pointer" onclick="openSizeGroupModal(' +
+      JSON.stringify(grp.id) +
+      ')">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between">' +
+      '<div style="font-weight:700;font-size:14.5px">' +
+      esc(grp.name) +
+      "</div>" +
+      '<button class="btn btn-outline btn-sm" title="حذف" onclick="event.stopPropagation();deleteSizeGroupConfirm(' +
+      JSON.stringify(grp.id) +
+      ',' +
+      JSON.stringify(grp.name) +
+      ')"><i class="ti ti-trash"></i></button>' +
+      "</div>" +
+      (grp.notes
+        ? '<div style="font-size:12px;color:var(--text3)">' + esc(grp.notes) + "</div>"
+        : "") +
+      '<div style="display:flex;flex-wrap:wrap;gap:6px">' +
+      (chips || '<span style="font-size:12px;color:var(--text3)">لا توجد مقاسات</span>') +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function renderSizeDefinitions() {
+    var sizes = APP.data.sizes || [];
+    var items = APP.data.items || [];
+    var groups = APP.data.sizeGroups || [];
+
+    var statsHtml =
+      '<div class="cd-stats-row">' +
+      '<div class="cd-stat-box"><div class="cd-stat-icon">' +
+      iconBadge("ti-ruler", "var(--success-soft)", "var(--success-dark)") +
+      '</div><div><div class="cd-stat-val">' +
+      sizes.length +
+      '</div><div class="cd-stat-lbl">' +
+      I18N.t("LBL_TOTAL_SIZES") +
+      "</div></div></div>" +
+      '<div class="cd-stat-box"><div class="cd-stat-icon">' +
+      iconBadge("ti-package", "var(--accent-soft)", "var(--teal)") +
+      '</div><div><div class="cd-stat-val">' +
+      items.length +
+      '</div><div class="cd-stat-lbl">' +
+      I18N.t("LBL_TOTAL_ITEMS") +
+      "</div></div></div>" +
+      "</div>";
+
+    // ── تابات: المقاسات / مجموعات ──
+    var tabsHtml =
+      '<div class="im-tabs-nav" style="margin-bottom:14px;border-radius:10px">' +
+      '<button type="button" class="im-tab-btn sz-page-tab' +
+      (_sizePageTab === "sizes" ? " active" : "") +
+      '" data-tab="sizes">' +
+      '<i class="ti ti-ruler"></i> المقاسات</button>' +
+      '<button type="button" class="im-tab-btn sz-page-tab' +
+      (_sizePageTab === "groups" ? " active" : "") +
+      '" data-tab="groups">' +
+      '<i class="ti ti-stack-2"></i> مجموعات</button>' +
+      "</div>";
+
+    var bodyHtml;
+    var headerBtnHtml;
+
+    if (_sizePageTab === "groups") {
+      headerBtnHtml = canDo("addSize")
+        ? '<button class="btn btn-primary" id="btn-add-size-group">' +
+          '<i class="ti ti-circle-plus"></i> إضافة مجموعة</button>'
+        : "";
+      bodyHtml = groups.length
+        ? '<div id="size-groups-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">' +
+          groups.map(_sizeGroupCardHtml).join("") +
+          "</div>"
+        : '<div class="card" style="padding:40px;text-align:center;color:var(--text3)">' +
+          '<i class="ti ti-stack-2" style="font-size:30px;opacity:.5"></i>' +
+          '<div style="margin-top:8px">لا توجد مجموعات مقاسات بعد — اضغط "إضافة مجموعة" لإنشاء أول مجموعة من المقاسات المُضافة</div>' +
+          "</div>";
+    } else {
+      headerBtnHtml = canDo("addSize")
+        ? '<button class="btn btn-primary" id="btn-add-size-def">' +
+          I18N.t("LBL_ADD_NEW_SIZE") +
+          "</button>"
+        : "";
+      // ── الجدول [COLUMN-ENGINE] — أعمدة ديناميكية بالكامل (Metadata-Driven)
+      // راجع _sizesRegisterColumns/_renderSizesTableCE في
+      // 07_JS_Shipping_Colors_Excel.html.
+      bodyHtml =
+        '<div class="card" style="padding:0;overflow:hidden">' +
+        '<div id="size-defs-ce-container"></div></div>';
+    }
+
+    return (
+      '<div class="page-enter">' +
+      '<div class="page-header">' +
+      "<div><h1 style='display:flex;align-items:center;gap:10px'>" +
+      iconBadge("ti-ruler", "var(--success-soft)", "var(--success-dark)") +
+      "<span>" +
+      I18N.t("PERM_MANAGE_SIZES") +
+      "</span></h1><p>" +
+      I18N.t("CATALOG_SYSTEM_SIZES_DESC") +
+      "</p></div>" +
+      '<div class="header-actions">' +
+      headerBtnHtml +
+      "</div>" +
+      "</div>" +
+      statsHtml +
+      tabsHtml +
+      bodyHtml +
+      "</div>"
+    );
+  }
+
+  // ============================================================
+  // [UNITS-2026-08-06] شاشة "تعريف الوحدات" — نفس نمط "تعريف المقاسات"
+  // فوق بالضبط، بس بدون تاب "مجموعات" (الوحدات كيان مسطّح بسيط: اسم +
+  // رمز مختصر + ملاحظات). راجع _unitsRegisterColumns/_renderUnitsTableCE
+  // في 07_JS_Shipping_Colors_Excel.html و bindUnitDefinitions في
+  // 10_JS_Settings_Search_Parties.html.
+  // ============================================================
+  function renderUnitDefinitions() {
+    var units = APP.data.units || [];
+    var items = APP.data.items || [];
+
+    var statsHtml =
+      '<div class="cd-stats-row">' +
+      '<div class="cd-stat-box"><div class="cd-stat-icon">' +
+      iconBadge("ti-ruler-2", "var(--accent-soft)", "#0E7490") +
+      '</div><div><div class="cd-stat-val">' +
+      units.length +
+      '</div><div class="cd-stat-lbl">' +
+      I18N.t("LBL_TOTAL_UNITS") +
+      "</div></div></div>" +
+      '<div class="cd-stat-box"><div class="cd-stat-icon">' +
+      iconBadge("ti-package", "var(--accent-soft)", "var(--teal)") +
+      '</div><div><div class="cd-stat-val">' +
+      items.length +
+      '</div><div class="cd-stat-lbl">' +
+      I18N.t("LBL_TOTAL_ITEMS") +
+      "</div></div></div>" +
+      "</div>";
+
+    var headerBtnHtml = canDo("addUnit")
+      ? '<button class="btn btn-primary" id="btn-add-unit-def">' +
+        I18N.t("LBL_ADD_NEW_UNIT") +
+        "</button>"
+      : "";
+
+    // ── الجدول [COLUMN-ENGINE] — نفس نمط جدول المقاسات ──
+    var bodyHtml =
+      '<div class="card" style="padding:0;overflow:hidden">' +
+      '<div id="unit-defs-ce-container"></div></div>';
+
+    return (
+      '<div class="page-enter">' +
+      '<div class="page-header">' +
+      "<div><h1 style='display:flex;align-items:center;gap:10px'>" +
+      iconBadge("ti-ruler-2", "var(--accent-soft)", "#0E7490") +
+      "<span>" +
+      I18N.t("PERM_MANAGE_UNITS") +
+      "</span></h1><p>" +
+      I18N.t("CATALOG_SYSTEM_UNITS_DESC") +
+      "</p></div>" +
+      '<div class="header-actions">' +
+      headerBtnHtml +
+      "</div>" +
+      "</div>" +
+      statsHtml +
+      bodyHtml +
+      "</div>"
+    );
+  }
+
+  // ============================================================
+
+  function renderWeeklyReports() {
+    return (
+      // ── Header ──
+      '<div class="page-header">' +
+      "<div>" +
+      '<h2 class="page-title" style="display:flex;align-items:center;gap:10px">' +
+      '<span style="background:linear-gradient(135deg,#2b9fd6,#1a73a7);width:38px;height:38px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0"></span>' +
+      "التقارير الأسبوعية — تيليجرام</h2>" +
+      '<p style="margin:4px 0 0;color:var(--text3);font-size:13px">' +
+      I18N.t("TG_AUTO_WEEKLY_REPORTS_DESC") +
+      "</p>" +
+      "</div>" +
+      '<button class="btn-primary" onclick="openAddReportUser()" style="background:linear-gradient(135deg,#2b9fd6,#1a73a7);border:none;display:flex;align-items:center;gap:6px;padding:10px 20px;border-radius:10px;font-weight:600;box-shadow:0 4px 14px rgba(43,159,214,.35)">' +
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>' +
+      "إضافة مستخدم</button>" +
+      "</div>" +
+      // ── خطوات الإعداد ──
+      '<div dir="rtl" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:20px">' +
+      // خطوة 1
+      '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 18px;display:flex;align-items:flex-start;gap:14px;direction:rtl;text-align:right">' +
+      '<div style="background:linear-gradient(135deg,#2b9fd6,#1a73a7);width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;color:#fff;font-weight:700">١</div>' +
+      '<div style="flex:1"><div style="font-weight:700;font-size:13px;margin-bottom:4px;color:var(--text)">' +
+      I18N.t("TG_CREATE_BOT") +
+      "</div>" +
+      '<div style="font-size:12px;color:var(--text2);line-height:1.8">افتح تيليجرام وروح لـ ' +
+      '<span style="display:inline-block;direction:ltr;unicode-bidi:embed;font-family:var(--font-mono);font-size:11px;font-weight:700">@BotFather</span>' +
+      "<br>" +
+      I18N.t("LBL_AND_SEND") +
+      ' <span style="display:inline-block;direction:ltr;unicode-bidi:embed;background:var(--accent-soft);color:var(--accent);padding:1px 6px;border-radius:5px;font-size:10px;font-family:var(--font-mono)">/newbot</span> ' +
+      I18N.t("LBL_AND_FOLLOW_INSTRUCTIONS") +
+      "</div>" +
+      "</div></div>" +
+      // خطوة 2
+      '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 18px;display:flex;align-items:flex-start;gap:14px;direction:rtl;text-align:right">' +
+      '<div style="background:linear-gradient(135deg,#3b82f6,#2563eb);width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;color:#fff;font-weight:700">٢</div>' +
+      '<div style="flex:1"><div style="font-weight:700;font-size:13px;margin-bottom:4px;color:var(--text)">' +
+      I18N.t("TG_GET_TOKEN_AND_CHAT_ID") +
+      "</div>" +
+      '<div style="font-size:12px;color:var(--text2);line-height:1.8">' +
+      "بعد إنشاء البوت هتاخد <strong>Bot Token</strong>.<br>" +
+      "عشان تاخد <strong>Chat ID</strong>: روح لـ " +
+      '<bdo dir="ltr" style="font-weight:700;font-family:var(--font-mono)">@userinfobot</bdo>' +
+      " وابعت " +
+      '<bdo dir="ltr" style="font-family:var(--font-mono);font-size:11px;background:var(--accent-soft);color:var(--accent);padding:1px 5px;border-radius:4px">/start</bdo>' +
+      "</div>" +
+      "</div></div>" +
+      // خطوة 3
+      '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 18px;display:flex;align-items:flex-start;gap:14px;direction:rtl;text-align:right">' +
+      '<div style="background:linear-gradient(135deg,#8b5cf6,#7c3aed);width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;color:#fff;font-weight:700">٣</div>' +
+      '<div style="flex:1"><div style="font-weight:700;font-size:13px;margin-bottom:4px;color:var(--text)">' +
+      I18N.t("LBL_ADD_A_USER") +
+      "</div>" +
+      '<div style="font-size:12px;color:var(--text2);line-height:1.8">' +
+      I18N.t("TG_CLICK_ADD_USER_AND_ENTER") +
+      " <strong>Chat ID</strong> " +
+      I18N.t("LBL_AND_THE") +
+      " <strong>Bot Token</strong>.</div>" +
+      "</div></div>" +
+      // خطوة 4
+      '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 18px;display:flex;align-items:flex-start;gap:14px;direction:rtl;text-align:right">' +
+      '<div style="background:linear-gradient(135deg,#f59e0b,#d97706);width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;color:#fff;font-weight:700">٤</div>' +
+      '<div style="flex:1"><div style="font-weight:700;font-size:13px;margin-bottom:4px;color:var(--text)">' +
+      I18N.t("TG_ENABLE_SCHEDULE_BTN") +
+      "</div>" +
+      '<div style="font-size:12px;color:var(--text2);line-height:1.8">' +
+      I18N.t("TG_ENABLE_SCHEDULE_HINT") +
+      "</div>" +
+      "</div></div>" +
+      "</div>" +
+      // ── Main grid: جدول + جدولة ──
+      '<div style="display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:start">' +
+      // جدول المستخدمين
+      '<div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden">' +
+      '<div style="padding:18px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">' +
+      '<div style="display:flex;align-items:center;gap:10px">' +
+      '<div style="background:var(--accent-soft);width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px"></div>' +
+      '<div><div style="font-weight:700;font-size:14px">' +
+      I18N.t("TG_REPORT_SUBSCRIBERS") +
+      "</div>" +
+      '<div id="wr-count" style="font-size:12px;color:var(--text3)">' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</div></div>" +
+      "</div>" +
+      '<button onclick="loadWeeklyReportUsers()" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2);display:flex;align-items:center;gap:5px">' +
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>' +
+      I18N.t("BTN_REFRESH") +
+      "</button>" +
+      "</div>" +
+      '<div id="weekly-report-table" style="min-height:120px">' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</div>" +
+      "</div>" +
+      // بطاقة الجدولة
+      '<div style="display:flex;flex-direction:column;gap:12px">' +
+      // حالة الجدولة
+      '<div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden">' +
+      '<div style="padding:16px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">' +
+      '<div style="background:var(--warning-soft);width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px">⏰</div>' +
+      '<div style="font-weight:700;font-size:14px">' +
+      I18N.t("TG_AUTO_SCHEDULE") +
+      "</div>" +
+      "</div>" +
+      '<div style="padding:16px 18px">' +
+      // ── حالة الـ Trigger ──
+      '<div id="trigger-status" style="margin-bottom:16px;padding:12px;border-radius:10px;background:var(--surface2);font-size:13px;text-align:center;color:var(--text2)">' +
+      I18N.t("MSG_VERIFYING_ELLIPSIS") +
+      "</div>" +
+      // ── التكرار ──
+      '<div style="margin-bottom:12px">' +
+      '<label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px">' +
+      I18N.t("TG_RECURRENCE_ICON") +
+      "</label>" +
+      '<select id="wr-frequency" onchange="onWrFreqChange()" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:var(--font);font-size:13px;cursor:pointer">' +
+      '<option value="weekly">' +
+      I18N.t("TG_ONCE_A_WEEK") +
+      "</option>" +
+      '<option value="twice_weekly">' +
+      I18N.t("TG_TWICE_A_WEEK") +
+      "</option>" +
+      '<option value="monthly">' +
+      I18N.t("TG_ONCE_A_MONTH") +
+      "</option>" +
+      "</select>" +
+      "</div>" +
+      // ── اليوم الأول ──
+      '<div id="wr-day1-wrap" style="margin-bottom:12px">' +
+      '<label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px">' +
+      I18N.t("LBL_DAY_ICON") +
+      "</label>" +
+      '<select id="wr-day1" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:var(--font);font-size:13px;cursor:pointer">' +
+      '<option value="SUNDAY">' +
+      I18N.t("DAY_SUNDAY") +
+      "</option>" +
+      '<option value="MONDAY">' +
+      I18N.t("DAY_MONDAY") +
+      "</option>" +
+      '<option value="TUESDAY">' +
+      I18N.t("DAY_TUESDAY") +
+      "</option>" +
+      '<option value="WEDNESDAY">' +
+      I18N.t("DAY_WEDNESDAY") +
+      "</option>" +
+      '<option value="THURSDAY">' +
+      I18N.t("DAY_THURSDAY") +
+      "</option>" +
+      '<option value="FRIDAY">' +
+      I18N.t("DAY_FRIDAY") +
+      "</option>" +
+      '<option value="SATURDAY">' +
+      I18N.t("DAY_SATURDAY") +
+      "</option>" +
+      "</select>" +
+      "</div>" +
+      // ── اليوم الثاني (يظهر فقط عند twice_weekly) ──
+      '<div id="wr-day2-wrap" style="margin-bottom:12px;display:none">' +
+      '<label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px">' +
+      I18N.t("LBL_SECOND_DAY_ICON") +
+      "</label>" +
+      '<select id="wr-day2" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:var(--font);font-size:13px;cursor:pointer">' +
+      '<option value="SUNDAY">' +
+      I18N.t("DAY_SUNDAY") +
+      "</option>" +
+      '<option value="MONDAY">' +
+      I18N.t("DAY_MONDAY") +
+      "</option>" +
+      '<option value="TUESDAY">' +
+      I18N.t("DAY_TUESDAY") +
+      "</option>" +
+      '<option value="WEDNESDAY" selected>' +
+      I18N.t("DAY_WEDNESDAY") +
+      "</option>" +
+      '<option value="THURSDAY">' +
+      I18N.t("DAY_THURSDAY") +
+      "</option>" +
+      '<option value="FRIDAY">' +
+      I18N.t("DAY_FRIDAY") +
+      "</option>" +
+      '<option value="SATURDAY">' +
+      I18N.t("DAY_SATURDAY") +
+      "</option>" +
+      "</select>" +
+      "</div>" +
+      // ── يوم من الشهر (يظهر فقط عند monthly) ──
+      '<div id="wr-dom-wrap" style="margin-bottom:12px;display:none">' +
+      '<label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px">' +
+      I18N.t("TG_DAY_OF_MONTH_ICON") +
+      "</label>" +
+      '<select id="wr-dom" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:var(--font);font-size:13px;cursor:pointer">' +
+      (function () {
+        var o = "";
+        for (var d = 1; d <= 28; d++)
+          o +=
+            '<option value="' +
+            d +
+            '">' +
+            I18N.t("LBL_DAY_N", { n: d }) +
+            "</option>";
+        return o;
+      })() +
+      "</select>" +
+      "</div>" +
+      // ── الساعة ──
+      '<div style="margin-bottom:16px">' +
+      '<label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px">' +
+      I18N.t("LBL_TIME_ICON") +
+      "</label>" +
+      '<select id="wr-hour" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:var(--font);font-size:13px;cursor:pointer">' +
+      (function () {
+        var o = "";
+        var labels = [
+          "12:00 ص (منتصف الليل)",
+          "1:00 ص",
+          "2:00 ص",
+          "3:00 ص",
+          "4:00 ص",
+          "5:00 ص",
+          "6:00 ص",
+          "7:00 ص",
+          "8:00 ص",
+          "9:00 ص",
+          "10:00 ص",
+          "11:00 ص",
+          "12:00 م (الظهر)",
+          "1:00 م",
+          "2:00 م",
+          "3:00 م",
+          "4:00 م",
+          "5:00 م",
+          "6:00 م",
+          "7:00 م",
+          "8:00 م",
+          "9:00 م",
+          "10:00 م",
+          "11:00 م",
+        ];
+        for (var h = 0; h < 24; h++)
+          o +=
+            '<option value="' +
+            h +
+            '"' +
+            (h === 8 ? " selected" : "") +
+            ">" +
+            labels[h] +
+            "</option>";
+        return o;
+      })() +
+      "</select>" +
+      "</div>" +
+      // ── أزرار التفعيل/الإيقاف ──
+      '<div style="display:flex;flex-direction:column;gap:8px">' +
+      '<button onclick="setupTrigger()" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;width:100%;display:flex;align-items:center;justify-content:center;gap:6px">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>' +
+      I18N.t("TG_ENABLE_SCHEDULE") +
+      "</button>" +
+      '<button onclick="removeTrigger()" style="background:var(--surface2);color:var(--danger);border:1.5px solid var(--danger);border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;width:100%;display:flex;align-items:center;justify-content:center;gap:6px">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>' +
+      I18N.t("TG_STOP_SCHEDULE") +
+      "</button>" +
+      "</div>" +
+      "</div></div>" + // end padding + end card
+      // إرسال فوري
+      '<div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px 18px">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">' +
+      '<div style="background:#eff4ff;width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px"></div>' +
+      '<div style="font-weight:700;font-size:13px">' +
+      I18N.t("LBL_SEND_NOW") +
+      "</div>" +
+      "</div>" +
+      '<div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.6">' +
+      I18N.t("TG_SEND_NOW_HINT") +
+      "</div>" +
+      '<button onclick="sendNow()" class="btn-primary" style="width:100%;justify-content:center;display:flex;align-items:center;gap:6px;border-radius:10px;padding:10px;font-size:13px">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>' +
+      "إرسال الآن</button>" +
+      "</div>" +
+      "</div>" + // end sidebar col
+      "</div>" + // end grid
+      // ── Modal إضافة/تعديل ──
+      '<div id="weekly-report-modal" style="display:none;position:fixed;inset:0;background:rgba(10,15,30,.55);z-index:9999;align-items:center;justify-content:center">' +
+      '<div style="background:var(--surface);width:min(520px,95vw);max-height:92vh;overflow-y:auto;border-radius:20px;box-shadow:0 24px 64px rgba(0,0,0,.2);position:relative;animation:modalIn .25s cubic-bezier(.34,1.56,.64,1)">' +
+      // Modal header — dir:rtl صريح لتثبيت الاتجاه
+      '<div dir="rtl" style="padding:20px 22px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--surface);z-index:1;border-radius:20px 20px 0 0">' +
+      '<div style="display:flex;align-items:center;gap:12px">' +
+      '<div style="background:linear-gradient(135deg,#2b9fd6,#1a73a7);width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0"></div>' +
+      '<div><div id="report-modal-title" style="font-weight:700;font-size:15px;color:var(--text)">' +
+      I18N.t("TG_ADD_USER_FOR_REPORTS") +
+      "</div>" +
+      '<div style="font-size:12px;color:var(--text3);margin-top:2px">' +
+      I18N.t("TG_WEEKLY_REPORTS") +
+      "</div></div>" +
+      "</div>" +
+      '<button onclick="closeReportModal()" style="background:var(--surface2);border:1px solid var(--border);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:16px;color:var(--text2);flex-shrink:0;display:flex;align-items:center;justify-content:center"><i class="ti ti-x"></i></button>' +
+      "</div>" +
+      // Modal body
+      '<div dir="rtl" style="padding:20px 22px">' +
+      '<input type="hidden" id="rm-edit-username">' +
+      // المستخدم
+      '<div style="margin-bottom:14px">' +
+      '<label style="display:block;font-weight:600;font-size:13px;margin-bottom:6px;color:var(--text)">' +
+      I18N.t("LBL_THE_USER") +
+      "</label>" +
+      '<select id="rm-username" class="form-input" onchange="onReportUserSelect()" style="border-radius:10px;width:100%">' +
+      '<option value="">' +
+      I18N.t("LBL_CHOOSE_A_USER_ELLIPSIS") +
+      "</option>" +
+      "</select></div>" +
+      // الاسم الكامل
+      '<div style="margin-bottom:14px">' +
+      '<label style="display:block;font-weight:600;font-size:13px;margin-bottom:6px;color:var(--text)">' +
+      I18N.t("LBL_FULL_NAME") +
+      "</label>" +
+      '<input type="text" id="rm-fullname" class="form-input" placeholder="' +
+      I18N.t("LBL_PH_NAME_SHOWN_IN_MESSAGE") +
+      '" style="border-radius:10px;width:100%;box-sizing:border-box"></div>' +
+      // Chat ID
+      '<div style="margin-bottom:14px">' +
+      '<label style="display:block;font-weight:600;font-size:13px;margin-bottom:6px;color:var(--text)">Chat ID <span style="font-weight:400;color:var(--text3);font-size:12px">' +
+      I18N.t("TG_FROM_USERINFOBOT") +
+      "</span></label>" +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+      '<div style="background:linear-gradient(135deg,#2b9fd6,#1a73a7);width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0"></div>' +
+      '<input type="text" id="rm-phone" class="form-input" placeholder="5498144953" dir="ltr" style="flex:1;border-radius:10px;font-family:var(--font-mono);text-align:left">' +
+      "</div></div>" +
+      // Bot Token
+      '<div style="margin-bottom:14px">' +
+      '<label style="display:block;font-weight:600;font-size:13px;margin-bottom:6px;color:var(--text)">' +
+      I18N.t("TG_BOT_TOKEN_FROM_BOTFATHER") +
+      "</label>" +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+      '<div style="background:var(--surface2);border:1px solid var(--border);width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0"></div>' +
+      '<input type="text" id="rm-apikey" class="form-input" placeholder="1234567890:AAFxxxxxxxxxxxxxxxx" dir="ltr" style="flex:1;border-radius:10px;font-family:var(--font-mono);text-align:left">' +
+      "</div>" +
+      '<div style="margin-top:5px;font-size:11px;color:var(--text3);display:flex;align-items:center;gap:4px;padding-right:46px">' +
+      '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>' +
+      "عند التعديل: اتركه فارغاً للاحتفاظ بالمفتاح الحالي</div>" +
+      "</div>" +
+      // أنواع التقارير
+      '<div style="margin-bottom:14px">' +
+      '<label style="display:block;font-weight:600;font-size:13px;margin-bottom:6px;color:var(--text)">' +
+      I18N.t("TG_REPORT_TYPES") +
+      "</label>" +
+      '<select id="rm-types" class="form-input" style="border-radius:10px;width:100%">' +
+      '<option value="all">' +
+      I18N.t("TG_ALL_REPORT_TYPES_ICON") +
+      "</option>" +
+      '<option value="summary,alerts">' +
+      I18N.t("TG_SUMMARY_ALERTS_ONLY_ICON") +
+      "</option>" +
+      '<option value="transactions">' +
+      I18N.t("TG_WEEK_MOVEMENTS_ONLY_ICON") +
+      "</option>" +
+      '<option value="alerts">' +
+      I18N.t("TG_INVENTORY_ALERTS_ONLY_ICON") +
+      "</option>" +
+      '<option value="summary,stock,transactions">' +
+      I18N.t("TG_SUMMARY_STOCK_MOVEMENTS_ICON") +
+      "</option>" +
+      "</select></div>" +
+      // تفعيل — Toggle مخصص بـ CSS فقط (بدون JS)
+      '<div style="margin-bottom:20px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between">' +
+      "<div>" +
+      '<div style="font-weight:600;font-size:13px;color:var(--text)">' +
+      I18N.t("TG_ENABLE_SUBSCRIPTION") +
+      "</div>" +
+      '<div style="font-size:12px;color:var(--text3);margin-top:2px">' +
+      I18N.t("TG_USER_WILL_RECEIVE_REPORTS") +
+      "</div>" +
+      "</div>" +
+      '<div style="position:relative;width:48px;height:26px;flex-shrink:0">' +
+      '<input type="checkbox" id="rm-active" checked ' +
+      'style="position:absolute;inset:0;opacity:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:2">' +
+      '<div id="rm-active-track" style="position:absolute;inset:0;background:linear-gradient(135deg,#2b9fd6,#1a73a7);border-radius:26px;transition:.3s;pointer-events:none">' +
+      '<div style="position:absolute;top:3px;right:3px;width:20px;height:20px;background:#fff;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,.25);transition:.3s"></div>' +
+      "</div></div>" +
+      "</div>" +
+      // أزرار
+      '<div style="display:flex;gap:10px">' +
+      '<button onclick="saveReportUser()" style="flex:1;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border:none;border-radius:11px;padding:12px 16px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;box-shadow:0 4px 14px rgba(37,99,235,.3)">' +
+      '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>' +
+      "حفظ</button>" +
+      '<button onclick="closeReportModal()" style="background:var(--surface2);color:var(--text2);border:1.5px solid var(--border);border-radius:11px;padding:12px 20px;font-size:14px;font-weight:600;cursor:pointer">' +
+      I18N.t("BTN_CANCEL") +
+      "</button>" +
+      "</div>" +
+      "</div>" + // end modal body
+      "</div></div>" // end modal
+    );
+  }
+
+  // ============================================================
+  // شاشة إرسال كتالوج مخصص لعميل
+  // ============================================================
+  function renderCatalogSend() {
+    var warehouses = APP.data.warehouses || [];
+
+    var whCards = warehouses.length
+      ? warehouses
+          .map(function (w) {
+            var typeColors = {
+              "منتج تام": "#0d9488",
+              "مخزن خام": "#d97706",
+              "مخزن اكسسوار": "#7c3aed",
+              "مخزن ديفوهات": "#dc2626",
+            };
+            var col = typeColors[w.type] || typeColors[w.name] || "#2563eb";
+            return (
+              '<div class="cs-wh-card" data-wid="' +
+              esc(String(w.id)) +
+              '" style="border-top:3px solid ' +
+              col +
+              '88">' +
+              '<div class="cs-wh-check"></div>' +
+              '<div class="cs-wh-name"><span class="cs-wh-dot" style="background:' +
+              col +
+              '"></span>' +
+              esc(w.name) +
+              "</div>" +
+              '<div class="cs-wh-meta">' +
+              esc(w.type || w.name) +
+              "</div>" +
+              "</div>"
+            );
+          })
+          .join("")
+      : '<span style="color:var(--text3);font-size:13px">' +
+        I18N.t("MSG_NO_WAREHOUSES") +
+        "</span>";
+
+    return (
+      "<style>" +
+      ".cs-wh-card{border:1.5px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;transition:all .18s;background:var(--surface);position:relative;overflow:hidden}" +
+      ".cs-wh-card:hover:not(.active){border-color:var(--accent);background:var(--primary-soft)}" +
+      ".cs-wh-card.active{border-color:var(--accent)!important;background:var(--primary-soft)}" +
+      ".cs-wh-check{position:absolute;top:7px;left:7px;width:16px;height:16px;background:var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;opacity:0;transform:scale(.5);transition:all .18s;font-size:10px;color:#fff;line-height:16px;text-align:center}" +
+      ".cs-wh-card.active .cs-wh-check{opacity:1;transform:scale(1)}" +
+      ".cs-wh-check::after{content:'';font-weight:700}" +
+      ".cs-wh-dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-left:6px;flex-shrink:0}" +
+      ".cs-wh-name{font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;display:flex;align-items:center}" +
+      ".cs-wh-meta{font-size:11px;color:var(--text3)}" +
+      ".cs-wh-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}" +
+      ".cs-all-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border:1.5px solid var(--border);border-radius:50px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);transition:all .18s;background:var(--surface);margin-bottom:12px;font-family:var(--font)}" +
+      ".cs-all-chip.active,.cs-all-chip:hover{background:var(--accent);color:#fff;border-color:var(--accent)}" +
+      ".cs-grp-chip{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border:1.5px solid var(--border);border-radius:50px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);transition:all .18s;background:var(--surface);font-family:var(--font);animation:csChipIn .22s ease both}" +
+      ".cs-grp-chip:hover:not(.active){border-color:var(--accent);color:var(--accent)}" +
+      ".cs-grp-chip.active{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)!important}" +
+      ".cs-chip-count{font-size:10px;opacity:.7;background:rgba(255,255,255,.25);border-radius:20px;padding:1px 5px}" +
+      ".cs-grp-chip:not(.active) .cs-chip-count{background:var(--surface2);color:var(--text3)}" +
+      "@keyframes csChipIn{from{opacity:0;transform:scale(.85) translateY(4px)}to{opacity:1;transform:scale(1) translateY(0)}}" +
+      ".cs-chip-wrap{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-height:40px}" +
+      ".cs-conn-line{display:none;align-items:center;gap:8px;margin:2px 0 10px;color:var(--text3);font-size:11px;padding:0 4px}" +
+      ".cs-conn-line.visible{display:flex}" +
+      ".cs-conn-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0}" +
+      ".cs-conn-track{flex:1;height:1px;background:linear-gradient(to left,transparent,var(--accent))}" +
+      "#cs-count-badge{background:var(--primary-soft);border-radius:10px;padding:12px 16px;text-align:center;margin-bottom:16px}" +
+      "#cs-count-badge span{font-size:15px;font-weight:800;color:var(--accent)}" +
+      "#cs-count-badge small{display:block;font-size:11px;color:var(--text3);margin-top:2px}" +
+      ".cs-preview-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}" +
+      ".cs-preview-tag{font-size:11px;padding:3px 10px;border-radius:20px;background:var(--surface2);border:1px solid var(--border);color:var(--text2)}" +
+      ".cs-excl-tag{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-size:12px;font-weight:700;font-family:monospace}" +
+      ".cs-excl-rm{background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;padding:0 0 0 2px;line-height:1;display:flex;align-items:center}" +
+      "</style>" +
+      '<div class="page-header">' +
+      "<div><h1 style='display:flex;align-items:center;gap:10px'>" +
+      iconBadge("ti-send", "var(--accent-soft)", "var(--primary)") +
+      "<span>" +
+      I18N.t("PAGE_CATALOG_SEND") +
+      "</span></h1>" +
+      "<p>' + I18N.t('CATALOG_CUSTOMIZE_SEND_WA_DESC') + '</p></div>" +
+      "</div>" +
+      '<div style="display:grid;grid-template-columns:1fr 380px;gap:20px;align-items:start">' +
+      '<div style="display:flex;flex-direction:column;gap:16px">' +
+      // ── المخازن
+      '<div class="card" style="padding:20px">' +
+      '<h3 style="font-size:14px;font-weight:700;margin:0 0 4px;display:flex;align-items:center;gap:8px">' +
+      navIcon("ti-building-store", "#1D4ED8") +
+      "المخازن</h3>" +
+      '<p style="font-size:12px;color:var(--text3);margin:0 0 14px">' +
+      I18N.t("CATALOG_CHOOSE_WAREHOUSES_HINT") +
+      "</p>" +
+      '<button class="cs-all-chip active" data-wid="__all__" id="cs-wh-all">' +
+      I18N.t("LBL_CHECK_ALL") +
+      "</button>" +
+      '<div class="cs-wh-grid" id="cs-wh-chips">' +
+      whCards +
+      "</div>" +
+      "</div>" +
+      // ── خط الربط
+      '<div class="cs-conn-line" id="cs-conn-line">' +
+      '<div class="cs-conn-dot"></div>' +
+      '<div class="cs-conn-track"></div>' +
+      "<span>" +
+      I18N.t("CATALOG_GROUPS_IN_SELECTED_WAREHOUSE") +
+      "</span>" +
+      "</div>" +
+      // ── المجموعات
+      '<div class="card" style="padding:20px">' +
+      '<h3 style="font-size:14px;font-weight:700;margin:0 0 4px;display:flex;align-items:center;gap:8px">' +
+      navIcon("ti-folder", "#5B21B6") +
+      "المجموعات</h3>" +
+      '<p style="font-size:12px;color:var(--text3);margin:0 0 12px" id="cs-grp-hint">' +
+      I18N.t("CATALOG_CHOOSE_GROUPS_HINT") +
+      "</p>" +
+      '<div class="cs-chip-wrap" id="cs-grp-chips">' +
+      '<button class="cs-grp-chip active" data-gid="__all__">' +
+      I18N.t("LBL_ALL") +
+      "</button>" +
+      "</div>" +
+      "</div>" +
+      // ── خيارات العرض
+      '<div class="card" style="padding:20px">' +
+      '<h3 style="font-size:14px;font-weight:700;margin:0 0 16px;display:flex;align-items:center;gap:8px">' +
+      navIcon("ti-settings", "#166534") +
+      "خيارات العرض</h3>" +
+      '<div style="display:flex;flex-direction:column;gap:12px">' +
+      '<label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:12px;background:var(--surface2);border-radius:10px;border:1.5px solid var(--border)">' +
+      '<input type="checkbox" id="cs-show-prices" checked style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;margin-top:1px">' +
+      '<div><div style="font-size:13px;font-weight:600;color:var(--text)">' +
+      I18N.t("CATALOG_SHOW_PRICES_TO_CUSTOMER") +
+      "</div>" +
+      '<div style="font-size:11px;color:var(--text3);margin-top:2px">' +
+      I18N.t("CATALOG_UNCHECK_HIDES_PRICE") +
+      "</div></div>" +
+      "</label>" +
+      '<label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:12px;background:var(--surface2);border-radius:10px;border:1.5px solid var(--border)">' +
+      '<input type="checkbox" id="cs-show-zero" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;margin-top:1px">' +
+      '<div><div style="font-size:13px;font-weight:600;color:var(--text)">' +
+      I18N.t("CATALOG_SHOW_ZERO_BALANCE_ITEMS_ICON") +
+      "</div>" +
+      '<div style="font-size:11px;color:var(--text3);margin-top:2px">' +
+      I18N.t("CATALOG_OUT_OF_STOCK_HIDDEN_DEFAULT") +
+      "</div></div>" +
+      "</label>" +
+      '<label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:12px;background:var(--surface2);border-radius:10px;border:1.5px solid var(--border)">' +
+      '<input type="checkbox" id="cs-no-qty" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;margin-top:1px">' +
+      '<div><div style="font-size:13px;font-weight:600;color:var(--text)">' +
+      I18N.t("CATALOG_HIDE_BALANCE_FROM_CUSTOMER_ICON") +
+      "</div>" +
+      '<div style="font-size:11px;color:var(--text3);margin-top:2px">' +
+      I18N.t("CATALOG_WONT_SEE_AVAILABLE_LIMITED") +
+      "</div></div>" +
+      "</label>" +
+      "</div></div>" +
+      // ── استثناء أصناف بالكود ──────────────────────────────
+      '<div class="card" style="padding:20px">' +
+      '<h3 style="font-size:14px;font-weight:700;margin:0 0 4px;display:flex;align-items:center;gap:8px">' +
+      navIcon("ti-eye-off", "#7C3AED") +
+      "استثناء أصناف من الكتالوج</h3>" +
+      '<p style="font-size:12px;color:var(--text3);margin:0 0 14px">' +
+      I18N.t("CATALOG_PH_HIDE_ITEM_CODES") +
+      "</p>" +
+      '<div style="position:relative;margin-bottom:10px">' +
+      '<div style="display:flex;gap:8px">' +
+      '<input class="input" id="cs-exclude-input" placeholder="' +
+      I18N.t("LBL_PH_SEARCH_ITEM_NAME_CODE") +
+      '" style="flex:1;font-size:13px" autocomplete="off">' +
+      '<button id="cs-exclude-add" class="btn btn-outline" style="flex-shrink:0;gap:6px;display:flex;align-items:center"><i class="ti ti-plus" style="font-size:14px"></i> ' +
+      I18N.t("BTN_ADD") +
+      "</button>" +
+      "</div>" +
+      '<div id="cs-exclude-dropdown" style="display:none;position:absolute;top:100%;right:0;left:0;z-index:999;background:var(--surface1);border:1.5px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:200px;overflow-y:auto;margin-top:4px"></div>' +
+      "</div>" +
+      '<div id="cs-exclude-tags" style="display:flex;flex-wrap:wrap;gap:6px;min-height:28px"></div>' +
+      "</div>" +
+      "</div>" + // end settings col
+      // ══ عمود المعاينة (sticky)
+      '<div style="display:flex;flex-direction:column;gap:16px;position:sticky;top:80px">' +
+      // ── بيانات العميل
+      '<div class="card" style="padding:20px">' +
+      '<h3 style="font-size:14px;font-weight:700;margin:0 0 14px;display:flex;align-items:center;gap:8px">' +
+      navIcon("ti-user", "#92400E") +
+      "بيانات العميل</h3>" +
+      '<label style="font-size:12px;color:var(--text2);margin-bottom:6px;display:block">' +
+      I18N.t("LBL_CUSTOMER_NAME") +
+      "</label>" +
+      '<input class="input" id="cs-client-name" placeholder="' +
+      I18N.t("LBL_PH_COMPANY_EXAMPLE") +
+      '" style="width:100%">' +
+      "</div>" +
+      // ── اللينك المخصص
+      '<div class="card" style="padding:20px">' +
+      '<h3 style="font-size:14px;font-weight:700;margin:0 0 16px;display:flex;align-items:center;gap:8px">' +
+      navIcon("ti-link", "#166534") +
+      "اللينك المخصص</h3>" +
+      '<div id="cs-summary" style="margin-bottom:14px"></div>' +
+      '<div id="cs-count-badge">' +
+      '<span id="cs-item-count">' +
+      I18N.t("LBL_CHOOSE_WAREHOUSE_OR_GROUP_START") +
+      "</span>" +
+      '<small id="cs-count-sub"></small>' +
+      '<div class="cs-preview-tags" id="cs-preview-tags"></div>' +
+      "</div>" +
+      '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px;word-break:break-all;font-size:11px;font-family:monospace;color:var(--text2);min-height:52px;line-height:1.7" id="cs-link-preview">—</div>' +
+      '<div style="display:flex;flex-direction:column;gap:10px">' +
+      '<button id="cs-copy-btn" class="btn btn-outline" style="width:100%;justify-content:center;gap:8px">' +
+      I18N.t("LBL_COPY_LINK_ICON") +
+      "</button>" +
+      '<button id="cs-wa-btn" style="width:100%;padding:13px;border:none;border-radius:12px;background:#25d366;color:#fff;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:background .2s;font-family:var(--font)">' +
+      I18N.t("LBL_SEND_ON_WHATSAPP_ICON") +
+      "</button>" +
+      "</div>" +
+      '<div style="margin-top:16px;padding:12px;background:var(--surface3);border-radius:8px">' +
+      '<p style="font-size:11px;color:var(--text3);margin:0;line-height:1.7">' +
+      I18N.t("CATALOG_LINK_OPENS_WITH_FILTERS_HINT") +
+      "</p>" +
+      "</div>" +
+      "</div></div>" +
+      "</div>"
+    );
+  }
+  /* ═══════════════════════════════════════════════════════════════
+   renderBarcode() — Production replacement for Templates.html
+   Replaces: function renderBarcode() { ... } (lines 7300–7535)
+
+   WHAT CHANGED:
+   • Layout: 3-column (Settings 25% | Products Table 45% | Preview 30%)
+   • Products: replaced card grid with sortable data table
+   • Settings: consolidated in left sidebar (always visible)
+   • Preview: always visible right panel with print summary
+   • KPI: moved to command bar (compact strip)
+   • UX: bulk actions bar, select-all header checkbox
+  ═══════════════════════════════════════════════════════════════ */
+  function renderBarcode() {
+    var items = APP.data.items || [];
+    var groups = APP.data.groups || [];
+    var warehouses = APP.data.warehouses || [];
+    var companyName =
+      (APP.companySettings &&
+        (APP.companySettings.company_name || APP.companySettings.name)) ||
+      "MOO.ERP";
+
+    var groupOpts =
+      '<option value="">' +
+      I18N.t("LBL_ALL_GROUPS") +
+      "</option>" +
+      groups
+        .map(function (g) {
+          return (
+            '<option value="' +
+            esc(String(g.id)) +
+            '">' +
+            esc(g.name) +
+            "</option>"
+          );
+        })
+        .join("");
+
+    var warehouseOpts =
+      '<option value="">' +
+      I18N.t("UI_LBL_ALL_WAREHOUSES") +
+      "</option>" +
+      warehouses
+        .map(function (w) {
+          return (
+            '<option value="' +
+            esc(String(w.id)) +
+            '">' +
+            esc(w.name) +
+            "</option>"
+          );
+        })
+        .join("");
+
+    var itemsWithStock = items.filter(function (it) {
+      return (APP.data.stock || []).some(function (s) {
+        return s.item_id === it.id && Number(s.quantity || 0) > 0;
+      });
+    });
+
+    var tbody = items
+      .map(function (it) {
+        var grp = groups.find(function (g) {
+          return String(g.id) === String(it.group);
+        });
+        var grpName = grp ? grp.name : "";
+        var stockRows = (APP.data.stock || []).filter(function (s) {
+          return s.item_id === it.id;
+        });
+        var stockTotal = stockRows.reduce(function (a, s) {
+          return a + Number(s.quantity || 0);
+        }, 0);
+        var hasStock = stockTotal > 0;
+        var wh_ids = stockRows
+          .filter(function (s) {
+            return Number(s.quantity || 0) > 0;
+          })
+          .map(function (s) {
+            return String(s.warehouse_id || s.warehouseId || "");
+          })
+          .filter(Boolean)
+          .join(",");
+        var priceStr = it.selling_price
+          ? formatMoney(it.selling_price, { decimals: 0 })
+          : "—";
+
+        return (
+          '<tr class="bcp-row" data-id="' +
+          esc(String(it.id)) +
+          '"' +
+          ' data-name="' +
+          esc(it.name) +
+          '"' +
+          ' data-code="' +
+          esc(it.code || it.id) +
+          '"' +
+          ' data-group="' +
+          esc(String(it.group || "")) +
+          '"' +
+          ' data-warehouses="' +
+          esc(wh_ids) +
+          '"' +
+          ' data-stock="' +
+          stockTotal +
+          '">' +
+          '<td class="bcp-td-check"><input type="checkbox" class="bcp-row-checkbox bcp-item-check" data-id="' +
+          esc(String(it.id)) +
+          '"></td>' +
+          '<td class="bcp-td-name"><span class="bcp-item-name-text">' +
+          esc(it.name || it.code || String(it.id)) +
+          "</span>" +
+          (grpName
+            ? '<span class="bcp-item-cat-tag">' + esc(grpName) + "</span>"
+            : "") +
+          "</td>" +
+          '<td class="bcp-td-sku">' +
+          esc(it.code || it.id) +
+          "</td>" +
+          '<td class="bcp-td-stock"><span class="bcp-stock-badge ' +
+          (hasStock ? "has" : "zero") +
+          '">' +
+          (hasStock ? stockTotal : "صفر") +
+          "</span></td>" +
+          '<td class="bcp-td-price">' +
+          priceStr +
+          "</td>" +
+          '<td class="bcp-td-qty"><div class="bcp-qty-wrap">' +
+          '<button class="bcp-qty-btn bcp-qty-minus" data-id="' +
+          esc(String(it.id)) +
+          '"><i class="ti ti-minus" style="font-size:10px"></i></button>' +
+          '<input class="bcp-qty-inp bcp-qty-input" type="number" min="1" max="9999" value="1" data-id="' +
+          esc(String(it.id)) +
+          '">' +
+          '<button class="bcp-qty-btn bcp-qty-plus" data-id="' +
+          esc(String(it.id)) +
+          '"><i class="ti ti-plus" style="font-size:10px"></i></button>' +
+          "</div></td></tr>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div class="page-enter bcp-page">' +
+      /* ── Command Bar ── */
+      '<div class="bcp-command-bar">' +
+      '<div class="bcp-cmd-left">' +
+      '<div class="bcp-cmd-icon"><i class="ti ti-barcode" aria-hidden="true"></i></div>' +
+      '<div><div class="bcp-cmd-title">' +
+      I18N.t("LBL_PRINT_BARCODE") +
+      "</div>" +
+      '<div class="bcp-cmd-sub">' +
+      I18N.t("LBL_CHOOSE_ITEMS_SETTINGS_PRINT") +
+      "</div></div>" +
+      "</div>" +
+      '<div class="bcp-cmd-right">' +
+      '<button class="bcp-btn bcp-btn-ghost bcp-panel-toggle" id="bcp-open-settings" type="button">' +
+      '<i class="ti ti-adjustments-horizontal"></i> ' +
+      I18N.t("LBL_LABEL_SETTINGS") +
+      "</button>" +
+      '<button class="bcp-btn bcp-btn-ghost bcp-panel-toggle" id="bcp-open-preview" type="button">' +
+      '<i class="ti ti-eye"></i> ' +
+      I18N.t("LBL_LIVE_PREVIEW") +
+      "</button>" +
+      '<div class="bcp-kpi-strip">' +
+      '<div class="bcp-kpi-pill"><div class="bcp-kpi-dot" style="background:#3b82f6"></div><span>' +
+      I18N.t("LBL_ITEMS") +
+      '</span><strong id="bcp-kpi-total">' +
+      items.length +
+      "</strong></div>" +
+      '<div class="bcp-kpi-sep"></div>' +
+      '<div class="bcp-kpi-pill"><div class="bcp-kpi-dot" style="background:#10b981"></div><span>' +
+      I18N.t("LBL_SELECTED") +
+      '</span><strong id="bcp-kpi-selected">0</strong></div>' +
+      '<div class="bcp-kpi-sep"></div>' +
+      '<div class="bcp-kpi-pill"><div class="bcp-kpi-dot" style="background:#f59e0b"></div><span>' +
+      I18N.t("LBL_LABEL") +
+      '</span><strong id="bcp-kpi-labels">0</strong></div>' +
+      "</div>" +
+      '<button class="bcp-btn bcp-btn-ghost" id="bcp-clear-btn"><i class="ti ti-x"></i> ' +
+      I18N.t("LBL_DESELECT_ALL") +
+      "</button>" +
+      '<button class="bcp-btn bcp-btn-ghost" id="bcp-pdf-btn" disabled><i class="ti ti-file-type-pdf"></i> PDF</button>' +
+      '<button class="bcp-btn bcp-btn-primary" id="bcp-print-btn" disabled>' +
+      '<i class="ti ti-printer"></i> ' +
+      I18N.t("BTN_PRINT") +
+      ' <span class="bcp-btn-count-badge" id="bcp-print-count">0</span>' +
+      "</button></div></div>" +
+      /* ── Three-Column Body ── */
+      '<div class="bcp-body">' +
+      '<div class="bcp-drawer-backdrop" id="bcp-drawer-backdrop"></div>' +
+      /* ─ LEFT: Settings ─ */
+      '<div class="bcp-settings" id="bcp-settings-panel">' +
+      '<button class="bcp-drawer-close" id="bcp-close-settings" type="button" aria-label="close"><i class="ti ti-x"></i></button>' +
+      '<div class="bcp-settings-header"><i class="ti ti-adjustments-horizontal"></i> ' +
+      I18N.t("LBL_LABEL_SETTINGS") +
+      "</div>" +
+      /* Label Size */
+      '<div class="bcp-setting-group"><div class="bcp-sg-label"><i class="ti ti-ruler-2"></i> ' +
+      I18N.t("LBL_LABEL_SIZE") +
+      "</div>" +
+      '<div class="bcp-size-grid">' +
+      '<button class="bcp-size-btn active" data-size="small"><span class="bcp-size-name">' +
+      I18N.t("LBL_SMALL") +
+      '</span><span class="bcp-size-dim">38×25</span></button>' +
+      '<button class="bcp-size-btn" data-size="medium"><span class="bcp-size-name">' +
+      I18N.t("LBL_MEDIUM") +
+      '</span><span class="bcp-size-dim">58×40</span></button>' +
+      '<button class="bcp-size-btn" data-size="large"><span class="bcp-size-name">' +
+      I18N.t("LBL_LARGE") +
+      '</span><span class="bcp-size-dim">100×60</span></button>' +
+      '<button class="bcp-size-btn" data-size="custom"><span class="bcp-size-name">' +
+      I18N.t("LBL_CUSTOM") +
+      '</span><span class="bcp-size-dim">×</span></button>' +
+      "</div>" +
+      '<div id="bcp-custom-wrap" style="display:none;margin-top:8px">' +
+      '<div class="bcp-custom-row"><input class="bcp-dim-inp" id="bcp-custom-w" type="number" value="58" placeholder="' +
+      I18N.t("LBL_WIDTH") +
+      '">' +
+      '<span style="color:var(--text3)">×</span>' +
+      '<input class="bcp-dim-inp" id="bcp-custom-h" type="number" value="40" placeholder="' +
+      I18N.t("LBL_HEIGHT") +
+      '">' +
+      '<span style="font-size:11px;color:var(--text3)">' +
+      I18N.t("LBL_MM") +
+      "</span></div></div>" +
+      '<input type="hidden" id="bcp-label-size" value="small"></div>' +
+      /* Barcode Type */
+      '<div class="bcp-setting-group"><div class="bcp-sg-label"><i class="ti ti-scan"></i> ' +
+      I18N.t("LBL_BARCODE_TYPE") +
+      "</div>" +
+      '<div class="bcp-type-grid">' +
+      '<button class="bcp-type-btn active" data-type="CODE128"><span class="bcp-type-bars">▮▮▯▮▯▮</span><span>CODE128</span><span class="bcp-type-hint">' +
+      I18N.t("LBL_RECOMMENDED") +
+      "</span></button>" +
+      '<button class="bcp-type-btn" data-type="CODE39"><span class="bcp-type-bars">▮▯▯▮▮▯</span><span>CODE39</span><span class="bcp-type-hint">' +
+      I18N.t("LBL_LETTERS_NUMBERS") +
+      "</span></button>" +
+      '<button class="bcp-type-btn" data-type="EAN13"><span class="bcp-type-bars">▮▯▮▮▯▮</span><span>EAN-13</span><span class="bcp-type-hint">' +
+      I18N.t("LBL_12_DIGITS") +
+      "</span></button>" +
+      '<button class="bcp-type-btn" data-type="QR"><span class="bcp-type-bars" style="font-size:18px">⊞</span><span>QR Code</span><span class="bcp-type-hint">' +
+      I18N.t("LBL_SQUARE") +
+      "</span></button>" +
+      '</div><input type="hidden" id="bcp-type" value="CODE128"></div>' +
+      /* Columns */
+      '<div class="bcp-setting-group"><div class="bcp-sg-label"><i class="ti ti-columns"></i> ' +
+      I18N.t("LBL_PAGE_COLUMNS") +
+      "</div>" +
+      '<div class="bcp-cols-row">' +
+      [2, 3, 4, 5]
+        .map(function (n) {
+          return (
+            '<button class="bcp-col-btn' +
+            (n === 3 ? " active" : "") +
+            '" data-cols="' +
+            n +
+            '">' +
+            n +
+            "</button>"
+          );
+        })
+        .join("") +
+      '</div><input type="hidden" id="bcp-cols" value="3"></div>' +
+      /* Display Options */
+      '<div class="bcp-setting-group"><div class="bcp-sg-label"><i class="ti ti-eye"></i> ' +
+      I18N.t("LBL_LABEL_ELEMENTS") +
+      "</div>" +
+      '<div class="bcp-toggles">' +
+      '<label class="bcp-toggle-opt"><input type="checkbox" id="bcp-show-name" checked><span class="ops-toggle-track"><span class="ops-toggle-thumb"></span></span><span>' +
+      I18N.t("COL_ITEM_NAME") +
+      "</span></label>" +
+      '<label class="bcp-toggle-opt"><input type="checkbox" id="bcp-show-code" checked><span class="ops-toggle-track"><span class="ops-toggle-thumb"></span></span><span>' +
+      I18N.t("LBL_SKU_CODE") +
+      "</span></label>" +
+      '<label class="bcp-toggle-opt"><input type="checkbox" id="bcp-show-price"><span class="ops-toggle-track"><span class="ops-toggle-thumb"></span></span><span>' +
+      I18N.t("COL_PRICE") +
+      "</span></label>" +
+      '<label class="bcp-toggle-opt"><input type="checkbox" id="bcp-show-brand" checked><span class="ops-toggle-track"><span class="ops-toggle-thumb"></span></span><span>' +
+      I18N.t("LBL_COMPANY_NAME") +
+      "</span></label>" +
+      "</div>" +
+      '<div id="bcp-brand-wrap"><input class="bcp-brand-inp" id="bcp-brand-name" value="' +
+      esc(companyName) +
+      '" placeholder="' +
+      I18N.t("LBL_COMPANY_NAME") +
+      '"></div>' +
+      "</div></div>" +
+      /* ─ CENTER: Products Table ─ */
+      '<div class="bcp-products">' +
+      '<div class="bcp-toolbar">' +
+      '<div class="bcp-toolbar-row1">' +
+      '<div class="bcp-search-wrap"><i class="ti ti-search bcp-search-icon"></i><input class="bcp-search" id="bcp-search" placeholder="' +
+      I18N.t("LBL_PH_SEARCH_NAME_CODE") +
+      '"></div>' +
+      '<select class="bcp-select" id="bcp-group-filter">' +
+      groupOpts +
+      "</select>" +
+      '<select class="bcp-select" id="bcp-warehouse-filter">' +
+      warehouseOpts +
+      "</select>" +
+      "</div>" +
+      '<div class="bcp-toolbar-row2">' +
+      '<button class="bcp-ftab active" data-stock-filter="all">' +
+      I18N.t("LBL_ALL") +
+      ' <span class="bcp-ftab-badge" id="bcp-tab-all">' +
+      items.length +
+      "</span></button>" +
+      '<button class="bcp-ftab" data-stock-filter="has">' +
+      I18N.t("LBL_HAS_BALANCE") +
+      ' <span class="bcp-ftab-badge" id="bcp-tab-has">' +
+      itemsWithStock.length +
+      "</span></button>" +
+      '<button class="bcp-ftab" data-stock-filter="zero">' +
+      I18N.t("LBL_ZERO_BALANCE") +
+      ' <span class="bcp-ftab-badge" id="bcp-tab-zero">' +
+      (items.length - itemsWithStock.length) +
+      "</span></button>" +
+      '<span class="bcp-ftab-spacer"></span>' +
+      '<button class="bcp-select-all-btn" id="bcp-select-stock-btn"><i class="ti ti-package"></i> ' +
+      I18N.t("LBL_SELECT_ALL_WITH_BALANCE") +
+      "</button>" +
+      "</div></div>" +
+      '<div class="bcp-bulk-bar hidden" id="bcp-bulk-bar"><i class="ti ti-checkbox"></i><span id="bcp-bulk-text">' +
+      I18N.t("LBL_ZERO_ITEMS_SELECTED") +
+      "</span></div>" +
+      '<div class="bcp-table-wrap">' +
+      '<table class="bcp-table" id="bcp-table">' +
+      "<thead><tr>" +
+      '<th class="th-check"><input type="checkbox" class="bcp-row-checkbox" id="bcp-check-all" title="' +
+      I18N.t("LBL_SELECT_ALL") +
+      '"></th>' +
+      '<th class="th-name">' +
+      I18N.t("COL_ITEM_NAME") +
+      '</th><th class="th-sku">' +
+      I18N.t("LBL_SKU_CODE") +
+      "</th>" +
+      '<th class="th-stock">' +
+      I18N.t("LBL_BALANCE") +
+      '</th><th class="th-price">' +
+      I18N.t("COL_PRICE") +
+      '</th><th class="th-qty">' +
+      I18N.t("COL_QTY") +
+      "</th>" +
+      "</tr></thead>" +
+      '<tbody id="bcp-tbody">' +
+      (tbody ||
+        '<tr><td colspan="6" class="bcp-table-empty"><p>' +
+          I18N.t("MSG_NO_ITEMS") +
+          "</p></td></tr>") +
+      "</tbody>" +
+      "</table></div></div>" +
+      /* ─ RIGHT: Preview ─ */
+      '<div class="bcp-preview-panel" id="bcp-preview-panel">' +
+      '<button class="bcp-drawer-close" id="bcp-close-preview" type="button" aria-label="close"><i class="ti ti-x"></i></button>' +
+      '<div class="bcp-preview-header">' +
+      '<div class="bcp-preview-header-left"><i class="ti ti-eye"></i> ' +
+      I18N.t("LBL_LIVE_PREVIEW") +
+      "</div>" +
+      '<span class="bcp-preview-dim-badge" id="bcp-dim-badge">' +
+      I18N.t("LBL_38X25MM") +
+      "</span>" +
+      "</div>" +
+      '<div class="bcp-preview-stage" id="bcp-preview-stage">' +
+      '<div class="bcp-preview-placeholder"><i class="ti ti-tag" style="font-size:40px;opacity:.2"></i><p>' +
+      I18N.t("LBL_CHOOSE_AN_ITEM") +
+      "<br>" +
+      I18N.t("LBL_TO_SEE_THE_LABEL") +
+      "</p></div>" +
+      "</div>" +
+      '<div class="bcp-print-summary">' +
+      '<div class="bcp-summary-title">' +
+      I18N.t("LBL_PRINT_SUMMARY") +
+      "</div>" +
+      '<div class="bcp-summary-stats">' +
+      '<div class="bcp-summary-stat"><div class="bcp-summary-stat-label">' +
+      I18N.t("LBL_SELECTED_ITEMS") +
+      '</div><div class="bcp-summary-stat-val accent" id="bcp-sum-items">0</div></div>' +
+      '<div class="bcp-summary-stat"><div class="bcp-summary-stat-label">' +
+      I18N.t("LBL_TOTAL_LABELS") +
+      '</div><div class="bcp-summary-stat-val accent" id="bcp-sum-labels">0</div></div>' +
+      "</div>" +
+      '<div class="bcp-print-actions">' +
+      '<button class="bcp-btn bcp-btn-success" id="bcp-print-main" disabled><i class="ti ti-printer"></i> ' +
+      I18N.t("LBL_PRINT_LABELS") +
+      "</button>" +
+      '<div class="bcp-btn-row">' +
+      '<button class="bcp-btn bcp-btn-ghost" id="bcp-export-pdf" disabled style="color:var(--text2);border:1.5px solid var(--border);background:var(--surface2)"><i class="ti ti-file-type-pdf"></i> PDF</button>' +
+      '<button class="bcp-btn bcp-btn-ghost" id="bcp-save-template" style="color:var(--text2);border:1.5px solid var(--border);background:var(--surface2)"><i class="ti ti-device-floppy"></i> ' +
+      I18N.t("LBL_SAVE_TEMPLATE") +
+      "</button>" +
+      "</div></div></div></div>" +
+      "</div></div>" // end bcp-body + bcp-page
+    );
+  }
+
+  // ============================================================
+  function renderPermissionsPage() {
+    if (!canDo("manageRoles")) {
+      return (
+        '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:40vh;gap:16px">' +
+        '<div style="font-size:56px"></div>' +
+        '<h2 style="color:var(--text2);margin:0">' +
+        I18N.t("MSG_NOT_AUTHORIZED_TO_ENTER") +
+        "</h2>" +
+        '<p style="color:var(--text3);margin:0">' +
+        I18N.t("PERM_REQUIRES_PERMISSION") +
+        " <b>" +
+        I18N.t("PERM_MANAGE_ROLES_SHORT") +
+        "</b></p>" +
+        "</div>"
+      );
+    }
+
+    return (
+      "<style>" +
+      // ── Shared helpers ────────────────────────────────────────
+      ".pm-wrap{display:flex;flex-direction:column;gap:0}" +
+      // ── Tab bar — identical to users-tab-bar style ────────────
+      ".pm-tab-bar{display:flex;gap:0;border-bottom:2.5px solid var(--border);margin-bottom:20px}" +
+      ".pm-tab{padding:10px 22px;font-size:13px;font-weight:600;border:none;background:transparent;cursor:pointer;" +
+      "color:var(--text2);border-bottom:2.5px solid transparent;margin-bottom:-2.5px;transition:all .15s;border-radius:0;font-family:var(--font)}" +
+      ".pm-tab.active{color:var(--accent);border-bottom-color:var(--accent)}" +
+      ".pm-tab:hover:not(.active){color:var(--text);background:var(--surface2)}" +
+      ".pm-pane{display:none}.pm-pane.active{display:block}" +
+      // ── Roles Grid ───────────────────────────────────────────
+      ".role-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}" +
+      ".role-card{background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:18px;transition:box-shadow .18s}" +
+      ".role-card:hover{box-shadow:0 4px 20px rgba(0,0,0,.09)}" +
+      ".role-card-header{display:flex;align-items:center;gap:10px;margin-bottom:10px}" +
+      ".role-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}" +
+      ".role-card-title{font-size:15px;font-weight:700;color:var(--text)}" +
+      ".role-card-sub{font-size:11px;color:var(--text3)}" +
+      ".role-actions{display:flex;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)}" +
+      ".builtin-badge{font-size:10px;padding:2px 7px;border-radius:10px;background:var(--surface2);color:var(--text3);border:1px solid var(--border);font-weight:600;margin-right:auto}" +
+      // ── Card table header bar — matches users card bar ────────
+      ".pm-card-bar{display:flex;align-items:center;justify-content:space-between;padding:11px 16px;" +
+      "background:var(--surface2);border-bottom:1.5px solid var(--border)}" +
+      ".pm-card-bar-title{display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;color:var(--text)}" +
+      ".pm-card-icon{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,#2563eb,#7c3aed);" +
+      "display:flex;align-items:center;justify-content:center;font-size:12px}" +
+      // ── Permission Matrix ─────────────────────────────────────
+      ".pm-matrix-wrap{overflow-x:auto;border-radius:0 0 12px 12px}" +
+      ".pm-matrix{width:100%;border-collapse:collapse;font-size:12px}" +
+      ".pm-matrix th{background:var(--surface2);padding:10px 14px;font-weight:700;color:var(--text2);border-bottom:1.5px solid var(--border);white-space:nowrap;text-align:center}" +
+      ".pm-matrix th.perm-name{text-align:right;min-width:200px;position:sticky;right:0;background:var(--surface2);z-index:2;box-shadow:-2px 0 6px rgba(0,0,0,.07)}" +
+      ".pm-matrix td{padding:7px 10px;border-bottom:1px solid var(--border);text-align:center;vertical-align:middle}" +
+      ".pm-matrix td.perm-label{text-align:right;font-size:12px;color:var(--text);padding:7px 14px;position:sticky;right:0;background:var(--surface);z-index:1;box-shadow:-2px 0 4px rgba(0,0,0,.04)}" +
+      ".pm-matrix tr:hover td{background:var(--primary-soft)}" +
+      ".pm-matrix tr:hover td.perm-label,.pm-matrix tr:hover td.cat-row{background:var(--primary-soft)}" +
+      ".pm-matrix td.cat-row{background:var(--surface2);font-weight:700;color:var(--text2);padding:8px 14px;position:sticky;right:0;z-index:1}" +
+      ".pm-matrix tr.cat-separator td{background:var(--surface2);padding:6px 14px}" +
+      ".perm-check{width:20px;height:20px;border-radius:6px;border:2px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-size:12px;background:var(--surface2);transition:all .15s}" +
+      ".perm-check.granted{background:#d1fae5;border-color:#10b981;color:#047857}" +
+      ".perm-check.denied-override{background:#fee2e2;border-color:#ef4444;color:#b91c1c}" +
+      ".perm-check.extra-override{background:#dbeafe;border-color:#3b82f6;color:#1d4ed8}" +
+      ".perm-check.empty{background:var(--surface2);border-color:var(--border);color:transparent}" +
+      // ── Legend ───────────────────────────────────────────────
+      ".pm-legend{display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--text3);padding:10px 16px;background:var(--surface2);border-bottom:1px solid var(--border)}" +
+      ".pm-legend-item{display:flex;align-items:center;gap:5px}" +
+      // ── User Overrides ────────────────────────────────────────
+      ".user-perm-row{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border);transition:background .15s}" +
+      ".user-perm-row:hover{background:var(--primary-soft)}" +
+      ".user-perm-badge-wrap{display:flex;gap:6px;flex-wrap:wrap;align-items:center}" +
+      ".pm-badge{font-size:10px;padding:2px 8px;border-radius:12px;font-weight:600}" +
+      ".pm-badge.extra{background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd}" +
+      ".pm-badge.denied{background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5}" +
+      // ── Modal override ────────────────────────────────────────
+      ".perm-toggle-row{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-radius:8px;margin-bottom:4px;transition:background .15s}" +
+      ".perm-toggle-row:hover{background:var(--surface2)}" +
+      ".perm-toggle-label{font-size:12px;color:var(--text);flex:1}" +
+      ".perm-group-header{font-size:11px;font-weight:700;color:var(--text2);padding:8px 12px 4px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);margin-bottom:4px}" +
+      ".pm-toggle-btn{width:28px;height:16px;border-radius:10px;position:relative;cursor:pointer;transition:background .2s;flex-shrink:0;border:none}" +
+      ".pm-toggle-btn.on{background:var(--accent)}.pm-toggle-btn.off{background:var(--border)}" +
+      ".pm-toggle-btn::after{content:'';position:absolute;top:2px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .2s}" +
+      ".pm-toggle-btn.on::after{left:14px}.pm-toggle-btn.off::after{left:2px}" +
+      "</style>" +
+      '<div class="pm-wrap">' +
+      // ══ شريط التبويبات — بنفس style شريط المستخدمين ══════════
+      '<div class="pm-tab-bar">' +
+      '<button class="pm-tab active" data-pmtab="roles" onclick="switchPermTab(this,\'roles\')">' +
+      I18N.t("PERM_ROLES_ICON") +
+      "</button>" +
+      '<button class="pm-tab" data-pmtab="matrix" onclick="switchPermTab(this,\'matrix\')">' +
+      I18N.t("PERM_MATRIX_ICON") +
+      "</button>" +
+      '<button class="pm-tab" data-pmtab="overrides" onclick="switchPermTab(this,\'overrides\')">' +
+      I18N.t("PERM_USER_OVERRIDE_ICON") +
+      "</button>" +
+      // زر دور جديد في يسار الـ tab bar
+      '<div style="margin-right:auto;display:flex;align-items:center;padding:4px 0">' +
+      '<button onclick="openNewRoleModal()" class="btn btn-primary btn-sm" style="display:flex;align-items:center;gap:6px;font-size:12px">' +
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>' +
+      "دور جديد</button>" +
+      "</div>" +
+      "</div>" +
+      // ══ تبويب 1: الأدوار ════════════════════════════════════
+      '<div class="pm-pane active" id="pm-pane-roles">' +
+      '<div class="card" style="padding:0;overflow:hidden">' +
+      '<div class="pm-card-bar">' +
+      '<div class="pm-card-bar-title">' +
+      '<div class="pm-card-icon"></div>' +
+      "<span>" +
+      I18N.t("PERM_ROLES_AVAILABLE") +
+      "</span>" +
+      "</div>" +
+      "</div>" +
+      '<div style="padding:16px">' +
+      '<div id="pm-roles-grid" class="role-cards">' +
+      '<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--text3)">' +
+      I18N.t("MSG_LOADING_HOURGLASS") +
+      "</div>" +
+      "</div></div></div></div>" +
+      // ══ تبويب 2: المصفوفة ════════════════════════════════════
+      '<div class="pm-pane" id="pm-pane-matrix">' +
+      '<div class="card" style="padding:0;overflow:hidden">' +
+      '<div class="pm-card-bar">' +
+      '<div class="pm-card-bar-title">' +
+      '<div class="pm-card-icon"></div>' +
+      "<span>" +
+      I18N.t("PERM_MATRIX_ALL_ROLES") +
+      "</span>" +
+      "</div>" +
+      "</div>" +
+      '<div class="pm-legend">' +
+      '<div class="pm-legend-item"><div class="perm-check granted" style="width:16px;height:16px;font-size:10px"></div> ' +
+      I18N.t("PERM_FROM_ROLE") +
+      "</div>" +
+      '<div class="pm-legend-item"><div class="perm-check extra-override" style="width:16px;height:16px;font-size:10px">+</div> ' +
+      I18N.t("LBL_ADD_SINGLE") +
+      "</div>" +
+      '<div class="pm-legend-item"><div class="perm-check denied-override" style="width:16px;height:16px;font-size:10px"></div> ' +
+      I18N.t("PERM_BLOCKED_FOR_USER") +
+      "</div>" +
+      '<div class="pm-legend-item"><div class="perm-check empty" style="width:16px;height:16px">—</div> ' +
+      I18N.t("MSG_NOT_ALLOWED") +
+      "</div>" +
+      "</div>" +
+      '<div id="pm-matrix-wrap" class="pm-matrix-wrap">' +
+      '<div style="padding:40px;text-align:center;color:var(--text3)">' +
+      I18N.t("MSG_BUILDING_MATRIX") +
+      "</div>" +
+      "</div></div></div>" +
+      // ══ تبويب 3: Override المستخدمين ═════════════════════════
+      '<div class="pm-pane" id="pm-pane-overrides">' +
+      '<div class="card" style="padding:0;overflow:hidden">' +
+      '<div class="pm-card-bar">' +
+      '<div class="pm-card-bar-title">' +
+      '<div class="pm-card-icon"></div>' +
+      "<span>" +
+      I18N.t("PERM_USER_SPECIFIC") +
+      "</span>" +
+      "</div>" +
+      '<span style="font-size:11px;color:var(--text3)">' +
+      I18N.t("PERM_OVERRIDES_ROLE_DESC") +
+      "</span>" +
+      "</div>" +
+      '<div id="pm-overrides-list"><div style="padding:30px;text-align:center;color:var(--text3)">' +
+      I18N.t("MSG_LOADING_HOURGLASS") +
+      "</div></div>" +
+      "</div></div>" +
+      "</div>" // end pm-wrap
+    );
+  }
+
+  // ============================================================
+  // مودال إنشاء / تعديل دور (تصميم محترف v2)
+  // ============================================================
+</script>

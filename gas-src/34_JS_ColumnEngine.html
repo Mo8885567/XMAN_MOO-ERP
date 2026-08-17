@@ -1,0 +1,2021 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 34_JS_ColumnEngine.html
+  // ColumnEngine — محرك مركزي لتعريف الأعمدة (Metadata-Driven Tables)
+  //
+  // [PHASE-1 / Dynamic-Columns] الهدف: إنهاء الاعتماد على أعمدة Hardcoded
+  // داخل كل شاشة (<th>الكود</th><th>الاسم</th>...) واستبدالها بتعريف
+  // مركزي (Column Definition) لكل شاشة، بحيث:
+  //   - إظهار/إخفاء الأعمدة، ترتيبها، عرضها، وتثبيتها كلها إعدادات
+  //     تُقرأ من الـ Metadata + تفضيلات المستخدم، وليست جزءًا من الكود.
+  //   - أي حقل جديد يُضاف لتعريف الشاشة (register) يظهر تلقائيًا في
+  //     نافذة "تخصيص الجدول" دون أي تعديل آخر في الواجهة.
+  //   - التخزين يعتمد على PreferenceService الموجود بالفعل
+  //     (24_JS_UserPreferences.html → tables[screenId]) فلا حاجة لأي
+  //     شيت جديد أو دالة backend جديدة — نفس آلية المزامنة والحفظ
+  //     التلقائي (debounce) المستخدمة في باقي تفضيلات المستخدم.
+  //
+  // الأداء: إعادة ترتيب/إخفاء الأعمدة لا تُعيد بناء الجدول بالكامل —
+  // كل صف (thead/tbody) عبارة عن CSS Grid بنفس grid-template-columns،
+  // وكل خلية عندها "order" ثابت حسب مفتاح العمود. تغيير الترتيب أو
+  // الإظهار = تحديث <style> واحد فقط (رقم order / display) بدون لمس
+  // الـ DOM الفعلي للصفوف. هذا ما يجعل التبديل فوريًا حتى مع آلاف الصفوف.
+  //
+  // الاستخدام من أي شاشة:
+  //   ColumnEngine.register('catalog_items', [
+  //     {key:'code', label:'الكود', type:'text', width:110, frozen:'right'},
+  //     {key:'name', label:'الاسم', type:'text', width:220, frozen:'right'},
+  //     {key:'group', label:'المجموعة', type:'text'},
+  //     {key:'tax_number', label:'الرقم الضريبي', type:'text',
+  //       category:'حقول إضافية', defaultVisible:false},
+  //     ...
+  //   ], { rowKey:'id', title:'قائمة الأصناف' });
+  //
+  //   ColumnEngine.renderTable('catalog_items', containerEl, rowsArray, {
+  //     onRowClick: function(row){ ... }
+  //   });
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  var ColumnEngine = (function () {
+    var _registry = {}; // screenId -> { columns:[...], options:{} }
+    var _state = {}; // screenId -> { rows, filtered, container, opts, sortKey, sortDir }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-CSS  حقن الأنماط الأساسية مرة واحدة فقط
+    // ─────────────────────────────────────────────────────────────────────
+    (function _injectBaseCSS() {
+      if (document.getElementById("ce-base-style")) return;
+      var s = document.createElement("style");
+      s.id = "ce-base-style";
+      s.textContent = [
+        ".ce-wrap{display:flex;flex-direction:column;gap:22px}",
+        ".ce-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}",
+        ".ce-search{flex:1;min-width:180px;position:relative}",
+        ".ce-search input{width:100%;padding:8px 34px 8px 12px;border:1px solid var(--border);",
+        "border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:13px}",
+        ".ce-search i{position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:15px}",
+        ".ce-btn{display:flex;align-items:center;gap:6px;padding:8px 12px;border:1px solid var(--border);",
+        "border-radius:var(--radius-sm);background:var(--surface);color:var(--text2);font-size:12.5px;",
+        "cursor:pointer;white-space:nowrap}",
+        ".ce-btn:hover{background:var(--surface2);color:var(--text)}",
+        ".ce-btn i{font-size:15px}",
+        ".ce-count{font-size:12px;color:var(--text3);padding:0 4px}",
+        ".ce-count:empty{display:none;padding:0}",
+        ".ce-table-scroll{overflow:auto;border:1px solid var(--border);border-radius:var(--radius-sm);",
+        "background:var(--surface);max-width:100%}",
+        ".ce-grid-row{display:grid;align-items:center;min-width:max-content}",
+        ".ce-thead-row{position:sticky;top:0;z-index:3;background:var(--surface3);",
+        "border-bottom:2px solid var(--border);font-weight:600;font-size:12.5px;color:var(--text2)}",
+        ".ce-th{padding:9px 10px;display:flex;align-items:center;gap:5px;cursor:pointer;",
+        "user-select:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:inherit;position:relative}",
+        ".ce-th:hover{color:var(--accent)}",
+        ".ce-th-resize{position:absolute;top:0;bottom:0;left:-3px;width:7px;cursor:col-resize;",
+        "z-index:5;background:transparent}",
+        ".ce-th-resize:hover,.ce-th-resize.ce-resizing{background:var(--accent)}",
+        ".ce-colctx-menu{position:fixed;z-index:9999;background:var(--surface);",
+        "border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);",
+        "padding:6px;min-width:220px;max-height:80vh;overflow:auto;font-size:12.5px}",
+        ".ce-colctx-item{display:flex;align-items:center;gap:8px;padding:8px 10px;",
+        "border-radius:8px;cursor:pointer;color:var(--text)}",
+        ".ce-colctx-item:hover{background:var(--surface2)}",
+        ".ce-colctx-item i{font-size:15px;width:16px;text-align:center;color:var(--text3)}",
+        ".ce-colctx-item.disabled{opacity:.4;pointer-events:none}",
+        ".ce-colctx-sep{height:1px;background:var(--border);margin:5px 2px}",
+        ".ce-colctx-sub{padding:6px 10px;font-size:11px;color:var(--text3);font-weight:700}",
+        ".ce-body-row{border-bottom:1px solid var(--border);font-size:13px;color:var(--text)}",
+        ".ce-body-row:hover{background:var(--surface2)}",
+        ".ce-td{padding:8px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:inherit}",
+        ".ce-frozen{position:sticky;z-index:2}",
+        ".ce-empty{padding:30px;text-align:center;color:var(--text3);font-size:13px}",
+        // ── [COLUMN-ENGINE-EXTRA-ROWS] صف افتتاحي (topRow) وصف إجمالي
+        // (bottomRow) للتقارير المالية (الأستاذ العام / ميزان المراجعة) —
+        // نفس شبكة الأعمدة (.ce-grid-row) فتتماشى تلقائيًا مع الترتيب/
+        // الإخفاء/التثبيت بدون أي كود إضافي (راجع _renderExtraRowHtml)
+        ".ce-extra-row{font-weight:700;background:var(--surface2)}",
+        ".ce-extra-row.ce-toprow{border-bottom:2px solid var(--border);color:var(--text3)}",
+        ".ce-extra-row.ce-bottomrow{border-top:2px solid var(--border)}",
+        // ── نافذة تخصيص الأعمدة ──
+        ".ce-cust-search{margin-bottom:10px}",
+        ".ce-cust-search input{width:100%;padding:8px 12px;border:1px solid var(--border);",
+        "border-radius:var(--radius-sm);font-size:13px}",
+        ".ce-cust-actions{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}",
+        ".ce-cust-list{max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-sm)}",
+        ".ce-cust-cat{padding:6px 10px;background:var(--surface2);font-size:11.5px;font-weight:700;",
+        "color:var(--text3);position:sticky;top:0}",
+        ".ce-cust-item{display:flex;align-items:center;gap:8px;padding:8px 10px;",
+        "border-bottom:1px solid var(--border);background:var(--surface)}",
+        ".ce-cust-item.dragging{opacity:.4}",
+        ".ce-cust-item.drag-over{border-top:2px solid var(--accent)}",
+        ".ce-cust-handle{cursor:grab;color:var(--text3);font-size:16px}",
+        ".ce-cust-label{flex:1;font-size:13px;color:var(--text)}",
+        ".ce-cust-width{width:56px;padding:4px 6px;border:1px solid var(--border);",
+        "border-radius:6px;font-size:11.5px;text-align:center}",
+        ".ce-cust-freeze{display:flex;gap:2px}",
+        ".ce-cust-freeze button{width:26px;height:26px;border:1px solid var(--border);background:var(--surface);",
+        "border-radius:6px;cursor:pointer;color:var(--text3);font-size:12px}",
+        ".ce-cust-freeze button.active{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}",
+        ".ce-preset-row{display:flex;align-items:center;gap:6px;margin-bottom:10px;flex-wrap:wrap}",
+        ".ce-preset-chip{padding:5px 10px;border:1px solid var(--border);border-radius:var(--radius-pill);",
+        "font-size:12px;cursor:pointer;background:var(--surface)}",
+        ".ce-preset-chip.active{background:var(--accent);color:#fff;border-color:var(--accent)}",
+      ].join("\n");
+      document.head.appendChild(s);
+    })();
+
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-01  تسجيل شاشة جديدة بتعريف أعمدتها (Metadata)
+    // ─────────────────────────────────────────────────────────────────────
+    function register(screenId, columns, options) {
+      options = options || {};
+      var normalized = columns.map(function (c, i) {
+        return Object.assign(
+          {
+            type: "text", // text | number | currency | date | badge | custom
+            // [FIX] الافتراضي بقى "center" لكل الأعمدة (نص وأرقام)
+            // بدل ما كان: يمين للنص ويسار للأرقام. أي عمود عايز محاذاة
+            // مختلفة لازم يحددها صراحة في تعريفه (align: 'left'/'right').
+            align: "center",
+            width: 140,
+            sortable: true,
+            filterable: true,
+            searchable: true,
+            defaultVisible: true,
+            exportable: true,
+            printable: true,
+            editable: false,
+            frozen: null, // null | 'left' | 'right'
+            category: "أساسي",
+            order: i,
+            format: null, // function(value, row) -> string
+          },
+          c,
+        );
+      });
+      _registry[screenId] = { columns: normalized, options: options };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-02  دمج تعريف الأعمدة الافتراضي مع تفضيلات المستخدم المحفوظة
+    // ─────────────────────────────────────────────────────────────────────
+    function _getPrefs(screenId) {
+      // getTablePrefs معرّفة في 24_JS_UserPreferences.html وتُخزَّن ضمن
+      // PreferenceService (مزامنة تلقائية مع شيت UserPreferences بالسيرفر)
+      return (
+        (typeof getTablePrefs === "function" && getTablePrefs(screenId)) || {}
+      );
+    }
+
+    function _savePrefs(screenId, patch) {
+      if (typeof saveTablePrefs === "function") saveTablePrefs(screenId, patch);
+    }
+
+    function _effectiveColumns(screenId) {
+      var reg = _registry[screenId];
+      if (!reg) return [];
+      var prefs = _getPrefs(screenId);
+      var visible = prefs.visible || {};
+      var widths = prefs.widths || {};
+      var frozen = prefs.frozen || {};
+      var order = prefs.order || [];
+
+      var cols = reg.columns.map(function (c) {
+        return Object.assign({}, c, {
+          _visible: visible.hasOwnProperty(c.key)
+            ? !!visible[c.key]
+            : c.defaultVisible,
+          // [FIX] الأولوية: عرض خصّصه المستخدم يدويًا > عرض best-fit المحسوب > العرض الافتراضي الثابت
+          _width: widths[c.key] || c._autoWidth || c.width,
+          _frozen: frozen.hasOwnProperty(c.key) ? frozen[c.key] : c.frozen,
+        });
+      });
+
+      if (order.length) {
+        var byKey = {};
+        cols.forEach(function (c) {
+          byKey[c.key] = c;
+        });
+        var ordered = order
+          .map(function (k) {
+            return byKey[k];
+          })
+          .filter(Boolean);
+        // أي عمود جديد أُضيف للتعريف بعد حفظ الترتيب القديم يُلحق في النهاية تلقائيًا
+        reg.columns.forEach(function (c) {
+          if (order.indexOf(c.key) === -1) ordered.push(byKey[c.key]);
+        });
+        cols = ordered;
+      }
+      return cols;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-03  بناء <style> ديناميكي لعمود الترتيب/الإظهار/التثبيت
+    //         (لا يلمس DOM الصفوف — راجع ملاحظة الأداء أعلى الملف)
+    // ─────────────────────────────────────────────────────────────────────
+    function _rebuildLayoutStyle(screenId) {
+      var cols = _effectiveColumns(screenId);
+      var visibleCols = cols.filter(function (c) {
+        return c._visible;
+      });
+      var reg = _registry[screenId];
+      // [FIT-TO-WIDTH] وضع اختياري (options.fitToWidth) بيخلي كل الأعمدة
+      // الظاهرة تاخد نفس النسبة بالظبط (1fr لكل عمود) وتتقلّص/تتمدد مع
+      // عرض الحاوية بدون سكرول جانبي — بعكس الوضع الافتراضي اللي بيحترم
+      // أقل عرض (min) لكل عمود وممكن يظهر سكرول لو المجموع أكبر من الحاوية.
+      var fitToWidth = !!(reg && reg.options && reg.options.fitToWidth);
+      // [FIX] كل الأعمدة كانت بتاخد عرض px ثابت (سواء افتراضي أو autofit)،
+      // فمفيش أي عمود "مرن" ياخد المساحة الفاضية لو مجموع عروض الأعمدة أقل
+      // من عرض الجدول الفعلي — فبيفضل فراغ بعد آخر عمود (زي ما ظهر في شاشة
+      // المخازن، بعكس المجموعات اللي كان مجموع عروضها قريب من عرض الجدول
+      // بالصدفة).
+      // [FIX-2] أول حل كان بيدي المساحة الفاضية كلها لآخر عمود بس
+      // (minmax(..,1fr) على آخر عمود فقط)، فكان العمود ده بيتضخم لوحده
+      // والباقي فاضل بعرضه الثابت الضيق → توزيع غير متساوي بين الأعمدة
+      // (بالظبط الشكوى اللي ظهرت في شاشة "الوظائف": عمود "القسم" واخد كل
+      // المساحة الفاضية والاسم/الكود ضيقين). الحل: كل الأعمدة الظاهرة
+      // (ما عدا المثبتة/frozen، عشان حسبة sticky offset تحت متعتمدش على
+      // عرض ثابت) بتاخد minmax(عرضها, 1fr) بدل عمود واحد بس، فـ CSS Grid
+      // بيوزّع أي مساحة فاضية بالتساوي على كل الأعمدة دي مع احترام أقل
+      // عرض لكل عمود.
+      var gridTemplate = fitToWidth
+        ? visibleCols
+            .map(function () {
+              // minmax(0,1fr) بدل 1fr وحدها: عشان العمود يقدر يتقلّص لأقل
+              // من min-content بتاعه (النص هيتقطع بـ ellipsis عبر .ce-td)
+              // بدل ما يفرض سكرول جانبي على الصف.
+              return "minmax(0, 1fr)";
+            })
+            .join(" ")
+        : visibleCols
+            .map(function (c) {
+              var isFrozen = c._frozen === "left" || c._frozen === "right";
+              return isFrozen
+                ? c._width + "px"
+                : "minmax(" + c._width + "px, 1fr)";
+            })
+            .join(" ");
+
+
+      var css = [];
+      css.push(
+        '[data-ce-scope="' +
+          screenId +
+          '"] .ce-grid-row{grid-template-columns:' +
+          gridTemplate +
+          "}",
+      );
+      if (fitToWidth) {
+        // الصف الافتراضي min-width:max-content بيفرض عرض الصف = مجموع
+        // أقل عرض لكل الأعمدة، وده بالظبط اللي بيسبب السكرول الجانبي.
+        // في وضع fitToWidth بنلغي القيد ده عشان الصف يتقلّص مع الحاوية.
+        css.push(
+          '[data-ce-scope="' + screenId + '"] .ce-grid-row{min-width:0}',
+        );
+        // مفيش معنى لسحب تغيير عرض عمود يدويًا طالما كل الأعمدة بتاخد
+        // نفس النسبة تلقائيًا — نخفي مقبض السحب في هذا الوضع.
+        css.push(
+          '[data-ce-scope="' + screenId + '"] .ce-th-resize{display:none}',
+        );
+      }
+
+      // إخفاء الأعمدة غير الظاهرة + ترتيبها عبر order (بدون إعادة بناء DOM)
+      cols.forEach(function (c, idx) {
+        var sel =
+          '[data-ce-scope="' + screenId + '"] [data-col="' + c.key + '"]';
+        if (!c._visible) {
+          css.push(sel + "{display:none!important}");
+        } else {
+          var visIdx = visibleCols.indexOf(c);
+          css.push(sel + "{order:" + visIdx + "}");
+        }
+      });
+
+      // تثبيت الأعمدة (Frozen) — نحسب الإزاحة التراكمية لعرض الأعمدة المثبتة
+      // (بيتخطى في وضع fitToWidth: أعمدة بعرض 1fr متغيّر مفيش معنى لحساب
+      // إزاحة px ثابتة لها، وأصلاً معدش فيه سكرول جانبي يستدعي التثبيت)
+      if (!fitToWidth) {
+        var leftAcc = 0;
+        visibleCols
+          .filter(function (c) {
+            return c._frozen === "left";
+          })
+          .forEach(function (c) {
+            var sel =
+              '[data-ce-scope="' + screenId + '"] [data-col="' + c.key + '"]';
+            css.push(
+              sel + "{position:sticky;left:" + leftAcc + "px;z-index:2}",
+            );
+            leftAcc += c._width;
+          });
+        var rightAcc = 0;
+        visibleCols
+          .filter(function (c) {
+            return c._frozen === "right";
+          })
+          .slice()
+          .reverse()
+          .forEach(function (c) {
+            var sel =
+              '[data-ce-scope="' + screenId + '"] [data-col="' + c.key + '"]';
+            css.push(
+              sel + "{position:sticky;right:" + rightAcc + "px;z-index:2}",
+            );
+            rightAcc += c._width;
+          });
+      }
+
+      var styleId = "ce-layout-" + screenId;
+      var el = document.getElementById(styleId);
+      if (!el) {
+        el = document.createElement("style");
+        el.id = styleId;
+        document.head.appendChild(el);
+      }
+      el.textContent = css.join("\n");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-04  عرض قيمة خلية حسب نوع العمود
+    // ─────────────────────────────────────────────────────────────────────
+    function _formatCell(col, row) {
+      var val = row[col.key];
+      if (col.format) {
+        try {
+          return col.format(val, row);
+        } catch (e) {
+          return "";
+        }
+      }
+      if (val === null || val === undefined || val === "") return "—";
+      switch (col.type) {
+        case "date":
+          return typeof _fmtDate === "function" ? _fmtDate(val) : String(val);
+        case "currency":
+          // [ENGINE-UNIFY] كانت هذه هي المسار الافتراضي الوحيد في كل الشاشات
+          // اللي بيتجاوز formatMoney/PreferenceService كليًا (locale ثابت
+          // en-US، بدون رمز العملة المختارة، وبدون class="sensitive-balance"
+          // فيبقى أي عمود currency بدون format مخصّص غير مغطّى بخاصية
+          // إخفاء الأرصدة hide_balances). دلوقتي بيمر عبر formatMoney دايمًا.
+          return (
+            '<span class="sensitive-balance">' +
+            (typeof formatMoney === "function"
+              ? formatMoney(val, { decimals: 2 })
+              : Number(val || 0).toLocaleString("en-US", {
+                  minimumFractionDigits: 2,
+                })) +
+            "</span>"
+          );
+        case "number":
+          return Number(val || 0).toLocaleString("en-US");
+        default:
+          return typeof _esc === "function" ? _esc(String(val)) : String(val);
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-AUTOFIT  حساب "أفضل عرض" لكل عمود حسب محتواه (شبيه بخاصية
+    // AutoFit Column Width في Excel) — بدل الأعرض الثابتة القديمة اللي
+    // ما كانتش بتتناسب مع طول النص الفعلي (عمود واسع فاضي / عمود ضيق
+    // بيقص النص). المحاذاة بتترك زي ما هي (align بيتحدد في register)،
+    // هنا بس بنحسب _autoWidth بالبكسل.
+    // ─────────────────────────────────────────────────────────────────────
+    var _measureCanvas = null;
+    var _measureCtx = null;
+    function _measureTextWidth(text, font) {
+      if (!_measureCanvas) {
+        _measureCanvas = document.createElement("canvas");
+        _measureCtx = _measureCanvas.getContext("2d");
+      }
+      _measureCtx.font = font;
+      return _measureCtx.measureText(text || "").width;
+    }
+
+    var _stripHtmlEl = null;
+    function _stripHtml(html) {
+      if (html == null) return "";
+      if (!_stripHtmlEl) _stripHtmlEl = document.createElement("div");
+      _stripHtmlEl.innerHTML = String(html);
+      return _stripHtmlEl.textContent || _stripHtmlEl.innerText || "";
+    }
+
+    // مسطرة قياس مخفية للأعمدة من نوع "custom" (زي pills الألوان أو أي
+    // شارات مزخرفة) — قياس النص المجرّد بس (_stripHtml) بيقلّل تقدير
+    // العرض الحقيقي لأن الشارات ليها padding/حدود/نقطة لون بتاخد مساحة
+    // مش موجودة في النص نفسه. القياس هنا بياخد عرض الـ HTML الفعلي بعد
+    // ما يترسم، فالعمود ياخد المساحة اللي محتاجها فعلاً.
+    var _rulerEl = null;
+    function _measureHtmlWidth(html) {
+      if (!_rulerEl) {
+        _rulerEl = document.createElement("div");
+        _rulerEl.style.cssText =
+          "position:absolute;visibility:hidden;pointer-events:none;" +
+          "top:-9999px;left:-9999px;display:inline-block;white-space:nowrap;" +
+          "padding:8px 10px;font:13px Tahoma,Arial,sans-serif;";
+        document.body.appendChild(_rulerEl);
+      }
+      _rulerEl.innerHTML = html || "";
+      // لو المحتوى جواه حاوية flex-wrap (زي pills الألوان) لازم نمنع
+      // الالتفاف مؤقتًا وقت القياس عشان ناخد أقصى عرض للمحتوى في سطر واحد
+      var wrapEls = _rulerEl.querySelectorAll('[style*="flex-wrap"]');
+      var prevWraps = [];
+      wrapEls.forEach(function (el) {
+        prevWraps.push(el.style.flexWrap);
+        el.style.flexWrap = "nowrap";
+      });
+      var w = _rulerEl.scrollWidth;
+      wrapEls.forEach(function (el, i) {
+        el.style.flexWrap = prevWraps[i];
+      });
+      return w;
+    }
+
+    var CE_AUTOFIT_MIN = 70;
+    var CE_AUTOFIT_MAX = 340;
+    var CE_AUTOFIT_SAMPLE = 150; // كفاية لتغطية أطول القيم من غير ما نمر على آلاف الصفوف
+
+    function _computeAutoFitWidths(cols, rows) {
+      var headFont = "700 13px Tahoma, Arial, sans-serif";
+      var bodyFont = "13px Tahoma, Arial, sans-serif";
+      var n = Math.min(rows.length, CE_AUTOFIT_SAMPLE);
+      cols.forEach(function (c) {
+        // لو حجم العمود اتخصص يدويًا بالفعل، سيبه — الأولوية لاختيار المستخدم
+        var maxW =
+          _measureTextWidth(
+            c.label !== undefined && c.label !== null ? c.label : c.key,
+            headFont,
+          ) + 40; // + أيقونة الفرز/الترتيب
+        var maxAutoWidth = c.maxAutoWidth || CE_AUTOFIT_MAX;
+        for (var i = 0; i < n; i++) {
+          var w;
+          try {
+            var cellHtml = _formatCell(c, rows[i]);
+            w =
+              c.type === "custom"
+                ? _measureHtmlWidth(cellHtml)
+                : _measureTextWidth(_stripHtml(cellHtml), bodyFont);
+          } catch (e) {
+            w = 0;
+          }
+          if (w > maxW) maxW = w;
+        }
+        c._autoWidth = Math.max(
+          CE_AUTOFIT_MIN,
+          Math.min(maxAutoWidth, Math.round(maxW + 28)),
+        );
+      });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-05  عرض الجدول الكامل (Toolbar + Thead + Tbody بنظام Lazy Rendering)
+    // ─────────────────────────────────────────────────────────────────────
+    function renderTable(screenId, container, rows, opts) {
+      opts = opts || {};
+      if (!_registry[screenId]) {
+        console.error("[ColumnEngine] الشاشة غير مسجّلة: " + screenId);
+        return;
+      }
+      _state[screenId] = {
+        rows: rows || [],
+        filtered: rows || [],
+        container: container,
+        opts: opts,
+        sortKey: null,
+        sortDir: 1,
+      };
+      // [FIX] احسب أفضل عرض تلقائي لكل عمود حسب محتواه الفعلي قبل رسم الجدول
+      _computeAutoFitWidths(_registry[screenId].columns, _state[screenId].rows);
+      _rebuildLayoutStyle(screenId);
+      container.setAttribute("data-ce-scope", screenId);
+      container.classList.add("ce-wrap");
+      container.innerHTML =
+        _buildToolbar(screenId) +
+        '<div class="ce-table-scroll"><div class="ce-thead-row ce-grid-row" id="ce-thead-' +
+        screenId +
+        '"></div><div id="ce-toprow-' +
+        screenId +
+        '"></div><div id="ce-tbody-' +
+        screenId +
+        '"></div><div id="ce-bottomrow-' +
+        screenId +
+        '"></div></div>';
+      _renderHead(screenId);
+      _renderBody(screenId);
+      _wireToolbar(screenId);
+      _wireContextMenu(screenId);
+    }
+
+    // [COLUMN-ENGINE-EXTRA-ROWS] صف ثابت خارج آلية الفرز/الفلترة/الصفحات —
+    // مخصّص لتقارير محاسبية بها "رصيد بداية الفترة" (topRow) أو "الإجمالي"
+    // (bottomRow). rowCfg = { label: "نص", values: { colKey: "HTML جاهز" } }
+    // — label تظهر في أول عمود ظاهر، وباقي values توضع في أعمدتها بالمفتاح.
+    // القيم HTML جاهزة من المستدعي (مش خام) لأنها أرقام مُجمَّعة مسبقًا.
+    function _renderExtraRowHtml(screenId, rowCfg, variantClass) {
+      if (!rowCfg) return "";
+      var cols = _effectiveColumns(screenId).filter(function (c) {
+        return c._visible;
+      });
+      var labelDone = false;
+      var html =
+        '<div class="ce-body-row ce-grid-row ce-extra-row ' +
+        variantClass +
+        '">';
+      cols.forEach(function (c) {
+        var content = "";
+        if (!labelDone && rowCfg.label) {
+          content = _esc(rowCfg.label);
+          labelDone = true;
+        } else if (
+          rowCfg.values &&
+          Object.prototype.hasOwnProperty.call(rowCfg.values, c.key)
+        ) {
+          content = rowCfg.values[c.key];
+        }
+        html +=
+          '<div class="ce-td ce-frozen" data-col="' +
+          c.key +
+          '" style="text-align:' +
+          (c.align === "left"
+            ? "left"
+            : c.align === "right"
+              ? "right"
+              : "center") +
+          '">' +
+          content +
+          "</div>";
+      });
+      html += "</div>";
+      return html;
+    }
+
+    function _renderExtraRows(screenId) {
+      var opts = (_state[screenId] || {}).opts || {};
+      var topEl = document.getElementById("ce-toprow-" + screenId);
+      if (topEl)
+        topEl.innerHTML = _renderExtraRowHtml(
+          screenId,
+          opts.topRow,
+          "ce-toprow",
+        );
+      var bottomEl = document.getElementById("ce-bottomrow-" + screenId);
+      if (bottomEl)
+        bottomEl.innerHTML = _renderExtraRowHtml(
+          screenId,
+          opts.bottomRow,
+          "ce-bottomrow",
+        );
+    }
+
+    // [PERF-PROGRESSIVE-LOAD-2026-08] إضافة صفوف جديدة لجدول اتعرض بالفعل
+    // (renderTable سبق ونودّي)، من غير ما نعيد بناء الجدول كله من الصفر —
+    // بتُستخدم مع runChunked (Core_Utilities.html) عشان نعرض أول دفعة صفوف
+    // فوراً، وبعدين نضيف الباقي تدريجياً في الخلفية بمجرد ما تجهز. بتحترم
+    // البحث/الفلترة/الفرز الحاليين على الشاشة تلقائياً.
+    function appendRows(screenId, moreRows) {
+      var st = _state[screenId];
+      if (!st || !moreRows || !moreRows.length) return;
+      st.rows = st.rows.concat(moreRows);
+      _applyFilters(screenId); // بيعيد بناء filtered ويرسم البادي (_renderBody)
+      if (st.sortKey) _applySort(screenId); // لو فيه فرز نشط، رجّعه على المجموعة الكاملة
+    }
+
+    // اختياري: ربط الجدول بنظام قائمة السياق العام (20_JS_ContextMenu.html)
+    // عبر تمرير options.contextMenuType عند التسجيل — بدون هذا الخيار لا يحدث
+    // أي شيء (توافق كامل مع الشاشات التي لا تستخدم قائمة السياق أصلاً)
+    function _wireContextMenu(screenId) {
+      var menuType = (_registry[screenId].options || {}).contextMenuType;
+      if (!menuType || !window.CTX || typeof CTX.register !== "function")
+        return;
+      var body = document.getElementById("ce-tbody-" + screenId);
+      if (!body || body._ceCtxBound) return;
+      body._ceCtxBound = true;
+      CTX.register(body, menuType);
+    }
+
+    function _buildToolbar(screenId) {
+      var reg = _registry[screenId];
+      var title = reg.options.title || "";
+      var hideSearch = !!reg.options.hideSearch;
+      return (
+        '<div class="ce-toolbar">' +
+        (hideSearch
+          ? ""
+          : '<div class="ce-search"><i class="ti ti-search"></i><input type="text" id="ce-search-' +
+            screenId +
+            '" placeholder="بحث..." /></div>') +
+        '<span class="ce-count" id="ce-count-' +
+        screenId +
+        '"></span>' +
+        '<div class="ce-preset-menu-wrap" style="position:relative">' +
+        '<button class="ce-btn" id="ce-presets-' +
+        screenId +
+        '"><i class="ti ti-layout-grid"></i> طرق العرض</button></div>' +
+        '<button class="ce-btn" id="ce-export-' +
+        screenId +
+        '"><i class="ti ti-download"></i> تصدير</button>' +
+        '<button class="ce-btn" id="ce-print-' +
+        screenId +
+        '"><i class="ti ti-printer"></i> طباعة</button>' +
+        "</div>"
+      );
+    }
+
+    function _renderHead(screenId) {
+      var cols = _effectiveColumns(screenId);
+      var head = document.getElementById("ce-thead-" + screenId);
+      if (!head) return;
+      head.innerHTML = cols
+        .map(function (c) {
+          return (
+            '<div class="ce-th ce-frozen" data-col="' +
+            c.key +
+            '" style="justify-content:' +
+            (c.align === "left"
+              ? "flex-start"
+              : c.align === "right"
+                ? "flex-end"
+                : "center") +
+            '" onclick="ColumnEngine._onSort(\'' +
+            screenId +
+            "','" +
+            c.key +
+            "')\">" +
+            '<div class="ce-th-resize" data-resize-col="' +
+            c.key +
+            '"></div>' +
+            (c.label !== undefined && c.label !== null ? c.label : c.key) +
+            "</div>"
+          );
+        })
+        .join("");
+      _wireHeaderEvents(screenId);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-11  ربط زرار القائمة (⋮) + Right-Click + Resize Handle على رأس العمود
+    // ─────────────────────────────────────────────────────────────────────
+    function _wireHeaderEvents(screenId) {
+      var head = document.getElementById("ce-thead-" + screenId);
+      if (!head) return;
+
+      // فتح Column Context Menu عبر زرار ⋮ أو زر الفأرة الأيمن على أي جزء من الرأس
+      head.querySelectorAll(".ce-th").forEach(function (th) {
+        var key = th.getAttribute("data-col");
+        th.addEventListener("contextmenu", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          _openColumnContextMenu(screenId, key, e.clientX, e.clientY);
+        });
+      });
+
+      // Resize Handle: سحب لتغيير العرض يدويًا + Double Click = Best Fit لهذا العمود
+      head.querySelectorAll(".ce-th-resize").forEach(function (handle) {
+        var key = handle.getAttribute("data-resize-col");
+        handle.addEventListener("click", function (e) {
+          e.stopPropagation();
+        });
+        handle.addEventListener("dblclick", function (e) {
+          e.stopPropagation();
+          _bestFitColumn(screenId, key);
+        });
+        handle.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          _startColumnResize(screenId, key, handle, e.clientX);
+        });
+      });
+    }
+
+    function _startColumnResize(screenId, key, handleEl, startX) {
+      var cols = _effectiveColumns(screenId);
+      var col = cols.find(function (c) {
+        return c.key === key;
+      });
+      if (!col) return;
+      var startWidth = col._width;
+      var container = _state[screenId].container;
+      var rtl = (container && getComputedStyle(container).direction) === "rtl";
+      handleEl.classList.add("ce-resizing");
+      document.body.style.cursor = "col-resize";
+
+      function onMove(e) {
+        var delta = e.clientX - startX;
+        var newWidth = Math.max(
+          50,
+          Math.min(600, startWidth + (rtl ? -delta : delta)),
+        );
+        _applyLiveWidth(screenId, key, newWidth);
+      }
+      function onUp(e) {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        handleEl.classList.remove("ce-resizing");
+        document.body.style.cursor = "";
+        var delta = e.clientX - startX;
+        var finalWidth = Math.max(
+          50,
+          Math.min(600, startWidth + (rtl ? -delta : delta)),
+        );
+        _saveColumnWidth(screenId, key, finalWidth);
+      }
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    }
+
+    // تحديث لحظي للعرض أثناء السحب فقط (بدون حفظ ولا إعادة رسم كامل للجدول)
+    function _applyLiveWidth(screenId, key, width) {
+      var cols = _effectiveColumns(screenId);
+      var target = cols.find(function (c) {
+        return c.key === key;
+      });
+      if (target) target._width = width;
+      _rebuildLayoutStyleFromCols(screenId, cols);
+    }
+
+    // نسخة من _rebuildLayoutStyle تقبل مصفوفة أعمدة جاهزة (لتفادي إعادة قراءة
+    // التفضيلات من التخزين أثناء السحب اللحظي، وهو ما قد يبطئ الحركة)
+    function _rebuildLayoutStyleFromCols(screenId, cols) {
+      var visibleCols = cols.filter(function (c) {
+        return c._visible;
+      });
+      // نفس منطق التوزيع بالتساوي في _rebuildLayoutStyle أعلاه (راجع
+      // شرح [FIX-2] هناك) — كل الأعمدة غير المثبتة تاخد minmax(width,1fr)
+      // مش عمود واحد بس، عشان يفضل التوزيع متساوي حتى أثناء السحب اللحظي.
+      var gridTemplate = visibleCols
+        .map(function (c) {
+          var isFrozen = c._frozen === "left" || c._frozen === "right";
+          return isFrozen
+            ? c._width + "px"
+            : "minmax(" + c._width + "px, 1fr)";
+        })
+        .join(" ");
+      var styleId = "ce-layout-" + screenId;
+      var el = document.getElementById(styleId);
+      if (!el) return;
+      // نستبدل فقط قاعدة grid-template-columns بدون لمس باقي القواعد (الإخفاء/الترتيب/التثبيت)
+      el.textContent = el.textContent.replace(
+        /\[data-ce-scope="[^"]*"\]\s*\.ce-grid-row\{grid-template-columns:[^}]*\}/,
+        '[data-ce-scope="' +
+          screenId +
+          '"] .ce-grid-row{grid-template-columns:' +
+          gridTemplate +
+          "}",
+      );
+    }
+
+    function _saveColumnWidth(screenId, key, width) {
+      var prefs = _getPrefs(screenId);
+      var widths = Object.assign({}, prefs.widths || {});
+      widths[key] = Math.round(width);
+      _savePrefs(screenId, { widths: widths });
+      _rebuildLayoutStyle(screenId);
+      _renderHead(screenId);
+    }
+
+    function _renderBody(screenId) {
+      var st = _state[screenId];
+      var body = document.getElementById("ce-tbody-" + screenId);
+      var cols = _effectiveColumns(screenId);
+      var countEl = document.getElementById("ce-count-" + screenId);
+      if (!body) return;
+
+      // [COLUMN-ENGINE-EXTRA-ROWS] يُعاد رسمهما مع أي تغيير أعمدة (ترتيب/
+      // إخفاء/تثبيت) لأن _renderBody هي نقطة الرسم المركزية الوحيدة
+      _renderExtraRows(screenId);
+
+      if (!st.filtered.length) {
+        body.innerHTML = '<div class="ce-empty">لا توجد بيانات لعرضها</div>';
+        if (countEl) countEl.textContent = "";
+        return;
+      }
+      if (countEl) countEl.textContent = st.filtered.length + " صف";
+
+      var rowKey = (_registry[screenId].options || {}).rowKey || "id";
+      var onRowClick = st.opts.onRowClick;
+
+      function rowHtml(row, idx, top) {
+        var attrs = "";
+        var idVal = row[rowKey];
+        var styleTop =
+          top !== undefined
+            ? ' style="position:absolute;top:' +
+              top +
+              "px;left:0;right:0;height:" +
+              CE_ROW_H +
+              'px"'
+            : "";
+        return (
+          '<div class="ce-body-row ce-grid-row" data-row-idx="' +
+          idx +
+          '"' +
+          (idVal !== undefined && idVal !== null
+            ? ' data-id="' + _esc(String(idVal)) + '"'
+            : "") +
+          styleTop +
+          attrs +
+          ">" +
+          cols
+            .map(function (c) {
+              return (
+                '<div class="ce-td ce-frozen" data-col="' +
+                c.key +
+                '" style="text-align:' +
+                (c.align === "left"
+                  ? "left"
+                  : c.align === "right"
+                    ? "right"
+                    : "center") +
+                '">' +
+                _formatCell(c, row) +
+                "</div>"
+              );
+            })
+            .join("") +
+          "</div>"
+        );
+      }
+
+      var total = st.filtered.length;
+
+      // ─────────────────────────────────────────────────────────────
+      // [VIRTUAL-SCROLL / المرحلة 8] القرار: جدول صغير (≤ CE_VIRTUAL_THRESHOLD
+      // صف) بيترسم كامل زي الأول (رسم بسيط، مفيش داعي لتعقيد إضافي).
+      // جدول كبير بيدخل في وضع Virtual Scrolling: بيتحط في الـ DOM بس
+      // الصفوف الظاهرة فعلياً في نافذة السكرول + BUFFER صف فوق وتحت
+      // (لمنع أي وميض أثناء سكرول سريع) — مش كل الصفوف زي قبل كده.
+      // ده بيفرق جداً في حجم DOM/استهلاك الذاكرة لو الجدول فيه آلاف
+      // الصفوف (أصناف/فواتير/عملاء) بدل ما يفضل النظام يرسم كل شيء.
+      // ─────────────────────────────────────────────────────────────
+      if (total <= CE_VIRTUAL_THRESHOLD) {
+        _teardownVirtualScroll(screenId);
+        body.style.position = "";
+        body.style.height = "";
+        body.innerHTML = st.filtered
+          .map(function (r, i) {
+            return rowHtml(r, i);
+          })
+          .join("");
+        _wireRowClicks(screenId);
+        // [IMAGE-ENGINE / المرحلة 9] أي عمود صور استخدم ImageEngine.thumbHtml()
+        // هيتفعّل هنا تلقائياً — Placeholder->Thumbnail Lazy بدون أي كود إضافي
+        // من الشاشة نفسها
+        if (typeof ImageEngine !== "undefined") ImageEngine.init(body);
+        return;
+      }
+
+      _renderVirtual(screenId, body, st.filtered, rowHtml, total);
+    }
+
+    /** ارتفاع الصف الثابت (بيكسل) — متوافق مع padding:8px 10px + font-size:13px
+     *  في .ce-td/.ce-body-row أعلاه. لو حد غيّر الـ CSS لازم يعدّل الرقم هنا. */
+    var CE_ROW_H = 37;
+    var CE_VIRTUAL_THRESHOLD = 150; // فوق العدد ده بيتفعّل Virtual Scrolling تلقائيًا
+    var CE_VIRTUAL_BUFFER = 8; // صفوف إضافية فوق/تحت النافذة الظاهرة
+
+    // screenId -> { scrollEl, handler, spacer } لإدارة/إزالة الـ listener بأمان
+    var _virtualScrollState = {};
+
+    function _teardownVirtualScroll(screenId) {
+      var v = _virtualScrollState[screenId];
+      if (!v) return;
+      if (v.scrollEl && v.handler) {
+        v.scrollEl.removeEventListener("scroll", v.handler);
+      }
+      delete _virtualScrollState[screenId];
+    }
+
+    function _renderVirtual(screenId, body, filtered, rowHtml, total) {
+      _teardownVirtualScroll(screenId);
+
+      var scrollEl = body.closest(".ce-table-scroll") || body;
+      body.innerHTML = "";
+      body.style.position = "relative";
+      body.style.height = total * CE_ROW_H + "px";
+
+      var rafPending = false;
+
+      function paint() {
+        rafPending = false;
+        // لو الشاشة اتقفلت/الجدول اتشال من الـ DOM أثناء انتظار الـ rAF
+        if (!document.body.contains(scrollEl)) {
+          _teardownVirtualScroll(screenId);
+          return;
+        }
+        var scrollTop = Math.max(0, scrollEl.scrollTop - body.offsetTop);
+        var viewportH = scrollEl.clientHeight || 400;
+        var startIdx = Math.max(
+          0,
+          Math.floor(scrollTop / CE_ROW_H) - CE_VIRTUAL_BUFFER,
+        );
+        var endIdx = Math.min(
+          total,
+          Math.ceil((scrollTop + viewportH) / CE_ROW_H) + CE_VIRTUAL_BUFFER,
+        );
+        var html = "";
+        for (var i = startIdx; i < endIdx; i++) {
+          html += rowHtml(filtered[i], i, i * CE_ROW_H);
+        }
+        body.innerHTML = html;
+        _wireRowClicks(screenId);
+        if (typeof ImageEngine !== "undefined") ImageEngine.init(body);
+      }
+
+      function onScroll() {
+        if (rafPending) return;
+        rafPending = true;
+        requestAnimationFrame(paint);
+      }
+
+      scrollEl.addEventListener("scroll", onScroll, { passive: true });
+      _virtualScrollState[screenId] = { scrollEl: scrollEl, handler: onScroll };
+      paint(); // رسم أولي للنافذة الظاهرة حاليًا
+    }
+
+    function _wireRowClicks(screenId) {
+      // [DISABLED] تم تعطيل خاصية فتح شاشة التعديل بالضغط على الصف بالكامل
+      // في كل الجداول اللي بتستخدم ColumnEngine (حتى لو الشاشة بتبعت onRowClick).
+      // لو حبيت ترجعها تاني: احذف السطر ده وارجع الشرط القديم اللي بيتحقق من st.opts.onRowClick.
+      return;
+      if (!st.opts.onRowClick) return;
+      var body = document.getElementById("ce-tbody-" + screenId);
+      if (!body || body._ceWired) return;
+      body._ceWired = true;
+      body.addEventListener("click", function (e) {
+        var rowEl = e.target.closest(".ce-body-row");
+        if (!rowEl) return;
+        var idx = Number(rowEl.getAttribute("data-row-idx"));
+        var row = _state[screenId].filtered[idx];
+        if (row) st.opts.onRowClick(row);
+      });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-06  البحث — فقط في الأعمدة الظاهرة القابلة للبحث (بند 6)
+    //         + تصفية اختيارية لعمود بعينه (Column Filter) من قائمة السياق،
+    //         بيتجمّع مع نص البحث العام (AND بين الاثنين)
+    // ─────────────────────────────────────────────────────────────────────
+    function _onSearch(screenId, term) {
+      var st = _state[screenId];
+      st.searchTerm = term;
+      _applyFilters(screenId);
+    }
+
+    function _applyFilters(screenId) {
+      var st = _state[screenId];
+      var cols = _effectiveColumns(screenId).filter(function (c) {
+        return c._visible && c.searchable;
+      });
+      var term = (st.searchTerm || "").trim().toLowerCase();
+      var colFilters = st.colFilters || {};
+      var filterKeys = Object.keys(colFilters).filter(function (k) {
+        return colFilters[k];
+      });
+
+      st.filtered = st.rows.filter(function (row) {
+        if (term) {
+          var hit = cols.some(function (c) {
+            var v = row[c.key];
+            return (
+              v !== null &&
+              v !== undefined &&
+              String(v).toLowerCase().indexOf(term) !== -1
+            );
+          });
+          if (!hit) return false;
+        }
+        for (var i = 0; i < filterKeys.length; i++) {
+          var k = filterKeys[i];
+          var fv = String(colFilters[k]).toLowerCase();
+          var rv = row[k];
+          if (
+            rv === null ||
+            rv === undefined ||
+            String(rv).toLowerCase().indexOf(fv) === -1
+          )
+            return false;
+        }
+        return true;
+      });
+      _renderBody(screenId);
+    }
+
+    function _setColumnFilter(screenId, key, value) {
+      var st = _state[screenId];
+      st.colFilters = st.colFilters || {};
+      if (value) st.colFilters[key] = value;
+      else delete st.colFilters[key];
+      _applyFilters(screenId);
+    }
+
+    function _onSort(screenId, key) {
+      var st = _state[screenId];
+      if (st.sortKey === key) {
+        st.sortDir = -st.sortDir;
+      } else {
+        st.sortKey = key;
+        st.sortDir = 1;
+      }
+      _applySort(screenId);
+    }
+
+    function _setSortDirect(screenId, key, dir) {
+      var st = _state[screenId];
+      st.sortKey = key;
+      st.sortDir = dir;
+      _applySort(screenId);
+    }
+
+    function _clearSort(screenId) {
+      var st = _state[screenId];
+      st.sortKey = null;
+      st.sortDir = 1;
+      _applyFilters(screenId); // يرجّع الترتيب الطبيعي (بدون فرز) مع احترام البحث/التصفية الحاليين
+      _renderHead(screenId);
+    }
+
+    function _applySort(screenId) {
+      var st = _state[screenId];
+      var key = st.sortKey;
+      var dir = st.sortDir;
+      st.filtered = st.filtered.slice().sort(function (a, b) {
+        var va = a[key],
+          vb = b[key];
+        if (va === vb) return 0;
+        if (va === null || va === undefined) return 1;
+        if (vb === null || vb === undefined) return -1;
+        if (typeof va === "number" && typeof vb === "number")
+          return (va - vb) * dir;
+        return String(va).localeCompare(String(vb), "ar") * dir;
+      });
+      _renderHead(screenId);
+      _renderBody(screenId);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-12  Column Context Menu — قائمة سياق احترافية على رأس العمود
+    //         (بديل زر "تخصيص الجدول" اللي اتشال من الـ Toolbar)
+    // ─────────────────────────────────────────────────────────────────────
+    function _openColumnContextMenu(screenId, key, x, y) {
+      _closeFloatingMenu();
+      var cols = _effectiveColumns(screenId);
+      var col = cols.find(function (c) {
+        return c.key === key;
+      });
+      if (!col) return;
+      var st = _state[screenId];
+      var hasHidden = cols.some(function (c) {
+        return !c._visible;
+      });
+      var hasFilter = !!(st.colFilters && st.colFilters[key]);
+
+      function item(icon, label, action, disabled) {
+        return (
+          '<div class="ce-colctx-item' +
+          (disabled ? " disabled" : "") +
+          '" data-action="' +
+          action +
+          '"><i class="ti ' +
+          icon +
+          '"></i><span>' +
+          label +
+          "</span></div>"
+        );
+      }
+      function sep() {
+        return '<div class="ce-colctx-sep"></div>';
+      }
+      function sub(label) {
+        return '<div class="ce-colctx-sub">' + label + "</div>";
+      }
+
+      var html = "";
+      html += sub(col.label !== undefined && col.label !== null ? col.label : col.key);
+      html += item("ti-adjustments-horizontal", "تخصيص الأعمدة", "customize");
+      html += item("ti-eye", "إظهار / إخفاء الأعمدة", "toggle-list");
+      html += item("ti-arrows-sort", "تغيير ترتيب الأعمدة", "reorder");
+      html += sep();
+      html += item(
+        "ti-pin",
+        "تثبيت لليمين",
+        "pin-right",
+        col._frozen === "right",
+      );
+      html += item(
+        "ti-pin",
+        "تثبيت لليسار",
+        "pin-left",
+        col._frozen === "left",
+      );
+      html += item("ti-pinned-off", "إلغاء التثبيت", "pin-none", !col._frozen);
+      html += sep();
+      html += item(
+        "ti-arrow-autofit-width",
+        "تغيير عرض العمود يدويًا",
+        "width-manual",
+      );
+      html += item(
+        "ti-arrow-autofit-content",
+        "أفضل احتواء (Best Fit)",
+        "best-fit-one",
+      );
+      html += item(
+        "ti-arrows-horizontal",
+        "أفضل احتواء لجميع الأعمدة",
+        "best-fit-all",
+      );
+      html += item("ti-restore", "إعادة تعيين عرض الأعمدة", "reset-widths");
+      html += sep();
+      html += item("ti-eye-off", "إخفاء هذا العمود", "hide-col");
+      html += item(
+        "ti-eye-check",
+        "إظهار جميع الأعمدة",
+        "show-all",
+        !hasHidden,
+      );
+      html += sep();
+      html += item(
+        "ti-sort-ascending",
+        "ترتيب تصاعدي",
+        "sort-asc",
+        !col.sortable,
+      );
+      html += item(
+        "ti-sort-descending",
+        "ترتيب تنازلي",
+        "sort-desc",
+        !col.sortable,
+      );
+      html += item(
+        "ti-square-rounded-x",
+        "إزالة الفرز",
+        "sort-clear",
+        st.sortKey !== key,
+      );
+      html += sep();
+      html += item(
+        "ti-filter",
+        hasFilter ? "تعديل تصفية هذا العمود" : "تصفية هذا العمود",
+        "filter-col",
+        !col.filterable,
+      );
+      html += item(
+        "ti-filter-x",
+        "إزالة تصفية هذا العمود",
+        "filter-clear",
+        !hasFilter,
+      );
+      html += sep();
+      html += item("ti-copy", "نسخ اسم العمود", "copy-name");
+      html += sep();
+      html += item(
+        "ti-layout-grid",
+        "إعادة تعيين تخطيط الجدول بالكامل",
+        "reset-layout",
+      );
+
+      var menu = document.createElement("div");
+      menu.className = "ce-floating-menu ce-colctx-menu";
+      menu.innerHTML = html;
+      document.body.appendChild(menu);
+
+      // ضبط الموضع بعد الإضافة عشان نعرف أبعاد القائمة الفعلية ونمنعها تخرج بره الشاشة
+      var mw = menu.offsetWidth,
+        mh = menu.offsetHeight;
+      var left = Math.min(x, window.innerWidth - mw - 8);
+      var top = Math.min(y, window.innerHeight - mh - 8);
+      menu.style.left = Math.max(8, left) + "px";
+      menu.style.top = Math.max(8, top) + "px";
+
+      menu.querySelectorAll(".ce-colctx-item").forEach(function (el) {
+        el.addEventListener("click", function () {
+          _handleColumnContextAction(
+            screenId,
+            key,
+            el.getAttribute("data-action"),
+          );
+          _closeFloatingMenu();
+        });
+      });
+      setTimeout(function () {
+        document.addEventListener("click", _closeFloatingMenuOnce);
+      }, 0);
+    }
+
+    function _handleColumnContextAction(screenId, key, action) {
+      switch (action) {
+        case "customize":
+          openCustomize(screenId);
+          break;
+        case "toggle-list":
+          openCustomize(screenId); // نفس نافذة التخصيص فيها Checkbox لكل عمود مباشرة
+          break;
+        case "reorder":
+          openCustomize(screenId); // نفس النافذة فيها Drag & Drop
+          break;
+        case "pin-right":
+          _setColumnFrozenDirect(screenId, key, "right");
+          break;
+        case "pin-left":
+          _setColumnFrozenDirect(screenId, key, "left");
+          break;
+        case "pin-none":
+          _setColumnFrozenDirect(screenId, key, null);
+          break;
+        case "width-manual":
+          _promptColumnWidth(screenId, key);
+          break;
+        case "best-fit-one":
+          _bestFitColumn(screenId, key);
+          break;
+        case "best-fit-all":
+          _bestFitAllColumns(screenId);
+          break;
+        case "reset-widths":
+          _resetColumnWidths(screenId);
+          break;
+        case "hide-col":
+          _setColumnVisibleDirect(screenId, key, false);
+          break;
+        case "show-all":
+          _showAllColumns(screenId);
+          break;
+        case "sort-asc":
+          _setSortDirect(screenId, key, 1);
+          break;
+        case "sort-desc":
+          _setSortDirect(screenId, key, -1);
+          break;
+        case "sort-clear":
+          _clearSort(screenId);
+          break;
+        case "filter-col":
+          _promptColumnFilter(screenId, key);
+          break;
+        case "filter-clear":
+          _setColumnFilter(screenId, key, null);
+          break;
+        case "copy-name":
+          _copyColumnName(screenId, key);
+          break;
+        case "reset-layout":
+          applyPreset(screenId, "__default__");
+          break;
+      }
+    }
+
+    function _promptColumnWidth(screenId, key) {
+      var cols = _effectiveColumns(screenId);
+      var col = cols.find(function (c) {
+        return c.key === key;
+      });
+      if (!col) return;
+      var v = window.prompt(
+        'عرض عمود "' +
+          (col.label !== undefined && col.label !== null
+            ? col.label
+            : col.key) +
+          '" بالبكسل (50 - 600):',
+        Math.round(col._width),
+      );
+      if (v === null) return;
+      var w = Math.max(50, Math.min(600, Number(v) || col._width));
+      _saveColumnWidth(screenId, key, w);
+    }
+
+    function _promptColumnFilter(screenId, key) {
+      var cols = _effectiveColumns(screenId);
+      var col = cols.find(function (c) {
+        return c.key === key;
+      });
+      if (!col) return;
+      var st = _state[screenId];
+      var current = (st.colFilters && st.colFilters[key]) || "";
+      var v = window.prompt(
+        'تصفية عمود "' +
+          (col.label !== undefined && col.label !== null
+            ? col.label
+            : col.key) +
+          '" (يحتوي على):',
+        current,
+      );
+      if (v === null) return;
+      _setColumnFilter(screenId, key, v.trim());
+    }
+
+    function _copyColumnName(screenId, key) {
+      var cols = _effectiveColumns(screenId);
+      var col = cols.find(function (c) {
+        return c.key === key;
+      });
+      var label = col
+        ? col.label !== undefined && col.label !== null
+          ? col.label
+          : col.key
+        : key;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(label);
+      }
+      typeof showToast === "function" &&
+        NotificationEngine.success('تم نسخ اسم العمود "' + label + '"');
+    }
+
+    function _setColumnFrozenDirect(screenId, key, side) {
+      var prefs = _getPrefs(screenId);
+      var frozen = Object.assign({}, prefs.frozen || {});
+      frozen[key] = side;
+      _savePrefs(screenId, { frozen: frozen });
+      _rebuildLayoutStyle(screenId);
+      _renderHead(screenId);
+    }
+
+    function _setColumnVisibleDirect(screenId, key, val) {
+      var prefs = _getPrefs(screenId);
+      var visible = Object.assign({}, prefs.visible || {});
+      visible[key] = val;
+      _savePrefs(screenId, { visible: visible });
+      _rebuildLayoutStyle(screenId);
+      _renderHead(screenId);
+      _renderBody(screenId);
+    }
+
+    function _showAllColumns(screenId) {
+      var reg = _registry[screenId];
+      var prefs = _getPrefs(screenId);
+      var visible = Object.assign({}, prefs.visible || {});
+      reg.columns.forEach(function (c) {
+        visible[c.key] = true;
+      });
+      _savePrefs(screenId, { visible: visible });
+      _rebuildLayoutStyle(screenId);
+      _renderHead(screenId);
+      _renderBody(screenId);
+      typeof showToast === "function" &&
+        NotificationEngine.success("تم إظهار كل الأعمدة");
+    }
+
+    function _resetColumnWidths(screenId) {
+      _savePrefs(screenId, { widths: {} });
+      var reg = _registry[screenId];
+      // نلغي أي عرض auto-fit محسوب سابقًا عشان يرجع العرض الافتراضي/auto-fit يتحسب من جديد
+      reg.columns.forEach(function (c) {
+        delete c._autoWidth;
+      });
+      _computeAutoFitWidths(reg.columns, _state[screenId].rows);
+      _rebuildLayoutStyle(screenId);
+      _renderHead(screenId);
+      typeof showToast === "function" &&
+        NotificationEngine.success("تم إعادة تعيين عرض الأعمدة");
+    }
+
+    // Best Fit لعمود واحد فقط — يعتمد على الصفوف المعروضة حاليًا (بعد البحث/التصفية)
+    function _bestFitColumn(screenId, key) {
+      var cols = _effectiveColumns(screenId);
+      var col = cols.find(function (c) {
+        return c.key === key;
+      });
+      if (!col) return;
+      var rows = (_state[screenId] && _state[screenId].filtered) || [];
+      _computeAutoFitWidths([col], rows);
+      _saveColumnWidth(screenId, key, col._autoWidth);
+    }
+
+    // Best Fit لكل الأعمدة الظاهرة دفعة واحدة
+    function _bestFitAllColumns(screenId) {
+      var cols = _effectiveColumns(screenId).filter(function (c) {
+        return c._visible;
+      });
+      var rows = (_state[screenId] && _state[screenId].filtered) || [];
+      _computeAutoFitWidths(cols, rows);
+      var prefs = _getPrefs(screenId);
+      var widths = Object.assign({}, prefs.widths || {});
+      cols.forEach(function (c) {
+        widths[c.key] = c._autoWidth;
+      });
+      _savePrefs(screenId, { widths: widths });
+      _rebuildLayoutStyle(screenId);
+      _renderHead(screenId);
+      typeof showToast === "function" &&
+        NotificationEngine.success("تم ضبط أفضل احتواء لجميع الأعمدة");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-07  التصدير والطباعة — الأعمدة الظاهرة فقط، مع خيار "الكل" (بند 7-8)
+    // ─────────────────────────────────────────────────────────────────────
+    // [FIX-EXPORT-HTML] _formatCell(...) يرجّع HTML جاهز للعرض (badges،
+    // أشرطة تقدّم، spans ملوّنة...). كان يُستخدم كما هو في CSV/Excel/Print
+    // فيطلع نص فيه <span style=...> حرفيًا داخل الملف. الحل: نص خام فقط
+    // للتصدير — إما column.exportValue(row) لو الشاشة عرّفتها صراحةً
+    // (للأعمدة اللي قيمتها المحسوبة تختلف عن value الخام)، أو قيمة الحقل
+    // الخام لأنواع number/currency (يفضّل يفضل رقم حقيقي في Excel)، أو
+    // إزالة أي وسوم HTML من ناتج _formatCell لباقي الحالات.
+    function _stripHtml(html) {
+      return String(html == null ? "" : html)
+        .replace(/<[^>]*>/g, "")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .trim();
+    }
+
+    function _exportCell(col, row) {
+      if (typeof col.exportValue === "function") {
+        try {
+          return col.exportValue(row);
+        } catch (e) {
+          return "";
+        }
+      }
+      if (
+        !col.format &&
+        (col.type === "number" || col.type === "currency") &&
+        row[col.key] !== null &&
+        row[col.key] !== undefined &&
+        row[col.key] !== ""
+      ) {
+        return Number(row[col.key]) || 0;
+      }
+      var v = _stripHtml(_formatCell(col, row));
+      return v === "—" ? "" : v;
+    }
+
+    function _exportPayload(screenId, allColumns) {
+      var st = _state[screenId];
+      var cols = _effectiveColumns(screenId).filter(function (c) {
+        return allColumns ? c.exportable : c._visible && c.exportable;
+      });
+      var headers = cols.map(function (c) {
+        return c.label !== undefined && c.label !== null ? c.label : c.key;
+      });
+      var data = st.filtered.map(function (row) {
+        return cols.map(function (c) {
+          return _exportCell(c, row);
+        });
+      });
+      return { headers: headers, data: data };
+    }
+
+    function exportData(screenId, format, allColumns) {
+      var p = _exportPayload(screenId, allColumns);
+      var title = (_registry[screenId].options || {}).title || screenId;
+      if (!window.ExportUtil) return;
+      if (format === "csv") ExportUtil.toCSV(p.data, p.headers, title);
+      else if (format === "excel")
+        ExportUtil.toExcel(p.data, p.headers, title, title);
+    }
+
+    function printData(screenId, allColumns) {
+      var p = _exportPayload(screenId, allColumns);
+      var title = (_registry[screenId].options || {}).title || screenId;
+      if (window.ExportUtil) ExportUtil.toPrint(p.data, p.headers, title);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-08  ربط أزرار الـ Toolbar (بحث / تخصيص / تصدير / طباعة / عروض)
+    // ─────────────────────────────────────────────────────────────────────
+    function _wireToolbar(screenId) {
+      var searchEl = document.getElementById("ce-search-" + screenId);
+      if (searchEl) {
+        var t = null;
+        searchEl.addEventListener("input", function () {
+          clearTimeout(t);
+          var v = searchEl.value;
+          t = setTimeout(function () {
+            _onSearch(screenId, v);
+          }, 180);
+        });
+      }
+      var presetBtn = document.getElementById("ce-presets-" + screenId);
+      if (presetBtn)
+        presetBtn.onclick = function (e) {
+          _openPresetMenu(screenId, e.currentTarget);
+        };
+
+      var exportBtn = document.getElementById("ce-export-" + screenId);
+      if (exportBtn)
+        exportBtn.onclick = function (e) {
+          _openExportMenu(screenId, e.currentTarget);
+        };
+
+      var printBtn = document.getElementById("ce-print-" + screenId);
+      if (printBtn)
+        printBtn.onclick = function () {
+          printData(screenId, false);
+        };
+    }
+
+    function _openExportMenu(screenId, anchor) {
+      _closeFloatingMenu();
+      var menu = document.createElement("div");
+      menu.className = "ce-floating-menu";
+      menu.style.cssText =
+        "position:fixed;z-index:9999;background:var(--surface);border:1px solid var(--border);" +
+        "border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);padding:6px;min-width:190px";
+      var rect = anchor.getBoundingClientRect();
+      menu.style.top = rect.bottom + 6 + "px";
+      menu.style.left = rect.left + "px";
+      menu.innerHTML = [
+        ["ti-file-spreadsheet", "Excel (الأعمدة الظاهرة)", "excel", false],
+        ["ti-file-spreadsheet", "Excel (كل الأعمدة)", "excel", true],
+        ["ti-file-text", "CSV (الأعمدة الظاهرة)", "csv", false],
+        ["ti-file-text", "CSV (كل الأعمدة)", "csv", true],
+      ]
+        .map(function (o) {
+          return (
+            '<div class="ce-menu-item" data-fmt="' +
+            o[2] +
+            '" data-all="' +
+            o[3] +
+            '" style="display:flex;gap:8px;align-items:center;padding:8px 10px;' +
+            'border-radius:8px;cursor:pointer;font-size:12.5px"><i class="ti ' +
+            o[0] +
+            '"></i>' +
+            o[1] +
+            "</div>"
+          );
+        })
+        .join("");
+      document.body.appendChild(menu);
+      menu.querySelectorAll(".ce-menu-item").forEach(function (item) {
+        item.addEventListener("mouseenter", function () {
+          item.style.background = "var(--surface2)";
+        });
+        item.addEventListener("mouseleave", function () {
+          item.style.background = "";
+        });
+        item.addEventListener("click", function () {
+          exportData(
+            screenId,
+            item.getAttribute("data-fmt"),
+            item.getAttribute("data-all") === "true",
+          );
+          _closeFloatingMenu();
+        });
+      });
+      setTimeout(function () {
+        document.addEventListener("click", _closeFloatingMenuOnce);
+      }, 0);
+    }
+
+    function _closeFloatingMenuOnce(e) {
+      if (e.target.closest(".ce-floating-menu")) return;
+      _closeFloatingMenu();
+    }
+    function _closeFloatingMenu() {
+      document.querySelectorAll(".ce-floating-menu").forEach(function (m) {
+        m.remove();
+      });
+      document.removeEventListener("click", _closeFloatingMenuOnce);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-09  View Presets — عروض جاهزة + عروض مخصصة يحفظها المستخدم
+    // ─────────────────────────────────────────────────────────────────────
+    function _builtinPresets(screenId) {
+      var opts = _registry[screenId].options || {};
+      return opts.presets || {};
+    }
+
+    function _openPresetMenu(screenId, anchor) {
+      _closeFloatingMenu();
+      var prefs = _getPrefs(screenId);
+      var custom = prefs.presets || {};
+      var builtin = _builtinPresets(screenId);
+      var menu = document.createElement("div");
+      menu.className = "ce-floating-menu";
+      menu.style.cssText =
+        "position:fixed;z-index:9999;background:var(--surface);border:1px solid var(--border);" +
+        "border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);padding:6px;min-width:210px;max-height:320px;overflow:auto";
+      var rect = anchor.getBoundingClientRect();
+      menu.style.top = rect.bottom + 6 + "px";
+      menu.style.left = rect.left + "px";
+
+      var html = "";
+      html +=
+        '<div class="ce-menu-item" data-preset="__default__" style="padding:8px 10px;border-radius:8px;cursor:pointer;font-size:12.5px;font-weight:600">↺ العرض الافتراضي</div>';
+      Object.keys(builtin).forEach(function (name) {
+        html +=
+          '<div class="ce-menu-item" data-preset="' +
+          _esc(name) +
+          '" style="padding:8px 10px;border-radius:8px;cursor:pointer;font-size:12.5px">' +
+          _esc(name) +
+          "</div>";
+      });
+      if (Object.keys(custom).length) {
+        html +=
+          '<div style="padding:6px 10px;font-size:11px;color:var(--text3);border-top:1px solid var(--border);margin-top:4px">عروضي المحفوظة</div>';
+        Object.keys(custom).forEach(function (name) {
+          html +=
+            '<div class="ce-menu-item" data-preset="' +
+            _esc(name) +
+            '" style="padding:8px 10px;border-radius:8px;cursor:pointer;font-size:12.5px;' +
+            'display:flex;justify-content:space-between;gap:6px"><span>' +
+            _esc(name) +
+            '</span><i class="ti ti-x" data-del-preset="' +
+            _esc(name) +
+            '" style="color:var(--text3)"></i></div>';
+        });
+      }
+      menu.innerHTML = html;
+      document.body.appendChild(menu);
+      menu.querySelectorAll(".ce-menu-item").forEach(function (item) {
+        item.addEventListener("mouseenter", function () {
+          item.style.background = "var(--surface2)";
+        });
+        item.addEventListener("mouseleave", function () {
+          item.style.background = "";
+        });
+        item.addEventListener("click", function (e) {
+          var delName = e.target.getAttribute("data-del-preset");
+          if (delName) {
+            e.stopPropagation();
+            var c = _getPrefs(screenId).presets || {};
+            delete c[delName];
+            _savePrefs(screenId, { presets: c });
+            _closeFloatingMenu();
+            return;
+          }
+          applyPreset(screenId, item.getAttribute("data-preset"));
+          _closeFloatingMenu();
+        });
+      });
+      setTimeout(function () {
+        document.addEventListener("click", _closeFloatingMenuOnce);
+      }, 0);
+    }
+
+    function applyPreset(screenId, name) {
+      var reg = _registry[screenId];
+      var config;
+      if (name === "__default__") {
+        config = {
+          visible: {},
+          order: reg.columns.map(function (c) {
+            return c.key;
+          }),
+          widths: {},
+          frozen: {},
+        };
+        reg.columns.forEach(function (c) {
+          config.visible[c.key] = c.defaultVisible;
+        });
+      } else {
+        config =
+          (_builtinPresets(screenId) || {})[name] ||
+          (_getPrefs(screenId).presets || {})[name];
+      }
+      if (!config) return;
+      _savePrefs(screenId, {
+        visible: config.visible,
+        order: config.order,
+        widths: config.widths,
+        frozen: config.frozen,
+        activePreset: name,
+      });
+      _rebuildLayoutStyle(screenId);
+      _renderHead(screenId);
+      typeof showToast === "function" &&
+        NotificationEngine.success("تم تطبيق العرض: " + (name === "__default__" ? "الافتراضي" : name));
+    }
+
+    function _currentConfigSnapshot(screenId) {
+      var cols = _effectiveColumns(screenId);
+      var visible = {},
+        widths = {},
+        frozen = {};
+      cols.forEach(function (c) {
+        visible[c.key] = c._visible;
+        widths[c.key] = c._width;
+        frozen[c.key] = c._frozen;
+      });
+      return {
+        visible: visible,
+        widths: widths,
+        frozen: frozen,
+        order: cols.map(function (c) {
+          return c.key;
+        }),
+      };
+    }
+
+    function saveCurrentAsPreset(screenId, name) {
+      if (!name) return;
+      var prefs = _getPrefs(screenId);
+      var presets = prefs.presets || {};
+      presets[name] = _currentConfigSnapshot(screenId);
+      _savePrefs(screenId, { presets: presets, activePreset: name });
+      typeof showToast === "function" &&
+        NotificationEngine.success("تم حفظ العرض: " + name);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-10  نافذة "تخصيص الجدول" — Drag & Drop + Checkbox + Freeze + Width
+    // ─────────────────────────────────────────────────────────────────────
+    var _custDraft = {}; // screenId -> نسخة عمل مؤقتة قبل الحفظ
+
+    function openCustomize(screenId) {
+      _custDraft[screenId] = _effectiveColumns(screenId).map(function (c) {
+        return {
+          key: c.key,
+          label: c.label,
+          category: c.category,
+          visible: c._visible,
+          width: c._width,
+          frozen: c._frozen,
+        };
+      });
+
+      var body =
+        '<div class="ce-cust-search"><input type="text" id="ce-cust-search-box" placeholder="بحث عن عمود..." /></div>' +
+        '<div class="ce-cust-actions">' +
+        '<button class="ce-btn" onclick="ColumnEngine._custSelectAll(\'' +
+        screenId +
+        "',true)\">تحديد الكل</button>" +
+        '<button class="ce-btn" onclick="ColumnEngine._custSelectAll(\'' +
+        screenId +
+        "',false)\">إلغاء التحديد</button>" +
+        '<button class="ce-btn" onclick="ColumnEngine._custReset(\'' +
+        screenId +
+        '\')"><i class="ti ti-refresh"></i> إعادة الافتراضي</button>' +
+        "</div>" +
+        '<div class="ce-cust-list" id="ce-cust-list"></div>' +
+        '<div style="margin-top:12px;display:flex;gap:8px">' +
+        '<input type="text" id="ce-cust-preset-name" placeholder="اسم عرض جديد (اختياري)" ' +
+        'style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12.5px" />' +
+        '<button class="ce-btn" onclick="ColumnEngine._custSaveAsPreset(\'' +
+        screenId +
+        "')\">حفظ كعرض جديد</button>" +
+        "</div>";
+
+      var footer =
+        '<button class="ce-btn" onclick="closeStyledDrawer()">إلغاء</button>' +
+        '<button class="ce-btn" style="background:var(--accent);color:#fff;border-color:var(--accent)" ' +
+        "onclick=\"ColumnEngine._custSave('" +
+        screenId +
+        '\')"><i class="ti ti-check"></i> حفظ</button>';
+
+      openStyledDrawer({
+        title: "تخصيص الجدول",
+        subtitle: (_registry[screenId].options || {}).title || "",
+        icon: "ti-adjustments-horizontal",
+        color: "blue",
+        width: 860,
+        body: body,
+        footer: footer,
+      });
+
+      _renderCustList(screenId, "");
+      var searchBox = document.getElementById("ce-cust-search-box");
+      if (searchBox) {
+        searchBox.addEventListener("input", function () {
+          _renderCustList(screenId, searchBox.value);
+        });
+      }
+    }
+
+    function _renderCustList(screenId, term) {
+      var list = document.getElementById("ce-cust-list");
+      if (!list) return;
+      term = (term || "").trim().toLowerCase();
+      var draft = _custDraft[screenId];
+      var filtered = term
+        ? draft.filter(function (c) {
+            return c.label.toLowerCase().indexOf(term) !== -1;
+          })
+        : draft;
+
+      // تجميع حسب الفئة إذا كان عدد الأعمدة كبيرًا (بند 10 — تجميع حسب الفئة)
+      var byCat = {};
+      var catOrder = [];
+      filtered.forEach(function (c) {
+        if (!byCat[c.category]) {
+          byCat[c.category] = [];
+          catOrder.push(c.category);
+        }
+        byCat[c.category].push(c);
+      });
+
+      var html = "";
+      var showCats = draft.length > 8 && catOrder.length > 1;
+      catOrder.forEach(function (cat) {
+        if (showCats)
+          html += '<div class="ce-cust-cat">' + _esc(cat) + "</div>";
+        byCat[cat].forEach(function (c) {
+          html +=
+            '<div class="ce-cust-item" draggable="true" data-key="' +
+            c.key +
+            '">' +
+            '<i class="ti ti-grip-vertical ce-cust-handle"></i>' +
+            '<input type="checkbox" ' +
+            (c.visible ? "checked" : "") +
+            " onchange=\"ColumnEngine._custToggle('" +
+            screenId +
+            "','" +
+            c.key +
+            "',this.checked)\" />" +
+            '<span class="ce-cust-label">' +
+            _esc(c.label) +
+            "</span>" +
+            '<input type="number" class="ce-cust-width" value="' +
+            c.width +
+            '" onchange="ColumnEngine._custWidth(\'' +
+            screenId +
+            "','" +
+            c.key +
+            "',this.value)\" />" +
+            '<div class="ce-cust-freeze">' +
+            '<button class="' +
+            (c.frozen === "right" ? "active" : "") +
+            '" title="تثبيت يمين" onclick="ColumnEngine._custFreeze(\'' +
+            screenId +
+            "','" +
+            c.key +
+            "','right')\"><i class=\"ti ti-pin\"></i></button>" +
+            '<button class="' +
+            (!c.frozen ? "active" : "") +
+            '" title="بدون تثبيت" onclick="ColumnEngine._custFreeze(\'' +
+            screenId +
+            "','" +
+            c.key +
+            '\',null)"><i class="ti ti-pinned-off"></i></button>' +
+            '<button class="' +
+            (c.frozen === "left" ? "active" : "") +
+            '" title="تثبيت يسار" onclick="ColumnEngine._custFreeze(\'' +
+            screenId +
+            "','" +
+            c.key +
+            '\',"left")"><i class="ti ti-pin" style="transform:scaleX(-1)"></i></button>' +
+            "</div></div>";
+        });
+      });
+      list.innerHTML = html;
+      _wireDragDrop(screenId, list);
+    }
+
+    function _wireDragDrop(screenId, list) {
+      var dragged = null;
+      list.querySelectorAll(".ce-cust-item").forEach(function (item) {
+        item.addEventListener("dragstart", function () {
+          dragged = item;
+          item.classList.add("dragging");
+        });
+        item.addEventListener("dragend", function () {
+          item.classList.remove("dragging");
+          list.querySelectorAll(".ce-cust-item").forEach(function (i) {
+            i.classList.remove("drag-over");
+          });
+        });
+        item.addEventListener("dragover", function (e) {
+          e.preventDefault();
+          if (item !== dragged) item.classList.add("drag-over");
+        });
+        item.addEventListener("dragleave", function () {
+          item.classList.remove("drag-over");
+        });
+        item.addEventListener("drop", function (e) {
+          e.preventDefault();
+          item.classList.remove("drag-over");
+          if (!dragged || dragged === item) return;
+          var draft = _custDraft[screenId];
+          var fromKey = dragged.getAttribute("data-key");
+          var toKey = item.getAttribute("data-key");
+          var fromIdx = draft.findIndex(function (c) {
+            return c.key === fromKey;
+          });
+          var toIdx = draft.findIndex(function (c) {
+            return c.key === toKey;
+          });
+          if (fromIdx === -1 || toIdx === -1) return;
+          var moved = draft.splice(fromIdx, 1)[0];
+          draft.splice(toIdx, 0, moved);
+          _renderCustList(
+            screenId,
+            document.getElementById("ce-cust-search-box").value,
+          );
+        });
+      });
+    }
+
+    function _custToggle(screenId, key, val) {
+      var c = _custDraft[screenId].find(function (c) {
+        return c.key === key;
+      });
+      if (c) c.visible = val;
+    }
+    function _custWidth(screenId, key, val) {
+      var c = _custDraft[screenId].find(function (c) {
+        return c.key === key;
+      });
+      if (c) c.width = Math.max(50, Number(val) || 100);
+    }
+    function _custFreeze(screenId, key, side) {
+      var c = _custDraft[screenId].find(function (c) {
+        return c.key === key;
+      });
+      if (c) c.frozen = side;
+      _renderCustList(
+        screenId,
+        document.getElementById("ce-cust-search-box").value,
+      );
+    }
+    function _custSelectAll(screenId, val) {
+      _custDraft[screenId].forEach(function (c) {
+        c.visible = val;
+      });
+      _renderCustList(screenId, "");
+    }
+    function _custReset(screenId) {
+      var reg = _registry[screenId];
+      _custDraft[screenId] = reg.columns.map(function (c) {
+        return {
+          key: c.key,
+          label: c.label,
+          category: c.category,
+          visible: c.defaultVisible,
+          width: c.width,
+          frozen: c.frozen,
+        };
+      });
+      _renderCustList(screenId, "");
+    }
+    function _custSaveAsPreset(screenId) {
+      var nameEl = document.getElementById("ce-cust-preset-name");
+      var name = nameEl ? nameEl.value.trim() : "";
+      if (!name) {
+        typeof showToast === "function" &&
+          NotificationEngine.error("اكتب اسم العرض أولاً");
+        return;
+      }
+      _custApplyDraftToPrefs(screenId, name);
+    }
+    function _custSave(screenId) {
+      _custApplyDraftToPrefs(screenId, null);
+      closeStyledDrawer();
+    }
+    function _custApplyDraftToPrefs(screenId, presetName) {
+      var draft = _custDraft[screenId];
+      var visible = {},
+        widths = {},
+        frozen = {};
+      draft.forEach(function (c) {
+        visible[c.key] = c.visible;
+        widths[c.key] = c.width;
+        frozen[c.key] = c.frozen;
+      });
+      var order = draft.map(function (c) {
+        return c.key;
+      });
+      var patch = {
+        visible: visible,
+        widths: widths,
+        frozen: frozen,
+        order: order,
+      };
+      if (presetName) {
+        var presets = _getPrefs(screenId).presets || {};
+        // [FIX] نخزّن نسخة "نظيفة" من الباتش (visible/widths/frozen/order فقط)
+        // كبريسِت، مش الـ patch نفسه — لأن الـ patch نفسه هيتحط جوه patch.presets
+        // بعد شوية، ولو خزّنّا فيه مرجع للـ patch الأصلي بيتكوّن مرجع دائري
+        // (patch.presets[presetName] === patch) يفشل JSON.stringify بخطأ
+        // "Converting circular structure to JSON" عند أي محاولة حفظ لاحقة.
+        var presetSnapshot = {
+          visible: visible,
+          widths: widths,
+          frozen: frozen,
+          order: order,
+        };
+        presets[presetName] = presetSnapshot;
+        patch.presets = presets;
+        patch.activePreset = presetName;
+      }
+      _savePrefs(screenId, patch);
+      _rebuildLayoutStyle(screenId);
+      _renderHead(screenId);
+      typeof showToast === "function" &&
+        NotificationEngine.success("تم حفظ إعدادات الجدول ");
+    }
+
+    return {
+      register: register,
+      renderTable: renderTable,
+      appendRows: appendRows,
+      openCustomize: openCustomize,
+      exportData: exportData,
+      printData: printData,
+      applyPreset: applyPreset,
+      saveCurrentAsPreset: saveCurrentAsPreset,
+      // internal — مستخدمة عبر onclick في الـ HTML المُولَّد فقط
+      _onSort: _onSort,
+      _custToggle: _custToggle,
+      _custWidth: _custWidth,
+      _custFreeze: _custFreeze,
+      _custSelectAll: _custSelectAll,
+      _custReset: _custReset,
+      _custSaveAsPreset: _custSaveAsPreset,
+      _custSave: _custSave,
+    };
+  })();
+
+  window.ColumnEngine = ColumnEngine;
+</script>

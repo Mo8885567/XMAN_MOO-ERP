@@ -1,0 +1,1545 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 24_JS_UserPreferences.html
+  // نظام تفضيلات المستخدم — PreferenceService + شاشة التفضيلات الكاملة
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // §PS  PreferenceService — الخدمة الموحدة لإدارة التفضيلات
+  // ─────────────────────────────────────────────────────────────────────────
+  var PreferenceService = (function () {
+    var _cache = null; // الكاش في الذاكرة
+    var _syncTimer = null; // debounce timer للحفظ التلقائي
+    var _pendingChanges = {}; // التغييرات المعلقة للحفظ الدفعي
+    var _ready = false; // هل تم تحميل التفضيلات؟
+    var _readyCallbacks = []; // callbacks تنتظر جهوزية التفضيلات
+
+    // ── [جديد - إصلاح P1] سجل المشتركين في تغييرات التفضيلات ──────────────
+    // بنية: { "<key>": [cb1, cb2, ...], "*": [cbAll1, ...] }
+    // "*" = يُستدعى عند أي تغيير أيًا كان المفتاح (مفيد لشاشات تعرض عدة تفضيلات معًا)
+    var _subscribers = {};
+
+    /**
+     * الاشتراك في تغييرات تفضيل معيّن (أو كل التفضيلات عبر "*").
+     * يُعيد دالة unsubscribe لإلغاء الاشتراك (مهم لمنع تسريب الذاكرة عند إغلاق شاشة).
+     * مثال:
+     *   var unsub = PreferenceService.subscribe('currency', function(newVal, oldVal){ ... });
+     *   // عند مغادرة الشاشة: unsub();
+     */
+    function subscribe(key, callback) {
+      if (typeof callback !== "function") return function () {};
+      if (!_subscribers[key]) _subscribers[key] = [];
+      _subscribers[key].push(callback);
+      return function unsubscribe() {
+        var arr = _subscribers[key];
+        if (!arr) return;
+        var idx = arr.indexOf(callback);
+        if (idx > -1) arr.splice(idx, 1);
+      };
+    }
+
+    /** بث التغيير لكل المشتركين في هذا المفتاح + المشتركين في "*" */
+    function _notify(key, newVal, oldVal) {
+      // مشتركو المفتاح نفسه
+      (_subscribers[key] || []).slice().forEach(function (cb) {
+        try {
+          cb(newVal, oldVal, key);
+        } catch (e) {
+          console.error("PreferenceService subscriber error [" + key + "]:", e);
+        }
+      });
+      // مشتركو "*" (كل التغييرات)
+      (_subscribers["*"] || []).slice().forEach(function (cb) {
+        try {
+          cb(newVal, oldVal, key);
+        } catch (e) {
+          console.error("PreferenceService wildcard subscriber error:", e);
+        }
+      });
+      // بث أيضًا كـ CustomEvent على document — نفس نمط dispatchEvent المستخدم
+      // بالفعل في باقي المشروع، عشان أي كود قديم يقدر "يسمع" بدون تعديل PreferenceService
+      try {
+        document.dispatchEvent(
+          new CustomEvent("pref:change", {
+            detail: { key: key, value: newVal, oldValue: oldVal },
+          }),
+        );
+      } catch (e) {}
+    }
+
+    // القيم الافتراضية (مطابقة للـ backend)
+    var DEFAULTS = {
+      language: "ar",
+      timezone: "Africa/Cairo",
+      date_format: "DD/MM/YYYY",
+      time_format: "12h",
+      currency: "EGP",
+      items_per_page: 25,
+      default_page: "dashboard",
+      theme: "light",
+      accent_color: "#2563eb",
+      font_size: "medium",
+      ui_density: "comfortable",
+      default_warehouse: "",
+      default_cashbox: "",
+      default_bank: "",
+      default_cost_center: "",
+      default_branch: "",
+      // [FIX-AUDIT #4] راجع نفس التعليق في Code_UserPreferences.gs
+      ai_voice: "Kore",
+      notif_system: true,
+      notif_email: false,
+      notif_financial: true,
+      notif_inventory: true,
+      notif_customers: true,
+      notif_suppliers: true,
+      notif_approvals: true,
+      notif_commhub_pending: true, // [PHASE4-NOTIF]
+      session_timeout: 60,
+      confirm_sensitive: true,
+      hide_balances: false,
+      hide_prices: false,
+      paper_size: "A4",
+      print_orientation: "portrait",
+      print_copies: 1,
+      tables: {},
+      dashboard_layout: {},
+      favorites: [],
+      recent_pages: [],
+      recent_searches: {},
+      shortcuts: {},
+    };
+
+    // مفتاح الكاش في localStorage (per-user)
+    function _cacheKey() {
+      return (
+        "moo_prefs_" +
+        (APP && APP.currentUser ? APP.currentUser.username : "guest")
+      );
+    }
+
+    // تحميل من localStorage
+    function _loadLocal() {
+      try {
+        var raw = localStorage.getItem(_cacheKey());
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // حفظ في localStorage
+    function _saveLocal(prefs) {
+      try {
+        localStorage.setItem(_cacheKey(), JSON.stringify(prefs));
+      } catch (e) {}
+    }
+
+    // دمج عميق مع الافتراضي
+    function _merge(target, source) {
+      if (!source) return target;
+      Object.keys(source).forEach(function (k) {
+        if (
+          source[k] !== null &&
+          typeof source[k] === "object" &&
+          !Array.isArray(source[k])
+        ) {
+          if (!target[k] || typeof target[k] !== "object") target[k] = {};
+          _merge(target[k], source[k]);
+        } else {
+          target[k] = source[k];
+        }
+      });
+      return target;
+    }
+
+    // تطبيق التفضيلات على الواجهة فوراً
+    function _applyToUI(prefs) {
+      // Theme
+      var theme = prefs.theme || "light";
+      if (theme === "auto") {
+        theme = window.matchMedia("(prefers-color-scheme: dark)").matches
+          ? "dark"
+          : "light";
+      }
+      document.documentElement.setAttribute(
+        "data-theme",
+        theme === "dark" ? "dark" : "",
+      );
+      APP.isDark = theme === "dark";
+      try {
+        localStorage.setItem("wms_theme", theme === "dark" ? "dark" : "");
+      } catch (e) {}
+      // Accent color
+      if (prefs.accent_color) {
+        document.documentElement.style.setProperty(
+          "--accent",
+          prefs.accent_color,
+        );
+        // حساب تلقائي للـ soft version
+        document.documentElement.style.setProperty(
+          "--accent-soft",
+          prefs.accent_color + "18",
+        );
+      }
+
+      // Font size
+      var fontMap = { small: "12px", medium: "13px", large: "15px" };
+      if (prefs.font_size && fontMap[prefs.font_size]) {
+        document.documentElement.style.setProperty(
+          "--text-base",
+          fontMap[prefs.font_size],
+        );
+      }
+
+      // UI Density
+      if (prefs.ui_density === "compact") {
+        document.documentElement.setAttribute("data-density", "compact");
+      } else {
+        document.documentElement.removeAttribute("data-density");
+      }
+
+      // ── [إصلاح P2] hide_balances / hide_prices ─────────────────────────
+      // كانا معرَّفين في DEFAULTS بدون أي تأثير فعلي في أي شاشة (Dead Setting).
+      // نفس نمط data-theme/data-density بالضبط: نضع Attribute على <html>،
+      // وأي شاشة تريد إخفاء رصيد/سعر حساس تضيف class="sensitive-balance"
+      // أو class="sensitive-price" على العنصر — والـ CSS المصاحب (في
+      // Style.html) يتكفّل بإخفائه تلقائيًا بدون أي منطق JS إضافي لكل شاشة.
+      document.documentElement.toggleAttribute(
+        "data-hide-balances",
+        !!prefs.hide_balances,
+      );
+      document.documentElement.toggleAttribute(
+        "data-hide-prices",
+        !!prefs.hide_prices,
+      );
+    }
+
+    // ─── Public API ────────────────────────────────────────────────────────
+
+    /** تحميل التفضيلات بعد اللوجين (يُستدعى مرة واحدة) */
+    function load(callback) {
+      // أولاً: استخدم الكاش المحلي فوراً لتطبيق التفضيلات بدون تأخير
+      var localPrefs = _loadLocal();
+      if (localPrefs) {
+        _cache = _merge(JSON.parse(JSON.stringify(DEFAULTS)), localPrefs);
+        _applyToUI(_cache);
+      }
+
+      // ثانياً: جلب من الـ backend لضمان التزامن
+      if (!APP || !APP.currentUser) {
+        _ready = true;
+        if (callback) callback(_cache || JSON.parse(JSON.stringify(DEFAULTS)));
+        return;
+      }
+
+      // [UNIFY-DATALAYER] استُبدل google.script.run المباشر بـ _gsr الموحّدة —
+      // نفس منطق الـ handlers بالحرف، فقط أُعيد تغليفه ضمن الطبقة الموحّدة.
+      _gsr(
+        "getUserPreferences",
+        [APP.currentUser.username, SESSION ? SESSION.token : null],
+        {
+          label: "UserPreferences.get",
+          onSuccess: function (res) {
+            if (res && res.success && res.data) {
+              _cache = _merge(JSON.parse(JSON.stringify(DEFAULTS)), res.data);
+              // [FIX] لو في تغييرات معلقة لم تُرسل للـ backend بعد (مثل theme غُيِّر قبل الـ flush)،
+              // نطبقها فوق البيانات الجاية من الـ backend عشان لا يتراجع التغيير
+              if (Object.keys(_pendingChanges).length) {
+                Object.keys(_pendingChanges).forEach(function (k) {
+                  _setNestedPref(_cache, k, _pendingChanges[k]);
+                });
+              }
+              // [FIX-REFRESH] localStorage هو المصدر الموثوق للـ theme عند الـ refresh
+              // لأن المستخدم ممكن يكون غيّر الـ theme وعمل refresh قبل ما الـ debounce يكمل الـ flush
+              // في الحالة دي الـ backend لسه عنده القيمة القديمة، لكن localStorage عنده الصح
+      // [FIX-CROSS-DEVICE-THEME-2026-08-12] كانت هنا localStorage تُعتبر
+      // "المصدر الموثوق" للثيم في كل تحميل صفحة بلا شرط — يعني أي متصفح
+      // خزّن wms_theme مرة، يفضل يفرضها للأبد فوق أي قيمة جايه من
+      // السيرفر، حتى لو اتغيّرت فعليًا من متصفح/جهاز تاني بنجاح. ده كان
+      // بيكسر المزامنة بين الأجهزة تمامًا لتفضيل الـtheme تحديدًا (كل
+      // تفضيل تاني كان بيتزامن صح). الأصل من هذا الكود كان يعالج سيناريو
+      // ضيّق: refresh سريع جدًا بعد تغيير الثيم قبل ما الـdebounce يخلص
+      // الإرسال للسيرفر (نادر، أقل من ثوانٍ). الحل: نخزّن وقت انتهاء
+      // صلاحية "تغيير معلّق" (wms_theme_dirty_until) بس وقت set('theme')
+      // فعليًا، ونثق في المحلي بس لو لسه جوه النافذة دي — أي حالة تانية
+      // (الأغلبية العظمى) قيمة السيرفر هي اللي تكسب، فالثيم يتزامن فعليًا
+      // بين كل الأجهزة/المتصفحات لنفس الحساب.
+              try {
+                var dirtyUntil = parseInt(
+                  localStorage.getItem("wms_theme_dirty_until") || "0",
+                );
+                var localTheme = localStorage.getItem("wms_theme");
+                if (dirtyUntil && Date.now() < dirtyUntil) {
+                  // تغيير حقيقي لسه محتمل يكون متأخر في الوصول للسيرفر
+                  if (localTheme === "dark" && _cache.theme !== "dark") {
+                    _cache.theme = "dark";
+                  } else if (
+                    (!localTheme || localTheme === "") &&
+                    _cache.theme === "dark"
+                  ) {
+                    _cache.theme = "light";
+                  }
+                } else {
+                  // مفيش تغيير معلّق حقيقي — قيمة السيرفر هي مصدر الحقيقة
+                  localStorage.removeItem("wms_theme_dirty_until");
+                }
+              } catch (e) {}
+              _saveLocal(_cache);
+              _applyToUI(_cache);
+            } else if (!_cache) {
+              _cache = JSON.parse(JSON.stringify(DEFAULTS));
+            }
+            _ready = true;
+            var cbs = _readyCallbacks.slice();
+            _readyCallbacks = [];
+            cbs.forEach(function (fn) {
+              fn(_cache);
+            });
+            if (callback) callback(_cache);
+          },
+          onError: function () {
+            if (!_cache) _cache = JSON.parse(JSON.stringify(DEFAULTS));
+            _ready = true;
+            if (callback) callback(_cache);
+          },
+        },
+      );
+    }
+
+    /** قراءة تفضيل بالمفتاح (يدعم nested مثل "tables.Customers.sort") */
+    function get(key, defaultVal) {
+      if (!_cache) return defaultVal !== undefined ? defaultVal : null;
+      var parts = key.split(".");
+      var cur = _cache;
+      for (var i = 0; i < parts.length; i++) {
+        if (cur === null || cur === undefined || typeof cur !== "object")
+          return defaultVal !== undefined ? defaultVal : null;
+        cur = cur[parts[i]];
+      }
+      return cur !== undefined && cur !== null
+        ? cur
+        : defaultVal !== undefined
+          ? defaultVal
+          : null;
+    }
+
+    /** حفظ تفضيل واحد مع debounce للحفظ التلقائي */
+    function set(key, value) {
+      if (!_cache) _cache = JSON.parse(JSON.stringify(DEFAULTS));
+      var oldValue = get(key); // ← نلتقط القيمة القديمة قبل التعديل عشان الـ notify
+      // تحديث الكاش فوراً
+      var parts = key.split(".");
+      var cur = _cache;
+      for (var i = 0; i < parts.length - 1; i++) {
+        if (typeof cur[parts[i]] !== "object" || !cur[parts[i]])
+          cur[parts[i]] = {};
+        cur = cur[parts[i]];
+      }
+      cur[parts[parts.length - 1]] = value;
+      _pendingChanges[key] = value;
+      _saveLocal(_cache);
+      // [FIX-CROSS-DEVICE-THEME-2026-08-12] راجع تعليق load() أعلاه —
+      // نافذة قصيرة (6 ثوانٍ، أكبر من الـdebounce بـ1.2 ثانية بأمان) نثق
+      // خلالها في localStorage لو حصل refresh فوري قبل ما الحفظ يوصل
+      // السيرفر. بعد انتهاء النافذة، القيمة اتبعتت فعلًا، فالسيرفر يرجع
+      // يبقى مصدر الحقيقة الوحيد (تزامن حقيقي بين الأجهزة).
+      if (key === "theme") {
+        try {
+          localStorage.setItem(
+            "wms_theme_dirty_until",
+            String(Date.now() + 6000),
+          );
+        } catch (e) {}
+      }
+      // تطبيق فوري على الواجهة (Theme/Accent/Font/Density فقط)
+      _applyToUI(_cache);
+      // Language is a first-class preference: persist it through the i18n
+      // endpoint and redraw the active screen immediately.  Previously this
+      // select only saved a value for the next login, leaving the UI Arabic.
+      if (
+        key === "language" &&
+        value !== oldValue &&
+        typeof I18N !== "undefined" &&
+        APP &&
+        APP.currentUser
+      ) {
+        I18N.switchLanguage(
+          APP.currentUser.username,
+          SESSION ? SESSION.token : null,
+          value,
+          function () {},
+          function () {
+            // Do not leave the preferences screen claiming a language which
+            // the server rejected (for example, a forced system language).
+            _setNestedPref(_cache, key, oldValue || DEFAULTS.language);
+            delete _pendingChanges[key];
+            _saveLocal(_cache);
+            _notify(key, oldValue || DEFAULTS.language, value);
+          },
+        );
+      }
+      // ── [جديد - إصلاح P1/P2] إخطار كل من اشترك في هذا المفتاح ──────────
+      // هنا أي شاشة مفتوحة فعليًا (Dashboard, Tables, Reports...) تقدر ترد
+      // فورًا بدون Refresh، بدل ما تكون القراءة بـ Pull فقط عند إعادة الفتح
+      if (value !== oldValue) _notify(key, value, oldValue);
+      // [FIX] theme و accent_color يُرسلان للـ backend فوراً بدون debounce
+      // عشان لو المستخدم عمل refresh بسرعة، الـ backend يكون عنده القيمة الصح
+      var IMMEDIATE_KEYS = { theme: true, accent_color: true };
+      if (IMMEDIATE_KEYS[key]) {
+        if (_syncTimer) clearTimeout(_syncTimer);
+        _flushToBackend();
+      } else {
+        // debounce الحفظ في الـ backend
+        if (_syncTimer) clearTimeout(_syncTimer);
+        _syncTimer = setTimeout(_flushToBackend, 1200);
+      }
+    }
+
+    /** حفظ دفعي فوري بدون debounce */
+    function setBulk(prefsObj) {
+      if (!_cache) _cache = JSON.parse(JSON.stringify(DEFAULTS));
+      var oldValues = {};
+      Object.keys(prefsObj).forEach(function (k) {
+        oldValues[k] = get(k);
+        var parts = k.split(".");
+        var cur = _cache;
+        for (var i = 0; i < parts.length - 1; i++) {
+          if (typeof cur[parts[i]] !== "object" || !cur[parts[i]])
+            cur[parts[i]] = {};
+          cur = cur[parts[i]];
+        }
+        cur[parts[parts.length - 1]] = prefsObj[k];
+        _pendingChanges[k] = prefsObj[k];
+      });
+      _saveLocal(_cache);
+      _applyToUI(_cache);
+      _flushToBackend();
+      // ── [جديد] إخطار المشتركين بكل تفضيل تغيّر في الحفظ الدفعي ──────────
+      Object.keys(prefsObj).forEach(function (k) {
+        if (prefsObj[k] !== oldValues[k]) _notify(k, prefsObj[k], oldValues[k]);
+      });
+    }
+
+    /** إرسال التغييرات المعلقة للـ backend */
+    function _flushToBackend() {
+      if (!APP || !APP.currentUser || !Object.keys(_pendingChanges).length)
+        return;
+      var toSend;
+      try {
+        toSend = JSON.parse(JSON.stringify(_pendingChanges));
+      } catch (e) {
+        // [FIX] لو أي مصدر تاني عمل مرجع دائري بالغلط في المستقبل، منمنع
+        // انهيار الحفظ بالكامل (uncaught TypeError) ونكتفي بتسجيل الخطأ
+        // وإفراغ التغييرات المعلّقة عشان الواجهة تفضل شغالة طبيعي.
+        console.error(
+          "PreferenceService._flushToBackend: pending changes contain a circular reference, discarding this batch:",
+          e.message,
+        );
+        _pendingChanges = {};
+        return;
+      }
+      _pendingChanges = {};
+      _gsr(
+        "saveBulkUserPreferences",
+        [
+          { callerUser: APP.currentUser.username, prefs: toSend },
+          SESSION ? SESSION.token : null,
+        ],
+        {
+          label: "UserPreferences.saveBulk",
+          onSuccess: function () {
+            // [FIX-CROSS-DEVICE-THEME-2026-08-12] الحفظ وصل السيرفر
+            // فعلًا بنجاح — نلغي نافذة "التغيير المعلّق" فورًا بدل ما
+            // نستنى انتهاءها بالتوقيت، عشان أي refresh بعد كده يثق في
+            // قيمة السيرفر (اللي هي بالظبط نفس القيمة المحلية دلوقتي).
+            if (toSend.hasOwnProperty("theme")) {
+              try {
+                localStorage.removeItem("wms_theme_dirty_until");
+              } catch (e) {}
+            }
+          },
+          onError: function () {
+            Object.assign(_pendingChanges, toSend);
+          },
+        },
+      );
+    }
+
+    /** تشغيل callback عند جهوزية التفضيلات */
+    function onReady(fn) {
+      if (_ready) fn(_cache);
+      else _readyCallbacks.push(fn);
+    }
+
+    /** إعادة تعيين وتنظيف (عند logout) */
+    function clear() {
+      _cache = null;
+      _ready = false;
+      _pendingChanges = {};
+      if (_syncTimer) clearTimeout(_syncTimer);
+      try {
+        localStorage.removeItem(_cacheKey());
+      } catch (e) {}
+    }
+
+    /** جلب كامل الكاش (للشاشة) */
+    function getAll() {
+      return _cache
+        ? JSON.parse(JSON.stringify(_cache))
+        : JSON.parse(JSON.stringify(DEFAULTS));
+    }
+
+    return {
+      load: load,
+      get: get,
+      set: set,
+      setBulk: setBulk,
+      onReady: onReady,
+      clear: clear,
+      getAll: getAll,
+      subscribe: subscribe, // ← [جديد] الآن أي شاشة تقدر PreferenceService.subscribe('key', cb)
+      _apply: _applyToUI,
+    };
+  })();
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Hook PreferenceService into login/logout lifecycle
+  // ─────────────────────────────────────────────────────────────────────────
+  (function _hookPrefs() {
+    var _origPreload =
+      typeof _preloadAllAfterLogin === "function"
+        ? _preloadAllAfterLogin
+        : null;
+    // يُشغَّل من 02_JS_UI_Shell بعد اللوجين مباشرة
+    window._loadUserPreferencesAfterLogin = function () {
+      PreferenceService.load(function (prefs) {
+        // [FIX-AUDIT #4] بمجرد جهوزية تفضيلات السيرفر، زامن صوت المساعد
+        // (كان يعتمد فقط على localStorage — راجع التعليق في DEFAULTS أعلاه)
+        try {
+          if (typeof AI_CHAT !== "undefined" && prefs && prefs.ai_voice) {
+            AI_CHAT.geminiVoice = prefs.ai_voice;
+          }
+        } catch (e) {}
+        // إذا كان المستخدم حدد صفحة رئيسية مخصصة، روح عليها
+        var defPage = prefs.default_page;
+        if (
+          defPage &&
+          defPage !== "dashboard" &&
+          APP.currentPage === "dashboard"
+        ) {
+          // تُطبَّق فقط عند أول دخول وليس عند Refresh
+          try {
+            if (typeof renderPage === "function") renderPage(defPage);
+          } catch (e) {}
+        }
+      });
+    };
+
+    // ── [جديد - إصلاح P3/P4] مشترك واحد فقط لكل ما يتعلق بعرض الثيم ────────
+    // بدل ما كل نقطة تغيّر فيها theme (زرار الشريط الجانبي، تاب المظهر في
+    // شاشة التفضيلات...) تكرر نفس منطق تحديث الـ pills وتاب التفضيلات يدويًا،
+    // نسجّل هنا مرة واحدة، و set('theme', ...) من أي مكان في النظام يكفي.
+    PreferenceService.subscribe("theme", function (newVal) {
+      var pillDark = document.getElementById("pill-dark");
+      var pillLight = document.getElementById("pill-light");
+      var isDark = newVal === "dark";
+      if (pillDark) pillDark.classList.toggle("active-dark", isDark);
+      if (pillLight) pillLight.classList.toggle("active-light", !isDark);
+      var tog = document.getElementById("theme-toggle");
+      if (tog)
+        tog.title = isDark ? "تفعيل الوضع النهاري" : "تفعيل الوضع الليلي";
+      // لو شاشة التفضيلات مفتوحة حاليًا، حدّث نسختها المحلية وأعد رسم التاب
+      if (
+        APP.currentPage === "user-preferences" &&
+        typeof _upPrefs !== "undefined" &&
+        _upPrefs
+      ) {
+        _upPrefs.theme = newVal;
+        if (typeof upRenderCurrentTab === "function") upRenderCurrentTab();
+      }
+    });
+  })();
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // §UP-UI  شاشة التفضيلات الكاملة
+  // ─────────────────────────────────────────────────────────────────────────
+
+  var _upCurrentTab = "general";
+  var _upPrefs = null; // النسخة المحلية التي يعدلها المستخدم
+
+  function renderUserPreferences() {
+    var tabs = [
+      { id: "general", icon: "ti-settings", label: I18N.t("PREF_GENERAL") },
+      {
+        id: "appearance",
+        icon: "ti-palette",
+        label: I18N.t("PREF_APPEARANCE"),
+      },
+      {
+        id: "accounting",
+        icon: "ti-report-money",
+        label: I18N.t("PREF_ACCOUNTING"),
+      },
+      { id: "tables", icon: "ti-table", label: I18N.t("PREF_TABLES") },
+      {
+        id: "notifications",
+        icon: "ti-bell",
+        label: I18N.t("PREF_NOTIFICATIONS"),
+      },
+      {
+        id: "security",
+        icon: "ti-shield-lock",
+        label: I18N.t("PREF_SECURITY"),
+      },
+      { id: "print", icon: "ti-printer", label: I18N.t("PREF_PRINT") },
+      { id: "shortcuts", icon: "ti-keyboard", label: I18N.t("PREF_SHORTCUTS") },
+    ];
+
+    var tabsHtml = tabs
+      .map(function (t) {
+        return (
+          '<button class="up-tab' +
+          (t.id === _upCurrentTab ? " active" : "") +
+          '" ' +
+          "onclick=\"upSwitchTab('" +
+          t.id +
+          '\')" data-tab="' +
+          t.id +
+          '">' +
+          '<i class="ti ' +
+          t.icon +
+          '"></i> ' +
+          t.label +
+          "</button>"
+        );
+      })
+      .join("");
+
+    return [
+      "<style>",
+      ".up-tabs{display:flex;gap:4px;flex-wrap:wrap;padding:0 0 16px;border-bottom:1px solid var(--border);margin-bottom:20px}",
+      ".up-tab{display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2);font-family:inherit;transition:all .18s}",
+      ".up-tab:hover{background:var(--surface2);color:var(--text1)}",
+      ".up-tab.active{background:var(--accent);color:#fff}",
+      ".up-tab.active i{color:#fff}",
+      ".up-section{display:none}.up-section.active{display:block}",
+      ".pref-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}",
+      ".pref-card-title{font-size:13px;font-weight:700;color:var(--text2);margin-bottom:16px;display:flex;align-items:center;gap:8px;padding-bottom:10px;border-bottom:1px solid var(--border)}",
+      ".pref-row{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center;padding:10px 0;border-bottom:1px solid var(--surface2)}",
+      ".pref-row:last-child{border-bottom:none;padding-bottom:0}",
+      ".pref-row-label{font-size:13px;font-weight:600;color:var(--text1)}",
+      ".pref-row-desc{font-size:11px;color:var(--text3);margin-top:2px}",
+      ".up-switch{position:relative;width:44px;height:24px;flex-shrink:0}",
+      ".up-switch input{opacity:0;width:0;height:0}",
+      ".up-slider{position:absolute;inset:0;background:#ccc;border-radius:24px;cursor:pointer;transition:.2s}",
+      '.up-slider:before{content:"";position:absolute;width:18px;height:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}',
+      ".up-switch input:checked+.up-slider{background:var(--accent)}",
+      ".up-switch input:checked+.up-slider:before{transform:translateX(20px)}",
+      ".color-swatches{display:flex;gap:8px;flex-wrap:wrap}",
+      ".color-swatch{width:28px;height:28px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:.15s;position:relative}",
+      '.color-swatch.active::after{content:"";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:800}',
+      ".color-swatch:hover{transform:scale(1.15)}",
+      ".up-save-bar{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:12px 20px;display:flex;justify-content:space-between;align-items:center;border-radius:0 0 16px 16px;z-index:10}",
+      ".density-btn{flex:1;padding:10px;border:1.5px solid var(--border);border-radius:8px;cursor:pointer;text-align:center;font-size:12px;font-weight:600;background:var(--surface2);color:var(--text2);transition:.18s}",
+      ".density-btn.active{border-color:var(--accent);background:var(--accent);color:#fff}",
+      "</style>",
+      '<div class="page-header">',
+      '<div><h1 style="display:flex;align-items:center;gap:10px">' +
+        iconBadge(
+          "ti-user-cog",
+          "linear-gradient(135deg,#7C3AED,#4F46E5)",
+          "#fff",
+        ) +
+        "<span>" +
+        I18N.t("PREF_USER_TITLE") +
+        "</span></h1>",
+      '<p style="margin-top:4px">' +
+        I18N.t("PREF_USER_SUBTITLE") +
+        "</p></div>",
+      '<div class="header-actions">',
+      '<button class="btn btn-outline" onclick="upResetAll()"><i class="ti ti-refresh"></i> ' +
+        I18N.t("PREF_RESET") +
+        "</button>",
+      "</div></div>",
+      '<div id="up-status" style="display:none;padding:8px 14px;border-radius:8px;font-size:12px;font-weight:600;margin-bottom:12px"></div>',
+      '<div class="up-tabs">' + tabsHtml + "</div>",
+      '<div id="up-sections">',
+      '<div class="loading-spinner-wrap"><i class="ti ti-loader-2 spin" style="font-size:32px;color:var(--accent)"></i><p>' +
+        I18N.t("PREF_LOADING") +
+        "</p></div>",
+      "</div>",
+    ].join("");
+  }
+
+  function bindUserPreferences() {
+    _upCurrentTab = "general";
+    // تحميل التفضيلات
+    PreferenceService.onReady(function (prefs) {
+      _upPrefs = JSON.parse(JSON.stringify(prefs));
+      upRenderCurrentTab();
+    });
+    // إذا لم يكن جاهزاً بعد، حمّل
+    if (PreferenceService.get("theme") === null) {
+      PreferenceService.load(function (prefs) {
+        _upPrefs = JSON.parse(JSON.stringify(prefs));
+        upRenderCurrentTab();
+      });
+    }
+  }
+
+  function upSwitchTab(tabId) {
+    _upCurrentTab = tabId;
+    document.querySelectorAll(".up-tab").forEach(function (b) {
+      b.classList.toggle("active", b.dataset.tab === tabId);
+    });
+    upRenderCurrentTab();
+  }
+
+  function upRenderCurrentTab() {
+    var container = document.getElementById("up-sections");
+    if (!container || !_upPrefs) return;
+    var renderFn = {
+      general: _upRenderGeneral,
+      appearance: _upRenderAppearance,
+      accounting: _upRenderAccounting,
+      tables: _upRenderTables,
+      notifications: _upRenderNotifications,
+      security: _upRenderSecurity,
+      print: _upRenderPrint,
+      shortcuts: _upRenderShortcuts,
+    }[_upCurrentTab];
+    container.innerHTML = renderFn ? renderFn(_upPrefs) : "<p>قريباً…</p>";
+  }
+
+  // ── تبويب: عام ──────────────────────────────────────────────────────────
+  function _upRenderGeneral(p) {
+    var pages = [
+      { v: "dashboard", l: I18N.t("PREF_DASHBOARD") },
+      { v: "chart-of-accounts", l: I18N.t("PREF_CHART_OF_ACCOUNTS") },
+      { v: "journal-entries", l: I18N.t("PREF_JOURNAL_ENTRIES") },
+      { v: "sale-invoices", l: I18N.t("PREF_SALES_INVOICES") },
+      { v: "purchase-invoices", l: I18N.t("PREF_PURCHASE_INVOICES") },
+      { v: "customers", l: I18N.t("PREF_CUSTOMERS") },
+      { v: "suppliers", l: I18N.t("PREF_SUPPLIERS") },
+      { v: "stock-report", l: I18N.t("PREF_STOCK_REPORT") },
+      { v: "hr-dashboard", l: I18N.t("PREF_HR_DASHBOARD") },
+    ];
+    var dateFormats = ["DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD", "D MMMM YYYY"];
+    // [PREF-CURRENCY-FIX 2026-07-14] كانت الليستة فيها 5 عملات وهمية —
+    // getDefaultCurrency() مكنش بيستخدمها أي مكان في السيستم غير هنا،
+    // فالنظام كله كان شغال EGP ثابت رغم الاختيار. لحد ما يتعمل multi-currency
+    // فعلي، الحقل بيعرض EGP فقط وبيبقى مقفول (disabled) عشان التفضيلات
+    // تعكس الواقع الفعلي بدل ما توهم المستخدم باختيار مش مطبق.
+    var currencies = ["EGP"];
+
+    return _upCard(I18N.t("PREF_GENERAL_SETTINGS"), "ti-settings", "#1D4ED8", [
+      _upSelect(
+        I18N.t("PREF_LANGUAGE"),
+        "language",
+        p.language,
+        [
+          { v: "ar", l: I18N.t("PREF_ARABIC") },
+          { v: "en", l: "English" },
+        ],
+        I18N.t("PREF_LANGUAGE_DESC"),
+      ),
+      _upSelect(
+        I18N.t("PREF_TIMEZONE"),
+        "timezone",
+        "Africa/Cairo",
+        [{ v: "Africa/Cairo", l: "القاهرة (UTC+2)" }],
+        I18N.t("PREF_TIMEZONE_DESC"),
+        true,
+      ),
+      _upSelect(
+        I18N.t("PREF_DATE_FORMAT"),
+        "date_format",
+        p.date_format,
+        dateFormats.map(function (f) {
+          return { v: f, l: f };
+        }),
+        I18N.t("PREF_DATE_FORMAT_DESC"),
+      ),
+      _upSelect(I18N.t("PREF_TIME_FORMAT"), "time_format", p.time_format, [
+        { v: "12h", l: I18N.t("PREF_12_HOUR") },
+        { v: "24h", l: I18N.t("PREF_24_HOUR") },
+      ]),
+      _upSelect(
+        I18N.t("PREF_CURRENCY"),
+        "currency",
+        p.currency,
+        currencies.map(function (c) {
+          return { v: c, l: c };
+        }),
+        I18N.t("PREF_CURRENCY_DESC"),
+        true,
+      ),
+      _upSelect(
+        "عدد الصفوف في الجداول",
+        "items_per_page",
+        String(p.items_per_page),
+        [
+          { v: "10", l: "10" },
+          { v: "25", l: "25" },
+          { v: "50", l: "50" },
+          { v: "100", l: "100" },
+        ],
+      ),
+      _upSelect(
+        "الصفحة الرئيسية بعد الدخول",
+        "default_page",
+        p.default_page,
+        pages,
+        "الشاشة التي تفتح مباشرة بعد تسجيل الدخول",
+      ),
+    ]);
+  }
+
+  // ── تبويب: المظهر ────────────────────────────────────────────────────────
+  function _upRenderAppearance(p) {
+    var accents = [
+      "#2563eb",
+      "#7C3AED",
+      "#059669",
+      "#DC2626",
+      "#D97706",
+      "#0891B2",
+      "#BE185D",
+      "#374151",
+      "#F97316",
+      "#16A34A",
+    ];
+    var swatches = accents
+      .map(function (c) {
+        var isActive = (p.accent_color || "#2563eb") === c;
+        return (
+          '<div class="color-swatch' +
+          (isActive ? " active" : "") +
+          '" ' +
+          'style="background:' +
+          c +
+          '" title="' +
+          c +
+          '" ' +
+          "onclick=\"upSetAccent('" +
+          c +
+          '\')" data-color="' +
+          c +
+          '"></div>'
+        );
+      })
+      .join("");
+
+    return [
+      _upCard(
+        "وضع العرض",
+        "ti-sun-moon",
+        "#7C3AED",
+        [
+          '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:8px 0">',
+          _upThemeBtn("light", "ti-sun", "فاتح", p.theme),
+          _upThemeBtn("dark", "ti-moon", "داكن", p.theme),
+          _upThemeBtn("auto", "ti-device-laptop", "تلقائي", p.theme),
+          "</div>",
+        ].join(""),
+      ),
+      _upCard(
+        "لون النظام الأساسي",
+        "ti-palette",
+        "#BE185D",
+        [
+          '<div class="pref-row"><div><div class="pref-row-label">لون الـ Accent</div>',
+          '<div class="pref-row-desc">يؤثر على الأزرار والروابط والعناصر التفاعلية</div></div>',
+          '<input type="color" id="up-accent-input" value="' +
+            (p.accent_color || "#2563eb") +
+            '" ' +
+            'onchange="upSetAccent(this.value)" style="width:40px;height:36px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:2px">',
+          "</div>",
+          '<div style="padding:10px 0"><div class="pref-row-label" style="margin-bottom:8px;font-size:12px">ألوان جاهزة:</div>',
+          '<div class="color-swatches">' + swatches + "</div></div>",
+        ].join(""),
+      ),
+      _upCard(
+        "حجم الخط وكثافة الواجهة",
+        "ti-text-size",
+        "#059669",
+        [
+          '<div class="pref-row"><div><div class="pref-row-label">حجم الخط</div></div>',
+          '<div style="display:flex;gap:6px">',
+          _upFontBtn("small", "ص", p.font_size),
+          _upFontBtn("medium", "م", p.font_size),
+          _upFontBtn("large", "ك", p.font_size),
+          "</div></div>",
+          '<div class="pref-row"><div><div class="pref-row-label">كثافة الواجهة</div>',
+          '<div class="pref-row-desc">Compact تُظهر مزيداً من البيانات في نفس المساحة</div></div>',
+          '<div style="display:flex;gap:6px">',
+          '<button class="density-btn' +
+            (p.ui_density === "comfortable" ? " active" : "") +
+            '" onclick="upSetDensity(\'comfortable\')">مريح</button>',
+          '<button class="density-btn' +
+            (p.ui_density === "compact" ? " active" : "") +
+            '" onclick="upSetDensity(\'compact\')">مضغوط</button>',
+          "</div></div>",
+        ].join(""),
+      ),
+    ].join("");
+  }
+
+  function _upThemeBtn(val, icon, label, current) {
+    return (
+      "<button onclick=\"upSetTheme('" +
+      val +
+      '\')" style="' +
+      "padding:14px 8px;border-radius:10px;border:2px solid " +
+      (current === val ? "var(--accent)" : "var(--border)") +
+      ";" +
+      "background:" +
+      (current === val ? "var(--accent)" : "var(--surface2)") +
+      ";" +
+      "color:" +
+      (current === val ? "#fff" : "var(--text2)") +
+      ";cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;" +
+      'display:flex;flex-direction:column;align-items:center;gap:6px;transition:.18s">' +
+      '<i class="ti ' +
+      icon +
+      '" style="font-size:22px"></i>' +
+      label +
+      "</button>"
+    );
+  }
+
+  function _upFontBtn(val, label, current) {
+    return (
+      "<button onclick=\"upSetFontSize('" +
+      val +
+      '\')" style="' +
+      "width:36px;height:36px;border-radius:6px;border:1.5px solid " +
+      (current === val ? "var(--accent)" : "var(--border)") +
+      ";" +
+      "background:" +
+      (current === val ? "var(--accent)" : "var(--surface2)") +
+      ";" +
+      "color:" +
+      (current === val ? "#fff" : "var(--text2)") +
+      ";cursor:pointer;font-family:inherit;font-weight:800;" +
+      "font-size:" +
+      (val === "small" ? "11px" : val === "large" ? "17px" : "14px") +
+      '">' +
+      label +
+      "</button>"
+    );
+  }
+
+  // ── تبويب: المحاسبة ──────────────────────────────────────────────────────
+  function _upRenderAccounting(p) {
+    var cashboxes = (APP.data && APP.data.cashBoxes) || [];
+    var banks = (APP.data && APP.data.bankAccounts) || [];
+    var warehouses = (APP.data && APP.data.warehouses) || [];
+
+    return _upCard(
+      "الإعدادات المحاسبية الافتراضية",
+      "ti-report-money",
+      "#059669",
+      [
+        _upSelect(
+          "المستودع الافتراضي",
+          "default_warehouse",
+          p.default_warehouse,
+          [{ v: "", l: "— اختر مستودعاً —" }].concat(
+            warehouses.map(function (w) {
+              return { v: w.id, l: w.name };
+            }),
+          ),
+          "يُستخدم افتراضياً في الفواتير والحركات",
+        ),
+        _upSelect(
+          "الخزينة الافتراضية",
+          "default_cashbox",
+          p.default_cashbox,
+          [{ v: "", l: "— اختر خزينة —" }].concat(
+            cashboxes.map(function (c) {
+              return { v: c.id, l: c.name };
+            }),
+          ),
+          "الخزينة الافتراضية في سندات القبض والصرف",
+        ),
+        _upSelect(
+          "البنك الافتراضي",
+          "default_bank",
+          p.default_bank,
+          [{ v: "", l: "— اختر بنك —" }].concat(
+            banks.map(function (b) {
+              return { v: b.id, l: b.name };
+            }),
+          ),
+          "البنك الافتراضي في التحويلات",
+        ),
+      ],
+    );
+  }
+
+  // ── تبويب: الجداول ───────────────────────────────────────────────────────
+  function _upRenderTables(p) {
+    var screens = [
+      "العملاء",
+      "الموردين",
+      "الأصناف",
+      "المخزون",
+      "فواتير المبيعات",
+      "فواتير المشتريات",
+      "القيود المحاسبية",
+      "الموظفين",
+      "أوامر الإنتاج",
+    ];
+    var tableKeys = Object.keys(p.tables || {});
+    var savedCount = tableKeys.length;
+
+    return [
+      _upCard(
+        "إعدادات الجداول المحفوظة",
+        "ti-table",
+        "#D97706",
+        [
+          '<div style="padding:8px 0">',
+          '<div style="font-size:13px;color:var(--text2);margin-bottom:12px">',
+          "تُحفظ تفضيلات الجداول تلقائياً عند تعديلها (ترتيب الأعمدة، الفرز، الفلاتر). " +
+            "عدد الشاشات المحفوظة: <strong>" +
+            savedCount +
+            "</strong>",
+          "</div>",
+          savedCount > 0
+            ? '<div style="display:grid;gap:6px">' +
+              tableKeys
+                .map(function (k) {
+                  return (
+                    '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--surface2);border-radius:6px">' +
+                    '<span style="font-size:12px;font-weight:600">' +
+                    esc(k) +
+                    "</span>" +
+                    "<button onclick=\"upClearTablePrefs('" +
+                    esc(k) +
+                    '\')" style="border:none;background:none;color:var(--error,#DC2626);cursor:pointer;font-size:11px">مسح</button>' +
+                    "</div>"
+                  );
+                })
+                .join("") +
+              "</div>"
+            : '<div style="text-align:center;padding:20px;color:var(--text3);font-size:12px">لا توجد تفضيلات جداول محفوظة حتى الآن</div>',
+          "</div>",
+          '<div style="padding-top:12px;border-top:1px solid var(--border)">',
+          '<button class="btn btn-outline" onclick="upClearAllTablePrefs()" style="font-size:12px">',
+          '<i class="ti ti-trash"></i> مسح جميع تفضيلات الجداول</button>',
+          "</div>",
+        ].join(""),
+      ),
+      _upCard(
+        "كيفية حفظ تفضيلات الجداول",
+        "ti-info-circle",
+        "#6B7280",
+        [
+          '<div style="font-size:12px;color:var(--text2);line-height:1.8;padding:6px 0">',
+          "• <strong>ترتيب الأعمدة:</strong> اسحب رأس العمود يميناً أو يساراً<br>",
+          '• <strong>إخفاء عمود:</strong> انقر بالزر الأيمن على رأس العمود واختر "إخفاء"<br>',
+          "• <strong>الفرز:</strong> انقر على رأس العمود مرة للتصاعدي ومرتين للتنازلي<br>",
+          "• <strong>الفلاتر:</strong> تُحفظ تلقائياً عند تغييرها<br>",
+          "• <strong>عدد الصفوف:</strong> حدده من إعدادات عام ← عدد العناصر في الجداول",
+          "</div>",
+        ].join(""),
+      ),
+    ].join("");
+  }
+
+  // ── تبويب: الإشعارات ─────────────────────────────────────────────────────
+  function _upRenderNotifications(p) {
+    var items = [
+      { k: "notif_system", l: "إشعارات النظام", d: "تنبيهات النظام والصيانة" },
+      {
+        k: "notif_email",
+        l: "إشعارات البريد",
+        d: "إرسال إشعارات للبريد الإلكتروني",
+      },
+      {
+        k: "notif_financial",
+        l: "العمليات المالية",
+        d: "القيود، الفواتير، سندات القبض والصرف",
+      },
+      {
+        k: "notif_inventory",
+        l: "المخزون",
+        d: "تنبيهات المخزون المنخفض والحركات",
+      },
+      {
+        k: "notif_customers",
+        l: "العملاء",
+        d: "إشعارات المديونيات وعمليات العملاء",
+      },
+      { k: "notif_suppliers", l: "الموردين", d: "إشعارات استحقاقات الموردين" },
+      { k: "notif_approvals", l: "الموافقات", d: "طلبات تحتاج موافقتك" },
+      {
+        k: "notif_commhub_pending",
+        l: "محادثات تحتاج تدخل بشري",
+        d: "تنبيه فوري لأي محادثة واتساب/Communication Hub معلّقة",
+      }, // [PHASE4-NOTIF]
+    ];
+    return _upCard(
+      "إعدادات الإشعارات",
+      "ti-bell",
+      "#DC2626",
+      items
+        .map(function (it) {
+          return _upSwitch(it.l, it.k, !!p[it.k], it.d);
+        })
+        .join(""),
+    );
+  }
+
+  // ── تبويب: الأمان ─────────────────────────────────────────────────────────
+  function _upRenderSecurity(p) {
+    return _upCard(
+      "إعدادات الأمان",
+      "ti-shield-lock",
+      "#B91C1C",
+      [
+        _upSelect(
+          "مدة انتهاء الجلسة",
+          "session_timeout",
+          String(p.session_timeout),
+          [
+            { v: "30", l: "30 دقيقة" },
+            { v: "60", l: "ساعة" },
+            { v: "120", l: "ساعتان" },
+            { v: "240", l: "4 ساعات" },
+            { v: "480", l: "8 ساعات" },
+            { v: "0", l: "لا تنتهي" },
+          ],
+          "المدة قبل تسجيل الخروج تلقائياً عند عدم النشاط",
+        ),
+        _upSwitch(
+          "تأكيد العمليات الحساسة",
+          "confirm_sensitive",
+          !!p.confirm_sensitive,
+          "طلب تأكيد إضافي قبل الحذف والترحيل",
+        ),
+        _upSwitch(
+          "إخفاء الأرصدة",
+          "hide_balances",
+          !!p.hide_balances,
+          "إخفاء أرصدة الخزائن والبنوك في الشاشات الرئيسية",
+        ),
+        _upSwitch(
+          "إخفاء الأسعار",
+          "hide_prices",
+          !!p.hide_prices,
+          "إخفاء أسعار الشراء والتكلفة عن المستخدمين غير المخولين",
+        ),
+      ].join(""),
+    );
+  }
+
+  // ── تبويب: الطباعة ────────────────────────────────────────────────────────
+  function _upRenderPrint(p) {
+    return _upCard(
+      "إعدادات الطباعة الافتراضية",
+      "ti-printer",
+      "#374151",
+      [
+        _upSelect("حجم الورق", "paper_size", p.paper_size, [
+          { v: "A4", l: "A4" },
+          { v: "A5", l: "A5" },
+          { v: "Letter", l: "Letter" },
+          { v: "Legal", l: "Legal" },
+        ]),
+        _upSelect("اتجاه الصفحة", "print_orientation", p.print_orientation, [
+          { v: "portrait", l: "عمودي (Portrait)" },
+          { v: "landscape", l: "أفقي (Landscape)" },
+        ]),
+        _upSelect(
+          "عدد النسخ الافتراضي",
+          "print_copies",
+          String(p.print_copies || 1),
+          ["1", "2", "3", "4", "5"].map(function (n) {
+            return { v: n, l: n + " نسخة" };
+          }),
+        ),
+      ].join(""),
+    );
+  }
+
+  // ── تبويب: الاختصارات ────────────────────────────────────────────────────
+  // مصدر واحد للحقيقة لأكشنات الاختصارات — نفس المصفوفة تُستخدم هنا للعرض
+  // وفي 01_JS_Core_Auth.html (APP_SHORTCUT_ACTIONS) للتنفيذ الفعلي عند الضغط.
+  var UP_SHORTCUT_ACTIONS = [
+    { key: "new_sale_invoice", l: "فاتورة بيع جديدة", def: "Alt+N" },
+    { key: "new_purchase_invoice", l: "فاتورة شراء جديدة", def: "Alt+P" },
+    { key: "new_journal_entry", l: "قيد محاسبي جديد", def: "Alt+J" },
+    { key: "quick_search", l: "بحث سريع", def: "Alt+S" },
+    { key: "dashboard", l: "لوحة التحكم", def: "Alt+D" },
+    { key: "home", l: "الصفحة الرئيسية", def: "Alt+H" },
+  ];
+
+  function _upFormatShortcut(combo) {
+    return combo
+      .split("+")
+      .map(function (p) {
+        return p.trim();
+      })
+      .join(" + ");
+  }
+
+  function _upRenderShortcuts(p) {
+    var custom = (p && p.shortcuts) || {};
+    return [
+      _upCard(
+        "اختصارات لوحة المفاتيح",
+        "ti-keyboard",
+        "#4F46E5",
+        [
+          '<div style="display:grid;gap:8px;padding:6px 0" id="up-shortcuts-list">',
+          UP_SHORTCUT_ACTIONS.map(function (s) {
+            var current = custom[s.key] || s.def;
+            return (
+              '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--surface2);border-radius:6px;gap:10px">' +
+              '<span style="font-size:12px;font-weight:600;color:var(--text1)">' +
+              esc(s.l) +
+              "</span>" +
+              '<div style="display:flex;align-items:center;gap:6px">' +
+              '<kbd id="up-shortcut-kbd-' +
+              s.key +
+              '" style="background:var(--surface3);border:1px solid var(--border);border-radius:5px;padding:3px 8px;font-size:11px;font-family:monospace;color:var(--text2);min-width:70px;text-align:center">' +
+              esc(_upFormatShortcut(current)) +
+              "</kbd>" +
+              '<button type="button" class="btn-icon" title="تغيير الاختصار" onclick="upRecordShortcut(\'' +
+              s.key +
+              "')\"><i class=\"ti ti-edit\"></i></button>" +
+              (custom[s.key]
+                ? '<button type="button" class="btn-icon" title="إرجاع الافتراضي" onclick="upResetShortcut(\'' +
+                  s.key +
+                  "','" +
+                  s.def +
+                  "')\"><i class=\"ti ti-restore\"></i></button>"
+                : "") +
+              "</div>" +
+              "</div>"
+            );
+          }).join(""),
+          "</div>",
+        ].join(""),
+      ),
+      '<div style="text-align:center;padding:14px;color:var(--text3);font-size:12px;background:var(--surface2);border-radius:12px">',
+      '<i class="ti ti-info-circle" style="margin-left:6px"></i>',
+      "اضغط على أيقونة القلم ثم اكتب مجموعة المفاتيح الجديدة (مثال: Alt+K)",
+      "</div>",
+    ].join("");
+  }
+
+  // ── تسجيل اختصار جديد ────────────────────────────────────────────────────
+  function upRecordShortcut(actionKey) {
+    var kbdEl = document.getElementById("up-shortcut-kbd-" + actionKey);
+    if (!kbdEl) return;
+    var original = kbdEl.textContent;
+    kbdEl.textContent = "اضغط أي مفتاح...";
+    kbdEl.style.color = "var(--accent)";
+
+    function handler(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      // نتجاهل الضغط على مفتاح تحكم بمفرده (Alt/Ctrl/Shift/Meta)
+      if (["Alt", "Control", "Shift", "Meta"].indexOf(e.key) !== -1) return;
+
+      var parts = [];
+      if (e.ctrlKey) parts.push("Ctrl");
+      if (e.altKey) parts.push("Alt");
+      if (e.shiftKey) parts.push("Shift");
+      var mainKey = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+      parts.push(mainKey);
+      var combo = parts.join("+");
+
+      if (parts.length < 2) {
+        NotificationEngine.warning("لازم الاختصار يحتوي على Alt أو Ctrl أو Shift مع مفتاح");
+        document.removeEventListener("keydown", handler, true);
+        kbdEl.textContent = original;
+        kbdEl.style.color = "";
+        return;
+      }
+
+      // تحقق من عدم تعارضه مع اختصار آخر
+      var custom = PreferenceService.get("shortcuts") || {};
+      var conflict = UP_SHORTCUT_ACTIONS.find(function (s) {
+        if (s.key === actionKey) return false;
+        var cur = custom[s.key] || s.def;
+        return cur.toLowerCase() === combo.toLowerCase();
+      });
+      if (conflict) {
+        NotificationEngine.error("الاختصار ده مستخدم بالفعل لـ: " + conflict.l);
+        document.removeEventListener("keydown", handler, true);
+        kbdEl.textContent = original;
+        kbdEl.style.color = "";
+        return;
+      }
+
+      custom[actionKey] = combo;
+      PreferenceService.set("shortcuts", custom);
+      if (_upPrefs) _upPrefs.shortcuts = custom;
+      kbdEl.textContent = _upFormatShortcut(combo);
+      kbdEl.style.color = "";
+      document.removeEventListener("keydown", handler, true);
+      _upShowAutoSave();
+      upRenderCurrentTab();
+    }
+
+    document.addEventListener("keydown", handler, true);
+  }
+
+  function upResetShortcut(actionKey, defaultCombo) {
+    var custom = PreferenceService.get("shortcuts") || {};
+    delete custom[actionKey];
+    PreferenceService.set("shortcuts", custom);
+    if (_upPrefs) _upPrefs.shortcuts = custom;
+    upRenderCurrentTab();
+    NotificationEngine.success("تم إرجاع الاختصار الافتراضي: " + defaultCombo);
+  }
+
+  // ─── UI Helper Builders ───────────────────────────────────────────────────
+  function _upCard(title, icon, color, contentHtml) {
+    // [FIX-PREF-COMMAS] بعض الاستدعاءات بتبعت contentHtml كمصفوفة (Array)
+    // مش نص، ولما بيتحصل "..." + array هنا، جافاسكريبت تلقائياً بتحوّل
+    // المصفوفة لنص بفاصلة "," بين كل عنصرين — وده اللي كان بيظهر كفاصلة
+    // منفردة بين كل صف إعداد في شاشة "تفضيلات المستخدم" (تبويب عام
+    // وغيره). الحل: نضمن إنها دايماً string قبل الدمج.
+    if (Array.isArray(contentHtml)) contentHtml = contentHtml.join("");
+    return (
+      '<div class="pref-card">' +
+      '<div class="pref-card-title">' +
+      '<div style="width:28px;height:28px;border-radius:7px;background:' +
+      color +
+      '22;display:flex;align-items:center;justify-content:center">' +
+      '<i class="ti ' +
+      icon +
+      '" style="color:' +
+      color +
+      ';font-size:15px"></i></div>' +
+      title +
+      "</div>" +
+      contentHtml +
+      "</div>"
+    );
+  }
+
+  function _upSelect(label, key, current, options, desc, disabled) {
+    var opts = options
+      .map(function (o) {
+        return (
+          '<option value="' +
+          esc(String(o.v)) +
+          '"' +
+          (String(o.v) === String(current) ? " selected" : "") +
+          ">" +
+          esc(o.l) +
+          "</option>"
+        );
+      })
+      .join("");
+    return (
+      '<div class="pref-row">' +
+      '<div><div class="pref-row-label">' +
+      label +
+      "</div>" +
+      (desc ? '<div class="pref-row-desc">' + esc(desc) + "</div>" : "") +
+      "</div>" +
+      '<select class="form-input" style="width:200px;font-size:12px" ' +
+      (disabled ? "disabled " : "") +
+      "onchange=\"upSetPref('" +
+      key +
+      "',this.value)\">" +
+      opts +
+      "</select>" +
+      "</div>"
+    );
+  }
+
+  function _upSwitch(label, key, checked, desc) {
+    return (
+      '<div class="pref-row">' +
+      '<div><div class="pref-row-label">' +
+      label +
+      "</div>" +
+      (desc ? '<div class="pref-row-desc">' + esc(desc) + "</div>" : "") +
+      "</div>" +
+      '<label class="up-switch">' +
+      '<input type="checkbox"' +
+      (checked ? " checked" : "") +
+      " onchange=\"upSetPref('" +
+      key +
+      "',this.checked)\">" +
+      '<span class="up-slider"></span></label>' +
+      "</div>"
+    );
+  }
+
+  // ─── Action Handlers ──────────────────────────────────────────────────────
+
+  function upSetPref(key, value) {
+    // تحويل النوع حسب الافتراضي
+    if (typeof PreferenceService.get(key) === "number") value = Number(value);
+    PreferenceService.set(key, value);
+    // تحديث _upPrefs المحلي عشان الـ selects ماترجعش للقيمة القديمة عند تبديل التاب
+    if (_upPrefs) _upPrefs[key] = value;
+    _upShowAutoSave();
+  }
+
+  function upSetTheme(val) {
+    // [إصلاح P3/P4] المشترك المسجَّل في subscribe("theme", ...) هو الآن
+    // المسؤول الوحيد عن تحديث _upPrefs وإعادة رسم التاب — لا داعي لتكرارها هنا
+    PreferenceService.set("theme", val);
+    _upShowAutoSave();
+  }
+
+  function upSetAccent(color) {
+    PreferenceService.set("accent_color", color);
+    _upPrefs.accent_color = color;
+    document.getElementById("up-accent-input") &&
+      (document.getElementById("up-accent-input").value = color);
+    document.querySelectorAll(".color-swatch").forEach(function (s) {
+      s.classList.toggle("active", s.dataset.color === color);
+    });
+    _upShowAutoSave();
+  }
+
+  function upSetFontSize(size) {
+    PreferenceService.set("font_size", size);
+    _upPrefs.font_size = size;
+    upRenderCurrentTab();
+    _upShowAutoSave();
+  }
+
+  function upSetDensity(val) {
+    PreferenceService.set("ui_density", val);
+    _upPrefs.ui_density = val;
+    upRenderCurrentTab();
+    _upShowAutoSave();
+  }
+
+  function upClearTablePrefs(screenKey) {
+    var tables = PreferenceService.get("tables") || {};
+    delete tables[screenKey];
+    PreferenceService.set("tables", tables);
+    _upPrefs.tables = tables;
+    upRenderCurrentTab();
+    NotificationEngine.success("تم مسح تفضيلات جدول: " + screenKey);
+  }
+
+  function upClearAllTablePrefs() {
+    PreferenceService.set("tables", {});
+    _upPrefs.tables = {};
+    upRenderCurrentTab();
+    NotificationEngine.success("تم مسح جميع تفضيلات الجداول");
+  }
+
+  function upResetAll() {
+    showConfirm({
+      title: "إعادة تعيين التفضيلات",
+      message:
+        "هل تريد إعادة تعيين جميع تفضيلاتك للقيم الافتراضية؟ لا يمكن التراجع.",
+      icon: "ti-refresh-alert",
+      iconColor: "#e11d48",
+      confirmText: "إعادة تعيين",
+      confirmClass: "btn-danger",
+      onConfirm: function () {
+        _gsr(
+          "resetUserPreferences",
+          [
+            APP.currentUser ? APP.currentUser.username : null,
+            SESSION ? SESSION.token : null,
+          ],
+          {
+            label: "UserPreferences.resetAll",
+            onSuccess: function (res) {
+              if (res && res.success) {
+                PreferenceService.clear();
+                PreferenceService.load(function (prefs) {
+                  _upPrefs = JSON.parse(JSON.stringify(prefs));
+                  upRenderCurrentTab();
+                  NotificationEngine.success(" تمت إعادة التعيين للقيم الافتراضية");
+                });
+              } else {
+                NotificationEngine.error(" " + (res ? res.message : "فشل"));
+              }
+            },
+            // [UNIFY-DATALAYER] onError من _gsr بياخد DL_Result (فيه .message
+            // نص جاهز) مش exception خام زي القديم (e.message) — استخدمناها هنا مباشرة
+            onError: function (result) {
+              NotificationEngine.error(" " + result.message);
+            },
+          },
+        );
+      },
+    });
+  }
+
+  function _upShowAutoSave() {
+    var bar = document.getElementById("up-status");
+    if (!bar) return;
+    bar.style.display = "block";
+    bar.style.background = "#D1FAE5";
+    bar.style.color = "#065F46";
+    bar.style.border = "1px solid #6EE7B7";
+    bar.textContent = " تم حفظ التفضيلات تلقائياً";
+    clearTimeout(bar._timer);
+    bar._timer = setTimeout(function () {
+      bar.style.display = "none";
+    }, 2500);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // §PS-HOOKS  توفير Helpers عامة للشاشات الأخرى
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** Helper: حفظ تفضيلات جدول شاشة معينة */
+  function saveTablePrefs(screenKey, prefsObj) {
+    var tables = PreferenceService.get("tables") || {};
+    tables[screenKey] = Object.assign(tables[screenKey] || {}, prefsObj);
+    PreferenceService.set("tables", tables);
+  }
+
+  /** Helper: قراءة تفضيلات جدول شاشة معينة */
+  function getTablePrefs(screenKey) {
+    var tables = PreferenceService.get("tables") || {};
+    return tables[screenKey] || {};
+  }
+
+  /** Helper: قراءة عدد الصفوف الافتراضي */
+  function getDefaultItemsPerPage() {
+    return PreferenceService.get("items_per_page", 25);
+  }
+
+  /** Helper: قراءة العملة الافتراضية */
+  function getDefaultCurrency() {
+    return PreferenceService.get("currency", "EGP");
+  }
+
+  /** Helper: هل يجب إخفاء الأرصدة؟ */
+  function shouldHideBalances() {
+    return PreferenceService.get("hide_balances", false);
+  }
+
+  /** Helper: هل يجب إخفاء الأسعار؟ */
+  function shouldHidePrices() {
+    return PreferenceService.get("hide_prices", false);
+  }
+
+  /** Helper: الخزينة الافتراضية */
+  function getDefaultCashbox() {
+    return PreferenceService.get("default_cashbox", "");
+  }
+
+  /** Helper: البنك الافتراضي */
+  function getDefaultBank() {
+    return PreferenceService.get("default_bank", "");
+  }
+
+  /** Helper: المستودع الافتراضي */
+  function getDefaultWarehouse() {
+    return PreferenceService.get("default_warehouse", "");
+  }
+</script>

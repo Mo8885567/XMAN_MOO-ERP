@@ -1,0 +1,3301 @@
+<style>
+  /* ═══════════════════════════════════════════════════════════════
+   Style_04_Components.html — جزء من Style.html الأصلي (تقسيم آلي نصي بحت، 2026-07-04)
+   راجع Architecture Audit 2026-07-03، المرحلة 5 — تقسيم بحسب الحجم
+   لا تقسيم دلالي بحت (الملف الأصلي كان منظّم بالفعل بترقيم أقسام
+   داخلي، فالتقسيم هنا اتبع نفس الترتيب الأصلي حرفيًا بدون أي تغيير
+   أو إعادة ترتيب لتفادي أي كسر في cascade/specificity الخاص بـ CSS).
+   يُحمَّل بالترتيب عبر <style> في Index.html مع باقي أجزاء Style.
+   ═══════════════════════════════════════════════════════════════ */
+
+  /* ===== 7. PAGE HEADER ===== */
+  .page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .page-header h1 {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    line-height: 1.2;
+  }
+  .page-header p {
+    font-size: 12px;
+    color: var(--text2);
+    margin-top: 3px;
+  }
+
+  /* [FIX] .page-header-left / .page-header-actions / .page-icon / .page-title /
+     .page-subtitle مستخدمين في 23_JS_PostingConfig_FixedAssets.html (شاشتَي
+     "ثوابت الحسابات" و"الأصول الثابتة والإهلاك") من غير أي تعريف CSS في
+     السيستم كله — فـ .page-icon (اللي معاه خلفية gradient inline بس من غير
+     width/height/border-radius) كان بيتمدد full-width كـ block عادي ويطلع
+     كشريط بنفسجي ضخم بدل أيقونة مربعة صغيرة، وباقي العناصر كانت بتاخد شكل
+     غير موحّد مع باقي رؤوس الشاشات في السيستم (مثل .sc2-page-header). */
+  .page-header-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .page-header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .page-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    box-shadow: var(--shadow-sm);
+  }
+  .page-title {
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--text);
+    line-height: 1.2;
+    margin: 0;
+  }
+  .page-subtitle {
+    font-size: 12.5px;
+    color: var(--text3);
+    margin: 3px 0 0;
+  }
+
+  .header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  /* ── توحيد حجم أزرار رأس الصفحة ── */
+  .header-actions .btn {
+    height: 36px;
+    padding: 0 16px;
+    font-size: 12.5px;
+    font-weight: 700;
+    border-radius: 9px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+
+  .section-title {
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--text2);
+    letter-spacing: 0.3px;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-title::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     COMPONENTS
+  ═══════════════════════════════════════════════════════════ */
+  /* ===== 8. BUTTONS ===== */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    font-size: 12.5px;
+    font-weight: 700;
+    transition:
+      background var(--transition),
+      color var(--transition),
+      opacity var(--transition),
+      border-color var(--transition);
+    cursor: pointer;
+    white-space: nowrap;
+    border: none;
+    font-family: var(--font-arabic);
+    user-select: none;
+  }
+
+  .btn-sm {
+    padding: 5px 11px;
+    font-size: 11px;
+    border-radius: 8px;
+  }
+
+  .btn-xs {
+    width: auto;
+    min-width: var(--action-btn-size);
+    height: var(--action-btn-size);
+    padding: 0 10px !important;
+    font-size: var(--action-btn-font);
+    border-radius: var(--action-btn-radius);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    white-space: nowrap;
+    transition:
+      background 0.2s,
+      color 0.2s,
+      opacity 0.2s,
+      border-color 0.2s;
+  }
+
+  .btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none !important;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
+  }
+  .btn-primary:hover {
+    background: var(--primary-dark);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(37, 99, 235, 0.5);
+  }
+  .btn-primary:active {
+    transform: translateY(0);
+  }
+
+  .btn-success {
+    background: var(--success);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+  }
+  .btn-success:hover {
+    background: var(--success-dark);
+    transform: translateY(-1px);
+  }
+
+  .btn-danger {
+    background: var(--danger);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+  }
+  .btn-danger:hover {
+    background: var(--danger-dark);
+    transform: translateY(-1px);
+  }
+
+  .btn-warning {
+    background: var(--warning);
+    color: #fff;
+  }
+  .btn-warning:hover {
+    background: var(--palette-amber-600);
+    transform: translateY(-1px);
+  }
+
+  .btn-outline {
+    background: var(--surface);
+    color: var(--text2);
+    border: 1.5px solid var(--border);
+  }
+  .btn-outline:hover {
+    background: var(--surface2);
+    border-color: var(--text3);
+    color: var(--text);
+  }
+  [data-theme="dark"] .btn-outline {
+    background: var(--surface2);
+    border-color: var(--border);
+    color: var(--text2);
+  }
+  [data-theme="dark"] .btn-outline:hover {
+    background: var(--surface3);
+    border-color: var(--text3);
+    color: var(--text);
+  }
+
+  /* ── btn-secondary (تحديث / استيراد) ── */
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--text2);
+    border: 1.5px solid var(--border);
+    box-shadow: var(--shadow-xs);
+  }
+  .btn-secondary:hover {
+    background: var(--surface2);
+    border-color: var(--primary-light);
+    color: var(--primary);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+  }
+  .btn-secondary:active {
+    transform: translateY(0);
+  }
+  [data-theme="dark"] .btn-secondary {
+    background: var(--surface2);
+    color: var(--text2);
+    border-color: var(--border);
+    box-shadow: none;
+  }
+  [data-theme="dark"] .btn-secondary:hover {
+    background: var(--surface3);
+    border-color: var(--primary-light);
+    color: var(--palette-blue-300);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--text2);
+  }
+  .btn-ghost:hover {
+    background: var(--surface2);
+    color: var(--text);
+  }
+  [data-theme="dark"] .btn-ghost:hover {
+    background: var(--surface3);
+  }
+
+  /* ===== 9. FORM INPUTS ===== */
+  .field {
+    margin-bottom: 14px;
+  }
+
+  .field label {
+    display: block;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--text2);
+    margin-bottom: 6px;
+    letter-spacing: 0.3px;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     [FORM-UNIFY-P1] نظام حقول الإدخال الموحّد (2026-07-05)
+     .input هو التعريف الأساسي (كان الأكثر استخدامًا فعليًا في
+     المشروع — 378 موضع مقابل 8 لـ .form-control و51 لـ
+     .form-input/.form-select). أبقينا .form-control / .form-input /
+     .form-select كأسماء بديلة بنفس القواعد بالضبط (توافق خلفي) لحد
+     ما تترحّل كل الاستخدامات القديمة لـ .input في مرحلة لاحقة من
+     مبادرة توحيد الفورمات — عندها تُحذف الأسماء البديلة من هنا.
+     لا تضِف تعريف مستقل لأي منها في أي ملف Style تاني.
+     ═══════════════════════════════════════════════════════════════ */
+  .input,
+  .form-control,
+  .form-input,
+  .form-select {
+    display: block;
+    width: 100%;
+    min-height: var(--input-height);
+    padding: var(--input-padding-y) var(--input-padding-x);
+    background: var(--surface2);
+    border: var(--input-border-width) solid var(--border);
+    border-radius: var(--input-radius);
+    color: var(--text);
+    font-size: var(--input-font-size);
+    font-family: var(--font-arabic);
+    appearance: none;
+    -webkit-appearance: none;
+    transition:
+      background var(--transition),
+      color var(--transition),
+      opacity var(--transition),
+      border-color var(--transition),
+      box-shadow var(--transition);
+  }
+  .input:hover:not(:disabled):not(:focus):not([readonly]),
+  .form-control:hover:not(:disabled):not(:focus):not([readonly]),
+  .form-input:hover:not(:disabled):not(:focus):not([readonly]),
+  .form-select:hover:not(:disabled):not(:focus):not([readonly]) {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  }
+  [data-theme="dark"] .input:hover:not(:disabled):not(:focus):not([readonly]),
+  [data-theme="dark"]
+    .form-control:hover:not(:disabled):not(:focus):not([readonly]),
+  [data-theme="dark"]
+    .form-input:hover:not(:disabled):not(:focus):not([readonly]),
+  [data-theme="dark"]
+    .form-select:hover:not(:disabled):not(:focus):not([readonly]) {
+    background: var(--surface3);
+  }
+  .input:focus,
+  .form-control:focus,
+  .form-input:focus,
+  .form-select:focus {
+    border-color: var(--accent);
+    background: var(--surface);
+    box-shadow: var(--input-focus-ring);
+    outline: none;
+  }
+  [data-theme="dark"] .input:focus,
+  [data-theme="dark"] .form-control:focus,
+  [data-theme="dark"] .form-input:focus,
+  [data-theme="dark"] .form-select:focus {
+    box-shadow: var(--input-focus-ring-dark);
+  }
+  .input::placeholder,
+  .form-control::placeholder,
+  .form-input::placeholder,
+  .form-select::placeholder {
+    color: var(--text3);
+  }
+  .input:disabled,
+  .form-control:disabled,
+  .form-input:disabled,
+  .form-select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: var(--surface2);
+  }
+  .input[readonly],
+  .form-control[readonly],
+  .form-input[readonly] {
+    background: var(--surface2);
+    border-style: dashed;
+    cursor: default;
+  }
+  textarea.input,
+  textarea.form-control,
+  textarea.form-input {
+    min-height: 80px;
+    height: auto;
+    resize: vertical;
+    line-height: 1.6;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     [SELECT-ARROW-FIX / 2026-07-26] الحل الجذري لمشكلة تكرار أيقونة
+     السهم (كانت بتظهر كأسهم/علامات زرقاء متكدسة داخل الحقل عند فتحه).
+
+     السبب الحقيقي: كنا حاطين background-image (أيقونة السهم) مباشرة
+     على عنصر <select> نفسه. المتصفح (خصوصًا Chrome/Windows) أحيانًا
+     بيعيد استخدام نفس الـ background اللي على الـ <select> وهو بيرسم
+     قائمة الـ <option> المفتوحة (لأنها من نفس العنصر تقنيًا)، فتتكرر
+     الأيقونة صف ورا صف. محاولة إلغاؤها على مستوى <option> (اللي كانت
+     موجودة هنا قبل كده) مش مضمونة عبر كل المتصفحات لأن <option>
+     بيتم رسمها بمحرك المتصفح الأصلي (native) مش CSS العادي.
+
+     الحل الجذري: نشيل الأيقونة نهائيًا من الـ <select> (مفيش
+     background-image عليه خالص → مستحيل تتسرب لقائمة الـ options
+     تاني)، ونرسمها بدل كده على ::after فوق الـ wrapper (.field) اللي
+     بيغلف الـ select في الغالبية العظمى من الفورمات — عنصر منفصل
+     تمامًا عن الـ <select>، فمفيش أي احتمال تكرار.
+     ═══════════════════════════════════════════════════════════════ */
+  select.input,
+  select.form-control,
+  select.form-input,
+  select.form-select {
+    cursor: pointer;
+    padding-left: 36px;
+    background-image: none !important;
+  }
+  /* [SELECT-ARROW-FIX-2] كروم الحديث بقى بيضيف أيقونة سهم تلقائية
+     مدمجة في الـ <select> نفسه (UA-inserted ::picker-icon) حتى مع
+     appearance:none — دي مختلفة تمامًا عن مشكلة الـ background-image
+     القديمة، فلازم تتقفل صراحة وإلا هتظهر بجانب سهمنا المخصص (سهمين
+     لنفس الحقل). */
+  .field > select.input::picker-icon,
+  .field > select.form-control::picker-icon,
+  .field > select.form-input::picker-icon,
+  .field > select.form-select::picker-icon,
+  .form-field > select.input::picker-icon,
+  .form-field > select.form-select::picker-icon,
+  select.input::picker-icon,
+  select.form-control::picker-icon,
+  select.form-input::picker-icon,
+  select.form-select::picker-icon {
+    display: none;
+  }
+  /* [SELECT-ARROW-FIX-3 / 2026-07-27] ملحوظة صيانة: القاعدة فوق
+     مقصورة على selects بالكلاسات الموحّدة (.input/.form-control/
+     .form-input/.form-select) جوه أو برّه .field. أي select محلي
+     بكلاس تاني خاص بشاشة معينة وبيحط appearance:none بنفسه (زي ما
+     كان حاصل في .hr-field select) لازم يضيف
+     "selector-الخاص-بيه::picker-icon { display:none }" جنبه صراحةً،
+     وإلا هيرجع سهم Chrome الأصلي يظهر جنب سهمه المرسوم يدويًا. ده
+     اتصلح في .hr-field (شوف 12_JS_HR.html). لا تحط قاعدة عامة
+     "select::picker-icon{display:none}" على *كل* select في المشروع
+     — ده هيشيل السهم الوحيد من selects تانية بترجع للـ native
+     المتصفح بالكامل (زي .settings-field select، .vc-select،
+     .bcp-select، .ati-map-table select) وهتبقى من غير سهم خالص. */
+  select.input option,
+  select.form-control option,
+  select.form-input option,
+  select.form-select option {
+    background: var(--surface);
+    background-image: none !important;
+    color: var(--text);
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+  [data-theme="dark"] select.input option,
+  [data-theme="dark"] select.form-control option,
+  [data-theme="dark"] select.form-input option,
+  [data-theme="dark"] select.form-select option {
+    background: var(--surface2);
+    background-image: none !important;
+    color: var(--text);
+  }
+
+  /* أيقونة السهم — عنصر ::after مستقل تمامًا فوق الـ wrapper، مش جزء
+     من الـ <select> خالص. بيشتغل تلقائيًا مع أي wrapper شائع من غير
+     أي تعديل HTML (:has() مدعومة في Chrome/Edge وهو المتصفح المعتمد
+     في المشروع).
+
+     [SELECT-ARROW-FIX-4 / 2026-07-27] السبب الحقيقي لظهور سهمين في
+     شاشات الفورمات (الصنف، العميل، المورد...): initCustomSelects()
+     في 02_JS_UI_Shell.html (بتشتغل تلقائيًا على أي select.input جوه
+     أي Drawer عن طريق Core_UIManagers.html) بتعمل hide للـ <select>
+     الأصلي (display:none) لكن بتسيبه Direct Child لل‑.field زي ما
+     هو، وبتضيف .cs-wrap كـ sibling ليه فيه سهمها الخاص (.cs-arrow
+     SVG). المشكلة إن :has() بتفضل شغالة حتى مع select مخفي
+     (display:none مبيأثرش على :has())، فقاعدة ::after فوق بتفضل
+     شغالة كمان → سهمين حقيقيين لنفس الحقل (سهم .field::after + سهم
+     .cs-arrow بتاع الـ cs-wrap)، مش سهم متصفح افتراضي زي ما كان
+     متصور الأول. الحل: نستثني أي .field فيها .cs-wrap (يبقى الـ
+     select اتحول فعلاً لـ custom dropdown وسهمه هو اللي المفروض
+     يظهر) من قاعدة الـ ::after دي. */
+  .field:has(> select.input),
+  .field:has(> select.form-control),
+  .field:has(> select.form-input),
+  .field:has(> select.form-select),
+  .form-field:has(> select.input),
+  .form-field:has(> select.form-select) {
+    position: relative;
+  }
+  .field:has(> select.input):not(:has(> .cs-wrap))::after,
+  .field:has(> select.form-control):not(:has(> .cs-wrap))::after,
+  .field:has(> select.form-input):not(:has(> .cs-wrap))::after,
+  .field:has(> select.form-select):not(:has(> .cs-wrap))::after,
+  .form-field:has(> select.input):not(:has(> .cs-wrap))::after,
+  .form-field:has(> select.form-select):not(:has(> .cs-wrap))::after {
+    content: "";
+    position: absolute;
+    left: 12px;
+    bottom: 0;
+    height: var(--input-height);
+    width: 14px;
+    pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 14px;
+  }
+  .field:has(> select.input:focus):not(:has(> .cs-wrap))::after,
+  .field:has(> select.form-control:focus):not(:has(> .cs-wrap))::after,
+  .field:has(> select.form-input:focus):not(:has(> .cs-wrap))::after,
+  .field:has(> select.form-select:focus):not(:has(> .cs-wrap))::after,
+  .form-field:has(> select.input:focus):not(:has(> .cs-wrap))::after,
+  .form-field:has(> select.form-select:focus):not(:has(> .cs-wrap))::after {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%232563eb' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  }
+  [data-theme="dark"] .field:has(> select.input):not(:has(> .cs-wrap))::after,
+  [data-theme="dark"] .field:has(> select.form-control):not(:has(> .cs-wrap))::after,
+  [data-theme="dark"] .field:has(> select.form-input):not(:has(> .cs-wrap))::after,
+  [data-theme="dark"] .field:has(> select.form-select):not(:has(> .cs-wrap))::after,
+  [data-theme="dark"] .form-field:has(> select.input):not(:has(> .cs-wrap))::after,
+  [data-theme="dark"] .form-field:has(> select.form-select):not(:has(> .cs-wrap))::after {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  }
+  [data-theme="dark"] .field:has(> select.input:focus):not(:has(> .cs-wrap))::after,
+  [data-theme="dark"] .field:has(> select.form-control:focus):not(:has(> .cs-wrap))::after,
+  [data-theme="dark"] .field:has(> select.form-input:focus):not(:has(> .cs-wrap))::after,
+  [data-theme="dark"] .field:has(> select.form-select:focus):not(:has(> .cs-wrap))::after,
+  [data-theme="dark"] .form-field:has(> select.input:focus):not(:has(> .cs-wrap))::after,
+  [data-theme="dark"] .form-field:has(> select.form-select:focus):not(:has(> .cs-wrap))::after {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%233b82f6' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  }
+
+  /* [FALLBACK] أي select من غير wrapper .field/.form-field (مثلاً
+     فلاتر التولبار) — appearance:none بتفضل شغالة عليه برضو (نفس
+     القاعدة الأساسية فوق) فمفيش سهم متصفح خالص. أفضل من ازدواج
+     الأسهم — لو الشاشة محتاجة سهم هنا لازم تتلف داخل .field/.form-field
+     أولاً عشان ياخد سهم الشاشة تلقائيًا. */
+
+  /* [FORM-UNIFY-P1] .input-error اتوحّد مع .vf-error (Enterprise
+     Validation Framework) في Style_11_Tail.html بدل التكرار هنا. */
+
+  .input-group {
+    display: flex;
+  }
+  .input-group .input {
+    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+    border-left: 0;
+  }
+  .input-group .btn {
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    flex-shrink: 0;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     [FORM-UNIFY-P1] Checkbox موحّد (2026-07-05)
+     كان .bcp-row-checkbox (شاشة طباعة الباركود) هو التصميم الوحيد
+     الجاهز للـ checkbox المخصص في المشروع كله. عمّمناه هنا كـ
+     .checkbox، وربطنا بيه 3 كلاسات كانت بدون أي تنسيق إطلاقًا
+     (بتترندر checkbox افتراضي من المتصفح): .bom-line-optional
+     (تصنيع)، .ov-deny-cb (صلاحيات المستخدمين)، .shco-gov-cb (الشحن).
+     ═══════════════════════════════════════════════════════════════ */
+  .checkbox,
+  .bcp-row-checkbox,
+  .bom-line-optional,
+  .ov-deny-cb,
+  .shco-gov-cb {
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--border);
+    border-radius: 5px;
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    position: relative;
+    background: var(--surface);
+    transition:
+      background 0.13s,
+      color 0.13s,
+      opacity 0.13s,
+      border-color 0.13s;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+  .checkbox:hover:not(:disabled),
+  .bcp-row-checkbox:hover:not(:disabled),
+  .bom-line-optional:hover:not(:disabled),
+  .ov-deny-cb:hover:not(:disabled),
+  .shco-gov-cb:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  }
+  .checkbox:checked,
+  .bcp-row-checkbox:checked,
+  .bom-line-optional:checked,
+  .ov-deny-cb:checked,
+  .shco-gov-cb:checked {
+    background: var(--primary, var(--accent));
+    border-color: var(--primary, var(--accent));
+  }
+  .checkbox:checked::after,
+  .bcp-row-checkbox:checked::after,
+  .bom-line-optional:checked::after,
+  .ov-deny-cb:checked::after,
+  .shco-gov-cb:checked::after {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 1.5px;
+    width: 4px;
+    height: 8px;
+    border: 2px solid #fff;
+    border-top: none;
+    border-right: none;
+    transform: rotate(-45deg);
+  }
+  .checkbox:disabled,
+  .bcp-row-checkbox:disabled,
+  .bom-line-optional:disabled,
+  .ov-deny-cb:disabled,
+  .shco-gov-cb:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     [FORM-UNIFY-P1] إصلاح كلاسات كانت من غير أي تنسيق إطلاقًا
+     (Phase 0 audit — 2026-07-05): فودافون كاش كامل، حقل هيكس اللون،
+     حقل ملاحظة رفع الملفات، وحقل كمية طباعة الباركود.
+     ═══════════════════════════════════════════════════════════════ */
+  .vc-input,
+  .color-hex-input,
+  .input-field,
+  .bcp-qty-inp {
+    display: block;
+    width: 100%;
+    min-height: var(--input-height);
+    padding: var(--input-padding-y) var(--input-padding-x);
+    background: var(--surface2);
+    border: var(--input-border-width) solid var(--border);
+    border-radius: var(--input-radius);
+    color: var(--text);
+    font-size: var(--input-font-size);
+    font-family: var(--font-arabic);
+    transition:
+      background var(--transition),
+      color var(--transition),
+      border-color var(--transition),
+      box-shadow var(--transition);
+  }
+  .vc-input:hover:not(:disabled):not(:focus),
+  .color-hex-input:hover:not(:disabled):not(:focus),
+  .input-field:hover:not(:disabled):not(:focus),
+  .bcp-qty-inp:hover:not(:disabled):not(:focus) {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  }
+  .vc-input:focus,
+  .color-hex-input:focus,
+  .input-field:focus,
+  .bcp-qty-inp:focus {
+    border-color: var(--accent);
+    background: var(--surface);
+    box-shadow: var(--input-focus-ring);
+    outline: none;
+  }
+  .vc-input::placeholder,
+  .color-hex-input::placeholder,
+  .input-field::placeholder,
+  .bcp-qty-inp::placeholder {
+    color: var(--text3);
+  }
+  .vc-input:disabled,
+  .color-hex-input:disabled,
+  .input-field:disabled,
+  .bcp-qty-inp:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: var(--surface2);
+  }
+  /* أرقام هاتف/عملة اتجاهها LTR دايمًا حتى في صفحة RTL */
+  .vc-input-ltr {
+    direction: ltr;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .vc-currency {
+    direction: ltr;
+    text-align: left;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  textarea.vc-input,
+  .vc-textarea {
+    min-height: 80px;
+    height: auto;
+    resize: vertical;
+    line-height: 1.6;
+  }
+  .color-hex-input {
+    max-width: 110px;
+    font-family: "Courier New", monospace;
+    text-transform: uppercase;
+    text-align: center;
+  }
+  .bcp-qty-inp {
+    min-height: 34px;
+    padding: 6px 8px;
+    text-align: center;
+    max-width: 70px;
+  }
+
+  /* ── Dark mode: select & input inline (عناصر بدون كلاس .input/.form-*) ── */
+  [data-theme="dark"] select,
+  [data-theme="dark"] input[type="text"],
+  [data-theme="dark"] input[type="email"],
+  [data-theme="dark"] input[type="tel"],
+  [data-theme="dark"] input[type="url"],
+  [data-theme="dark"] input[type="number"],
+  [data-theme="dark"] input[type="password"],
+  [data-theme="dark"] textarea {
+    color: var(--text) !important;
+    background: var(--surface) !important;
+    border-color: var(--border) !important;
+  }
+
+  /* ── Dark mode: settings-card-header ── */
+  [data-theme="dark"] .settings-card-header {
+    background: var(--surface2);
+  }
+
+  /* ── Dark mode: sys-info-item ── */
+  [data-theme="dark"] .sys-info-item {
+    background: var(--surface2);
+    border-color: var(--border);
+  }
+  .company-preview-card::after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--preview-accent, var(--accent2, #0ea5e9));
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  }
+  /* ── Dark mode: danger-action-row ── */
+  [data-theme="dark"] .danger-action-row {
+    border-bottom-color: rgba(239, 68, 68, 0.2);
+  }
+
+  /* ── Dark mode: AI voice preview card ── */
+  [data-theme="dark"]
+    #settings-section-ai_voice
+    .settings-card-body
+    > div:first-child {
+    background: linear-gradient(135deg, #1f1248, #2d1f60) !important;
+    border-color: #3d2a8a !important;
+  }
+
+  [data-theme="dark"]
+    #settings-section-ai_voice
+    .settings-card-body
+    > div:first-child
+    h4 {
+    color: var(--palette-violet-300) !important;
+  }
+
+  [data-theme="dark"] #ai-voice-current-label {
+    color: var(--palette-violet-400) !important;
+  }
+
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .form-grid .full {
+    grid-column: 1 / -1;
+  }
+
+  /* ===== 10. CARDS & STAT CARDS ===== */
+  /* [FIX] .loading-spinner-wrap كان مستخدم في 23_JS_PostingConfig_FixedAssets.html
+     و 24_JS_UserPreferences.html من غير أي تعريف CSS في السيستم كله، فكان
+     بيطلع بلا padding/خلفية/تمركز — شكل مختلف عن باقي كروت السيستم. */
+  .loading-spinner-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 48px 18px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    text-align: center;
+  }
+  .loading-spinner-wrap p {
+    font-size: 13px;
+    color: var(--text2);
+    margin: 0;
+  }
+  [data-theme="dark"] .loading-spinner-wrap {
+    border-color: var(--border);
+    box-shadow: var(--shadow);
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px;
+    box-shadow: var(--shadow-sm);
+  }
+  [data-theme="dark"] .card {
+    border-color: var(--border);
+    box-shadow: var(--shadow);
+  }
+
+  .card-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    transition:
+      background var(--transition),
+      color var(--transition),
+      opacity var(--transition),
+      border-color var(--transition);
+    position: relative;
+    overflow: hidden;
+  }
+  .stat-card::before {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    opacity: 0.06;
+    transform: translate(20px, 20px);
+    transition: transform var(--transition);
+  }
+  .stat-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-md);
+  }
+  .stat-card:hover::before {
+    transform: translate(10px, 10px);
+  }
+
+  .stat-icon {
+    width: 70px;
+    height: 70px;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 31px;
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  .stat-info h3 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text2);
+    margin-bottom: 5px;
+    white-space: nowrap;
+  }
+  .stat-info h2 {
+    font-size: 32px;
+    font-weight: 800;
+    line-height: 1;
+    font-family: var(--font-mono);
+    letter-spacing: -1px;
+  }
+  .stat-info small {
+    font-size: 10.5px;
+    color: var(--text3);
+    margin-top: 2px;
+    display: block;
+  }
+
+  .stat-trend {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-top: 4px;
+  }
+  .trend-up {
+    color: var(--success);
+  }
+  .trend-down {
+    color: var(--danger);
+  }
+
+  /* ===== 11. TABLES ===== */
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-radius: var(--radius-sm);
+  }
+
+  /* جدول آخر الحركات في الداشبورد — ارتفاع ديناميكي حسب الشاشة */
+  .dash-recent-tx-wrap {
+    overflow-y: auto;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    /*
+      الحسبة (عرض عادي — صفّان):
+        topbar(52) + content-pt(62) + page-header(68) + stat-grid(108)
+        + gap(24) + two-col(260) + gap(24) + card-pad(18) + title(46) + thead(41)
+        = 703px overhead
+        + صفّان × 45px = 90px
+        → max-height = 100vh - 703px ≈ يعرض صفّين بالظبط
+    */
+    max-height: calc(100vh - 703px);
+    min-height: 90px;
+  }
+
+  /* fullscreen — أربعة صفوف (الـ topbar بيفضل، الـ Google bar بيختفي ~30px) */
+  :fullscreen .dash-recent-tx-wrap,
+  :-webkit-full-screen .dash-recent-tx-wrap,
+  :-moz-full-screen .dash-recent-tx-wrap {
+    max-height: calc(
+      100vh - 673px
+    ); /* 703 - 30px browser-bar = 673 → يعرض 4 صفوف */
+  }
+
+  /* الـ dashboard wrapper */
+  .dash-page {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* الكارد الأخير (آخر الحركات) */
+  .dash-last-tx-card {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .dash-last-tx-card > div:last-child {
+    display: flex;
+    flex-direction: column;
+  }
+
+  table {
+    width: 100%;
+    min-width: 500px;
+    border-collapse: collapse;
+    font-size: 14.5px;
+  }
+
+  /* Ensure all table containers handle overflow */
+  .table-wrap,
+  .table-container,
+  [class*="-table-wrap"],
+  [class*="-table-container"] {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-radius: var(--radius);
+  }
+
+  thead tr {
+    background: var(--surface2);
+  }
+
+  [data-theme="dark"] thead tr {
+    background: var(--surface3);
+  }
+
+  th {
+    padding: var(--table-th-padding);
+    text-align: center;
+    font-weight: 700;
+    color: var(--text2);
+    font-size: var(--table-th-font-size);
+    white-space: nowrap;
+    border-bottom: 2px solid var(--border);
+    letter-spacing: 0.2px;
+  }
+
+  td {
+    padding: var(--table-td-padding);
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    vertical-align: middle;
+    font-size: var(--table-font-size);
+    text-align: center;
+  }
+
+  /* عمود الإجراءات (آخر عمود) — توسيط الأزرار أفقياً ورأسياً */
+  th:last-child,
+  td:last-child {
+    text-align: center;
+    white-space: nowrap; /* [FIX-STICKY] منع لف نص العمود */
+    width: 1%; /* [FIX-COLWIDTH] يخلي العمود الفاضي يتقلص لمحتواه، والباقي ياخد المساحة المتاحة بشكل سليم */
+  }
+  /* لا نستخدم display:flex على td لأنه يكسر border-bottom وارتفاع الصف
+     بدل كده نوسّط المحتوى بـ text-align:center على td
+     والأزرار المباشرة بتتوسط تلقائياً — wrapper div.act-btns بيعمل الـ gap */
+  td:last-child > .act-btns {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  /* fallback للـ wrapper divs القديمة بـ inline style */
+  td:last-child > div[style*="display:flex"] {
+    display: inline-flex !important;
+    justify-content: center !important;
+    width: 100%;
+  }
+
+  tbody tr {
+    transition: background var(--transition);
+    height: 76px; /* ارتفاع موحد لكل صفوف الجداول */
+  }
+  tbody tr:hover {
+    background: var(--surface2);
+  }
+  [data-theme="dark"] tbody tr:hover {
+    background: var(--surface3);
+  }
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  /* Alignment override */
+  table th,
+  table td {
+    text-align: center;
+    vertical-align: middle;
+  }
+
+  td div[style*="display:flex"] {
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .mono {
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+  table .mono {
+    font-size: 15px;
+  }
+
+  /* ===== 12. BADGES & PILLS ===== */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 700;
+    white-space: nowrap;
+    letter-spacing: 0.2px;
+  }
+  .badge-success {
+    background: var(--success-soft);
+    color: var(--success);
+  }
+  .badge-danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+  .badge-warning {
+    background: var(--warning-soft);
+    color: var(--warning);
+  }
+  .badge-blue {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .badge-purple {
+    background: var(--purple-soft);
+    color: var(--purple);
+  }
+  .badge-teal {
+    background: var(--teal-soft);
+    color: var(--teal);
+  }
+  .badge-orange {
+    background: var(--orange-soft);
+    color: var(--orange);
+  }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .status-pill::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status-pill.online {
+    background: var(--success-soft);
+    color: var(--success);
+  }
+  .status-pill.online::before {
+    background: var(--success);
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.3);
+  }
+
+  /* ===== 13. MODAL & CONFIRM DIALOG ===== */
+  /* ══════════════════════════════════════════════
+     MODAL — Modern Design (v5)
+  ══════════════════════════════════════════════ */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    /* REMOVED: backdrop-filter: blur(8px) — very expensive on repaint */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9000;
+    padding: 20px;
+    will-change: opacity;
+    animation: fadeIn 0.15s ease;
+  }
+
+  .modal-box {
+    background: var(--surface);
+    border-radius: 20px;
+    width: 100%;
+    max-width: 680px;
+    box-shadow:
+      0 32px 80px rgba(0, 0, 0, 0.22),
+      0 0 0 1px var(--border);
+    will-change: transform, opacity;
+    animation: slideUp 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
+    max-height: 90vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header Bar ── */
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 22px 28px 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+    gap: 12px;
+  }
+
+  .modal-header-left {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    min-width: 0;
+  }
+
+  /* أيقونة المودال الحديثة */
+  .modal-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+    background: var(--accent-soft);
+    color: var(--accent);
+    box-shadow: 0 2px 10px rgba(37, 99, 235, 0.13);
+  }
+  .modal-icon.icon-danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+  .modal-icon.icon-success {
+    background: var(--success-soft);
+    color: var(--success);
+  }
+  .modal-icon.icon-warning {
+    background: var(--warning-soft);
+    color: var(--warning);
+  }
+  .modal-icon.icon-purple {
+    background: #f3eeff;
+    color: var(--palette-violet-800);
+  }
+
+  .modal-header h2 {
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--text);
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .modal-header-sub {
+    font-size: 12px;
+    color: var(--text3);
+    margin-top: 2px;
+  }
+
+  .modal-close {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text2);
+    font-size: 14px;
+    cursor: pointer;
+    transition:
+      background var(--transition),
+      color var(--transition),
+      opacity var(--transition),
+      border-color var(--transition);
+    flex-shrink: 0;
+  }
+  .modal-close:hover {
+    background: var(--danger-soft);
+    border-color: var(--danger);
+    color: var(--danger);
+    transform: scale(1.05);
+  }
+
+  /* ── Body (scrollable) ── */
+  .modal-body {
+    padding: 24px 28px;
+    overflow-y: auto;
+    flex: 1;
+  }
+
+  /* ── Footer ── */
+  .modal-actions {
+    display: flex;
+    gap: 10px;
+    padding: 16px 28px;
+    border-top: 1px solid var(--border);
+    background: var(--surface2);
+    justify-content: flex-end;
+    flex-shrink: 0;
+  }
+
+  /* Legacy support: when modal-body not used */
+  .modal-box > .form-grid,
+  .modal-box > div > .form-grid {
+    padding: 0;
+  }
+
+  /* ── Header ملوّن اختياري (accent) ──────────────────────────
+     يُستخدم عبر renderModalBox({color:"accent-blue", ...}) لإعطاء
+     أي مودال/درج في النظام هيدر متدرج اللون بدل الهيدر الأبيض القياسي،
+     مع الحفاظ على نفس البنية والآلية (نفس .modal-header/.modal-icon/.modal-close). */
+  .modal-header.header-accent {
+    border-bottom: none;
+    padding: 20px 28px;
+  }
+  .modal-header.header-accent .modal-header-sub {
+    color: rgba(255, 255, 255, 0.82);
+  }
+  .modal-header.header-accent h2 {
+    color: #fff;
+  }
+  .modal-header.header-accent .modal-icon {
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+    box-shadow: none;
+  }
+  .modal-header.header-accent .modal-close {
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.28);
+    color: #fff;
+  }
+  .modal-header.header-accent .modal-close:hover {
+    background: rgba(255, 255, 255, 0.3);
+    border-color: rgba(255, 255, 255, 0.42);
+    color: #fff;
+    transform: scale(1.05);
+  }
+  .modal-header.accent-blue {
+    background: linear-gradient(135deg, var(--primary-dark), var(--accent2));
+  }
+  .modal-header.accent-green {
+    background: linear-gradient(
+      135deg,
+      var(--palette-emerald-800),
+      var(--success)
+    );
+  }
+  .modal-header.accent-amber {
+    background: linear-gradient(
+      135deg,
+      var(--palette-amber-800),
+      var(--warning)
+    );
+  }
+  .modal-header.accent-purple {
+    background: linear-gradient(
+      135deg,
+      var(--palette-violet-800),
+      var(--palette-violet-400)
+    );
+  }
+  .modal-header.accent-rose {
+    background: linear-gradient(135deg, #9f1239, #f43f5e);
+  }
+  .modal-header.accent-teal {
+    background: linear-gradient(135deg, #0f766e, #2dd4bf);
+  }
+  /* داخل الـ drawer: الهيدر الملوّن ياخد نفس بادينج الهيدر العادي جوه edit-drawer-inner */
+  .edit-drawer-inner .modal-header.header-accent {
+    padding: 22px 28px 18px 28px;
+  }
+
+  /* Confirm */
+  .confirm-box {
+    max-width: 380px;
+    text-align: center;
+    padding: 32px 28px 24px;
+  }
+  .confirm-icon {
+    width: 68px;
+    height: 68px;
+    border-radius: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 18px;
+    font-size: 32px;
+    line-height: 1;
+  }
+  .confirm-icon .ti {
+    font-size: 32px;
+  }
+  .confirm-title {
+    font-size: 17px;
+    font-weight: 800;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+  .confirm-msg {
+    font-size: 13.5px;
+    color: var(--text2);
+    line-height: 1.6;
+    margin-bottom: 24px;
+  }
+  .confirm-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+  }
+  .confirm-actions .btn {
+    min-width: 110px;
+    justify-content: center;
+  }
+
+  /* ===== 13b. EDIT DRAWER — PERF-OPTIMIZED ===== */
+  /* Backdrop — NO backdrop-filter (GPU killer), use solid rgba only */
+  .drawer-backdrop {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: var(--sidebar-w);
+    z-index: 9500;
+    background: rgba(0, 0, 0, 0.38);
+    /* REMOVED: backdrop-filter: blur(3px) — causes full repaint on every frame */
+    will-change: opacity;
+    animation: drawerBgIn 0.18s ease;
+  }
+  /* [FIX-MOBILE] على الموبايل الـ backdrop يغطي الشاشة كاملاً من left:0 */
+  @media (max-width: 860px) {
+    .drawer-backdrop {
+      left: 0 !important;
+      z-index: 9500;
+    }
+  }
+  /* [FIX-BACKDROP-BLOCK] لو الـ backdrop opacity وصل صفر → pointer-events none تلقائياً */
+  .drawer-backdrop[style*="opacity: 0"],
+  .drawer-backdrop[style*="opacity:0"] {
+    pointer-events: none !important;
+  }
+  @keyframes drawerBgIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  /* Drawer panel — transform-only animation, GPU-composited layer */
+  .edit-drawer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: min(calc(var(--sidebar-w) + 720px), 100vw);
+    height: 100%; /* avoid 100vh reflow on mobile */
+    z-index: 9501;
+    background: transparent;
+    display: flex;
+    flex-direction: row;
+    /* REMOVED: overflow:hidden — was blocking GPU layer promotion */
+    pointer-events: none;
+    will-change: transform, opacity;
+    backface-visibility: hidden;
+    transform: translateZ(0);
+    animation: drawerSlideIn 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+  /* sidebar spacer */
+  .edit-drawer::before {
+    content: "";
+    flex: 0 1 var(--sidebar-w);
+    min-width: 0;
+    height: 100%;
+  }
+  /* Inner panel — lightweight shadow, contain paint */
+  .edit-drawer-inner {
+    flex: 1;
+    min-width: 0;
+    max-width: 720px;
+    height: 100%;
+    background: var(--bg);
+    /* Simplified shadow — was 4-layer, now 1-layer */
+    box-shadow: -2px 0 20px rgba(0, 0, 0, 0.12);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    pointer-events: all;
+    /* Isolate paint to this subtree */
+    contain: strict;
+    will-change: transform;
+    backface-visibility: hidden;
+  }
+  .edit-drawer.drawer-closing {
+    animation: drawerSlideOut 0.18s cubic-bezier(0.55, 0, 0.1, 1) forwards;
+  }
+  @keyframes drawerSlideIn {
+    from {
+      transform: translateX(-100%);
+      opacity: 0.7;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+  @keyframes drawerSlideOut {
+    from {
+      transform: translateX(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateX(-100%);
+      opacity: 0;
+    }
+  }
+
+  /* The modal-box inside drawer loses its own rounded/shadow/centering styles */
+  .edit-drawer-inner .modal-box {
+    max-width: 100%;
+    border-radius: 0;
+    box-shadow: none;
+    animation: none;
+    height: 100%;
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .edit-drawer-inner .modal-header {
+    border-radius: 0;
+    flex-shrink: 0;
+    padding: 22px 28px 18px 28px;
+  }
+  .edit-drawer-inner .modal-body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 24px 28px;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    /* Prevent scroll from triggering layout on parent */
+    contain: paint;
+  }
+  .edit-drawer-inner .modal-body::-webkit-scrollbar {
+    width: 5px;
+  }
+  .edit-drawer-inner .modal-body::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .edit-drawer-inner .modal-body::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 99px;
+  }
+  /* footer buttons */
+  .edit-drawer-inner .modal-footer,
+  .edit-drawer-inner .form-actions {
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+    padding: 14px 28px;
+    background: var(--surface);
+  }
+
+  /* modal-actions (إلغاء + حفظ) داخل الـ drawer */
+  .edit-drawer-inner .modal-actions {
+    padding: 14px 28px;
+  }
+
+  /* ===== Drawer Sections (premium form layout) ===== */
+  .drawer-section {
+    margin-bottom: 24px;
+    padding: 18px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .drawer-section-label {
+    font-size: 11.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .drawer-section-label i {
+    font-size: 14px;
+    opacity: 0.7;
+  }
+  .form-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 480px) {
+    .form-grid-2 {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* Input with leading icon */
+  .input-icon-wrap {
+    position: relative;
+  }
+  .input-icon-wrap .input-icon {
+    position: absolute;
+    top: 50%;
+    right: 11px;
+    transform: translateY(-50%);
+    font-size: 15px;
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+  .input-icon-wrap input {
+    padding-right: 34px;
+  }
+
+  /* Required star */
+  span.req {
+    color: var(--error, var(--danger));
+    font-size: 13px;
+    margin-right: 2px;
+  }
+
+  /* ===== 13c. HR DRAWERS (مراحل الإنتاج، الموظفون، الإجازات، السلف...) =====
+      [FIX] هذه الكلاسات (hr-drawer*, form-group, form-label) كانت
+     مستخدمة في 10 شاشات داخل ملف HR/Templates لكنها لم تكن معرّفة هنا
+     إطلاقًا، فكانت كل نوافذ الإضافة/التعديل في موديول الموارد البشرية
+     (ومنها "مرحلة إنتاج جديدة") تظهر بدون تموضع صحيح: بلا تظليل خلفية،
+     بلا إطار جانبي، والحقول تتراكب فوق بعضها بدل التنسيق الشبكي. */
+  .hr-drawer-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.38);
+    /* REMOVED: backdrop-filter: blur(3px) — GPU killer */
+    will-change: opacity;
+    animation: drawerBgIn 0.18s ease;
+  }
+  .hr-drawer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100%;
+    max-width: 100vw;
+    background: var(--bg);
+    box-shadow: -2px 0 20px rgba(0, 0, 0, 0.12);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    will-change: transform, opacity;
+    backface-visibility: hidden;
+    transform: translateZ(0);
+    animation: hrDrawerSlideIn 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+  @keyframes hrDrawerSlideIn {
+    from {
+      transform: translateX(-100%);
+      opacity: 0.7;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+  .hr-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 18px 22px;
+    flex-shrink: 0;
+  }
+  .hr-drawer-body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    contain: paint;
+  }
+  .hr-drawer-body::-webkit-scrollbar {
+    width: 5px;
+  }
+  .hr-drawer-body::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .hr-drawer-body::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 99px;
+  }
+  .hr-drawer-footer {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    padding: 14px 22px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  @media (max-width: 480px) {
+    .hr-drawer {
+      width: 100vw !important;
+    }
+  }
+
+  /* Generic form-group / form-label — تستخدمها نفس شاشات HR */
+  .form-group {
+    margin-bottom: 14px;
+  }
+  .form-label {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-muted, var(--text3));
+    margin-bottom: 6px;
+  }
+
+  /* ===== 14. SEARCH BAR ===== */
+  .search-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .search-input-wrap {
+    position: relative;
+    flex: 1;
+    min-width: 180px;
+  }
+  .search-input-wrap .s-icon {
+    position: absolute;
+    right: 13px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text3);
+    font-size: 13px;
+    pointer-events: none;
+  }
+  .search-input-wrap input {
+    padding-right: 38px;
+  }
+
+  .spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    margin: 40px auto;
+  }
+
+  /* [UNIFY-LOADING] نسخة صغيرة من .spinner لصفوف الجداول والعناصر الداخلية
+     الضيقة، بدل الـ margin الكبير (40px) اللي مصمم بس للحاوية الكاملة */
+  .spinner.spinner-sm {
+    width: 18px;
+    height: 18px;
+    border-width: 2px;
+    margin: 0;
+    display: inline-block;
+    vertical-align: middle;
+  }
+
+  /* [FIX] class="spin" مستخدمة على أيقونات <i class="ti ti-loader-2 spin">
+     في أماكن كتير (23_JS_PostingConfig_FixedAssets.html وغيرها) بس مفيش
+     ولا قاعدة CSS بتربط .spin بـ animation: spin — فالأيقونة كانت واقفة
+     ثابتة زي ما هي بدل ما تلف. @keyframes spin نفسه معرّف فعلاً في
+     Style_02_Base.html، الناقص كان بس الكلاس اللي بيستخدمه. */
+  .spin {
+    display: inline-block;
+    animation: spin 0.9s linear infinite;
+  }
+
+  .loading-overlay {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 60px;
+    color: var(--text3);
+    font-size: 13px;
+  }
+
+  /* ===== APP LOADING OVERLAY (full-screen, shown right after login) ===== */
+  #app-loading-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg1, #0f1117);
+    z-index: 99999;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    transition:
+      opacity 0.35s ease,
+      visibility 0.35s ease;
+  }
+  #app-loading-overlay.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+  #app-loading-overlay .app-loader-logo {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--accent, #6c63ff);
+    letter-spacing: 1px;
+    opacity: 0.9;
+  }
+  #app-loading-overlay .app-loader-ring {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: 3px solid rgba(108, 99, 255, 0.2);
+    border-top-color: var(--accent, #6c63ff);
+    animation: spin 0.75s linear infinite;
+  }
+  #app-loading-overlay .app-loader-text {
+    font-size: 13px;
+    color: var(--text3, #888);
+    letter-spacing: 0.3px;
+  }
+  @keyframes app-loader-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  #app-loading-overlay > * {
+    animation: app-loader-fade-in 0.4s ease both;
+  }
+  #app-loading-overlay > *:nth-child(2) {
+    animation-delay: 0.08s;
+  }
+  #app-loading-overlay > *:nth-child(3) {
+    animation-delay: 0.16s;
+  }
+
+  /* ===== 16. EMPTY STATE & ALERTS ===== */
+  .empty-state {
+    text-align: center;
+    padding: 56px 20px;
+    color: var(--text3);
+  }
+  .empty-icon {
+    display: none !important;
+  }
+  .empty-state p {
+    font-size: 13.5px;
+  }
+
+  .alert-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 6px;
+    background: var(--danger-soft);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    transition: transform var(--transition);
+  }
+  .alert-card:hover {
+    transform: translateX(-3px);
+  }
+  .alert-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+  .alert-text h4 {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--danger);
+  }
+  .alert-text p {
+    font-size: 11px;
+    color: var(--text2);
+    margin-top: 1px;
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     DATA VISUALIZATION
+  ═══════════════════════════════════════════════════════════ */
+  /* ===== 17. CHARTS ===== */
+  .chart-container {
+    position: relative;
+    margin-top: 8px;
+  }
+
+  .chart-bars-wrap {
+    height: 200px;
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    padding: 16px 0 0;
+  }
+
+  .bar-group {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    height: 100%;
+  }
+
+  .bar-wrap {
+    flex: 1;
+    display: flex;
+    align-items: flex-end;
+    width: 100%;
+    position: relative;
+  }
+
+  .bar {
+    flex: 1;
+    border-radius: 5px 5px 0 0;
+    min-height: 4px;
+    transition: height 0.7s cubic-bezier(0.34, 1.2, 0.64, 1);
+    position: relative;
+    cursor: pointer;
+  }
+  .bar:hover {
+    filter: brightness(1.1);
+  }
+  .bar:hover::after {
+    content: attr(data-val);
+    position: absolute;
+    top: -28px;
+    left: 50%;
+    transform: translate(-50%);
+    background: var(--text);
+    color: var(--surface);
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    z-index: 10;
+  }
+
+  .bar-in {
+    background: linear-gradient(
+      180deg,
+      var(--success) 0%,
+      var(--success-dark) 100%
+    );
+  }
+  .bar-out {
+    background: linear-gradient(
+      180deg,
+      var(--danger) 0%,
+      var(--danger-dark) 100%
+    );
+  }
+  .bar-transfer {
+    background: linear-gradient(
+      180deg,
+      var(--purple) 0%,
+      var(--palette-violet-600) 100%
+    );
+  }
+  .bar-blue {
+    background: linear-gradient(
+      180deg,
+      var(--primary-light) 0%,
+      var(--primary) 100%
+    );
+  }
+
+  .bar-label {
+    font-size: 9.5px;
+    color: var(--text3);
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  .chart-legend {
+    display: flex;
+    gap: 16px;
+    margin-top: 14px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--text2);
+  }
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  /* Donut */
+  .donut-wrap {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .donut-svg {
+    flex-shrink: 0;
+  }
+  .donut-legend {
+    flex: 1;
+    min-width: 120px;
+  }
+
+  .donut-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .donut-item:last-child {
+    border-bottom: none;
+  }
+  .donut-item-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--text2);
+  }
+  .donut-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+  .donut-val {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  /* Sparkline */
+  .sparkline {
+    height: 40px;
+  }
+
+  @media (max-width: 540px) {
+    .chart-wrap {
+      height: 200px !important;
+    }
+    .donut-wrap {
+      width: 140px;
+      height: 140px;
+    }
+    .chart-legend {
+      flex-direction: column;
+      gap: 6px;
+    }
+  }
+
+  /* ===== 18. TABS & PROGRESS BAR ===== */
+  .tabs {
+    display: flex;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 18px;
+  }
+
+  .tab {
+    padding: 9px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text2);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition:
+      background var(--transition),
+      color var(--transition),
+      opacity var(--transition),
+      border-color var(--transition);
+    white-space: nowrap;
+  }
+  .tab.active {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .tab:hover:not(.active) {
+    color: var(--text);
+  }
+
+  .progress-bar {
+    height: 6px;
+    background: var(--surface3);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* ===== 19. KPI RING & TIMELINE ===== */
+  .kpi-ring-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+  .kpi-ring-label {
+    position: absolute;
+    text-align: center;
+  }
+  .kpi-ring-label .kpi-val {
+    font-size: 22px;
+    font-weight: 800;
+    font-family: var(--font-mono);
+    line-height: 1;
+  }
+  .kpi-ring-label .kpi-sub {
+    font-size: 10px;
+    color: var(--text3);
+    margin-top: 2px;
+  }
+
+  .timeline {
+    padding: 4px 0;
+  }
+
+  .timeline-item {
+    display: flex;
+    gap: 14px;
+    padding-bottom: 20px;
+    position: relative;
+  }
+  .timeline-item::before {
+    content: "";
+    position: absolute;
+    right: 17px;
+    top: 32px;
+    bottom: 0;
+    width: 1px;
+    background: var(--border);
+  }
+  .timeline-item:last-child {
+    padding-bottom: 0;
+  }
+  .timeline-item:last-child::before {
+    display: none;
+  }
+
+  .timeline-dot {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+    border: 2px solid var(--surface);
+    box-shadow: 0 0 0 2px var(--border);
+  }
+  .timeline-content {
+    flex: 1;
+    min-width: 0;
+  }
+  .timeline-title {
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .timeline-meta {
+    font-size: 11.5px;
+    color: var(--text2);
+    margin-top: 2px;
+  }
+  .timeline-time {
+    font-size: 10.5px;
+    color: var(--text3);
+    white-space: nowrap;
+  }
+
+  /* ===== 20. GRID UTILITIES ===== */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    align-items: stretch; /* ← المهم ده */
+  }
+  .three-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 14px;
+  }
+
+  @media (max-width: 1100px) {
+    .three-col {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  @media (max-width: 900px) {
+    .two-col,
+    .three-col {
+      grid-template-columns: 1fr;
+    }
+    .content {
+      padding: 20px 16px;
+    }
+  }
+
+  @media (max-width: 860px) {
+    /* كتالوج العميل — يتحول لعمود واحد */
+    [style*="grid-template-columns:1fr 380px"] {
+      grid-template-columns: 1fr !important;
+    }
+    [style*="position:sticky;top:80px"] {
+      position: static !important;
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     ===== 21. INVOICE MODAL (فاتورة بيع / فاتورة شراء) — UI/UX Pro =====
+     تحديث بصري فقط لمودالات فاتورة البيع/الشراء (sinv-modal / pinv-modal)؛
+     لا تغيير في أي منطق، أسماء دوال، أو IDs المستخدَمة في JS.
+     ═══════════════════════════════════════════════════════════════ */
+  /* [FULLSCREEN-INVOICE] شاشة إنشاء الفاتورة بقت تاخد الشاشة كاملة
+     بدل الصندوق الصغير نص الشاشة — أريح لإدخال بنود كتير. التغيير
+     مقصور على .inv-modal-box بس (فاتورة بيع/شراء)، باقي المودالات
+     في النظام (.modal-box العادي) فضلت زي ما هي بالظبط. */
+  .modal-overlay:has(.inv-modal-box) {
+    padding: 0;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+  .inv-modal-box {
+    max-width: 100vw !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     [WIDE-MODAL] نفس فلسفة .inv-modal-box (شاشة كاملة بدل صندوق صغير)
+     لكن بدون إخفاء .modal-header/.modal-actions — بيتفرق عن
+     .inv-modal-box إن ده مودال عادي (header + body + footer) لسه شغّال
+     بنفس بنية _buildPOModal/_buildPRModal الحالية، بس بحجم الشاشة كاملة.
+     مُستخدَم في مودالات طلبات الشراء وأوامر الشراء (22_JS_PurchaseOrders،
+     40_JS_PurchaseRequests) عشان تبقى بنفس حجم شاشة فاتورة الشراء. */
+  .modal-overlay:has(.wide-modal-box) {
+    padding: 0;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+  .wide-modal-box {
+    max-width: 100vw !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+  }
+  .wide-modal-box .modal-body {
+    flex: 1 1 auto;
+  }
+  .inv-header-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+  @media (max-width: 900px) {
+    .inv-header-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+  @media (max-width: 560px) {
+    .inv-header-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .inv-payment-toggle {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .inv-payment-toggle label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: 9px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text2);
+    transition:
+      border-color var(--transition),
+      background var(--transition),
+      color var(--transition);
+  }
+  .inv-payment-toggle input {
+    accent-color: var(--accent);
+  }
+  .inv-payment-toggle label:has(input:checked) {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .inv-section-card {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    margin-bottom: 16px;
+    background: var(--surface);
+  }
+  .inv-section-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+  }
+  .inv-section-head i {
+    font-size: 18px;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+  .inv-section-head h3 {
+    font-size: 13px;
+    font-weight: 800;
+    margin: 0;
+    color: var(--text);
+  }
+  .inv-section-head .inv-badge-count {
+    margin-inline-start: auto;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 3px 10px;
+    border-radius: 20px;
+    white-space: nowrap;
+  }
+  .inv-section-body {
+    padding: 14px 16px;
+  }
+  .inv-table-wrap {
+    max-height: 360px;
+    overflow: auto;
+  }
+  table.inv-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  table.inv-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--surface2);
+    padding: 10px 12px;
+    font-weight: 700;
+    font-size: 12.5px;
+    color: var(--text2);
+    border-bottom: 1px solid var(--border);
+    text-align: right;
+    white-space: nowrap;
+  }
+  table.inv-table tbody td {
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  table.inv-table tbody tr:nth-child(even) {
+    background: var(--surface2);
+  }
+  table.inv-table tbody tr:hover {
+    background: var(--accent-soft);
+  }
+  table.inv-table .input-sm {
+    height: 34px;
+  }
+  .inv-add-line-bar {
+    padding: 10px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--surface2);
+  }
+  .inv-totals-card {
+    padding: 16px 18px;
+  }
+  .inv-totals-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+  @media (max-width: 560px) {
+    .inv-totals-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .inv-totals-summary {
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+  .inv-total-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    font-size: 13.5px;
+    color: var(--text2);
+  }
+  .inv-total-row b {
+    color: var(--text);
+  }
+  .inv-total-row.grand {
+    margin-top: 6px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    font-size: 19px;
+    font-weight: 800;
+    color: var(--text);
+  }
+  .inv-total-row.grand span:last-child {
+    color: var(--accent);
+  }
+  .inv-notes-shipping-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+      [ERP-REDESIGN] إعادة تصميم شاشة فاتورة البيع/الشراء بمستوى
+     احترافي (SAP/Odoo/NetSuite). كل الأنماط الجديدة تحت أسماء classes
+     جديدة تمامًا (inv-toolbar / inv-field-card / إلخ) — صفر تعديل على
+     أي class أو id مستخدَم فعليًا في جمع البيانات (_collectInvoiceData)
+     أو حساب الإجماليات (_calcInvoiceTotals). المنطق البرمجي لم يتغيّر.
+     ═══════════════════════════════════════════════════════════════ */
+
+  .inv-modal-box {
+    display: flex !important;
+    flex-direction: column;
+    padding: 0 !important;
+  }
+  .inv-modal-box .modal-header {
+    display: none;
+  }
+  .inv-modal-box .modal-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 0;
+  }
+  .inv-modal-box .modal-actions {
+    display: none;
+  }
+  .inv-content-pad {
+    padding: 16px 20px 4px;
+  }
+
+  .inv-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 18px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+  .inv-toolbar-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-inline-end: 14px;
+    padding-inline-end: 14px;
+    border-inline-end: 1px solid var(--border);
+  }
+  .inv-toolbar-title .inv-toolbar-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 17px;
+    flex-shrink: 0;
+  }
+  .inv-toolbar-title h2 {
+    font-size: 15px;
+    font-weight: 800;
+    margin: 0;
+    color: var(--text);
+    line-height: 1.25;
+  }
+  .inv-toolbar-title .inv-toolbar-sub {
+    font-size: 11px;
+    color: var(--text3);
+    font-weight: 600;
+  }
+  .inv-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .inv-toolbar-spacer {
+    flex: 1 1 auto;
+  }
+  .inv-tbtn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 12px;
+    border-radius: 9px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text2);
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      background var(--transition),
+      color var(--transition),
+      border-color var(--transition);
+    position: relative;
+  }
+  .inv-tbtn i {
+    font-size: 16px;
+  }
+  .inv-tbtn:hover:not(:disabled) {
+    background: var(--surface2);
+    color: var(--text);
+  }
+  .inv-tbtn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+  .inv-tbtn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .inv-tbtn.inv-tbtn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .inv-tbtn.inv-tbtn-primary:hover:not(:disabled) {
+    background: var(--accent);
+    filter: brightness(1.08);
+    color: #fff;
+  }
+  .inv-tbtn.inv-tbtn-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    color: var(--danger);
+  }
+  .inv-tbtn .inv-kbd {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text3);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    margin-inline-start: 2px;
+  }
+  .inv-tbtn.inv-tbtn-primary .inv-kbd {
+    background: rgba(255, 255, 255, 0.18);
+    border-color: rgba(255, 255, 255, 0.3);
+    color: #fff;
+  }
+  .inv-tbtn[data-tip]:hover::after {
+    content: attr(data-tip);
+    position: absolute;
+    top: 110%;
+    right: 50%;
+    transform: translateX(50%);
+    background: var(--text);
+    color: var(--surface);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+    z-index: 20;
+    pointer-events: none;
+  }
+  .inv-toolbar-divider {
+    width: 1px;
+    align-self: stretch;
+    margin: 6px 4px;
+    background: var(--border);
+  }
+  .inv-status-pill {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 11px;
+    border-radius: 20px;
+    background: var(--surface2);
+    color: var(--text2);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  .inv-header-grid.inv-header-cards {
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  @media (max-width: 1100px) {
+    .inv-header-grid.inv-header-cards {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+  @media (max-width: 700px) {
+    .inv-header-grid.inv-header-cards {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+  .inv-field-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    padding: 8px 12px 9px;
+    transition: border-color var(--transition);
+  }
+  .inv-field-card:focus-within {
+    border-color: var(--accent);
+  }
+  .inv-field-card .inv-field-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--text3);
+    margin-bottom: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.2px;
+  }
+  .inv-field-card .inv-field-label i {
+    font-size: 13px;
+    color: var(--accent);
+  }
+  .inv-field-card .input,
+  .inv-field-card select.input {
+    border: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+    height: auto !important;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .inv-field-card .input:focus {
+    box-shadow: none !important;
+  }
+
+  .inv-table-wrap {
+    max-height: none;
+    overflow: visible;
+  }
+  .inv-section-card.inv-lines-section {
+    display: flex;
+    flex-direction: column;
+  }
+  .inv-lines-section .inv-table-wrap {
+    max-height: 46vh;
+    overflow: auto;
+  }
+  table.inv-table thead th:first-child,
+  table.inv-table tbody td:first-child {
+    position: sticky;
+    right: 0;
+    background: var(--surface2);
+    z-index: 2;
+    box-shadow: -1px 0 0 var(--border) inset;
+  }
+  table.inv-table tbody tr:nth-child(even) td:first-child {
+    background: var(--surface2);
+  }
+  table.inv-table tbody tr:hover td:first-child {
+    background: var(--accent-soft);
+  }
+  table.inv-table tbody tr {
+    height: 46px;
+  }
+  table.inv-table tbody tr.inv-row-focused {
+    background: var(--accent-soft) !important;
+  }
+  table.inv-table tbody td .input-sm:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+  .inv-row-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text3);
+    font-size: 10.5px;
+    font-weight: 700;
+    margin-inline-end: 6px;
+    flex-shrink: 0;
+  }
+  .inv-add-line-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    justify-content: space-between;
+  }
+  .inv-add-line-bar .inv-hint {
+    font-size: 11px;
+    color: var(--text3);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .inv-modal-box .inv-sticky-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    margin-top: 14px;
+    padding: 10px 20px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -4px 14px rgba(0, 0, 0, 0.05);
+  }
+  .inv-sticky-footer .inv-sf-item {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    white-space: nowrap;
+  }
+  .inv-sticky-footer .inv-sf-item span {
+    font-size: 10.5px;
+    color: var(--text3);
+    font-weight: 600;
+  }
+  .inv-sticky-footer .inv-sf-item b {
+    font-size: 13.5px;
+    color: var(--text);
+  }
+  .inv-sticky-footer .inv-sf-grand {
+    margin-inline-start: auto;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 8px 18px;
+    background: var(--accent-soft);
+    border-radius: 12px;
+  }
+  .inv-sticky-footer .inv-sf-grand span {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text2);
+  }
+  .inv-sticky-footer .inv-sf-grand b {
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--accent);
+  }
+  @media (max-width: 860px) {
+    .inv-sticky-footer {
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .inv-sticky-footer .inv-sf-grand {
+      margin-inline-start: 0;
+      width: 100%;
+      justify-content: space-between;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .inv-toolbar-title .inv-toolbar-sub {
+      display: none;
+    }
+    .inv-tbtn span.inv-tbtn-label {
+      display: none;
+    }
+    .inv-tbtn {
+      padding: 0 9px;
+    }
+  }
+
+  /* ── [ITEM-MASTER-P0] بنية Tabs + Header + Sidebar لشاشة الصنف الجديدة ──
+     مكوّن CSS عام (im-*) — يُبنى إضافيًا هنا ولا يعدّل أي كلاس موجود، حتى
+     يصلح لإعادة الاستخدام في شاشات Master-Detail أخرى مستقبلاً. */
+  .im-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+  .im-infobar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
+    padding: 10px 16px;
+    background: var(--surface2, #f8fafc);
+    border-bottom: 1px solid var(--border);
+    font-size: 12.5px;
+  }
+  .im-infobar .im-info-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 90px;
+  }
+  .im-infobar .im-info-label {
+    color: var(--text3);
+    font-size: 10.5px;
+  }
+  .im-infobar .im-info-value {
+    font-weight: 700;
+    color: var(--text);
+  }
+  .im-quick-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .im-quick-actions .btn-sm {
+    font-size: 11.5px;
+    padding: 5px 10px;
+  }
+  /* [ITEM-MASTER-PIN-FIELDS] شريط ثابت (كود/اسم/صورة) فوق التابات —
+     برّه .im-tab-panels اللي هي بس اللي بتعمل scroll، فيفضل ظاهر دايمًا
+     مهما كان التاب المفتوح. */
+  .im-pinned-fields {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 14px 16px;
+    background: var(--surface2, #f8fafc);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .im-pinned-fields .im-pin-field {
+    flex: 1 1 180px;
+    min-width: 160px;
+    margin: 0;
+  }
+  .im-pinned-fields .im-pin-img {
+    flex: 1 1 260px;
+  }
+  /* [PIN-FIELDS-RELAYOUT-2026-07-28] عمود يلمّ الكود/اسم الصنف/نوع
+     الصنف فوق بعض بدل ما يكونوا جنب بعض، وصورة الصنف بقت مربع مستقل
+     جنبهم بدل حقل رابط + زرار رفع منفصلين. */
+  .im-pinned-fields .im-pin-stack {
+    flex: 2 1 320px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 220px;
+  }
+  .im-pinned-fields .im-pin-stack .im-pin-field {
+    flex: none;
+    min-width: 0;
+    width: 100%;
+  }
+  .im-pinned-fields .im-pin-img {
+    flex: 0 0 130px;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start; /* [IMG-BOX-ALIGN-TOP] محاذاة لأعلى بدل النص الرأسي */
+    align-items: center; /* توسيط أفقي داخل عموده */
+  }
+  .im-img-box {
+    position: relative;
+    width: 130px;
+    height: 130px;
+    border: 1.5px dashed var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    cursor: pointer;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+      border-color 0.15s,
+      background 0.15s;
+  }
+  .im-img-box:hover {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .im-img-box img#i-img-preview {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .im-img-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    color: var(--text3);
+    text-align: center;
+    padding: 8px;
+  }
+  .im-img-placeholder i {
+    font-size: 22px;
+  }
+  .im-img-placeholder span {
+    font-size: 10.5px;
+    line-height: 1.3;
+  }
+  .im-img-box-loading {
+    opacity: 0.6;
+    pointer-events: none;
+  }
+  /* [IMG-LINK-INPUT-2026-08-05] زرار "أضف رابط صورة" في ركن مربع الصورة —
+     بديل للرفع المباشر. z-index أعلى من المربع نفسه عشان الضغط عليه
+     ياخد الأولوية (مع stopPropagation في الـ JS كخط دفاع ثاني). */
+  .im-img-link-btn {
+    position: absolute;
+    bottom: 4px;
+    left: 4px;
+    z-index: 2;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: none;
+    background: var(--surface2, #fff);
+    color: var(--text2);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0;
+  }
+  .im-img-link-btn:hover {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .im-img-url-row input#i-img-url-manual {
+    height: 26px;
+    padding: 4px 8px;
+  }
+  /* [IMG-DEFER-UPLOAD-2026-08-05] زرارين معاينة/حذف في ركن الصندوق
+     المقابل لزرار الرابط — نفس الأسلوب البصري بالظبط. */
+  .im-img-actions {
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    z-index: 2;
+    display: flex;
+    gap: 4px;
+  }
+  .im-img-action-btn {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: none;
+    background: var(--surface2, #fff);
+    color: var(--text2);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0;
+  }
+  .im-img-action-btn:hover {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .im-img-action-btn.im-img-action-danger:hover {
+    background: var(--danger-soft, #fde8e8);
+    color: var(--danger);
+  }
+  /* [PIN-FIELDS-STATUS-SWITCH-2026-08-02] رجّعنا سويتش الحالة تاني —
+     نفس الشكل القديم، بس من غير <label> نصي فوقه (اتشال هو بس بناءً
+     على توضيح المستخدم إن المطلوب يتشال النص مش الحقل). القيمة بتتخزن
+     في input#im-status المخفي (نفس id القديم فمنطق الحفظ ما اتغيرش). */
+  /* [PIN-FIELDS-RELAYOUT-2026-08-02] الكود بقى في نفس سطر سويتش الحالة،
+     و"نوع الصنف" بقى في نفس سطر "الوصف" — بناءً على طلب المستخدم.
+     im-pin-row عامة (بتتظبط بالكلاسات الفرعية تحت لكل حالة). */
+  .im-pin-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+  }
+  .im-pin-row .im-pin-field {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  /* يمنع تداخل صف الكود: الحقل يأخذ المساحة، والحالة لا تنكمش. */
+  /* [CODE-FIELD-FIXED-WIDTH-2026-08-07] كان عمود الكود minmax(0,1fr) —
+     بياخد أي مساحة فاضية في الصف، فحجمه كان بيتغيّر حسب باقي الصف.
+     بناءً على طلب المستخدم اتحول لعرض ثابت (170px) يكفي بالظبط
+     input الكود + دروب داون تلقائي/يدوي من غير ما يتزنق أو ياخد
+     مساحة زيادة. */
+  .im-pin-row-code {
+    display: grid;
+    grid-template-columns: 170px max-content;
+    align-items: end;
+    gap: 10px;
+  }
+  .im-pin-row-code .im-pin-field-code {
+    min-width: 0;
+    max-width: none !important;
+  }
+  .im-code-input-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .im-code-input-row #i-code { min-width: 0; }
+  .im-code-mode-select { flex: 0 0 108px; width: 108px; min-width: 108px; }
+  .im-code-mode-toggle { display: flex; flex: 0 0 auto; gap: 4px; }
+  .im-code-mode-btn { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; min-height: 34px; white-space: nowrap; }
+  .im-code-mode-label { display: none; }
+  .im-code-mode-btn.active .im-code-mode-label { display: inline; }
+  .im-pin-row-code .im-status-switch {
+    flex: none;
+    align-self: flex-end;
+    margin-bottom: 1px; /* محاذاة رأسية دقيقة مع حقل الإدخال جنبه */
+  }
+  /* سطر نوع الصنف/الوصف: نوع الصنف بقى أصغر والوصف ياخد الباقي. */
+  .im-pin-row-type .im-pin-field-type {
+    flex: 0 1 170px;
+  }
+  .im-pin-row-type .im-pin-field:not(.im-pin-field-type) {
+    flex: 1 1 auto;
+  }
+  /* [ITEM-TYPE-INFO-INLINE-2026-08-02] سطر نوع الصنف + بطاقة الشرح
+     جنب بعض: نوع الصنف عرض ثابت وبطاقة الشرح تاخد باقي المساحة. */
+  .im-pin-row-typeinfo {
+    align-items: stretch;
+  }
+  /* صف مستقل داخل الحقول المثبتة: الشرح يمتد بعرض الشريط بالكامل، من
+     حقل نوع الصنف في اليمين حتى الحافة اليسرى، بدل أن يُحصر داخل عمود
+     بيانات الصنف ويترك فراغًا تحت مربع الصورة. */
+  .im-pinned-fields > .im-pin-stack { order: 1; }
+  .im-pinned-fields > .im-pin-img { order: 2; }
+  .im-pinned-fields > .im-pin-row-typeinfo {
+    order: 3;
+    flex: 1 0 100%;
+    width: 100%;
+  }
+  .im-pin-row-typeinfo .im-type-info {
+    flex: 1 1 200px;
+    min-width: 0;
+    width: auto;
+  }
+  /* [PIN-FIELDS-STATUS-SWITCH-BORDERLESS-2026-08-02] شكل السويتش بقى
+     بدون خلفية ولا إطار (بناءً على طلب المستخدم)، والسويتش نفسه
+     بيتمركز رأسيًا مع الكلمة جنبه (align-items:center). */
+  .im-status-switch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 38px;
+    border: none;
+    border-radius: 8px;
+    padding: 0 2px;
+    background: transparent;
+    cursor: pointer;
+  }
+  .im-status-switch-track {
+    display: inline-block;
+    position: relative;
+    width: 32px;
+    height: 18px;
+    flex: none;
+    border-radius: 999px;
+    background: var(--text3, #94a3b8);
+    opacity: 0.55;
+    transition:
+      background 0.15s,
+      opacity 0.15s;
+  }
+  .im-status-switch-track.on {
+    background: #10b981;
+    opacity: 1;
+  }
+  .im-status-switch-thumb {
+    display: block;
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    transition: right 0.15s;
+  }
+  .im-status-switch-track.on .im-status-switch-thumb {
+    right: 16px;
+  }
+  .im-status-switch-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text1, #1e293b);
+    line-height: 1;
+    white-space: nowrap;
+    white-space: nowrap;
+  }
+  /* [ITEM-TYPE-INFO-CARD-2026-07-28 / COMPACT-2026-07-28] بطاقة شرح "نوع
+     الصنف" — هامشية ومضغوطة (سطر واحد قابل للف عند الضيق)، مش بلوك كبير. */
+  /* [ITEM-TYPE-INFO-INLINE-2026-08-05] بطاقة الشرح بقت جنب حقل "نوع
+     الصنف" في نفس السطر بدل تحته — flex-basis صغيرة بدل 100% عشان متعملش
+     wrap لسطر جديد جوه .im-pin-row-typeinfo (flex-wrap:wrap). */
+  .im-type-info {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+  }
+  .im-type-card {
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: nowrap;
+    gap: 6px 10px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: var(--surface2, #f8fafc);
+    border: 1px solid var(--border);
+    font-size: 11.5px;
+    color: var(--text3);
+    width: 100%; /* [ITEM-TYPE-INFO-FULLWIDTH-2026-08-05] تمتد لآخر المساحة
+       المتاحة (لحد اليسار) بدل ما تنكمش على مقاس محتواها فقط */
+    box-sizing: border-box;
+  }
+  .im-type-card-icon {
+    flex: 0 0 auto;
+    font-size: 13px;
+    color: var(--accent);
+    margin-top: 1px;
+  }
+  .im-type-card-desc {
+    flex: 1 1 auto;
+    min-width: 0;
+    line-height: 1.5;
+  }
+  .im-type-card-chips {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 4px;
+    flex: 0 0 auto;
+  }
+  .im-type-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 20px;
+    white-space: nowrap;
+  }
+  .im-type-chip i {
+    font-size: 11px;
+  }
+  .im-type-chip-yes {
+    background: var(--success-soft);
+    color: var(--success);
+  }
+  .im-type-chip-no {
+    background: var(--border);
+    color: var(--text3);
+    opacity: 0.75;
+  }
+  .im-tabs-nav {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden; /* [FIX] بدون ده، تحديد overflow-x لوحده بيخلي المتصفح
+      يحسب overflow-y تلقائيًا كـ auto، فيظهر Scrollbar رأسي وهمي بأسهم
+      فوق/تحت حتى لو الصف مش محتاج أي تمرير رأسي إطلاقًا */
+    gap: 2px;
+    padding: 0 12px;
+    background: var(--surface);
+    border-bottom: 2px solid var(--border);
+    scrollbar-width: thin;
+  }
+  .im-tab-btn {
+    flex-shrink: 0;
+    padding: 10px 14px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text3);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    cursor: pointer;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    transition: color 0.12s, border-color 0.12s;
+  }
+  .im-tab-btn:hover {
+    color: var(--text);
+  }
+  .im-tab-btn.active {
+    color: var(--accent, #0ea5a5);
+    border-bottom-color: var(--accent, #0ea5a5);
+  }
+  .im-body-split {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .im-tab-panels {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    min-width: 0;
+  }
+  .im-tab-panel {
+    display: none;
+  }
+  .im-tab-panel.active {
+    display: block;
+  }
+  /* [GROUP-ADD-BTN-INSIDE-2026-08-06] زرار "+" إضافة مجموعة سريعة —
+     بعد ما بننقله برمجيًا جوه ".as-trigger" (شوف 03_JS_Dashboard_Items)
+     يبقى بجانب سهم الفتح (".as-chevron") من داخل صندوق المنسدل نفسه. */
+  .as-trigger .as-inline-add-btn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    margin-inline-start: 2px;
+    border: none;
+    background: transparent;
+    color: var(--text3);
+    border-radius: 6px;
+    cursor: pointer;
+    padding: 0;
+  }
+  .as-trigger .as-inline-add-btn:hover {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .as-trigger .as-inline-add-btn i {
+    font-size: 15px;
+  }
+  .im-sidebar {
+    width: 230px;
+    flex-shrink: 0;
+    border-inline-start: 1px solid var(--border);
+    background: var(--surface2, #f8fafc);
+    padding: 14px 12px;
+    overflow-y: auto;
+  }
+  .im-sidebar h4 {
+    font-size: 11.5px;
+    color: var(--text3);
+    margin: 0 0 10px;
+    font-weight: 700;
+  }
+  .im-sidebar .im-sb-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 12px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .im-sidebar .im-sb-row .im-sb-val {
+    font-weight: 700;
+    color: var(--text);
+  }
+  .im-soon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 60px 20px;
+    color: var(--text3);
+    text-align: center;
+  }
+  .im-soon i {
+    font-size: 30px;
+    opacity: 0.5;
+  }
+  @media (max-width: 860px) {
+    .im-sidebar {
+      display: none;
+    }
+    .im-infobar {
+      display: none;
+    }
+  }
+</style>
+
+
+
+
+
+
+
+

@@ -1,0 +1,388 @@
+<script>
+  // ═════════════════════════════════════════════════════════════════
+  // 53_JS_UnifiedDataEngine.html — UDE (Unified Data Engine)
+  // ─────────────────────────────────────────────────────────────────
+  // [REBUILD-2026-08-07] إعادة بناء كاملة لدورة "تحميل بيانات الشاشة
+  // بعد تسجيل الدخول"، بدل الإصلاحات المتفرقة السابقة. هذا الملف
+  // بديل واحد موحّد لكل الآلية القديمة المُبعثرة في 01_JS_Core_Auth.html:
+  //
+  //   القديم (بيتشال/يتعطّل الاستدعاء منه، مش بيتحذف فعليًا لأمان):
+  //     _prefetch{}, _startPrefetch(), _prefetchOnDemandEager(),
+  //     _prefetchReferenceIdle(), _prefetchBackgroundIdle(),
+  //     ensureLevelData(), _pageDataReady(), _prefetchFullReady(),
+  //     _fullWaiters, _drainFullWaiters(), _markPartialRender(),
+  //     _resolvePartialRenderIfNeeded(), PAGE_REQUIRED_FIELDS,
+  //     LIGHT_ONLY_PAGES, setTimeout(...,4000/9000/14000/19000) في
+  //     _preloadAllAfterLogin().
+  //
+  // ليه كان لازم إعادة بناء بدل إصلاح تاني؟
+  //   المنظومة القديمة فيها 3 مشاكل بنيوية مش قابلة للإصلاح بترقيع:
+  //   1) "مهلة الاستسلام" (ensureLevelData 8s timeout) بترسم الشاشة
+  //      بيانات ناقصة ولو فشل السيناريو تاني، الصفحة ممكن تفضل ناقصة
+  //      للأبد لو الـ waiter وقع برّه القائمة قبل ما البيانات توصل.
+  //   2) قائمة PAGE_REQUIRED_FIELDS يدوية لازم تتحدّث لكل شاشة جديدة —
+  //      أي حد ينسى يضيف شاشة فيها، الشاشة ترجع تلقائيًا لسلوك "انتظار
+  //      كل حاجة" (أبطأ فتح ممكن) من غير أي تحذير.
+  //   3) طلبات الشبكة بتتبعت بتوقيتات ثابتة (4s/9s/14s/19s) مبنية على
+  //      تخمين لسرعة الشبكة، مش على الحاجة الفعلية للشاشة المفتوحة —
+  //      فلو المستخدم فتح شاشة قبل معاده "المجدول"، بيستنى من غير داعي.
+  //
+  // الحل الجديد — 3 مبادئ بسيطة:
+  //   • طلب واحد فقط لكل مجموعة "مستويات" مطلوبة، بحد أقصى نداء شبكة
+  //     واحد نشط لكل مجموعة في نفس اللحظة (تجميع/Dedup تلقائي).
+  //   • أي صفحة بتستنى بيانات، بتفضل مسجّلة كـ "مشترك" فعليًا لحد ما
+  //     بياناتها توصل بنجاح — مفيش تسريح قسري لمشترك قبل نجاح/فشل
+  //     صريح، فمفيش سيناريو "بيانات وصلت بس محدش استلمها".
+  //   • عند الفشل: إعادة محاولة تلقائية (مرة واحدة) ثم عرض رسالة خطأ
+  //     صريحة + زر "إعادة المحاولة" بدل ما تفضل الشاشة على Skeleton
+  //     أو تُعرض ببيانات فاضية بصمت.
+  // ═════════════════════════════════════════════════════════════════
+
+  var UDE = (function () {
+    // ---------- الحالة الداخلية ----------
+    // كاش بسيط: أي مستوى (2/3/4) اتحمّل بنجاح قبل كده مش هيتطلب تاني
+    // في نفس الجلسة (نفس مبدأ _prefetch.data القديم، لكن بدون تعقيد
+    // "full/partial" — كل مستوى بييجي بحالة true/false واضحة).
+    var _loadedLevels = {}; // { 2: true, 3: true, 4: true }
+    var _inFlight = {}; // { "2,3": true } — مفتاح = مستويات النداء الجاري
+    var _subscribers = []; // { levels:[...], onReady:fn, onError:fn }
+
+    // ─────────────────────────────────────────────────────────────
+    // [PERF-UDE-LS-CACHE-2026-08-12] ROOT CAUSE FIX
+    // المشكلة: _loadedLevels/APP.data كانا فقط في الذاكرة (متغيرات JS).
+    // مستوى 1 (Critical) عنده فعلاً كاش SWR في localStorage (_saveCache/
+    // _loadCache في 01_JS_Core_Auth.html) فبيظهر فورًا بعد Refresh.
+    // لكن المستويات 2/3/4 (اللي أغلب الشاشات فعليًا محتاجاها —
+    // شوف PAGE_LEVELS) ماكانش عندها أي تخزين محلي، فأي Refresh كامل
+    // للصفحة (F5) كان بيصفّر _loadedLevels فيرجع أي فتح شاشة يستنى
+    // نداء شبكة حقيقي لـ Apps Script من الصفر — وهو ده بالظبط سبب
+    // "كل شاشة بتبدأ من الصفر بعد Refresh" المذكور في المشكلة.
+    // الحل: نفس مبدأ SWR بتاع مستوى 1 لكن للمستويات 2/3/4: نخزّن آخر
+    // نسخة ناجحة من كل مستوى في localStorage (بنفس owner-check المتّبع
+    // في wms_cache_owner)، وعند بداية الجلسة (warmup) لو فيه نسخة محلية
+    // لسه Fresh (< STALE_MS) نعتبر المستوى "محمّل" فورًا (Instant Render،
+    // بدون أي نداء شبكة) ثم نعمل مراجعة خلفية صامتة (revalidate) تحدّث
+    // البيانات والكاش من غير ما توقف أو تعيد رسم أي حاجة قسرًا.
+    // ─────────────────────────────────────────────────────────────
+    var LS_PREFIX = "wms_ude_lvl_";
+    var STALE_MS = 10 * 60 * 1000; // 10 دقائق: بعدها لسه بنعرض الكاش فورًا لكن بنراجع خلفيًا دايمًا
+
+    function _owner() {
+      return (typeof APP !== "undefined" && APP.currentUser && APP.currentUser.username) || "";
+    }
+    function _ownerMatches(saved) {
+      try {
+        var currentOwner = localStorage.getItem("wms_cache_owner") || "";
+        return !!currentOwner && saved && saved.owner === currentOwner;
+      } catch (e) {
+        return false;
+      }
+    }
+    function _lsSave(level, data) {
+      try {
+        localStorage.setItem(
+          LS_PREFIX + level,
+          JSON.stringify({ data: data, ts: Date.now(), owner: _owner() }),
+        );
+      } catch (e) {
+        // القرص ممتلئ أو localStorage معطّل — نتجاهل بأمان، الكاش في
+        // الذاكرة (APP.data + _loadedLevels) لسه شغّال طول الجلسة الحالية
+      }
+    }
+    function _lsLoad(level) {
+      try {
+        var raw = localStorage.getItem(LS_PREFIX + level);
+        if (!raw) return null;
+        var saved = JSON.parse(raw);
+        if (!saved || !_ownerMatches(saved)) return null;
+        return saved;
+      } catch (e) {
+        return null;
+      }
+    }
+    /** يحاول عرض نسخة محلية فورية لمستوى معيّن قبل أي نداء شبكة. */
+    function _hydrateLevel(level) {
+      if (_loadedLevels[level]) return true;
+      var saved = _lsLoad(level);
+      if (!saved || !saved.data) return false;
+      if (APP && APP.data) Object.assign(APP.data, saved.data);
+      _loadedLevels[level] = true;
+      return true;
+    }
+
+    // خريطة اختيارية: صفحة → المستويات اللي فعليًا محتاجاها (تحسين أداء
+    // اختياري بحت — صفحة غير مذكورة هنا تاخد الافتراضي [2, 3] تلقائيًا،
+    // فمفيش أي شاشة ممكن "تتنسى" وتفضل عالقة بلا تعريف زي القديم).
+    var PAGE_LEVELS = {
+      dashboard: [],
+      shortcuts: [],
+      catalog: [2],
+      items: [2],
+      groups: [2],
+      stock: [2],
+      current_stock: [2],
+      stocktake: [2],
+      tx_in: [2],
+      tx_out: [2],
+      transfer: [2],
+      tx_transfer: [2],
+      transactions: [2],
+    };
+    var DEFAULT_LEVELS = [2, 3];
+
+    function _levelsKey(levels) {
+      return levels.slice().sort().join(",");
+    }
+
+    function _haveAllLevels(levels) {
+      for (var i = 0; i < levels.length; i++) {
+        if (!_loadedLevels[levels[i]]) return false;
+      }
+      return true;
+    }
+
+    function levelsForPage(page) {
+      return PAGE_LEVELS.hasOwnProperty(page)
+        ? PAGE_LEVELS[page]
+        : DEFAULT_LEVELS;
+    }
+
+    // [SESSION-SAFE] بديل صريح عن الوصول المباشر لـ SESSION.token —
+    // أي انتظار لازم يكون بانتظار حقيقي (retry بفاصل زمني قصير)، مش
+    // استثناء غير متوقَّع يوقف السلسلة كلها بصمت (كان هذا نفسه السبب
+    // الجذري اللي اكتشفناه سابقًا في DL.Core.getAllDataByLevel).
+    function _authReady() {
+      return !!(
+        typeof SESSION !== "undefined" &&
+        SESSION &&
+        SESSION.token &&
+        APP &&
+        APP.currentUser
+      );
+    }
+
+    // ---------- تنفيذ النداء الفعلي ----------
+    function _fetchLevels(levels, attempt) {
+      var key = _levelsKey(levels);
+      if (_inFlight[key]) return; // Dedup: نداء لنفس المستويات شغال بالفعل
+      if (!_authReady()) {
+        // لسه مفيش جلسة/مستخدم — نعيد المحاولة بعد وقت قصير بدل ما
+        // نرمي استثناء أو نلغي الطلب. هذا الفحص هنا (نقطة مركزية
+        // واحدة) بيغلق باب فئة كاملة من الأخطاء الصامتة (نداء بيتنفذ
+        // قبل ما SESSION/APP.currentUser يكونوا جاهزين).
+        setTimeout(function () {
+          _fetchLevels(levels, attempt);
+        }, 200);
+        return;
+      }
+      _inFlight[key] = true;
+      DL.Core.getAllDataByLevel(levels, {
+        label: "UDE.fetch(" + key + ")" + (attempt ? ".retry" : ""),
+        // [TIMEOUT-BUMP-2026-08-08] كانت 30 ثانية — قليلة على نداء
+        // getAllDataByLevel([2,3]) في بيئة /dev البطيئة (Cold Start +
+        // بدون تحسينات نسخة /exec)، فكانت بتفشل بصمت وتدخل في retry
+        // من غير داعي رغم إن النداء نفسه كان لسه شغال وهيرجع لو استنينا
+        // شوية زيادة. مفيش تغيير في منطق الـ retry نفسه (لسه بيحصل
+        // مرة واحدة تلقائيًا لو فعلاً فشل بعد المهلة الجديدة).
+        timeout: 60000,
+        onSuccess: function (result) {
+          delete _inFlight[key];
+          if (result && result.data && APP.data) {
+            Object.assign(APP.data, result.data);
+          }
+          levels.forEach(function (lvl) {
+            _loadedLevels[lvl] = true;
+            // [PERF-UDE-LS-CACHE-2026-08-12] خزّن نسخة محلية لكل مستوى
+            // على حدة (مش الحزمة كاملة) عشان Refresh القادم يقدر يعرض
+            // فورًا حتى لو كان طلب سابق جاب مستويات مختلفة مع بعض.
+            if (result && result.data) _lsSave(lvl, result.data);
+          });
+          _resolveSubscribers();
+        },
+        onError: function () {
+          delete _inFlight[key];
+          if (!attempt) {
+            // محاولة واحدة إضافية تلقائية قبل ما نُبلّغ المشتركين
+            // بالفشل — يغطي أعطال الشبكة العابرة اللي شفناها في
+            // الكونسول (NetworkError مؤقت) من غير ما نزعج المستخدم.
+            setTimeout(function () {
+              _fetchLevels(levels, true);
+            }, 1500);
+            return;
+          }
+          _failSubscribers(levels);
+        },
+      });
+    }
+
+    function _resolveSubscribers() {
+      var remaining = [];
+      _subscribers.forEach(function (sub) {
+        if (_haveAllLevels(sub.levels)) {
+          try {
+            sub.onReady();
+          } catch (e) {
+            console.error("[UDE] subscriber onReady error:", e);
+          }
+        } else {
+          remaining.push(sub);
+        }
+      });
+      _subscribers = remaining;
+    }
+
+    function _failSubscribers(failedLevels) {
+      var failedKey = _levelsKey(failedLevels);
+      var remaining = [];
+      _subscribers.forEach(function (sub) {
+        var subKey = _levelsKey(sub.levels);
+        // نبلّغ بالفشل بس المشتركين اللي طلبهم يعتمد فعليًا على
+        // المستويات اللي فشلت (مش كل حد مستني أي حاجة)
+        var overlaps = sub.levels.some(function (l) {
+          return failedLevels.indexOf(l) !== -1;
+        });
+        if (overlaps && !_haveAllLevels(sub.levels)) {
+          if (typeof sub.onError === "function") {
+            try {
+              sub.onError();
+            } catch (e) {}
+          }
+        } else if (!_haveAllLevels(sub.levels)) {
+          remaining.push(sub);
+        }
+      });
+      _subscribers = remaining;
+    }
+
+    // ---------- الواجهة العامة ----------
+    /**
+     * ensure(levels, { onReady, onError }) — تضمن وصول البيانات قبل
+     * تنفيذ onReady. لو وصلت بالفعل، تُنفَّذ onReady() فورًا (مسار
+     * متزامن، بدون أي تأخير مصطنع). لو لأ، تسجّل اشتراكًا حقيقيًا
+     * يفضل قائمًا لحد نجاح أو فشل صريح — لا يوجد "انتهاء مهلة" يُسقط
+     * الاشتراك من غير رد.
+     */
+    function ensure(levels, opts) {
+      opts = opts || {};
+      if (!levels || !levels.length) {
+        if (typeof opts.onReady === "function") opts.onReady();
+        return;
+      }
+      // [PERF-UDE-LS-CACHE-2026-08-12] قبل أي نداء شبكة: جرّب تعرض أي
+      // مستوى مطلوب من نسخته المحلية المحفوظة (لو موجودة وبتاعة نفس
+      // اليوزر) — هنا بالظبط بيحصل "Instant Render" بعد Refresh بدل
+      // انتظار الشبكة، حتى لو الطلب الأصلي جه من نداء مختلف عن اللي
+      // خزّن الكاش.
+      levels.forEach(_hydrateLevel);
+      if (_haveAllLevels(levels)) {
+        if (typeof opts.onReady === "function") opts.onReady();
+        // مراجعة خلفية صامتة (Stale-While-Revalidate) — بس لو فيه نسخة
+        // فعليًا قديمة نسبيًا أو مفيش أي طلب شغال أصلاً لنفس المستويات
+        _revalidateIfStale(levels);
+        return;
+      }
+      _subscribers.push({
+        levels: levels,
+        onReady: opts.onReady || function () {},
+        onError: opts.onError,
+      });
+      var missing = levels.filter(function (l) {
+        return !_loadedLevels[l];
+      });
+      _fetchLevels(missing, false);
+    }
+
+    /** يعيد جلب مستوى في الخلفية بصمت لو نسخته المحلية أقدم من STALE_MS
+     *  — لا يغيّر أي حالة "جاهز" ولا يوقف أي شاشة، فقط يحدّث البيانات
+     *  والكاش المحلي لما يوصل الرد. */
+    function _revalidateIfStale(levels) {
+      var needsRevalidate = levels.some(function (l) {
+        var saved = _lsLoad(l);
+        return !saved || Date.now() - saved.ts > STALE_MS;
+      });
+      if (!needsRevalidate) return;
+      var key = _levelsKey(levels);
+      if (_inFlight[key]) return;
+      if (!_authReady()) return;
+      _inFlight[key] = true;
+      DL.Core.getAllDataByLevel(levels, {
+        label: "UDE.revalidate(" + key + ")",
+        timeout: 60000,
+        onSuccess: function (result) {
+          delete _inFlight[key];
+          if (result && result.data && APP.data) {
+            Object.assign(APP.data, result.data);
+          }
+          levels.forEach(function (lvl) {
+            _loadedLevels[lvl] = true;
+            if (result && result.data) _lsSave(lvl, result.data);
+          });
+          _resolveSubscribers();
+        },
+        onError: function () {
+          delete _inFlight[key];
+          // فشل صامت — البيانات المعروضة (من الكاش) لسه صحيحة وقديمة
+          // بس، مش فاضية؛ هنحاول تاني في المرة الجاية اللي المستخدم
+          // يفتح فيها نفس الشاشة
+        },
+      });
+    }
+
+    /** ensurePage(page, opts) — نفس ensure لكن بمنطق "الصفحة" مباشرة. */
+    function ensurePage(page, opts) {
+      ensure(levelsForPage(page), opts);
+    }
+
+    /**
+     * warmup() — تُستدعى مرة واحدة بعد نجاح تسجيل الدخول (أو استعادة
+     * جلسة قديمة). بتجهّز مستوى ON_DEMAND (2) فورًا لأنه المستوى اللي
+     * معظم الشاشات هتحتاجه أول ما تُفتح، ثم BACKGROUND (3) وREFERENCE
+     * (4) في وقت فراغ المتصفح — نفس الترتيب المنطقي القديم، لكن بدون
+     * أي setTimeout بتوقيت ثابت مخمَّن؛ الاعتماد فقط على requestIdleCallback
+     * (أو fallback بسيط لو مش مدعوم).
+     */
+    var _warmedUp = false;
+    function warmup() {
+      if (_warmedUp) return;
+      _warmedUp = true;
+      // [PERF-UDE-LS-CACHE-2026-08-12] حاول تعرض النسخ المحلية فورًا؛
+      // أي مستوى اتحمّل من localStorage بيتراجع خلفيًا لو قديم بدل ما
+      // يتطلب من الصفر — أي مستوى لسه مفيش له نسخة محلية بيتطلب عادي.
+      [2, 3, 4].forEach(_hydrateLevel);
+      _revalidateIfStale([2]);
+      var missing2 = _loadedLevels[2] ? [] : [2];
+      if (missing2.length) _fetchLevels(missing2, false);
+      var ric =
+        (typeof requestIdleCallback === "function" && requestIdleCallback) ||
+        function (fn) {
+          setTimeout(fn, 60);
+        };
+      ric(function () {
+        if (_loadedLevels[3]) _revalidateIfStale([3]);
+        else _fetchLevels([3], false);
+      });
+      ric(function () {
+        if (_loadedLevels[4]) _revalidateIfStale([4]);
+        else _fetchLevels([4], false);
+      });
+    }
+
+    /** حالة تشخيصية — تُستخدم في شاشة "دليل الأكواد"/الدعم الفني فقط */
+    function debugState() {
+      return {
+        loadedLevels: Object.assign({}, _loadedLevels),
+        inFlight: Object.keys(_inFlight),
+        pendingSubscribers: _subscribers.length,
+      };
+    }
+
+    return {
+      ensure: ensure,
+      ensurePage: ensurePage,
+      levelsForPage: levelsForPage,
+      warmup: warmup,
+      haveAllLevels: _haveAllLevels,
+      debugState: debugState,
+    };
+  })();
+</script>

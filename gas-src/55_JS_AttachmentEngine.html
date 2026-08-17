@@ -1,0 +1,101 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 55_JS_AttachmentEngine.html — محرك المرفقات الكسول (Lazy Attachments)
+  // ═══════════════════════════════════════════════════════════════════
+  // [DATA-LOADING-ENGINE / المرحلة 10] المشكلة اللي هذا الملف بيحلّها:
+  //
+  //   بعض الشاشات (الأصناف، الموظفين، الموردين...) عندها حقل JSON مرفقات
+  //   (documents_json / attachments_json) بييجي أصلاً جوه بيانات السجل نفسه
+  //   وقت التحميل الأول — ده مقبول طالما بس metadata خفيفة (اسم/رابط/نوع).
+  //   لكن أي محاولة *فتح معاينة فعلية* (thumbnail لصورة، أو استدعاء سيرفر
+  //   لجلب تفاصيل/محتوى إضافي عن المرفق) ما ينفعش يحصل إلا وقت ما المستخدم
+  //   يفتح تبويب "المرفقات/المستندات" فعليًا — مش وقت فتح الشاشة كلها.
+  //
+  //   الحل: AttachmentEngine — طبقة رقيقة فوق نفس فلسفة TabEngine/ImageEngine:
+  //     1) renderList()  — يرسم قائمة المرفقات من الـ metadata الموجودة
+  //        بالفعل في الذاكرة (بدون أي نداء سيرفر) — سريع فورًا.
+  //     2) ensureLoaded(recordId, fetcher) — أول مرة بس ينادي fetcher()
+  //        (نداء سيرفر حقيقي لجلب تفاصيل إضافية زي حجم الملف/تاريخ آخر
+  //        تعديل لو مطلوب)، ثم يخزّن النتيجة بالـ recordId فمفيش تكرار.
+  //     3) previewThumb() — يستخدم ImageEngine.thumbHtml() لو المرفق صورة،
+  //        فمفيش تكرار منطق Placeholder→Thumbnail→Original.
+  //
+  //   [SYSTEM-UNIFY] الاستخدام المتوقع مع TabEngine:
+  //     loaders: {
+  //       documents: function (recordId, done) {
+  //         AttachmentEngine.ensureLoaded(recordId, function (rid, cb) {
+  //           _gsr('getItemAttachmentsDetails', rid, { onSuccess: function (r) { cb(r.data); } });
+  //         }, function (list) {
+  //           document.getElementById('im-doc-list-view').innerHTML =
+  //             AttachmentEngine.renderList(list);
+  //           done();
+  //         });
+  //       }
+  //     }
+  //
+  //   ⚠️ إلزامي: هذا الملف "إضافي" فقط — لا شيء من منطق المرفقات الحالي
+  //   (مثل _imDocumentsPanelHtml في 03_JS_Dashboard_Items.html) اتغيّر أو
+  //   اتشال. الدمج التدريجي يحصل شاشة بشاشة لاحقًا بدون كسر أي وظيفة قائمة.
+  // ═══════════════════════════════════════════════════════════════════
+
+  var AttachmentEngine = (function () {
+    "use strict";
+
+    var _cache = {}; // recordId -> details array (مرة واحدة فقط لكل سجل)
+    var _pending = {}; // recordId -> true أثناء التحميل (منع نداء مزدوج)
+
+    // ── §1 — رسم القائمة من الـ metadata الموجودة أصلاً (بدون نداء سيرفر) ──
+    function renderList(docs) {
+      docs = docs || [];
+      if (!docs.length) {
+        return '<div class="attach-empty" style="color:var(--text3);font-size:12px">لا توجد مرفقات</div>';
+      }
+      return docs
+        .map(function (d) {
+          d = d || {};
+          var isImage = d.type === "image";
+          var thumb =
+            isImage && typeof ImageEngine !== "undefined" && ImageEngine.thumbHtml
+              ? ImageEngine.thumbHtml(d.url, { size: 40 })
+              : '<i class="ti ti-file-text" style="font-size:20px"></i>';
+          return (
+            '<div class="attach-row" style="display:flex;align-items:center;gap:8px;padding:4px 0">' +
+            thumb +
+            '<a href="' + (d.url || "#") + '" target="_blank" rel="noopener" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+            (d.name || d.url || "") +
+            "</a>" +
+            "</div>"
+          );
+        })
+        .join("");
+    }
+
+    // ── §2 — تحميل تفاصيل إضافية مرة واحدة فقط لكل سجل ──
+    // fetcher(recordId, cb) : cb(detailsArray)
+    function ensureLoaded(recordId, fetcher, onReady) {
+      if (_cache[recordId]) {
+        onReady(_cache[recordId]);
+        return;
+      }
+      if (_pending[recordId]) return; // نداء بالفعل جارٍ لنفس السجل — تجاهل التكرار
+      _pending[recordId] = true;
+      fetcher(recordId, function (details) {
+        _pending[recordId] = false;
+        _cache[recordId] = details || [];
+        onReady(_cache[recordId]);
+      });
+    }
+
+    // ── §3 — إبطال الكاش بعد تعديل/رفع مرفق جديد لنفس السجل ──
+    function invalidate(recordId) {
+      delete _cache[recordId];
+      delete _pending[recordId];
+    }
+
+    return {
+      renderList: renderList,
+      ensureLoaded: ensureLoaded,
+      invalidate: invalidate,
+    };
+  })();
+</script>

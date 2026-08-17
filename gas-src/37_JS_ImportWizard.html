@@ -1,0 +1,1402 @@
+<script>
+  // ─────────────────────────────────────────────────────────────
+  // 37_JS_ImportWizard.html — معالج الاستيراد الاحترافي (IMP-WIZARD-V1)
+  // Enterprise Import Validation Wizard
+  //
+  // محرك عام يُستخدم لكل شاشات الاستيراد من إكسيل بالنظام. المنطق
+  // الفعلي للتحقق (Validation Engine) موجود بالكامل في الباك إند
+  // (Code_29_ImportEngine.gs) — هذا الملف مسؤول فقط عن: قراءة الملف
+  // (SheetJS)، عرض الخطوات، وتنسيق استدعاءات الباك إند + الاستيراد
+  // الفعلي على دفعات (Batch) بدون تجميد الواجهة.
+  //
+  // لإضافة شاشة استيراد جديدة (عملاء، موردين...):
+  //   1) عرّف الكيان في IMPORT_ENTITY_CONFIGS (باك إند) — الأعمدة
+  //      وقواعد التحقق والعلاقات.
+  //   2) عرّف وصف واجهة بسيط في IW_ENTITY_UI هنا (تسمية، نموذج تحميل،
+  //      ودالة afterImport لتحديث الشاشة بعد النجاح).
+  //   3) نادِ ImportWizard.open('entityKey') من أي زرار "استيراد".
+  // ─────────────────────────────────────────────────────────────
+
+  var IW_ENTITY_UI = {
+    items: {
+      label: "الأصناف",
+      icon: "ti-file-import",
+      requiredCols: ["الكود", "الاسم"],
+      optionalCols: [
+        "المجموعة",
+        "المخزن",
+        "الوحدة",
+        "الحد الأدنى",
+        "سعر التكلفة",
+        "سعر البيع",
+        "الألوان",
+        "رابط الصورة",
+        "الوصف",
+      ],
+      templateHeaders: [
+        "الكود",
+        "الاسم",
+        "المجموعة",
+        "المخزن",
+        "الوحدة",
+        "الحد الأدنى",
+        "سعر التكلفة",
+        "سعر البيع",
+        "الألوان",
+        "رابط الصورة",
+        "الوصف",
+      ],
+      templateExample: [
+        "B1",
+        "بابل أحمر",
+        "قمصان",
+        "مخزن الخامات الرئيسي",
+        "قطعة",
+        "10",
+        "50",
+        "100",
+        "أحمر:https://i.imgur.com/red.jpg، أسود:https://i.imgur.com/black.jpg، أبيض",
+        "https://i.imgur.com/example.jpg",
+        "وصف اختياري",
+      ],
+      templateFileName: "نموذج_استيراد_الأصناف.xlsx",
+      previewColumns: [
+        { key: "code", label: "الكود" },
+        { key: "name", label: "الاسم" },
+        { key: "group", label: "المجموعة" },
+        { key: "warehouse", label: "المخزن" },
+        { key: "unit", label: "الوحدة" },
+        { key: "min_qty", label: "الحد الأدنى" },
+        { key: "cost_price", label: "سعر التكلفة" },
+        { key: "selling_price", label: "سعر البيع" },
+      ],
+      afterImport: function () {
+        setTimeout(function () {
+          reloadAfterMutationFull(
+            function () {
+              navigate("items");
+            },
+            null,
+            { emoji: "", successMsg: "تم استيراد الأصناف بنجاح " },
+          );
+        }, 400);
+      },
+    },
+
+    opening_stock: {
+      label: "أرصدة أول المدة",
+      icon: "ti-file-import",
+      requiredCols: ["كود الصنف", "الكمية"],
+      optionalCols: ["اللون", "ملاحظات"],
+      templateHeaders: ["كود الصنف", "اللون", "الكمية", "ملاحظات"],
+      templateExample: ["ITM-22-059-K8", "أزرق", "55", "ملاحظات اختياري"],
+      templateFileName: "نموذج_استيراد_أرصدة_أول_المدة.xlsx",
+      previewColumns: [
+        { key: "item_id", label: "كود الصنف" },
+        { key: "color", label: "اللون" },
+        { key: "qty", label: "الكمية" },
+      ],
+      afterImport: function () {
+        setTimeout(function () {
+          reloadAfterMutationFull(
+            function () {
+              navigate("opening_stock");
+            },
+            null,
+            { emoji: "", successMsg: "تم استيراد أرصدة أول المدة بنجاح " },
+          );
+        }, 400);
+      },
+    },
+  };
+
+  var IW = {
+    state: null,
+    STAGES: ["upload", "structure", "review", "commit", "report"],
+  };
+
+  function _iwReset(entityType) {
+    IW.state = {
+      entityType: entityType,
+      ui: IW_ENTITY_UI[entityType],
+      stage: "upload",
+      fileInfo: null,
+      headers: [],
+      rawRows: [],
+      structure: null,
+      results: [],
+      summary: {},
+      excluded: {}, // rowNum -> true
+      startedAt: null,
+      commitStats: { imported: 0, rejected: 0, rejectedDetails: [], imageWarnings: [] },
+      rehostImages: false, // [DOC-ENGINE-IMPORT] Opt-in — رفع فعلي على Drive لصور الأصناف بدل الروابط الخارجية
+      compressImages: true, // [PHASE-3-IMPORT] بقى تلقائي دايمًا (طالما رفع الصور فعليًا مفعّل) — ضغط الصور المرفوعة عبر TinyPNG
+      workbook: null,
+      sheetNames: [],
+      activeSheet: null,
+    };
+  }
+
+  // ============================================================
+  //  فتح المعالج
+  // ============================================================
+  function openImportWizard(entityType) {
+    if (!IW_ENTITY_UI[entityType]) {
+      NotificationEngine.error(" نوع استيراد غير معروف: " + entityType);
+      return;
+    }
+    _iwReset(entityType);
+    if (!document.getElementById("iw-modal")) {
+      var div = document.createElement("div");
+      div.innerHTML = _iwRenderShell();
+      document.body.appendChild(div.firstElementChild);
+    }
+    document.getElementById("iw-modal").style.display = "flex";
+    _iwRenderStage();
+  }
+
+  function closeImportWizard() {
+    var modal = document.getElementById("iw-modal");
+    if (modal) modal.style.display = "none";
+  }
+
+  // ============================================================
+  //  الهيكل العام + الستيبر
+  // ============================================================
+  function _iwRenderShell() {
+    return (
+      '<div id="iw-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9200;align-items:center;justify-content:center;padding:16px">' +
+      '<div class="modal-box" style="max-width:1080px;width:100%;direction:rtl;max-height:94vh">' +
+      '<div class="modal-header">' +
+      '<div class="modal-header-left">' +
+      '<div class="modal-icon icon-success" id="iw-header-icon"><i class="ti ti-file-import" style="font-size:20px"></i></div>' +
+      '<div><h2 id="iw-header-title">معالج الاستيراد الاحترافي</h2>' +
+      '<div class="modal-header-sub" id="iw-header-sub">مراجعة كاملة للبيانات قبل الحفظ</div></div>' +
+      "</div>" +
+      '<button onclick="closeImportWizard()" class="modal-close"><i class="ti ti-x"></i></button>' +
+      "</div>" +
+      '<div style="padding:14px 28px 0" id="iw-stepper"></div>' +
+      '<div class="modal-body" id="iw-body"></div>' +
+      '<div class="modal-actions" id="iw-actions"></div>' +
+      "</div></div>"
+    );
+  }
+
+  var IW_STEP_LABELS = {
+    upload: "١. اختيار الملف والتحليل",
+    structure: "٢. بنية الملف",
+    review: "٣. المراجعة والتحقق",
+    commit: "٤. الاستيراد",
+    report: "٥. التقرير النهائي",
+  };
+
+  function _iwRenderStepper() {
+    var cur = IW.state.stage;
+    var idx = IW.STAGES.indexOf(cur);
+    var html =
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">';
+    IW.STAGES.forEach(function (s, i) {
+      var active = i === idx;
+      var done = i < idx;
+      html +=
+        '<div style="flex:1;min-width:110px;text-align:center;padding:6px 4px;border-radius:8px;font-size:11px;font-weight:700;' +
+        "background:" +
+        (active
+          ? "var(--accent)"
+          : done
+            ? "var(--success-soft)"
+            : "var(--surface2)") +
+        ";color:" +
+        (active ? "#fff" : done ? "var(--success)" : "var(--text3)") +
+        '">' +
+        (done ? " " : "") +
+        IW_STEP_LABELS[s] +
+        "</div>";
+    });
+    html += "</div>";
+    document.getElementById("iw-stepper").innerHTML = html;
+    var titleEl = document.getElementById("iw-header-title");
+    if (titleEl) titleEl.textContent = "استيراد " + IW.state.ui.label;
+  }
+
+  function _iwSetActions(buttonsHtml) {
+    document.getElementById("iw-actions").innerHTML = buttonsHtml;
+  }
+
+  function _iwRenderStage() {
+    _iwRenderStepper();
+    switch (IW.state.stage) {
+      case "upload":
+        return _iwRenderUploadStage();
+      case "structure":
+        return _iwRenderStructureStage();
+      case "review":
+        return _iwRenderReviewStage();
+      case "commit":
+        return _iwRenderCommitStage();
+      case "report":
+        return _iwRenderReportStage();
+    }
+  }
+
+  // ============================================================
+  //  المرحلة ١: اختيار الملف + التحليل (Analysis)
+  // ============================================================
+  function _iwRenderUploadStage() {
+    var ui = IW.state.ui;
+    var badges =
+      ui.requiredCols
+        .map(function (c) {
+          return (
+            '<span style="background:var(--accent);color:#fff;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:600">' +
+            esc(c) +
+            "</span>"
+          );
+        })
+        .join("") +
+      ui.optionalCols
+        .map(function (c) {
+          return (
+            '<span style="background:var(--border);color:var(--text2);padding:2px 10px;border-radius:20px;font-size:12px">' +
+            esc(c) +
+            "</span>"
+          );
+        })
+        .join("");
+
+    var html =
+      '<div style="background:var(--accent-soft);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:14px;line-height:2">' +
+      "<b> كيف تجهّز ملف الإكسيل؟</b><br>" +
+      '<span style="color:var(--text2)">اعمل ملف إكسيل فيه هذه الأعمدة (أي ترتيب):</span>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">' +
+      badges +
+      "</div>" +
+      '<span style="font-size:12px;color:var(--text3)"> الأعمدة الملونة إلزامية — الباقي اختياري وله قيمة افتراضية</span><br>' +
+      '<span style="font-size:12px;color:var(--text3)"> المعالج هيحلل الملف ويصحح الأخطاء البسيطة تلقائياً، وهيوريك أي مشكلة قبل ما يحفظ أي حاجة</span><br>' +
+      '<span style="font-size:12px;color:var(--text3)"> عمود "الألوان": اكتب أسماء الألوان مفصولة بفاصلة (أحمر، أزرق). لو عاوز تحدد صورة لكل لون، اكتب بعد اسم اللون نقطتين ":" ثم رابط الصورة، مثال: <b>أحمر:https://example.com/red.jpg، أزرق</b> — تقدر تحدد صورة للون واحد وتسيب الباقي من غير صورة</span>' +
+      "</div>" +
+      '<div style="text-align:center;margin-bottom:16px">' +
+      '<button onclick="_iwDownloadTemplate()" class="btn btn-secondary" style="font-size:13px"> تحميل نموذج إكسيل جاهز</button>' +
+      "</div>" +
+      '<div style="margin-bottom:10px">' +
+      '<label style="font-weight:700;font-size:14px;display:block;margin-bottom:10px"> اختر ملف الإكسيل:</label>' +
+      '<input type="file" id="iw-file-input" accept=".xlsx,.xls,.csv" ' +
+      'style="width:100%;padding:12px;border:2px dashed var(--accent);border-radius:10px;cursor:pointer;font-size:14px;box-sizing:border-box;background:var(--accent-soft)">' +
+      "</div>" +
+      '<div id="iw-analysis" style="display:none"></div>';
+
+    document.getElementById("iw-body").innerHTML = html;
+    _iwSetActions(
+      '<button onclick="closeImportWizard()" class="btn btn-secondary">إلغاء</button>',
+    );
+
+    var fileInput = document.getElementById("iw-file-input");
+    fileInput.value = "";
+    fileInput.onchange = function (e) {
+      if (e.target.files[0]) _iwHandleFile(e.target.files[0]);
+    };
+  }
+
+  function _iwDownloadTemplate() {
+    var ui = IW.state.ui;
+    _loadSheetJS(function () {
+      var ws = XLSX.utils.aoa_to_sheet([
+        ui.templateHeaders,
+        ui.templateExample,
+      ]);
+      ws["!cols"] = ui.templateHeaders.map(function () {
+        return { wch: 18 };
+      });
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, ui.label);
+      XLSX.writeFile(wb, ui.templateFileName);
+    });
+  }
+
+  // يحاول تخمين نوع العمود من عيّنة قيمه (لعرض معلوماتي فقط في مرحلة التحليل)
+  function _iwGuessColumnType(values) {
+    var sample = values
+      .filter(function (v) {
+        return String(v).trim() !== "";
+      })
+      .slice(0, 25);
+    if (!sample.length) return "فارغ";
+    var numeric = sample.every(function (v) {
+      return !isNaN(Number(String(v).replace(/,/g, "")));
+    });
+    if (numeric) return "رقم";
+    var urlLike = sample.every(function (v) {
+      return /^https?:\/\//i.test(String(v));
+    });
+    if (urlLike) return "رابط";
+    return "نص";
+  }
+
+  function _iwHandleFile(file) {
+    var analysisEl = document.getElementById("iw-analysis");
+    analysisEl.style.display = "block";
+    analysisEl.innerHTML =
+      '<div style="text-align:center;padding:16px"><div class="spinner"></div><div style="font-size:13px;color:var(--text2);margin-top:8px">جاري تحليل الملف...</div></div>';
+
+    _loadSheetJS(function () {
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        try {
+          var data = new Uint8Array(e.target.result);
+          var workbook = XLSX.read(data, { type: "array" });
+          IW.state.workbook = workbook;
+          IW.state.sheetNames = workbook.SheetNames;
+          IW.state.activeSheet = workbook.SheetNames[0];
+          IW.state.fileInfo = { name: file.name, size: file.size };
+          _iwLoadActiveSheet();
+        } catch (err) {
+          analysisEl.innerHTML =
+            '<div style="color:var(--danger);padding:12px"> خطأ في قراءة الملف: ' +
+            esc(err.message) +
+            "</div>";
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  function _iwLoadActiveSheet() {
+    var workbook = IW.state.workbook;
+    var sheet = workbook.Sheets[IW.state.activeSheet];
+    var jsonData = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+    if (!jsonData || jsonData.length === 0) {
+      document.getElementById("iw-analysis").innerHTML =
+        '<div style="color:var(--danger);padding:12px"> الورقة المختارة لا تحتوي على بيانات</div>';
+      return;
+    }
+
+    IW.state.rawRows = jsonData;
+    var headers = Object.keys(jsonData[0]);
+    IW.state.headers = headers;
+
+    var colTypes = headers.map(function (h) {
+      return _iwGuessColumnType(
+        jsonData.slice(0, 30).map(function (r) {
+          return r[h];
+        }),
+      );
+    });
+
+    var sheetSelector =
+      workbook.SheetNames.length > 1
+        ? '<div style="margin-bottom:10px"><label style="font-size:13px;font-weight:700">الورقة (Sheet):</label> ' +
+          '<select id="iw-sheet-select" style="margin-right:8px;padding:6px 10px;border-radius:8px;border:1px solid var(--border)">' +
+          workbook.SheetNames.map(function (s) {
+            return (
+              '<option value="' +
+              esc(s) +
+              '"' +
+              (s === IW.state.activeSheet ? " selected" : "") +
+              ">" +
+              esc(s) +
+              "</option>"
+            );
+          }).join("") +
+          "</select></div>"
+        : "";
+
+    var fi = IW.state.fileInfo;
+    var statsHtml =
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">' +
+      _iwStatBox("اسم الملف", fi.name) +
+      _iwStatBox("حجم الملف", (fi.size / 1024).toFixed(1) + " KB") +
+      _iwStatBox("عدد الأوراق", workbook.SheetNames.length) +
+      _iwStatBox("عدد الصفوف", jsonData.length) +
+      _iwStatBox("عدد الأعمدة", headers.length) +
+      "</div>";
+
+    var colsTable =
+      '<div style="font-weight:700;font-size:13px;margin-bottom:6px">أعمدة الملف المكتشفة:</div>' +
+      '<div style="overflow-x:auto;max-height:160px;border:1px solid var(--border);border-radius:8px;margin-bottom:14px">' +
+      '<table style="border-collapse:collapse;width:100%;font-size:12px">' +
+      '<thead><tr style="background:var(--surface2)">' +
+      '<th style="padding:6px 10px;text-align:right">اسم العمود</th><th style="padding:6px 10px;text-align:right">النوع المكتشف</th></tr></thead><tbody>' +
+      headers
+        .map(function (h, i) {
+          return (
+            "<tr><td style='padding:5px 10px;border-top:1px solid var(--border)'>" +
+            esc(h) +
+            "</td><td style='padding:5px 10px;border-top:1px solid var(--border);color:var(--text2)'>" +
+            esc(colTypes[i]) +
+            "</td></tr>"
+          );
+        })
+        .join("") +
+      "</tbody></table></div>";
+
+    var preview5 = jsonData.slice(0, 5);
+    var previewTable =
+      '<div style="font-weight:700;font-size:13px;margin-bottom:6px"> معاينة أول 5 صفوف:</div>' +
+      '<div style="overflow-x:auto;max-height:180px;border:1px solid var(--border);border-radius:8px">' +
+      '<table style="border-collapse:collapse;min-width:100%;font-size:12px">' +
+      "<thead><tr>" +
+      headers
+        .map(function (h) {
+          return (
+            '<th style="padding:5px 8px;background:var(--accent);color:#fff;border:1px solid var(--border);white-space:nowrap">' +
+            esc(h) +
+            "</th>"
+          );
+        })
+        .join("") +
+      "</tr></thead><tbody>" +
+      preview5
+        .map(function (row) {
+          return (
+            "<tr>" +
+            headers
+              .map(function (h) {
+                var val = String(row[h] || "");
+                return (
+                  '<td style="padding:4px 8px;border:1px solid var(--border);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis" title="' +
+                  esc(val) +
+                  '">' +
+                  esc(val) +
+                  "</td>"
+                );
+              })
+              .join("") +
+            "</tr>"
+          );
+        })
+        .join("") +
+      "</tbody></table></div>";
+
+    document.getElementById("iw-analysis").innerHTML =
+      sheetSelector + statsHtml + colsTable + previewTable;
+
+    if (workbook.SheetNames.length > 1) {
+      document.getElementById("iw-sheet-select").onchange = function (e) {
+        IW.state.activeSheet = e.target.value;
+        _iwLoadActiveSheet();
+      };
+    }
+
+    _iwSetActions(
+      '<button onclick="closeImportWizard()" class="btn btn-secondary">إلغاء</button>' +
+        '<button onclick="_iwGoToStructureCheck()" class="btn btn-primary">التالي: تحقق من البنية ←</button>',
+    );
+  }
+
+  function _iwStatBox(label, val) {
+    return (
+      '<div style="background:var(--surface2);border-radius:10px;padding:10px 12px;text-align:center">' +
+      '<div style="font-size:11px;color:var(--text3);margin-bottom:4px">' +
+      esc(label) +
+      "</div>" +
+      '<div style="font-weight:700;font-size:14px;color:var(--text)">' +
+      esc(String(val)) +
+      "</div></div>"
+    );
+  }
+
+  // ============================================================
+  //  المرحلة ٢: تحقق بنية الملف
+  // ============================================================
+  function _iwGoToStructureCheck() {
+    IW.state.stage = "structure";
+    _iwRenderStepper();
+    document.getElementById("iw-body").innerHTML =
+      '<div style="text-align:center;padding:30px"><div class="spinner"></div><div style="font-size:13px;color:var(--text2);margin-top:10px">جاري التحقق من بنية الملف...</div></div>';
+    _iwSetActions("");
+
+    _gsr(
+      "analyzeImportStructure",
+      [
+        IW.state.entityType,
+        IW.state.headers,
+        APP.currentUser.username,
+        SESSION.token,
+      ],
+      {
+        label: "تحقق بنية الملف",
+        onSuccess: function (res) {
+          IW.state.structure = res.data;
+          _iwRenderStructureStage();
+        },
+        onError: function (res) {
+          document.getElementById("iw-body").innerHTML =
+            '<div style="color:var(--danger);padding:16px"> ' +
+            esc(res.message) +
+            "</div>";
+          _iwSetActions(
+            '<button onclick="_iwBackToUpload()" class="btn btn-secondary">رجوع</button>',
+          );
+        },
+      },
+    );
+  }
+
+  function _iwBackToUpload() {
+    IW.state.stage = "upload";
+    _iwRenderStage();
+  }
+
+  function _iwRenderStructureStage() {
+    var s = IW.state.structure;
+    if (!s) return;
+
+    if (s.ok) {
+      // البنية سليمة — كمّل تلقائياً لمرحلة التحقق التفصيلي
+      document.getElementById("iw-body").innerHTML =
+        '<div style="text-align:center;padding:20px;color:var(--success)"><i class="ti ti-circle-check" style="font-size:32px"></i>' +
+        '<div style="margin-top:8px;font-weight:700">بنية الملف متوافقة مع النظام </div></div>';
+      _iwSetActions("");
+      setTimeout(_iwRunRowValidation, 400);
+      return;
+    }
+
+    var html = "";
+    if (s.missingRequired.length) {
+      html +=
+        '<div style="background:var(--danger-soft);border-radius:10px;padding:14px 16px;margin-bottom:14px">' +
+        '<b style="color:var(--danger)"> أعمدة إلزامية ناقصة:</b>' +
+        '<ul style="margin:8px 0 0;padding-right:18px;font-size:13px;line-height:2">' +
+        s.missingRequired
+          .map(function (m) {
+            return (
+              "<li><b>" + esc(m.label) + "</b> — " + esc(m.suggestion) + "</li>"
+            );
+          })
+          .join("") +
+        "</ul></div>";
+    }
+    if (s.duplicateColumns.length) {
+      html +=
+        '<div style="background:var(--warning-soft);border-radius:10px;padding:14px 16px;margin-bottom:14px">' +
+        '<b style="color:var(--warning)"> أعمدة مكررة في الملف:</b> ' +
+        s.duplicateColumns.map(esc).join("، ") +
+        '<div style="font-size:12px;color:var(--text3);margin-top:4px">احذف الأعمدة الزائدة أو أعد تسميتها قبل المتابعة</div>' +
+        "</div>";
+    }
+    if (s.unknownColumns.length) {
+      html +=
+        '<div style="background:var(--accent-soft);border-radius:10px;padding:14px 16px;margin-bottom:14px">' +
+        "<b>ℹ️ أعمدة غير معروفة (سيتم تجاهلها):</b> " +
+        s.unknownColumns.map(esc).join("، ") +
+        "</div>";
+    }
+
+    document.getElementById("iw-body").innerHTML = html;
+
+    var canProceedAnyway = s.missingRequired.length === 0;
+    _iwSetActions(
+      '<button onclick="_iwBackToUpload()" class="btn btn-secondary">رجوع لاختيار ملف آخر</button>' +
+        (canProceedAnyway
+          ? '<button onclick="_iwRunRowValidation()" class="btn btn-primary">تجاهل والمتابعة ←</button>'
+          : ""),
+    );
+  }
+
+  // ============================================================
+  //  المرحلة ٣: التحقق التفصيلي لكل صف (Row Validation)
+  // ============================================================
+  function _iwRunRowValidation() {
+    IW.state.stage = "review";
+    IW.state.startedAt = Date.now();
+    _iwRenderStepper();
+    document.getElementById("iw-body").innerHTML =
+      '<div style="text-align:center;padding:30px"><div class="spinner"></div><div style="font-size:13px;color:var(--text2);margin-top:10px">جاري فحص ' +
+      IW.state.rawRows.length +
+      " صف والتحقق من صحة البيانات...</div></div>";
+    _iwSetActions("");
+
+    _gsr(
+      "validateImportRows",
+      [
+        IW.state.entityType,
+        IW.state.rawRows,
+        APP.currentUser.username,
+        SESSION.token,
+      ],
+      {
+        timeout: 60000,
+        label: "تحقق الصفوف",
+        onSuccess: function (res) {
+          IW.state.results = res.data.results;
+          IW.state.summary = res.data.summary;
+          IW.state.excluded = {};
+          // الصفوف اللي فيها خطأ (error) أو فاضية تُستبعد افتراضياً من الاستيراد
+          IW.state.results.forEach(function (r) {
+            if (r.status === "error" || r.status === "empty")
+              IW.state.excluded[r.rowNum] = true;
+          });
+          IW.state.activeTab = "preview";
+          _iwRenderReviewStage();
+        },
+        onError: function (res) {
+          document.getElementById("iw-body").innerHTML =
+            '<div style="color:var(--danger);padding:16px"> ' +
+            esc(res.message) +
+            "</div>";
+          _iwSetActions(
+            '<button onclick="_iwBackToUpload()" class="btn btn-secondary">رجوع</button>',
+          );
+        },
+      },
+    );
+  }
+
+  // ============================================================
+  //  المرحلة ٤: المراجعة (معاينة ملونة + جدول أخطاء + ملخص)
+  // ============================================================
+  function _iwComputeCounts() {
+    var results = IW.state.results;
+    var counts = {
+      total: 0,
+      toImport: 0,
+      excluded: 0,
+      valid: 0,
+      corrected: 0,
+      warning: 0,
+      error: 0,
+    };
+    results.forEach(function (r) {
+      if (r.status === "empty") return;
+      counts.total++;
+      if (r.status === "valid") counts.valid++;
+      if (r.status === "corrected") counts.corrected++;
+      if (r.status === "warning") counts.warning++;
+      if (r.status === "error") counts.error++;
+      if (IW.state.excluded[r.rowNum]) counts.excluded++;
+      else counts.toImport++;
+    });
+    return counts;
+  }
+
+  function _iwRenderReviewStage() {
+    var counts = _iwComputeCounts();
+    var tab = IW.state.activeTab || "preview";
+
+    var tabsHtml =
+      '<div style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--border)">' +
+      _iwTabBtn("preview", " المعاينة", tab) +
+      _iwTabBtn(
+        "errors",
+        " الأخطاء والتحذيرات (" + (counts.warning + counts.error) + ")",
+        tab,
+      ) +
+      _iwTabBtn("summary", " الملخص", tab) +
+      "</div>";
+
+    var body = tabsHtml;
+    if (tab === "preview") body += _iwRenderPreviewTable();
+    else if (tab === "errors") body += _iwRenderErrorsTable();
+    else body += _iwRenderSummaryPanel(counts);
+
+    // [DOC-ENGINE-IMPORT] خيار Opt-in — رفع فعلي على Drive لصور الأصناف
+    // (عمود "رابط الصورة") بدل الاحتفاظ بالرابط الخارجي كما هو. مطفي
+    // افتراضيًا لأنه بيضيف طلب شبكة خارجي لكل صورة أثناء الحفظ.
+    if (IW.state.entityType === "item") {
+      body +=
+        '<label style="display:flex;align-items:center;gap:8px;margin-top:14px;padding:10px 12px;background:var(--bg2);border-radius:8px;font-size:13px;cursor:pointer">' +
+        '<input type="checkbox" id="iw-rehost-images"' +
+        (IW.state.rehostImages ? " checked" : "") +
+        ">" +
+        "<span>ارفع صور الأصناف فعليًا على Google Drive بدل الاحتفاظ بالرابط الخارجي فقط " +
+        '<span style="color:var(--text3)">(أبطأ قليلاً — لو فشل رفع صورة معينة هيتم الاحتفاظ بالرابط الأصلي تلقائيًا)</span></span>' +
+        "</label>";
+
+      // [PHASE-3-IMPORT] الضغط بقى تلقائي دايمًا طالما "رفع فعليًا" مفعّل —
+      // مفيش checkbox منفصل للمستخدم. يحتاج TINYPNG_API_KEY في Script
+      // Properties وإلا هيرجع تلقائيًا للرفع بدون ضغط (تحذير في اللوج).
+      IW.state.compressImages = true;
+    }
+
+    document.getElementById("iw-body").innerHTML = body;
+
+    var rehostCb = document.getElementById("iw-rehost-images");
+    if (rehostCb) {
+      rehostCb.addEventListener("change", function () {
+        IW.state.rehostImages = rehostCb.checked;
+        _iwRenderReviewStage();
+      });
+    }
+
+    var canCommit = counts.toImport > 0;
+    _iwSetActions(
+      '<button onclick="_iwBackToUpload()" class="btn btn-secondary">رجوع لاختيار ملف آخر</button>' +
+        '<div style="flex:1"></div>' +
+        '<span style="align-self:center;font-size:13px;color:var(--text2);margin-left:8px">سيتم استيراد <b style="color:var(--accent)">' +
+        counts.toImport +
+        "</b> من أصل " +
+        counts.total +
+        " صف</span>" +
+        '<button onclick="_iwStartCommit()" class="btn btn-primary"' +
+        (canCommit ? "" : " disabled") +
+        "> بدء الاستيراد الفعلي</button>",
+    );
+  }
+
+  function _iwTabBtn(key, label, active) {
+    return (
+      "<button onclick=\"_iwSwitchTab('" +
+      key +
+      '\')" style="padding:8px 14px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:700;border-bottom:3px solid ' +
+      (active === key ? "var(--accent)" : "transparent") +
+      ";color:" +
+      (active === key ? "var(--accent)" : "var(--text2)") +
+      '">' +
+      label +
+      "</button>"
+    );
+  }
+
+  function _iwSwitchTab(key) {
+    IW.state.activeTab = key;
+    _iwRenderReviewStage();
+  }
+
+  // ── تبويب المعاينة: جدول ملوّن حسب الحالة، قابل للتعديل، مع تضمين/استبعاد ──
+  function _iwRenderPreviewTable() {
+    var ui = IW.state.ui;
+    var cols = ui.previewColumns;
+    var rows = IW.state.results.filter(function (r) {
+      return r.status !== "empty";
+    });
+
+    var rowsHtml = rows
+      .map(function (r) {
+        var bg =
+          r.status === "error"
+            ? "var(--danger-soft)"
+            : r.status === "warning"
+              ? "var(--warning-soft)"
+              : r.status === "corrected"
+                ? "var(--accent-soft)"
+                : "var(--success-soft)";
+        var included = !IW.state.excluded[r.rowNum];
+        var cells = cols
+          .map(function (c) {
+            var val = r.record[c.key];
+            return (
+              '<td style="padding:5px 8px;border:1px solid var(--border);white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis" ' +
+              'contenteditable="true" data-rownum="' +
+              r.rowNum +
+              '" data-field="' +
+              c.key +
+              '" onblur="_iwCellEdited(this)" title="اضغط للتعديل">' +
+              esc(val === undefined || val === null ? "" : String(val)) +
+              "</td>"
+            );
+          })
+          .join("");
+        return (
+          '<tr style="background:' +
+          bg +
+          '">' +
+          '<td style="padding:5px 8px;border:1px solid var(--border);text-align:center">' +
+          '<input type="checkbox" ' +
+          (included ? "checked" : "") +
+          ' onchange="_iwToggleRow(' +
+          r.rowNum +
+          ')"></td>' +
+          '<td style="padding:5px 8px;border:1px solid var(--border);text-align:center;font-size:11px;color:var(--text3)">' +
+          r.rowNum +
+          "</td>" +
+          '<td style="padding:5px 8px;border:1px solid var(--border);text-align:center">' +
+          _iwStatusBadge(r.status) +
+          "</td>" +
+          cells +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div style="font-size:12px;color:var(--text3);margin-bottom:8px"> اضغط على أي خلية للتعديل مباشرة — الصفوف الحمراء بها أخطاء تمنع الاستيراد حتى تُصحَّح</div>' +
+      '<div style="overflow:auto;max-height:420px;border:1px solid var(--border);border-radius:8px">' +
+      '<table style="border-collapse:collapse;width:100%;font-size:12px">' +
+      '<thead style="position:sticky;top:0;z-index:1"><tr style="background:var(--accent);color:#fff">' +
+      '<th style="padding:6px 8px">تضمين</th><th style="padding:6px 8px">صف</th><th style="padding:6px 8px">الحالة</th>' +
+      cols
+        .map(function (c) {
+          return (
+            '<th style="padding:6px 8px;white-space:nowrap">' +
+            esc(c.label) +
+            "</th>"
+          );
+        })
+        .join("") +
+      "</tr></thead><tbody>" +
+      rowsHtml +
+      "</tbody></table></div>"
+    );
+  }
+
+  function _iwStatusBadge(status) {
+    var map = {
+      valid: [" صحيح", "var(--success)"],
+      corrected: [" تم تصحيحه", "var(--accent)"],
+      warning: [" تحذير", "var(--warning)"],
+      error: [" خطأ", "var(--danger)"],
+    };
+    var m = map[status] || ["-", "var(--text3)"];
+    return (
+      '<span style="color:' +
+      m[1] +
+      ';font-weight:700;font-size:11px">' +
+      m[0] +
+      "</span>"
+    );
+  }
+
+  function _iwToggleRow(rowNum) {
+    if (IW.state.excluded[rowNum]) delete IW.state.excluded[rowNum];
+    else IW.state.excluded[rowNum] = true;
+    _iwRenderReviewStage();
+  }
+
+  function _iwCellEdited(td) {
+    var rowNum = Number(td.getAttribute("data-rownum"));
+    var field = td.getAttribute("data-field");
+    var newVal = td.textContent.trim();
+    var row = IW.state.results.filter(function (r) {
+      return r.rowNum === rowNum;
+    })[0];
+    if (!row) return;
+    row.record[field] = newVal;
+    row._manuallyEdited = true;
+  }
+
+  // إعادة فحص صف واحد بعد تعديله يدوياً (يستدعي نفس محرك التحقق بالباك إند
+  // — بدون تكرار أي منطق تحقق في الفرونت إند، حفاظاً على المركزية)
+  function _iwRevalidateRow(rowNum) {
+    var row = IW.state.results.filter(function (r) {
+      return r.rowNum === rowNum;
+    })[0];
+    if (!row) return;
+    // نبني صفاً خاماً بنفس عناوين الملف الأصلية من القيم المعدّلة الحالية
+    var rebuilt = {};
+    IW.state.ui.previewColumns.forEach(function (c) {
+      rebuilt[c.label] = row.record[c.key];
+    });
+    NotificationEngine.loading("⏳ جاري إعادة فحص الصف " + rowNum + "...");
+    _gsr(
+      "validateImportRows",
+      [IW.state.entityType, [rebuilt], APP.currentUser.username, SESSION.token],
+      {
+        onSuccess: function (res) {
+          var fresh = res.data.results[0];
+          fresh.rowNum = rowNum;
+          var idx = IW.state.results.indexOf(row);
+          IW.state.results[idx] = fresh;
+          if (fresh.status === "error") IW.state.excluded[rowNum] = true;
+          else delete IW.state.excluded[rowNum];
+          finishLoadingToast(" تم تحديث نتيجة الفحص للصف " + rowNum, "success");
+          _iwRenderReviewStage();
+        },
+        onError: function (res) {
+          finishLoadingToast(" " + res.message, "error");
+        },
+      },
+    );
+  }
+
+  function _iwApplySuggestion(rowNum, field, suggestedValue) {
+    var row = IW.state.results.filter(function (r) {
+      return r.rowNum === rowNum;
+    })[0];
+    if (!row) return;
+    row.record[field] = suggestedValue;
+    _iwRevalidateRow(rowNum);
+  }
+
+  function _iwExcludeRowFromErrorTab(rowNum) {
+    IW.state.excluded[rowNum] = true;
+    _iwRenderReviewStage();
+  }
+
+  // ── تبويب جدول الأخطاء والتحذيرات ──
+  function _iwRenderErrorsTable() {
+    var issueRows = [];
+    IW.state.results.forEach(function (r) {
+      if (!r.issues || !r.issues.length) return;
+      r.issues.forEach(function (issue) {
+        issueRows.push({
+          rowNum: r.rowNum,
+          status: r.status,
+          issue: issue,
+          record: r.record,
+        });
+      });
+    });
+
+    if (!issueRows.length) {
+      return '<div style="text-align:center;padding:30px;color:var(--success)"><i class="ti ti-circle-check" style="font-size:32px"></i><div style="margin-top:8px">لا توجد أخطاء أو تحذيرات </div></div>';
+    }
+
+    var rowsHtml = issueRows
+      .map(function (x) {
+        var sevColor =
+          x.issue.severity === "error" ? "var(--danger)" : "var(--warning)";
+        var sevLabel =
+          x.issue.severity === "error" ? "خطأ يمنع الاستيراد" : "تحذير";
+        var currentVal = x.record[x.issue.field];
+        return (
+          "<tr>" +
+          '<td style="padding:6px 8px;border:1px solid var(--border);text-align:center">' +
+          x.rowNum +
+          "</td>" +
+          '<td style="padding:6px 8px;border:1px solid var(--border)">' +
+          esc(x.issue.label || x.issue.field) +
+          "</td>" +
+          '<td style="padding:6px 8px;border:1px solid var(--border);max-width:140px;overflow:hidden;text-overflow:ellipsis">' +
+          esc(
+            String(
+              currentVal === undefined || currentVal === null ? "" : currentVal,
+            ),
+          ) +
+          "</td>" +
+          '<td style="padding:6px 8px;border:1px solid var(--border)">' +
+          esc(x.issue.reason) +
+          "</td>" +
+          '<td style="padding:6px 8px;border:1px solid var(--border);color:var(--accent)">' +
+          esc(x.issue.suggestion || "-") +
+          "</td>" +
+          '<td style="padding:6px 8px;border:1px solid var(--border);text-align:center"><span style="color:' +
+          sevColor +
+          ';font-weight:700;font-size:11px">' +
+          sevLabel +
+          "</span></td>" +
+          '<td style="padding:6px 8px;border:1px solid var(--border);text-align:center">' +
+          (IW.state.excluded[x.rowNum] ? "مستبعد" : "سيُستورد") +
+          "</td>" +
+          '<td style="padding:6px 8px;border:1px solid var(--border);white-space:nowrap">' +
+          (x.issue.suggestedValue
+            ? '<button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="_iwApplySuggestion(' +
+              x.rowNum +
+              ",'" +
+              x.issue.field +
+              "','" +
+              esc(x.issue.suggestedValue).replace(/'/g, "\\'") +
+              "')\">قبول الاقتراح</button> "
+            : "") +
+          '<button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="_iwSwitchTab(\'preview\')">تعديل يدوي</button> ' +
+          '<button class="btn btn-danger" style="font-size:11px;padding:3px 8px" onclick="_iwExcludeRowFromErrorTab(' +
+          x.rowNum +
+          ')">استبعاد الصف</button>' +
+          "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div style="overflow:auto;max-height:420px;border:1px solid var(--border);border-radius:8px">' +
+      '<table style="border-collapse:collapse;width:100%;font-size:12px">' +
+      '<thead style="position:sticky;top:0"><tr style="background:var(--accent);color:#fff">' +
+      "<th style='padding:6px 8px'>صف</th><th style='padding:6px 8px'>العمود</th><th style='padding:6px 8px'>القيمة الحالية</th>" +
+      "<th style='padding:6px 8px'>سبب الخطأ</th><th style='padding:6px 8px'>التصحيح المقترح</th>" +
+      "<th style='padding:6px 8px'>الخطورة</th><th style='padding:6px 8px'>الحالة</th><th style='padding:6px 8px'>إجراءات</th>" +
+      "</tr></thead><tbody>" +
+      rowsHtml +
+      "</tbody></table></div>"
+    );
+  }
+
+  // ── تبويب الملخص ──
+  function _iwRenderSummaryPanel(counts) {
+    return (
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px">' +
+      _iwSummaryCard("إجمالي السجلات", counts.total, "var(--text)") +
+      _iwSummaryCard("سجلات صحيحة", counts.valid, "var(--success)") +
+      _iwSummaryCard("سجلات تم تصحيحها", counts.corrected, "var(--accent)") +
+      _iwSummaryCard("سجلات بها تحذير", counts.warning, "var(--warning)") +
+      _iwSummaryCard("سجلات بها أخطاء", counts.error, "var(--danger)") +
+      _iwSummaryCard("سيتم استيرادها", counts.toImport, "var(--accent)") +
+      _iwSummaryCard("مستبعدة من الاستيراد", counts.excluded, "var(--text3)") +
+      "</div>"
+    );
+  }
+
+  function _iwSummaryCard(label, val, color) {
+    return (
+      '<div style="background:var(--surface2);border-radius:12px;padding:16px;text-align:center">' +
+      '<div style="font-size:26px;font-weight:800;color:' +
+      color +
+      '">' +
+      val +
+      "</div>" +
+      '<div style="font-size:12px;color:var(--text3);margin-top:4px">' +
+      esc(label) +
+      "</div></div>"
+    );
+  }
+
+  // ============================================================
+  //  المرحلة ٥: الاستيراد الفعلي (Batch Commit + Progress Bar)
+  // ============================================================
+  var IMP_WIZ_BATCH_SIZE = 200;
+
+  function _iwStartCommit() {
+    IW.state.stage = "commit";
+    var toImport = IW.state.results.filter(function (r) {
+      return r.status !== "empty" && !IW.state.excluded[r.rowNum];
+    });
+
+    var batches = [];
+    for (var i = 0; i < toImport.length; i += IMP_WIZ_BATCH_SIZE) {
+      batches.push(toImport.slice(i, i + IMP_WIZ_BATCH_SIZE));
+    }
+
+    IW.state.commitStats = { imported: 0, rejected: 0, rejectedDetails: [] };
+    _iwRenderCommitStage();
+    _iwRunBatches(batches, 0, toImport.length);
+  }
+
+  function _iwRenderCommitStage() {
+    document.getElementById("iw-body").innerHTML =
+      '<div style="padding:10px 4px">' +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:8px">' +
+      '<strong id="iw-progress-label">جارٍ التحضير...</strong>' +
+      '<span id="iw-progress-pct">0%</span>' +
+      "</div>" +
+      '<div class="progress-bar"><div class="progress-fill" id="iw-progress-fill" style="width:0%;background:var(--accent)"></div></div>' +
+      '<div id="iw-progress-eta" style="font-size:12px;color:var(--text3);margin-top:6px"></div>' +
+      '<div id="iw-progress-log" style="margin-top:14px;font-size:12px;color:var(--text2);max-height:220px;overflow:auto"></div>' +
+      "</div>";
+    _iwSetActions("");
+  }
+
+  function _iwRunBatches(batches, index, totalRows) {
+    if (index >= batches.length) {
+      _iwFinishCommit(totalRows);
+      return;
+    }
+    var batch = batches[index];
+    var records = batch.map(function (r) {
+      var rec = Object.assign({}, r.record);
+      rec._rowNum = r.rowNum;
+      return rec;
+    });
+
+    var pctBefore = Math.round((index / batches.length) * 100);
+    _iwUpdateProgress(
+      pctBefore,
+      "جاري حفظ الدفعة " + (index + 1) + " من " + batches.length + "...",
+    );
+
+    _gsr(
+      "commitImportBatch",
+      [
+        IW.state.entityType,
+        records,
+        APP.currentUser.username,
+        SESSION.token,
+        {
+          rehostImages: !!IW.state.rehostImages,
+          compressImages: !!IW.state.rehostImages && !!IW.state.compressImages,
+        },
+      ],
+      {
+        timeout: 45000,
+        label: "استيراد دفعة",
+        onSuccess: function (res) {
+          IW.state.commitStats.imported += res.data.accepted || 0;
+          IW.state.commitStats.rejected += res.data.rejected || 0;
+          IW.state.commitStats.rejectedDetails =
+            IW.state.commitStats.rejectedDetails.concat(
+              res.data.rejectedDetails || [],
+            );
+          IW.state.commitStats.imageWarnings = (
+            IW.state.commitStats.imageWarnings || []
+          ).concat(res.data.imageRehostWarnings || []);
+          _iwLogProgress(
+            " دفعة " +
+              (index + 1) +
+              ": تم استيراد " +
+              (res.data.accepted || 0) +
+              " سجل" +
+              (res.data.rejected ? " — رُفض " + res.data.rejected : ""),
+          );
+          (res.data.imageRehostWarnings || []).forEach(function (w) {
+            _iwLogProgress(
+              " صف " + w.rowNum + ": " + w.reason,
+              true,
+            );
+          });
+          _iwRunBatches(batches, index + 1, totalRows);
+        },
+        onError: function (res) {
+          _iwLogProgress(
+            " فشلت الدفعة " + (index + 1) + ": " + res.message,
+            true,
+          );
+          IW.state.commitStats.rejected += batch.length;
+          _iwRunBatches(batches, index + 1, totalRows);
+        },
+      },
+    );
+  }
+
+  function _iwUpdateProgress(pct, label) {
+    var fill = document.getElementById("iw-progress-fill");
+    var pctEl = document.getElementById("iw-progress-pct");
+    var lbl = document.getElementById("iw-progress-label");
+    if (fill) fill.style.width = pct + "%";
+    if (pctEl) pctEl.textContent = pct + "%";
+    if (lbl && label) lbl.textContent = label;
+  }
+
+  function _iwLogProgress(msg, isError) {
+    var log = document.getElementById("iw-progress-log");
+    if (!log) return;
+    var line = document.createElement("div");
+    line.style.padding = "2px 0";
+    line.style.color = isError ? "var(--danger)" : "inherit";
+    line.textContent = msg;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function _iwFinishCommit(totalRows) {
+    _iwUpdateProgress(100, "اكتمل الاستيراد ");
+    var counts = _iwComputeCounts();
+    var durationMs = Date.now() - IW.state.startedAt;
+
+    var stats = {
+      total: counts.total,
+      validRows: counts.valid,
+      correctedRows: counts.corrected,
+      warningRows: counts.warning,
+      errorRows: counts.error,
+      imported: IW.state.commitStats.imported,
+      excludedRows: counts.excluded,
+    };
+
+    _gsr(
+      "logImportOperation",
+      [
+        IW.state.entityType,
+        stats,
+        APP.currentUser.username,
+        SESSION.token,
+        {
+          fileName: IW.state.fileInfo ? IW.state.fileInfo.name : "",
+          startedAt: IW.state.startedAt,
+          durationMs: durationMs,
+          details: { rejectedDetails: IW.state.commitStats.rejectedDetails },
+        },
+      ],
+      {
+        onSuccess: function () {
+          IW.state.stage = "report";
+          IW.state.durationMs = durationMs;
+          _iwRenderStage();
+        },
+        onError: function () {
+          // حتى لو فشل تسجيل اللوج، الاستيراد نفسه نجح — كمّل للتقرير
+          IW.state.stage = "report";
+          IW.state.durationMs = durationMs;
+          _iwRenderStage();
+        },
+      },
+    );
+  }
+
+  // ============================================================
+  //  المرحلة ٦: التقرير النهائي
+  // ============================================================
+  function _iwRenderReportStage() {
+    var stats = IW.state.commitStats;
+    var counts = _iwComputeCounts();
+    var seconds = ((IW.state.durationMs || 0) / 1000).toFixed(1);
+
+    var rejectedHtml = "";
+    if (stats.rejectedDetails.length) {
+      rejectedHtml =
+        '<div style="margin-top:14px"><b style="font-size:13px">أسباب استبعاد السجلات المرفوضة أثناء الحفظ:</b>' +
+        '<ul style="margin:8px 0 0;padding-right:18px;font-size:12px;color:var(--text2);max-height:140px;overflow:auto">' +
+        stats.rejectedDetails
+          .map(function (d) {
+            return "<li>صف " + d.rowNum + ": " + esc(d.reason) + "</li>";
+          })
+          .join("") +
+        "</ul></div>";
+    }
+
+    document.getElementById("iw-body").innerHTML =
+      '<div id="iw-report-content">' +
+      '<div style="text-align:center;padding:10px 0 20px">' +
+      '<i class="ti ti-circle-check" style="font-size:44px;color:var(--success)"></i>' +
+      '<div style="font-size:18px;font-weight:800;margin-top:6px">تم استيراد ' +
+      stats.imported +
+      " " +
+      IW.state.ui.label +
+      "</div></div>" +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px">' +
+      _iwSummaryCard("إجمالي السجلات بالملف", counts.total, "var(--text)") +
+      _iwSummaryCard("تم استيرادها", stats.imported, "var(--success)") +
+      _iwSummaryCard("تم تصحيحها تلقائياً", counts.corrected, "var(--accent)") +
+      _iwSummaryCard(
+        "مرفوضة/مستبعدة",
+        counts.total - stats.imported,
+        "var(--danger)",
+      ) +
+      _iwSummaryCard("مدة العملية", seconds + " ث", "var(--text)") +
+      "</div>" +
+      '<div style="margin-top:14px;font-size:12px;color:var(--text3)">' +
+      "بواسطة: " +
+      esc(APP.currentUser.full_name || APP.currentUser.username) +
+      " | الملف: " +
+      esc(IW.state.fileInfo ? IW.state.fileInfo.name : "") +
+      " | التاريخ: " +
+      esc(fmtDateTime(new Date())) +
+      "</div>" +
+      rejectedHtml +
+      "</div>";
+
+    _iwSetActions(
+      '<button onclick="_iwPrintReport()" class="btn btn-secondary"> طباعة / PDF</button>' +
+        '<button onclick="_iwExportReportExcel()" class="btn btn-secondary"> تصدير Excel</button>' +
+        '<button onclick="closeImportWizard();' +
+        (IW.state.ui.afterImport ? "IW_AFTER_IMPORT_CB();" : "") +
+        '" class="btn btn-primary">تم </button>',
+    );
+
+    // نخزن الكولباك في متغيّر عام مؤقت عشان زرار "تم" يقدر ينفذه (تفادي مشاكل onclick مع closures)
+    window.IW_AFTER_IMPORT_CB = IW.state.ui.afterImport || function () {};
+  }
+
+  function _iwPrintReport() {
+    var content = document.getElementById("iw-report-content");
+    if (!content) return;
+    var w = window.open("", "_blank", "width=800,height=600");
+    w.document.write(
+      "<html><head><title>تقرير الاستيراد</title><style>" +
+        "body{font-family:Tahoma,Arial;direction:rtl;padding:24px}" +
+        "*{box-sizing:border-box}</style></head><body>" +
+        content.innerHTML +
+        "</body></html>",
+    );
+    w.document.close();
+    setTimeout(function () {
+      w.print();
+    }, 300);
+  }
+
+  function _iwExportReportExcel() {
+    var stats = IW.state.commitStats;
+    var counts = _iwComputeCounts();
+    _loadSheetJS(function () {
+      var summaryRows = [
+        ["البند", "القيمة"],
+        ["إجمالي السجلات بالملف", counts.total],
+        ["تم استيرادها", stats.imported],
+        ["تم تصحيحها تلقائياً", counts.corrected],
+        ["مرفوضة/مستبعدة", counts.total - stats.imported],
+        ["الملف", IW.state.fileInfo ? IW.state.fileInfo.name : ""],
+        ["المستخدم", APP.currentUser.full_name || APP.currentUser.username],
+        ["التاريخ", fmtDateTime(new Date())],
+      ];
+      var wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, wsSummary, "الملخص");
+
+      if (stats.rejectedDetails.length) {
+        var rejRows = [["الصف", "سبب الرفض"]].concat(
+          stats.rejectedDetails.map(function (d) {
+            return [d.rowNum, d.reason];
+          }),
+        );
+        var wsRej = XLSX.utils.aoa_to_sheet(rejRows);
+        XLSX.utils.book_append_sheet(wb, wsRej, "السجلات المرفوضة");
+      }
+
+      XLSX.writeFile(
+        wb,
+        "تقرير_استيراد_" + IW.state.ui.label + "_" + Date.now() + ".xlsx",
+      );
+    });
+  }
+
+  // ============================================================
+  //  سجل عمليات الاستيراد (Import Log) — شاشة عرض بسيطة
+  // ============================================================
+  function renderImportWizardLog() {
+    return (
+      '<div class="page-header"><div><h1 style="display:flex;align-items:center;gap:10px">' +
+      iconBadge("ti-history", "var(--accent-soft)", "var(--accent)") +
+      "<span>سجل عمليات الاستيراد</span></h1><p>آخر عمليات استيراد البيانات من إكسيل في النظام</p></div></div>" +
+      '<div class="card" id="import-wizard-log-container" style="padding:0;overflow:hidden">' +
+      _loadingBlock() +
+      "</div>"
+    );
+  }
+
+  function bindImportWizardLog() {
+    _gsr("getImportLogs", [APP.currentUser.username, SESSION.token, 100], {
+      onSuccess: function (res) {
+        var rows = res.data || [];
+        var container = document.getElementById("import-wizard-log-container");
+        if (!container) return;
+        if (!rows.length) {
+          container.innerHTML =
+            '<div style="padding:24px;text-align:center;color:var(--text2)">لا توجد عمليات استيراد مسجّلة بعد</div>';
+          return;
+        }
+        var statusColor = {
+          SUCCESS: "var(--success)",
+          PARTIAL: "var(--warning)",
+          FAILED: "var(--danger)",
+        };
+        container.innerHTML =
+          '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:13px">' +
+          '<thead><tr style="background:var(--surface2)">' +
+          "<th style='padding:8px'>التاريخ</th><th style='padding:8px'>الكيان</th><th style='padding:8px'>الملف</th>" +
+          "<th style='padding:8px'>المستخدم</th><th style='padding:8px'>الإجمالي</th><th style='padding:8px'>تم استيرادها</th>" +
+          "<th style='padding:8px'>أخطاء</th><th style='padding:8px'>الحالة</th></tr></thead><tbody>" +
+          rows
+            .map(function (r) {
+              return (
+                "<tr>" +
+                "<td style='padding:6px 8px;border-top:1px solid var(--border)'>" +
+                esc(r.finished_at) +
+                "</td>" +
+                "<td style='padding:6px 8px;border-top:1px solid var(--border)'>" +
+                esc(r.entity_label) +
+                "</td>" +
+                "<td style='padding:6px 8px;border-top:1px solid var(--border)'>" +
+                esc(r.file_name) +
+                "</td>" +
+                "<td style='padding:6px 8px;border-top:1px solid var(--border)'>" +
+                esc(r.user) +
+                "</td>" +
+                "<td style='padding:6px 8px;border-top:1px solid var(--border);text-align:center'>" +
+                r.total_rows +
+                "</td>" +
+                "<td style='padding:6px 8px;border-top:1px solid var(--border);text-align:center;color:var(--success)'>" +
+                r.imported_rows +
+                "</td>" +
+                "<td style='padding:6px 8px;border-top:1px solid var(--border);text-align:center;color:var(--danger)'>" +
+                r.error_rows +
+                "</td>" +
+                "<td style='padding:6px 8px;border-top:1px solid var(--border);text-align:center'><span style='color:" +
+                (statusColor[r.status] || "var(--text)") +
+                ";font-weight:700'>" +
+                esc(r.status) +
+                "</span></td>" +
+                "</tr>"
+              );
+            })
+            .join("") +
+          "</tbody></table></div>";
+      },
+      onError: function (res) {
+        var container = document.getElementById("import-wizard-log-container");
+        if (container)
+          container.innerHTML =
+            '<div style="padding:24px;text-align:center;color:var(--danger)"> ' +
+            esc(res.message) +
+            "</div>";
+      },
+    });
+  }
+</script>

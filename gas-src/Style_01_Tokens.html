@@ -1,0 +1,438 @@
+<style>
+  /* ═══════════════════════════════════════════════════════════════
+   Style_01_Tokens.html — جزء من Style.html الأصلي (تقسيم آلي نصي بحت، 2026-07-04)
+   راجع Architecture Audit 2026-07-03، المرحلة 5 — تقسيم بحسب الحجم
+   لا تقسيم دلالي بحت (الملف الأصلي كان منظّم بالفعل بترقيم أقسام
+   داخلي، فالتقسيم هنا اتبع نفس الترتيب الأصلي حرفيًا بدون أي تغيير
+   أو إعادة ترتيب لتفادي أي كسر في cascade/specificity الخاص بـ CSS).
+   يُحمَّل بالترتيب عبر وسم style في Index.html مع باقي أجزاء Style.
+ 
+   [REFACTOR-P6] القيم الست ألوان الأساسية اللي عمرها ما اتغيّرت بين
+   الوضع الفاتح/الداكن (--primary, --primary-dark, --primary-light,
+   --accent2, --success, --success-dark, --warning, --danger,
+   --danger-dark, --purple, --orange, --teal) — كل قيمة hex مطابقة
+   لها حرفيًا في باقي أجزاء Style اتستبدلت بـ var(--x) المقابل (155
+   استبدال، صفر تغيير في الشكل النهائي لأن القيمة نفسها). اتعمّد
+   تجاهل الألوان الـ"-soft" (زي --accent-soft) لأن لها قيم مختلفة في
+   الوضع الداكن — استبدال الـ hex الثابت بيها كان هيغيّر سلوك فعلي
+   في الوضع الداكن مش بس تنظيف، فسيبتها لقرار منفصل مستقبلي. كذلك
+   اتجاهل #fff/#000 والرمادي العام لعموميتهم وغموض القصد منهم.
+   ═══════════════════════════════════════════════════════════════ */
+  /* ============================================================
+   MOO.ERP — Enterprise Resource Planning
+   Style.html — Global Stylesheet (Canonical Source)
+   ============================================================
+   
+     هذا الملف هو المصدر الوحيد لجميع الـ CSS في المشروع.
+       لا يجب وضع أي CSS في ملفات أخرى (Templates, JavaScript, Index).
+
+   ARCHITECTURE:
+   ┌─ FOUNDATIONS ──────────────────────────────────────┐
+   │  1.  CSS Variables (Design Tokens)                 │
+   │  2.  Reset & Base                                  │
+   │  3.  Scrollbar                                     │
+   │  4.  Animations & Keyframes                        │
+   ├─ LAYOUT ───────────────────────────────────────────┤
+   │  5.  App Shell (Layout)                            │
+   │  6.  Sidebar                                       │
+   │  7.  Top Bar & Global Search                       │
+   │  8.  Notification Bell & Dropdown                  │
+   ├─ COMPONENTS ───────────────────────────────────────┤
+   │  9.  Page Header                                   │
+   │  10. Buttons                                       │
+   │  11. Form Inputs & Controls                        │
+   │  12. Cards & Stat Cards                            │
+   │  13. Tables                                        │
+   │  14. Badges & Pills                                │
+   │  15. Modal & Confirm Dialog                        │
+   │  16. Search Bar                                    │
+   │  17. Toast & Spinner                               │
+   │  18. Empty State & Alerts                          │
+   ├─ DATA VISUALIZATION ───────────────────────────────┤
+   │  19. Charts (Bar, Donut, Sparkline)                │
+   │  20. Tabs & Progress Bar                           │
+   │  21. KPI Ring & Timeline                           │
+   │  22. Stock Status Bars                             │
+   ├─ PAGES ────────────────────────────────────────────┤
+   │  23. Login Page                                    │
+   │  24. Dashboard Welcome                             │
+   │  25. Shortcuts Page (sc2)                          │
+   │  26. Transactions (TX-IN / TX-OUT)                 │
+   │  27. Barcode Printer (bc2 + bc3)                   │
+   │  28. AI Assistant (Embedded + Floating)            │
+   │  29. System Settings                               │
+   │  30. Color Definitions Page (cd / cg2)             │
+   │  31. Notifications Page                            │
+   │  32. Invoice                                       │
+   ├─ UTILITIES ────────────────────────────────────────┤
+   │  33. Grid Utilities                                │
+   │  34. Form Sections & Quick Actions                 │
+   │  35. Item Cells & Warehouse Badges                 │
+   │  36. Action Buttons (Edit/Delete)                  │
+   │  37. Custom Pickers (Item/Color/Warehouse)         │
+   │  38. Catalog (cs-* classes)                        │
+   │  39. Permissions Matrix (pm-*)                     │
+   ├─ ANIMATIONS ───────────────────────────────────────┤
+   │  40. Save Animation System                         │
+   │  41. Refresh Bar                                   │
+   ├─ RESPONSIVE & PRINT ───────────────────────────────┤
+   │  42. Responsive (Tablet → Mobile → XS)             │
+   │  43. Print                                         │
+   └────────────────────────────────────────────────────┘
+   ============================================================ */
+
+  @media (max-width: 768px) {
+    .perm-table-wrap {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .perm-role-header {
+      font-size: 11px;
+      padding: 8px 6px;
+    }
+    .perm-row-pro {
+      font-size: 12px;
+    }
+    .perm-checkbox-custom {
+      width: 20px;
+      height: 20px;
+    }
+  }
+
+  @media (max-width: 540px) {
+    .perm-table-wrap table {
+      min-width: 500px;
+    }
+    .perm-section-header {
+      font-size: 11px;
+    }
+  }
+
+  /* ===== 1. CSS VARIABLES ===== */
+  :root {
+    /* [REFACTOR-P6-B] Palette tokens — قيم Tailwind-standard متكررة (>=3 مرات)
+     كانت hardcoded عبر ملفات Style، مفيش لها أي dark-mode override في أي
+     مكان بالمشروع (تم التحقق آليًا) فتحويلها لمتغيرات صفر تغيير في الشكل
+     النهائي بأي وضع. غير مرتبطة بالـ semantic tokens الأساسية (primary/
+     success/...) عمدًا — دي مجرد تسمية لقيم Tailwind الخام المتكررة. */
+    --palette-blue-300: #93c5fd;
+    --palette-violet-600: #7c3aed;
+    --palette-whatsapp-green: #25d366;
+    --palette-slate-500: #64748b;
+    --palette-emerald-800: #065f46;
+    --palette-red-100: #fee2e2;
+    --palette-amber-800: #92400e;
+    --palette-slate-400: #94a3b8;
+    --palette-green-600: #16a34a;
+    --palette-emerald-100: #d1fae5;
+    --palette-amber-100: #fef3c7;
+    --palette-red-800: #991b1b;
+    --palette-blue-100: #dbeafe;
+    --palette-amber-600: #d97706;
+    --palette-emerald-300: #6ee7b7;
+    --palette-slate-100: #f1f5f9;
+    --palette-red-300: #fca5a5;
+    --palette-red-200: #fecaca;
+    --palette-red-900: #7f1d1d;
+    --palette-sky-900: #0c4a6e;
+    --palette-blue-50: #eff6ff;
+    --palette-red-700: #b91c1c;
+    --palette-violet-700: #6d28d9;
+    --palette-slate-900: #0f172a;
+    --palette-orange-800: #9a3412;
+    --palette-violet-300: #c4b5fd;
+    --palette-violet-800: #5b21b6;
+    --palette-blue-accent: #5b9bff;
+    --palette-slate-50: #f8fafc;
+    --palette-amber-200: #fde68a;
+    --palette-green-800: #166534;
+    --palette-emerald-700: #047857;
+    --palette-blue-200: #bfdbfe;
+    --palette-orange-700: #c2410c;
+    --palette-slate-200: #e2e8f0;
+    --palette-whatsapp-green-dark: #128c7e;
+    --palette-emerald-200: #a7f3d0;
+    --palette-violet-400: #a78bfa;
+    --palette-amber-300: #fcd34d;
+    --palette-green-300: #86efac;
+    --palette-sky-50: #f0f9ff;
+    --palette-violet-900: #4c1d95;
+    --palette-violet-200: #ddd6fe;
+    --palette-sky-200: #bae6fd;
+    --palette-sky-700: #0369a1;
+    --palette-navy-800: #1a2438;
+    --palette-navy-700: #232e45;
+    --palette-indigo-500: #6366f1;
+
+    /* Colors */
+    --bg: #eef2fb;
+    --surface: #ffffff;
+    --surface2: #f4f7fe;
+    --surface3: #eaeefc;
+    --border: #dde4f2;
+
+    /* Text */
+    --text: #0a1120;
+    --text2: #3d4f6a;
+    --text3: #8a9db8;
+
+    /* Brand */
+    --primary: #2563eb;
+    --primary-dark: #1d4ed8;
+    --primary-light: #3b82f6;
+    --accent: #2563eb;
+    --accent-soft: #eff4ff;
+    --accent2: #0ea5e9;
+
+    /* Semantic */
+    --success: #10b981;
+    --success-soft: #ecfdf5;
+    --success-dark: #059669;
+    --warning: #f59e0b;
+    --warning-soft: #fffbeb;
+    --danger: #ef4444;
+    --danger-soft: #fef2f2;
+    --danger-dark: #dc2626;
+
+    /* Extra */
+    --purple: #8b5cf6;
+    --purple-soft: #f5f3ff;
+    --orange: #f97316;
+    --orange-soft: #fff7ed;
+    --teal: #14b8a6;
+    --teal-soft: #f0fdfa;
+
+    /* ═══ Alias Tokens (Phase 2 — إصلاح متغيرات مُستخدَمة بدون تعريف) ═══
+       هذه المتغيرات كانت تُستخدم في الكود (Style.html + ملفات الوحدات)
+       دون أي تعريف فعلي، فكانت القاعدة تُسقَط بالكامل دون أي تأثير
+       مرئي ظاهر دون فحص دقيق. رُبطت هنا بالتوكِن الأصلي المطابق دلاليًا
+       حفاظًا على Single Source of Truth وبدون تعديل القيمة نفسها. */
+    --bg1: var(
+      --surface
+    ); /* لوحات/صفحات واتساب (.wa-center-page وغيرها) — 9 مواضع */
+    --bg2: var(--surface2); /* hover/badge backgrounds — 41 موضع */
+    --bg3: var(--surface3); /* hover أزرار الفلتر بواتساب — 2 موضع */
+    --surface1: var(--surface); /* بطاقات Skeleton Loader — 4 مواضع */
+    --text1: var(--text); /* نص أساسي بمكوّنات متعددة — 85 موضع */
+    --text-muted: var(
+      --text3
+    ); /* نص ثانوي خافت (labels/icons) — متوافق مع fallback الحالي */
+    --hover: var(--surface2); /* متوافق مع نمط hover المعتمد بباقي النظام */
+    --error: var(--danger); /* متوافق مع fallback الحالي var(--error,#ef4444) */
+    --primary-soft: var(
+      --accent-soft
+    ); /* بطاقات/صفوف مُحدَّدة (cs-wh-card, pm-matrix, user-perm-row) — 19 موضع */
+
+    /* Shadows */
+    --shadow-xs: 0 1px 2px rgba(14, 21, 37, 0.05);
+    --shadow-sm:
+      0 1px 3px rgba(14, 21, 37, 0.07), 0 1px 2px rgba(14, 21, 37, 0.05);
+    --shadow:
+      0 4px 16px rgba(14, 21, 37, 0.08), 0 1px 4px rgba(14, 21, 37, 0.04);
+    --shadow-md:
+      0 8px 24px rgba(14, 21, 37, 0.1), 0 2px 8px rgba(14, 21, 37, 0.05);
+    --shadow-lg:
+      0 16px 48px rgba(14, 21, 37, 0.12), 0 4px 16px rgba(14, 21, 37, 0.06);
+    --shadow-xl:
+      0 24px 64px rgba(14, 21, 37, 0.15), 0 8px 24px rgba(14, 21, 37, 0.08);
+
+    /* Border Radius */
+    --radius-xs: 6px;
+    --radius-xs-alt: 8px; /* يغطي استخدامات 8px (50+ موضع) — لا متغيّر مقابل قبل ذلك */
+    --radius-sm: 10px;
+    --radius-md: 12px; /* يغطي استخدامات 12px (37+ موضع) */
+    --radius: 14px;
+    --radius-lg: 20px;
+    --radius-xl: 28px;
+    --radius-pill: 9999px; /* يغطي استخدامات 99px/999px (شارات/أزرار دائرية) */
+    --radius-none: 0;
+
+    /* Layout */
+    --sidebar-w: 300px;
+
+    /* Transitions */
+    --transition: 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* ── [FORM-UNIFY-P1] Form Control Tokens (2026-07-05) ──
+       مصدر واحد لأبعاد وحالات كل حقول الإدخال في المشروع (.input و
+       الأسماء البديلة .form-control/.form-input/.form-select).
+       راجع Style_04_Components.html § FORM CONTROLS. */
+    --input-height: 42px;
+    --input-padding-y: 11px;
+    --input-padding-x: 14px;
+    --input-radius: var(--radius-sm);
+    --input-border-width: 1.5px;
+    --input-font-size: 14.5px;
+    --input-focus-ring: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    --input-focus-ring-dark: 0 0 0 3px rgba(37, 99, 235, 0.22);
+
+    /* Fonts */
+    --font-arabic: "IBM Plex Sans Arabic", sans-serif;
+    --font-mono: "JetBrains Mono", monospace;
+    /* Aliases مستخدمة في الكود الحالي بدون تعريف سابق (إصلاح Phase 2) */
+    --font: var(--font-arabic);
+    --font-main: var(--font-arabic);
+
+    /* ═══ Spacing Scale (Phase 2 — Design Tokens) ═══ */
+    /* كل خطوة = 4px — Single Source of Truth لكل padding/margin بالنظام */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-7: 28px;
+    --space-8: 32px;
+    --space-9: 36px;
+    --space-10: 40px;
+    --space-11: 44px;
+    --space-12: 48px;
+    --space-13: 52px;
+    --space-14: 56px;
+    --space-15: 60px;
+    --space-16: 64px;
+
+    /* ═══ Typography Scale (Phase 2 — Design Tokens) ═══ */
+    /* مبنية على القيم الفعلية الأكثر استخدامًا في المشروع (تحليل Phase 1) */
+    --text-2xs: 10px;
+    --text-xs: 11px;
+    --text-sm: 12px;
+    --text-base: 13px;
+    --text-md: 14px;
+    --text-lg: 16px;
+    --text-xl: 18px;
+    --text-2xl: 20px;
+    --text-3xl: 24px;
+    --text-4xl: 28px;
+    --text-5xl: 32px;
+    --text-6xl: 36px;
+
+    /* ═══ Font Weight Tokens (Phase 2) ═══ */
+    --weight-regular: 400;
+    --weight-medium: 500;
+    --weight-semibold: 600;
+    --weight-bold: 700;
+    --weight-extrabold: 800;
+    --weight-black: 900;
+
+    /* ═══ Line Height Tokens (Phase 2) ═══ */
+    --leading-none: 1;
+    --leading-tight: 1.2;
+    --leading-snug: 1.4;
+    --leading-normal: 1.5;
+    --leading-relaxed: 1.6;
+    --leading-loose: 1.7;
+
+    /* ═══ Unified Component Sizes ═══ */
+    /* Action buttons (edit / delete) */
+    --action-btn-size: 34px;
+    --action-btn-radius: 8px;
+    --action-btn-font: 14px;
+
+    /* Tables */
+    --table-th-padding: 12px 16px;
+    --table-td-padding: 14px 16px;
+    --table-font-size: 15px;
+    --table-th-font-size: 13px;
+
+    /* Pill Colors */
+    --pill-color-text: var(--accent);
+    --pill-color-bg: var(--accent-soft);
+    --pill-color-border: var(--accent);
+
+    /* ── Responsive Variables ── */
+    --topbar-h: 52px;
+    --content-pad: 28px;
+    --modal-pad: 28px;
+    --form-cols: 2;
+  }
+
+  [data-theme="dark"] {
+    --pill-color-text: #ffffff;
+    --pill-color-bg: rgba(37, 99, 235, 0.25);
+    --pill-color-border: rgba(37, 99, 235, 0.5);
+  }
+
+  /* ── Compact Density Mode (User Preferences) ── */
+  [data-density="compact"] .card {
+    padding: 12px !important;
+  }
+  [data-density="compact"] .data-table td,
+  [data-density="compact"] .data-table th {
+    padding: 6px 10px !important;
+    font-size: 11px !important;
+  }
+  [data-density="compact"] .form-group {
+    margin-bottom: 8px !important;
+  }
+  [data-density="compact"] .modal-body {
+    gap: 8px !important;
+  }
+  [data-density="compact"] .page-header {
+    padding-bottom: 12px !important;
+    margin-bottom: 14px !important;
+  }
+  [data-density="compact"] .stat-card {
+    padding: 12px !important;
+  }
+
+  /* ── [إصلاح P2] إخفاء الأرصدة/الأسعار الحساسة (User Preferences) ──
+     أي عنصر عايز يستفيد من تفضيل hide_balances/hide_prices يضيف الكلاس
+     المناسب عليه (sensitive-balance / sensitive-price)، والقيمة تتحوّل
+     تلقائيًا لعلامات ***** بدل الاختفاء الكامل (أفضل لتجربة المستخدم،
+     يوضح إن فيه قيمة مخفية وليست فارغة أو خطأ). */
+  [data-hide-balances] .sensitive-balance {
+    color: transparent !important;
+    position: relative;
+  }
+  [data-hide-balances] .sensitive-balance::after {
+    content: "•••••";
+    position: absolute;
+    inset: 0;
+    color: var(--text3);
+    letter-spacing: 2px;
+  }
+  [data-hide-prices] .sensitive-price {
+    color: transparent !important;
+    position: relative;
+  }
+  [data-hide-prices] .sensitive-price::after {
+    content: "•••••";
+    position: absolute;
+    inset: 0;
+    color: var(--text3);
+    letter-spacing: 2px;
+  }
+
+  [data-theme="dark"] {
+    /* ── Backgrounds: أقل قتامة لراحة العين ── */
+    --bg: #0d1117;
+    --surface: #161b27;
+    --surface2: #1c2333;
+    --surface3: #212d42;
+    --border: #2a3855;
+
+    /* ── Text: تباين مريح بدون وهج ── */
+    --text: #dce6f5;
+    --text2: #8a9dbf;
+    --text3: #4a6080;
+
+    /* ── Soft backgrounds: أكثر وضوحاً في الداكن ── */
+    --accent-soft: #1e3563;
+    --success-soft: #0a3326;
+    --warning-soft: #2e1e04;
+    --danger-soft: #30100f;
+    --purple-soft: #1f1248;
+    --orange-soft: #2e1804;
+    --teal-soft: #03201e;
+
+    /* ── Shadows: أعمق لإبراز العناصر ── */
+    --shadow-xs: 0 1px 3px rgba(0, 0, 0, 0.3);
+    --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+    --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 16px 52px rgba(0, 0, 0, 0.55);
+    --shadow-xl: 0 24px 68px rgba(0, 0, 0, 0.65);
+  }
+</style>

@@ -1,0 +1,687 @@
+<script>
+  // ══════════════════════════════════════════════════════════════════════════
+  // 00b_JS_SaveEngine.html — محرك الحفظ الموحّد لكل شاشات MOO.ERP
+  // ──────────────────────────────────────────────────────────────────────────
+  // الهدف: كل عملية Create / Update / Duplicate / Import / Save Settings
+  //        في أي موديول (مبيعات، مشتريات، مخازن، محاسبة، بنوك، HR، CRM،
+  //        إعدادات، تقارير، مستخدمين، صلاحيات، Dashboard) تمر من هنا فقط.
+  //
+  // لا يوجد أي شاشة لها منطق حفظ خاص بها بعد اليوم — راجع §SE-9 "قواعد المطوّر"
+  // في آخر الملف.
+  //
+  // [DL-UNIFY] هذا المحرك لا يستدعي google.script.run مباشرة إطلاقًا — الاستدعاء
+  // الفعلي يمر عبر _gsr() المُعرَّفة في 00_JS_DataLayer.html (نفس نقطة الدخول
+  // الموحّدة المستخدمة في كل قراءات/كتابات النظام). قبل هذا التوحيد كان عندنا
+  // طبقتين متوازيتين بنفس الفلسفة (SaveEngine لواجهة الحفظ + DataLayer لطلبات
+  // الباك-إند) بدون أي تكامل بينهما — الآن SaveEngine طبقة UI فقط (validation +
+  // spinner + toast + dirty-tracking) فوق _gsr، ومفيش أي منطق retry/timeout
+  // مكرر. يجب تحميل 31_JS_DataLayer.html قبل هذا الملف مباشرة في Index.html.
+  //
+  // المحتوى:
+  //   §SE-1  الثوابت الموحّدة (حالات + نصوص)
+  //   §SE-2  Logger            — تسجيل كل عملية حفظ
+  //   §SE-3  ValidationService — تحقق موحّد + تظليل الحقول
+  //   §SE-4  LoadingService    — طبقة الحفظ الناعمة (Soft Save)
+  //   §SE-5  NotificationService — واجهة موحّدة فوق showToast الموجودة
+  //   §SE-6  SaveButtonController — إدارة حالة الزر (spinner / disable / dirty)
+  //   §SE-7  DirtyTracker      — كشف التغييرات (Dirty State)
+  //   §SE-8  SaveEngine.run()  — المنسّق الرئيسي لكامل الـ workflow (فوق _gsr)
+  //   §SE-9  قواعد المطوّر (لا يجوز كسرها)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+  // §SE-1  SAVE_STATES + رسائل موحّدة — ممنوع اختراع نصوص جديدة في أي شاشة
+  // ─────────────────────────────────────────────────────────────
+  var SAVE_STATES = {
+    IDLE: "idle",
+    VALIDATING: "validating",
+    SAVING: "saving",
+    SUCCESS: "success",
+    FAILED: "failed",
+    RETRY: "retry",
+    CANCELLED: "cancelled",
+    TIMEOUT: "timeout",
+  };
+
+  /** النصوص الموحّدة — يُمنع أي شاشة تكتب "جاري التحديث/المعالجة/الإرسال..." بدلها */
+  var SAVE_MESSAGES = {
+    SAVING: "⏳ جاري الحفظ...",
+    UPDATING: "جار التحديث...", // ← [SOFT-SAVE] مرحلة ما بعد النجاح أثناء تحديث الشاشة/المزامنة
+    SAVED: " تم الحفظ بنجاح",
+    FAILED: " فشل الحفظ",
+    RETRYING: " إعادة المحاولة...",
+    VALIDATION_FAILED: " برجاء مراجعة البيانات المدخلة",
+    CONNECTION_LOST: " انقطع الاتصال بالخادم",
+    TIMEOUT: "⌛ استغرقت العملية وقتاً طويلاً، حاول مرة أخرى",
+    NOTHING_TO_SAVE: "لا يوجد تغييرات لحفظها",
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // §SE-2  Logger — سجل مركزي لكل عمليات الحفظ في النظام
+  // يُخزَّن في الذاكرة (آخر 200 عملية) + console، ويمكن ربطه بالـ backend
+  // لاحقاً عبر SaveEngineConfig.remoteLog
+  // ─────────────────────────────────────────────────────────────
+  var SaveLogger = (function () {
+    var _buffer = [];
+    var MAX = 200;
+
+    function _push(entry) {
+      _buffer.push(entry);
+      if (_buffer.length > MAX) _buffer.shift();
+      var tag = "[SaveEngine:" + entry.phase + "]";
+      if (entry.phase === "error") console.error(tag, entry);
+      else console.log(tag, entry);
+    }
+
+    return {
+      start: function (ctx) {
+        ctx._startedAt = Date.now();
+        _push({
+          phase: "start",
+          entity: ctx.entity,
+          screen: ctx.screen,
+          recordId: ctx.recordId || null,
+          user: (typeof SESSION !== "undefined" && SESSION.user) || null,
+          at: new Date().toISOString(),
+        });
+      },
+      end: function (ctx, success, message) {
+        var duration = Date.now() - (ctx._startedAt || Date.now());
+        _push({
+          phase: success ? "end" : "error",
+          entity: ctx.entity,
+          screen: ctx.screen,
+          recordId: ctx.recordId || null,
+          success: success,
+          message: message || "",
+          durationMs: duration,
+          retries: ctx._retries || 0,
+          at: new Date().toISOString(),
+        });
+        return duration;
+      },
+      retry: function (ctx, attempt) {
+        ctx._retries = attempt;
+        _push({
+          phase: "retry",
+          entity: ctx.entity,
+          screen: ctx.screen,
+          attempt: attempt,
+          at: new Date().toISOString(),
+        });
+      },
+      dump: function () {
+        return _buffer.slice();
+      },
+    };
+  })();
+
+  // ─────────────────────────────────────────────────────────────
+  // §SE-3  ValidationService — تحقق موحّد
+  //
+  // rules: [{ field: "sinv-party", label: "اسم العميل", required: true },
+  //         { field: "sinv-date",  label: "تاريخ الفاتورة", required: true },
+  //         { test: function(){ return lines.length>0; }, message: "أضف بنوداً" }]
+  // ─────────────────────────────────────────────────────────────
+  var ValidationService = {
+    /**
+     * @returns {{valid:boolean, firstInvalidEl:?HTMLElement, message:?string}}
+     */
+    validate: function (rules) {
+      rules = rules || [];
+      this.clearHighlights(rules);
+      for (var i = 0; i < rules.length; i++) {
+        var r = rules[i];
+        var ok;
+        var el = r.field ? document.getElementById(r.field) : null;
+
+        if (typeof r.test === "function") {
+          ok = !!r.test();
+        } else if (el) {
+          var val = (el.value || "").toString().trim();
+          ok = r.required ? val.length > 0 : true;
+          if (ok && r.pattern) ok = r.pattern.test(val);
+          if (ok && typeof r.validate === "function") ok = !!r.validate(val);
+        } else {
+          ok = true; // الحقل غير موجود في الصفحة الحالية — تجاهل
+        }
+
+        if (!ok) {
+          var msg = r.message || "برجاء إدخال " + (r.label || "بيانات صحيحة");
+          if (el) {
+            el.classList.add("field-invalid");
+            el.style.outline = "2px solid #ef4444";
+            el.style.outlineOffset = "1px";
+          }
+          return { valid: false, firstInvalidEl: el, message: msg };
+        }
+      }
+      return { valid: true, firstInvalidEl: null, message: null };
+    },
+
+    clearHighlights: function (rules) {
+      (rules || []).forEach(function (r) {
+        if (!r.field) return;
+        var el = document.getElementById(r.field);
+        if (el) {
+          el.classList.remove("field-invalid");
+          el.style.outline = "";
+          el.style.outlineOffset = "";
+        }
+      });
+    },
+
+    focusFirstInvalid: function (el) {
+      if (!el) return;
+      try {
+        el.focus();
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch (e) {}
+    },
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // §SE-4  LoadingService — Soft Save طبقة موحّدة
+  //
+  // لا تُجمّد الصفحة أبداً (لا overlay كامل الشاشة يمنع scroll) — تستخدم
+  // محرك التحميل الموحّد الوحيد على مستوى السيستم: showSaveAnim/_closeSaveAnim
+  // (معرّف في 01_JS_Core_Auth.html §F). _freezeUI/_unfreezeUI (02_JS_UI_Shell)
+  // بقيا alias فوق نفس المحرك، فمفيش نظامين متوازيين تاني.
+  // ─────────────────────────────────────────────────────────────
+  var LoadingService = {
+    show: function (message) {
+      if (typeof showSaveAnim === "function") {
+        showSaveAnim({ title: message || SAVE_MESSAGES.SAVING });
+      } else if (typeof _freezeUI === "function") {
+        _freezeUI(message || SAVE_MESSAGES.SAVING);
+      } else if (typeof showLoading === "function") {
+        showLoading(message || SAVE_MESSAGES.SAVING);
+      }
+      // ملاحظة: عمداً لا يوجد أي pointer-events:none على body — المستخدم
+      // يقدر يكمل Scroll وقراءة باقي الشاشة أثناء الحفظ (Soft Save).
+    },
+    hide: function () {
+      if (typeof _closeSaveAnim === "function") _closeSaveAnim(false);
+      else if (typeof _unfreezeUI === "function") _unfreezeUI();
+      else if (typeof hideLoading === "function") hideLoading();
+    },
+    // [SOFT-SAVE] مرحلة 2: يحوّل نفس الفقاعة من "جار الحفظ" لـ "جار التحديث"
+    // بدون إغلاق/فتح جديد — تُستخدم بعد نجاح الحفظ مباشرة وأثناء تنفيذ
+    // onSuccess/refresh (تحديث الكاش المحلي وإعادة رسم الشاشة).
+    update: function (message) {
+      if (typeof _saveAnimUpdating === "function") {
+        _saveAnimUpdating(message || SAVE_MESSAGES.UPDATING);
+      }
+      // لو مفيش bubble متاحة (fallback _freezeUI/showLoading) سيبها كما هي؛
+      // هتتقفل عادي في hide() الأخيرة بدون رسالة وسيطة.
+    },
+    // [SE-BUBBLE-FIX] success/fail: تكمّل نفس الفقاعة لحالة نجاح/فشل
+    // بدل ما تتقفل (hide) وبعدين يظهر توست منفصل بعد فجوة زمنية فاضية.
+    // نفس أسلوب showSaveAnim(...).done()/.fail() المستخدم في شاشة الأصناف.
+    success: function (message, opts) {
+      if (typeof _saveAnimSuccess === "function") {
+        _saveAnimSuccess(message || SAVE_MESSAGES.SAVED);
+        // [UNIFY-NOTIF] حتى مع فقاعة "الحفظ الناعم" (نظام مختلف بصريًا عن
+        // توست الـ FAB)، لو الشاشة مررت page/perm نسجّل الحدث في
+        // NotificationEngine كمان عشان يظهر في مركز الإشعارات (الجرس)
+        // ويكون قابل للفتح لاحقًا — حتى لو مش هو مصدر الفقاعة المعروضة دلوقتي.
+        if (opts && opts.page && typeof NotificationEngine !== "undefined") {
+          NotificationEngine.save(
+            message || SAVE_MESSAGES.SAVED,
+            Object.assign({ silent: true }, opts),
+          );
+        }
+      } else {
+        this.hide();
+        NotificationService.success(message, opts);
+      }
+    },
+    fail: function (message) {
+      if (typeof _saveAnimFail === "function") {
+        _saveAnimFail(message || SAVE_MESSAGES.FAILED);
+      } else {
+        this.hide();
+        NotificationService.error(message);
+      }
+    },
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // §SE-5  NotificationService — واجهة موحّدة فوق showToast
+  // نفس الأسلوب في كل الشاشات: نجاح / تحذير / خطأ / معلومة
+  // ─────────────────────────────────────────────────────────────
+  var NotificationService = {
+    success: function (msg, opts) {
+      this._emit(msg || SAVE_MESSAGES.SAVED, "success", opts);
+    },
+    warning: function (msg, opts) {
+      this._emit(msg, "warning", opts);
+    },
+    error: function (msg, opts) {
+      this._emit(msg || SAVE_MESSAGES.FAILED, "error", opts);
+    },
+    info: function (msg, opts) {
+      this._emit(msg, "info", opts);
+    },
+    _emit: function (msg, type, opts) {
+      // [UNIFY-NOTIF] NotificationEngine هو المستوى الأول الآن — نفس سلسلة
+      // fallback القديمة (showToast ثم console.log) فضلت زي ما هي لو
+      // NotificationEngine مش محمّل بعد (ترتيب تحميل الملفات).
+      if (typeof NotificationEngine !== "undefined") NotificationEngine[type](msg, opts);
+      else if (typeof showToast === "function") showToast(msg, type);
+      else console.log("[Notify:" + type + "] " + msg);
+    },
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // §SE-6  SaveButtonController — سلوك زر الحفظ موحّد في كل الشاشات
+  //
+  // usage:
+  //   var ctrl = SaveButtonController.attach("sinv-save-btn");
+  //   ctrl.setSaving();     // spinner + disable + منع double-click
+  //   ctrl.restore();       // إعادة الحالة الأصلية (نجاح أو فشل)
+  // ─────────────────────────────────────────────────────────────
+  var SaveButtonController = {
+    attach: function (buttonId) {
+      return this._build(document.getElementById(buttonId));
+    },
+
+    /** نفس attach لكن بتاخد عنصر DOM جاهز بدل الـ id — لشاشات فيها الزر متغيّر محلي (var saveBtn = ...) */
+    attachEl: function (btnEl) {
+      return this._build(btnEl);
+    },
+
+    _build: function (btn) {
+      var originalHtml = btn ? btn.innerHTML : "";
+      var busy = false;
+
+      return {
+        isBusy: function () {
+          return busy;
+        },
+        setSaving: function (label) {
+          if (!btn || busy) return false; // يمنع الـ double-click فعلياً
+          busy = true;
+          originalHtml = btn.innerHTML;
+          btn.disabled = true;
+          btn.setAttribute("aria-busy", "true");
+          btn.innerHTML =
+            '<i class="ti ti-loader-2" style="animation:spin 0.8s linear infinite"></i> ' +
+            "<span>" +
+            (label || SAVE_MESSAGES.SAVING) +
+            "</span>";
+          return true;
+        },
+        restore: function () {
+          if (!btn) {
+            busy = false;
+            return;
+          }
+          btn.disabled = false;
+          btn.removeAttribute("aria-busy");
+          btn.innerHTML = originalHtml;
+          busy = false;
+        },
+        disableIfClean: function (isDirty) {
+          // زرار الحفظ يتعطّل تلقائياً لو مفيش تغييرات (Dirty State)
+          if (btn) btn.disabled = !isDirty;
+        },
+      };
+    },
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // §SE-7  DirtyTracker — كشف التغييرات + تحذير عند الخروج بدون حفظ
+  //
+  // usage:
+  //   var dt = DirtyTracker.create("sinv-form-wrapper", saveBtnCtrl);
+  //   ... عند أي تعديل ...    dt.markDirty();
+  //   بعد نجاح الحفظ ...      dt.markClean();
+  // ─────────────────────────────────────────────────────────────
+  var DirtyTracker = {
+    _anyDirty: false,
+
+    create: function (containerSelectorOrId, buttonCtrl) {
+      var self = this;
+      var dirty = false;
+      var container = containerSelectorOrId
+        ? document.getElementById(containerSelectorOrId) ||
+          document.querySelector(containerSelectorOrId)
+        : null;
+
+      function mark(state) {
+        dirty = state;
+        self._anyDirty = state;
+        if (buttonCtrl) buttonCtrl.disableIfClean(dirty);
+      }
+
+      if (container) {
+        container.addEventListener("input", function () {
+          mark(true);
+        });
+        container.addEventListener("change", function () {
+          mark(true);
+        });
+      }
+
+      return {
+        isDirty: function () {
+          return dirty;
+        },
+        markDirty: function () {
+          mark(true);
+        },
+        markClean: function () {
+          mark(false);
+        },
+      };
+    },
+  };
+
+  // تحذير موحّد عند مغادرة الصفحة ولسه فيه تعديلات لم تُحفظ
+  window.addEventListener("beforeunload", function (e) {
+    if (DirtyTracker._anyDirty) {
+      e.preventDefault();
+      e.returnValue = "";
+      return "";
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // §SE-8  SaveEngine.run() — المنسّق الرئيسي (النقطة الوحيدة للحفظ)
+  //
+  // usage:
+  //   SaveEngine.run({
+  //     screen:   "SaleInvoice",          // اسم الشاشة (للـ logging)
+  //     entity:   "sale_invoice",         // اسم الكيان
+  //     recordId: null,                   // موجود لو تعديل
+  //     buttonId: "sinv-save-btn",        // اختياري
+  //     rules:    [ {field:"sinv-party", required:true, label:"اسم العميل"} ],
+  //     dirtyTracker: dt,                 // اختياري — DirtyTracker instance
+  //     collect:  function(){ return _collectInvoiceData("sinv"); },
+  //     fn:       "addSaleInvoice",       // اسم دالة الـ backend
+  //     params:   function(data){ return [data, SESSION.token]; },
+  //     timeout:  25000,
+  //     retries:  0,                      // عدد محاولات إعادة الإرسال التلقائية عند فشل الاتصال
+  //     successMessage: "تم حفظ فاتورة البيع بنجاح",
+  //     onSuccess: function(res, data){ ... },   // منطق العمل بعد النجاح
+  //     onError:   function(res){ ... },         // اختياري — منطق إضافي عند الفشل
+  //     closeDialogId: null,              // اختياري — يُغلق تلقائياً عند النجاح
+  //     refresh:   function(){ renderPage(APP.currentPage); } // تحديث البيانات المتأثرة فقط
+  //   });
+  // ─────────────────────────────────────────────────────────────
+  var SaveEngine = {
+    run: function (cfg) {
+      cfg = cfg || {};
+      var ctx = {
+        screen: cfg.screen || "UnknownScreen",
+        entity: cfg.entity || "unknown",
+        recordId: cfg.recordId || null,
+        state: SAVE_STATES.IDLE,
+        _retries: 0,
+      };
+
+      var btnCtrl = cfg.buttonId
+        ? SaveButtonController.attach(cfg.buttonId)
+        : null;
+
+      // 1) منع الحفظ لو الزرار مشغول فعلاً (منع الضغط المزدوج)
+      if (btnCtrl && btnCtrl.isBusy()) return;
+
+      // 2) لو فيه Dirty Tracker ومفيش أي تغيير حقيقي → لا داعي لطلب سيرفر
+      if (
+        cfg.dirtyTracker &&
+        cfg.dirtyTracker.isDirty &&
+        !cfg.dirtyTracker.isDirty() &&
+        !cfg.forceSave
+      ) {
+        NotificationService.info(SAVE_MESSAGES.NOTHING_TO_SAVE);
+        return;
+      }
+
+      // 3) التحقق (Validation)
+      ctx.state = SAVE_STATES.VALIDATING;
+      if (cfg.rules && cfg.rules.length) {
+        var result = ValidationService.validate(cfg.rules);
+        if (!result.valid) {
+          ctx.state = SAVE_STATES.FAILED;
+          NotificationService.error(
+            result.message || SAVE_MESSAGES.VALIDATION_FAILED,
+          );
+          ValidationService.focusFirstInvalid(result.firstInvalidEl);
+          return;
+        }
+      }
+
+      // 4) تجميع البيانات
+      var data;
+      try {
+        data = typeof cfg.collect === "function" ? cfg.collect() : cfg.data;
+      } catch (e) {
+        NotificationService.error("خطأ في تجهيز البيانات: " + e.message);
+        return;
+      }
+
+      // 5) قفل الزر + منع الضغط المزدوج + عرض السبينر
+      if (btnCtrl) btnCtrl.setSaving(cfg.savingLabel);
+
+      // 5-ب) [SOFT-SAVE] إغلاق الشاشة (Drawer/Modal) فورًا — قبل استدعاء
+      // السيرفر أصلاً — نفس أسلوب "الحفظ الناعم" المستخدم بالفعل في شاشات
+      // الأصناف/المجموعات/المخازن (closeModal()/closeStyledDrawer() قبل
+      // _gsr مباشرة). التحقق (rules) عدّى فعلاً في الخطوة 3، فمفيش داعي
+      // نستنى رد السيرفر عشان نقفل — لو فشل الحفظ هيظهر Toast بالخطأ
+      // برضه ولسه المستخدم يقدر يعيد المحاولة من زر "إضافة/تعديل" تاني.
+      // الطريقة المفضّلة: تمرير closeFn (دالة إغلاق الشاشة الفعلية).
+      // للتوافق مع كود قديم فيه closeDialogId، بنقفلها هنا بنفس التوقيت.
+      if (typeof cfg.closeFn === "function") {
+        try {
+          cfg.closeFn();
+        } catch (e) {
+          console.warn("SaveEngine: فشل استدعاء closeFn:", e.message || e);
+        }
+      } else if (cfg.closeDialogId) {
+        var _dlg0 = document.getElementById(cfg.closeDialogId);
+        if (_dlg0 && typeof closeDrawer === "function")
+          closeDrawer(cfg.closeDialogId);
+        else if (_dlg0) _dlg0.style.display = "none";
+      }
+
+      // 6) عرض طبقة الحفظ الناعمة (لا تجمّد الشاشة) — مرحلة 1: "جار الحفظ"
+      LoadingService.show(cfg.savingLabel || SAVE_MESSAGES.SAVING);
+
+      // [SESSION-LIFECYCLE] تسجيل عملية حفظ جارية — يستخدمها محرك دورة
+      // حياة الجلسة (SessionLifecycle) عشان يستنى العمليات الحرجة قبل ما
+      // ينفّذ إنهاء جلسة منظّم بدل ما يقطعها فجأة.
+      var _slOpId =
+        typeof SessionLifecycle !== "undefined"
+          ? SessionLifecycle.registerBusyOp("save:" + ctx.screen)
+          : null;
+
+      ctx.state = SAVE_STATES.SAVING;
+      SaveLogger.start(ctx);
+
+      var maxRetries = cfg.retries || 0;
+      var timeoutMs = cfg.timeout != null ? cfg.timeout : 25000;
+
+      function finish(success, res) {
+        if (_slOpId && typeof SessionLifecycle !== "undefined")
+          SessionLifecycle.unregisterBusyOp(_slOpId);
+        if (btnCtrl) btnCtrl.restore();
+
+        if (success) {
+          ctx.state = SAVE_STATES.SUCCESS;
+          SaveLogger.end(ctx, true, "OK");
+          if (cfg.dirtyTracker && cfg.dirtyTracker.markClean)
+            cfg.dirtyTracker.markClean();
+
+          // [SOFT-SAVE] مرحلة 2: "جار الحفظ..." نجحت — نحوّل نفس الفقاعة
+          // لـ "جار التحديث..." أثناء تنفيذ onSuccess/refresh (تحديث الكاش
+          // المحلي وإعادة رسم الشاشة) بدل ما الفقاعة تختفي فجأة بلا تفسير.
+          // الشاشة نفسها اتقفلت بالفعل قبل نداء السيرفر (خطوة 5-ب فوق).
+          LoadingService.update(cfg.updatingLabel || SAVE_MESSAGES.UPDATING);
+
+          // [DL-UNIFY] journal_warning (لو موجودة يومًا) قد تصل الآن إما على
+          // مستوى الاستجابة الأصلية (نادر) أو داخل res.data بعد تطبيع _gsr
+          var journalWarning =
+            (res && res.journal_warning) ||
+            (res && res.data && res.data.journal_warning);
+
+          if (typeof cfg.onSuccess === "function") cfg.onSuccess(res, data);
+
+          // توافق قديم: closeDialogId — نادرًا هيلاقي حاجة يقفلها هنا لأن
+          // الإغلاق الفعلي بقى بيحصل بدري (خطوة 5-ب) قبل نداء السيرفر أصلاً.
+          if (cfg.closeDialogId) {
+            var dlg = document.getElementById(cfg.closeDialogId);
+            if (dlg && typeof closeDrawer === "function")
+              closeDrawer(cfg.closeDialogId);
+            else if (dlg) dlg.style.display = "none";
+          }
+
+          if (typeof cfg.refresh === "function") cfg.refresh();
+
+          // مرحلة 3: [SE-BUBBLE-FIX] بدل قفل الفقاعة ثم إظهار توست منفصل
+          // بعد فجوة زمنية فاضية — نكمّل نفس الفقاعة لحالة "تم الحفظ "
+          // (نفس أسلوب شاشة الأصناف: showSaveAnim(...).done(msg)) وهي
+          // بتتقفل نفسها بعد ثانيتين. الاستثناء الوحيد: journal_warning،
+          // حالة نادرة بتحتاج توست تحذير منفصل يفضل ظاهر بعد قفل الفقاعة.
+          if (journalWarning) {
+            LoadingService.hide();
+            NotificationService.warning(journalWarning);
+          } else {
+            // [UNIFY-NOTIF] لو الشاشة حددت notifyPage (صفحة الوجهة) —
+            // بيتسجّل الحدث في مركز الإشعارات الموحّد بصلاحية notifyPerm
+            // الاختيارية، فيبقى قابل للفتح لاحقًا من الجرس/تبويب المساعد
+            LoadingService.success(
+              cfg.successMessage || SAVE_MESSAGES.SAVED,
+              cfg.notifyPage ? { page: cfg.notifyPage, perm: cfg.notifyPerm || null } : null,
+            );
+          }
+        } else {
+          ctx.state = SAVE_STATES.FAILED;
+          var message = (res && res.message) || SAVE_MESSAGES.FAILED;
+          SaveLogger.end(ctx, false, message);
+          // [SE-BUBBLE-FIX] نفس المنطق: نكمّل الفقاعة لحالة " فشل" بدل
+          // قفلها وإظهار توست خطأ منفصل بعد فجوة فاضية.
+          LoadingService.fail(message);
+          if (typeof cfg.onError === "function") cfg.onError(res, data);
+          // ملاحظة: الشاشة كانت اتقفلت بالفعل قبل الإرسال (Soft Save) — لو
+          // الشاشة محتاجة تفتح تاني عند الفشل، تقدر تعمل كده جوه onError.
+        }
+      }
+
+      // [DL-UNIFY] SaveEngine لم يعد يعمل google.script.run مباشرة — بيمر
+      // إلزاميًا عبر _gsr() (00_JS_DataLayer.html)، نفس نقطة الدخول الموحّدة
+      // المستخدمة في كل قراءات/كتابات النظام. كده الـ retry/timeout/تطبيع
+      // الاستجابة/معالجة انتهاء الجلسة كلها منطق واحد مش نسختين متوازيتين.
+      function attempt(attemptNo) {
+        var params =
+          typeof cfg.params === "function"
+            ? cfg.params(data)
+            : cfg.params || [data];
+
+        if (typeof _gsr !== "function") {
+          finish(false, {
+            message:
+              "طبقة DataLayer (_gsr) غير متاحة — تأكد من تحميل 00_JS_DataLayer.html",
+          });
+          return;
+        }
+
+        _gsr(cfg.fn, params, {
+          timeout: timeoutMs,
+          label: cfg.screen || cfg.fn,
+          rawResponse: cfg.rawResponse,
+          onSuccess: function (result) {
+            finish(true, result);
+          },
+          onError: function (result) {
+            // جلسة غير صالحة/منتهية: _gsr نفسها بالفعل نادت _handleSessionExpired
+            // — هنا فقط نُنهي الـ workflow المحلي (spinner/logger) بدون أي retry.
+            if (
+              typeof _isSessionErrorResponse === "function" &&
+              _isSessionErrorResponse(result)
+            ) {
+              finish(false, result);
+              return;
+            }
+
+            var msg = (result && result.message) || "";
+            var isTransient =
+              msg.indexOf("انتهت المهلة") !== -1 ||
+              msg.indexOf("خطأ في الاتصال") !== -1;
+
+            if (
+              attemptNo < maxRetries &&
+              (isTransient || cfg.retryOnLogicalFailure)
+            ) {
+              SaveLogger.retry(ctx, attemptNo + 1);
+              NotificationService.info(SAVE_MESSAGES.RETRYING);
+              attempt(attemptNo + 1);
+            } else {
+              if (isTransient) ctx.state = SAVE_STATES.TIMEOUT;
+              finish(false, result);
+            }
+          },
+        });
+      }
+
+      attempt(0);
+
+      // إتاحة الإلغاء (Cancellation) لو الشاشة محتاجة توقف الانتظار
+      return {
+        cancel: function () {
+          ctx.state = SAVE_STATES.CANCELLED;
+          LoadingService.hide();
+          if (btnCtrl) btnCtrl.restore();
+          SaveLogger.end(ctx, false, "Cancelled by user");
+        },
+      };
+    },
+  };
+</script>
+
+<!--
+══════════════════════════════════════════════════════════════
+   §SE-9 DEVELOPER RULES — قواعد محرك الحفظ (لا يجوز كسرها)
+══════════════════════════════════════════════════════════════
+
+RULE 1 — ممنوع أي شاشة تعمل save workflow يدوي (spinner يدوي + google.script.run مباشر)
+    صح: SaveEngine.run({ screen, entity, fn:"addX", collect, rules, ... })
+    غلط: btn.disabled=true; google.script.run.withSuccessHandler(...).addX(...)
+
+RULE 2 — كل نصوص الحالة تُؤخذ من SAVE_MESSAGES فقط
+    SAVE_MESSAGES.SAVING ("⏳ جاري الحفظ...")
+    ممنوع اختراع "جاري التحديث..." أو "Processing..." أو "برجاء الانتظار..."
+   (استثناء وحيد: عملية مختلفة فعلاً عن الحفظ، مثال: "جاري الطباعة...")
+
+RULE 3 — كل تحقق (Validation) قبل الحفظ يمر عبر ValidationService / rules[]
+   لا تحقق مبعثر بـ if/else متفرق داخل دالة الحفظ نفسها.
+
+RULE 4 — أي رسالة نجاح/خطأ تمر عبر NotificationService (والتي تستخدم showToast
+   الموجودة فعلاً) — لا console.log فقط ولا innerHTML يدوي لعرض رسالة.
+
+RULE 5 — الحفظ لازم يكون Soft Save دايماً: ممنوع أي overlay يمنع scroll
+   أو pointer-events:none على <body> بالكامل أثناء الحفظ.
+
+RULE 6 — أي زرار حفظ لازم يُدار عبر SaveButtonController (spinner موحّد،
+   منع الضغط المزدوج تلقائي، استرجاع تلقائي للحالة الأصلية).
+
+RULE 7 — أي شاشة فيها تعديل حي (فورم كبير) يجب أن تستخدم DirtyTracker
+   بحيث زر الحفظ يكون معطّل تلقائياً لو مفيش تغيير فعلي.
+
+RULE 8 — عند الفشل، البيانات المدخلة من المستخدم لا تُمسح أبداً — تبقى في
+   الفورم بالكامل ليعيد المحاولة مباشرة (SaveEngine لا يفرّغ أي input).
+
+RULE 9 — أي endpoint جديد للحفظ (Create/Update/Duplicate/Import/Settings)
+   يُستدعى حصرياً عبر SaveEngine.run({ fn: "اسم دالة الباك-إند", ... })
+   ولا يُستدعى مباشرة عبر google.script.run في أي ملف شاشة.
+
+RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع استجابة يُكتب من جديد
+   داخل أي شاشة أو داخل SaveEngine نفسه — كل ده مسؤولية _gsr() فقط
+   (00_JS_DataLayer.html). SaveEngine طبقة UI فوق _gsr، مش بديل عنها.
+   لو شاشة قديمة بتستخدم DL.Module.function() مباشرة (بدل SaveEngine.run)
+   واللي بالفعل بتمر عبر _gsr، فده مقبول ولا يحتاج ترحيل إجباري لـ SaveEngine —
+   المهم إنها ما تستخدمش google.script.run مباشرة، مش إنها بالضبط SaveEngine.run.
+
+══════════════════════════════════════════════════════════════
+-->

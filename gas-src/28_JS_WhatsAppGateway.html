@@ -1,0 +1,351 @@
+<script>
+  // ════════════════════════════════════════════════════════════════
+  // 28_JS_WhatsAppGateway.html — [WA-GATEWAY-1] بانل ربط واتساب (QR)
+  //
+  // واجهة إدارة بوابة Baileys الخارجية: عرض حالة الاتصال، QR للمسح،
+  // إعدادات رابط/مفتاح السيرفر، وتسجيل الخروج. يتكلم مع الباك اند عبر
+  // الدوال في Code_WhatsAppGateway.gs (getWhatsappGatewayConfig,
+  // saveWhatsappGatewayConfig, getWhatsappGatewayStatus,
+  // logoutWhatsappGateway).
+  //
+  // الفتح: WA_GATEWAY.open() — من زرار في شريط أدوات مركز واتساب
+  // (محمي بصلاحية manageWhatsappGateway).
+  // ════════════════════════════════════════════════════════════════
+
+  var WA_GATEWAY = (function () {
+    var POLL_INTERVAL_MS = 4000;
+    var _pollTimer = null;
+    var _showingConfigForm = false;
+    var _lastConfig = null;
+
+    // ── فتح/غلق ────────────────────────────────────────────────
+
+    function open() {
+      if (!canDo("manageWhatsappGateway")) {
+        NotificationEngine.error(I18N.t("WA_MSG_NO_PERMISSION"));
+        return;
+      }
+      openModal(
+        I18N.t("WA_TITLE_CONNECT_QR"),
+        '<div id="wa-gw-body" style="min-height:220px;display:flex;align-items:center;justify-content:center;color:var(--text3)">' +
+          '<div class="wa-spinner"></div>' +
+          "</div>",
+      );
+      _loadInitial();
+    }
+
+    function _stopPolling() {
+      if (_pollTimer) {
+        clearInterval(_pollTimer);
+        _pollTimer = null;
+      }
+    }
+
+    // يُستدعى من closeModal العام — نراقب اختفاء العنصر لوقف الـ polling
+    function _isModalOpen() {
+      return !!document.getElementById("wa-gw-body");
+    }
+
+    // ── تحميل أولي: نجيب الإعدادات المحفوظة، ولو موجودة نبدأ نتابع الحالة ──
+
+    function _loadInitial() {
+      _gsr(
+        "getWhatsappGatewayConfig",
+        [APP.currentUser.username, SESSION.token],
+        {
+          onSuccess: function (r) {
+            _lastConfig = r.data;
+            if (!r.data || r.data.last_state === "not_configured") {
+              _showingConfigForm = true;
+              _renderConfigForm();
+            } else {
+              _showingConfigForm = false;
+              refreshStatus();
+              _stopPolling();
+              _pollTimer = setInterval(function () {
+                if (!_isModalOpen()) {
+                  _stopPolling();
+                  return;
+                }
+                refreshStatus();
+              }, POLL_INTERVAL_MS);
+            }
+          },
+          onError: function (r) {
+            _renderError(r.message);
+          },
+        },
+      );
+    }
+
+    // ── حالة الاتصال (Polling) ─────────────────────────────────
+
+    function refreshStatus() {
+      if (!_isModalOpen()) {
+        _stopPolling();
+        return;
+      }
+      _gsr(
+        "getWhatsappGatewayStatus",
+        [APP.currentUser.username, SESSION.token],
+        {
+          timeout: 12000,
+          onSuccess: function (r) {
+            if (!_isModalOpen()) return;
+            if (r.data.state === "not_configured") {
+              _showingConfigForm = true;
+              _renderConfigForm();
+              return;
+            }
+            _renderStatus(r.data);
+          },
+          onError: function (r) {
+            if (!_isModalOpen()) return;
+            _renderError(r.message);
+          },
+        },
+      );
+    }
+
+    // ── عرض: نموذج الإعدادات (رابط + مفتاح) ─────────────────────
+
+    function _renderConfigForm() {
+      var el = document.getElementById("wa-gw-body");
+      if (!el) return;
+      var cfg = _lastConfig || {};
+
+      el.innerHTML =
+        '<div style="width:100%;max-width:420px;margin:0 auto">' +
+        '<p style="font-size:13px;color:var(--text2);margin:0 0 16px;text-align:center">' +
+        I18N.t("WA_LBL_URL_HELP") +
+        "</p>" +
+        '<label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">' +
+        I18N.t("WA_LBL_GATEWAY_URL") +
+        "</label>" +
+        '<input type="text" id="wa-gw-url" class="form-input" placeholder="https://xxxx.trycloudflare.com" value="' +
+        _esc(cfg.gateway_url || "") +
+        '" style="width:100%;margin-bottom:14px">' +
+        '<label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">' +
+        I18N.t("WA_LBL_SECRET_KEY") +
+        "</label>" +
+        '<input type="password" id="wa-gw-key" class="form-input" placeholder="' +
+        (cfg.has_secret
+          ? I18N.t("WA_PLACEHOLDER_SECRET_KEEP")
+          : I18N.t("WA_PLACEHOLDER_SECRET_FROM_ENV")) +
+        '" style="width:100%;margin-bottom:18px">' +
+        '<button class="btn btn-primary" style="width:100%" onclick="WA_GATEWAY.saveConfig()">' +
+        '<i class="ti ti-device-floppy"></i> ' +
+        I18N.t("WA_BTN_SAVE_CONNECT") +
+        "</button>" +
+        "</div>";
+    }
+
+    function saveConfig() {
+      var urlInput = document.getElementById("wa-gw-url");
+      var keyInput = document.getElementById("wa-gw-key");
+      var url = urlInput ? urlInput.value.trim() : "";
+      var key = keyInput ? keyInput.value.trim() : "";
+
+      if (!url) {
+        NotificationEngine.error(I18N.t("WA_MSG_URL_REQUIRED"));
+        return;
+      }
+
+      _gsr(
+        "saveWhatsappGatewayConfig",
+        [
+          { gateway_url: url, secret_key: key },
+          APP.currentUser.username,
+          SESSION.token,
+        ],
+        {
+          onSuccess: function (r) {
+            NotificationEngine.success(r.message);
+            _showingConfigForm = false;
+            refreshStatus();
+            _stopPolling();
+            _pollTimer = setInterval(function () {
+              if (!_isModalOpen()) {
+                _stopPolling();
+                return;
+              }
+              refreshStatus();
+            }, POLL_INTERVAL_MS);
+          },
+          onError: function (r) {
+            NotificationEngine.error(r.message);
+          },
+        },
+      );
+    }
+
+    // ── عرض: حالة الاتصال (QR / متصل / منقطع) ────────────────────
+
+    function _renderStatus(data) {
+      var el = document.getElementById("wa-gw-body");
+      if (!el) return;
+
+      var html = "";
+
+      if (data.state === "connected") {
+        html =
+          '<div style="text-align:center;width:100%">' +
+          '<div style="width:64px;height:64px;border-radius:50%;background:var(--palette-emerald-100);display:flex;align-items:center;justify-content:center;margin:0 auto 16px">' +
+          '<i class="ti ti-check" style="font-size:32px;color:var(--palette-whatsapp-green-dark)"></i>' +
+          "</div>" +
+          '<p style="font-size:16px;font-weight:700;margin:0 0 4px">' +
+          I18N.t("WA_STATUS_CONNECTED") +
+          "</p>" +
+          '<p style="font-size:13px;color:var(--text3);margin:0 0 20px" dir="ltr">' +
+          _esc(data.connectedNumber || "") +
+          "</p>" +
+          '<div style="font-size:12px;color:var(--text3);margin-bottom:20px">' +
+          I18N.t("WA_LBL_TODAY_MESSAGES") +
+          " " +
+          (data.dailyCount || 0) +
+          " / " +
+          (data.dailyLimit || 0) +
+          "</div>" +
+          '<button class="btn btn-danger" onclick="WA_GATEWAY.logout()">' +
+          '<i class="ti ti-logout"></i> ' +
+          I18N.t("WA_BTN_LOGOUT") +
+          "</button>" +
+          '<button class="btn btn-ghost" style="margin-inline-start:8px" onclick="WA_GATEWAY.showConfigForm()">' +
+          '<i class="ti ti-settings"></i> ' +
+          I18N.t("WA_BTN_EDIT_SETTINGS") +
+          "</button>" +
+          "</div>";
+      } else if (data.state === "qr_pending" && data.qr) {
+        html =
+          '<div style="text-align:center;width:100%">' +
+          '<img src="' +
+          data.qr +
+          '" style="width:220px;height:220px;border-radius:12px;border:1px solid var(--border);margin-bottom:16px">' +
+          '<ol style="text-align:right;font-size:13px;color:var(--text2);max-width:280px;margin:0 auto;padding-inline-start:20px;line-height:1.9">' +
+          "<li>" +
+          I18N.t("WA_STEP_OPEN_APP") +
+          "</li>" +
+          "<li>" +
+          I18N.t("WA_STEP_SETTINGS_DEVICES") +
+          "</li>" +
+          "<li>" +
+          I18N.t("WA_STEP_SCAN_CODE") +
+          "</li>" +
+          "</ol>" +
+          '<p style="font-size:11px;color:var(--text3);margin-top:14px">' +
+          I18N.t("WA_LBL_QR_REFRESH_NOTE") +
+          "</p>" +
+          "</div>";
+      } else if (data.state === "connecting") {
+        html =
+          '<div style="text-align:center;color:var(--text3)">' +
+          '<div class="wa-spinner" style="margin:0 auto 12px"></div>' +
+          "<p>" +
+          I18N.t("WA_STATUS_CONNECTING") +
+          "</p>" +
+          "</div>";
+      } else {
+        // disconnected / unknown
+        html =
+          '<div style="text-align:center;color:var(--text3)">' +
+          '<i class="ti ti-plug-connected-x" style="font-size:40px;display:block;margin-bottom:12px;opacity:.5"></i>' +
+          '<p style="font-weight:600;color:var(--text)">' +
+          I18N.t("WA_STATUS_DISCONNECTED") +
+          "</p>" +
+          '<p style="font-size:12px;margin:6px 0 16px">' +
+          I18N.t("WA_LBL_CHECK_SERVER_NOTE") +
+          "</p>" +
+          '<button class="btn btn-outline" onclick="WA_GATEWAY.refreshStatus()">' +
+          '<i class="ti ti-refresh"></i> ' +
+          I18N.t("BTN_REFRESH") +
+          "</button>" +
+          '<button class="btn btn-ghost" style="margin-inline-start:8px" onclick="WA_GATEWAY.showConfigForm()">' +
+          '<i class="ti ti-settings"></i> ' +
+          I18N.t("WA_BTN_EDIT_SETTINGS") +
+          "</button>" +
+          "</div>";
+      }
+
+      el.innerHTML = html;
+    }
+
+    function _renderError(msg) {
+      var el = document.getElementById("wa-gw-body");
+      if (!el) return;
+      el.innerHTML =
+        '<div style="text-align:center;color:var(--danger)">' +
+        '<i class="ti ti-alert-triangle" style="font-size:36px;display:block;margin-bottom:10px"></i>' +
+        "<p>" +
+        _esc(msg || I18N.t("MSG_ERROR_OCCURRED")) +
+        "</p>" +
+        '<button class="btn btn-outline" onclick="WA_GATEWAY.refreshStatus()" style="margin-top:10px">' +
+        '<i class="ti ti-refresh"></i> ' +
+        I18N.t("WA_BTN_RETRY") +
+        "</button>" +
+        "</div>";
+    }
+
+    function showConfigForm() {
+      _stopPolling();
+      _gsr(
+        "getWhatsappGatewayConfig",
+        [APP.currentUser.username, SESSION.token],
+        {
+          onSuccess: function (r) {
+            _lastConfig = r.data;
+            _showingConfigForm = true;
+            _renderConfigForm();
+          },
+          onError: function (r) {
+            NotificationEngine.error(r.message);
+          },
+        },
+      );
+    }
+
+    // ── تسجيل خروج ─────────────────────────────────────────────
+
+    function logout() {
+      showConfirm({
+        title: I18N.t("WA_TITLE_LOGOUT"),
+        message: I18N.t("WA_MSG_LOGOUT_CONFIRM"),
+        icon: "ti-logout",
+        iconColor: "#e11d48",
+        confirmText: I18N.t("WA_BTN_LOGOUT"),
+        confirmClass: "btn-danger",
+        onConfirm: function () {
+          _gsr(
+            "logoutWhatsappGateway",
+            [APP.currentUser.username, SESSION.token],
+            {
+              onSuccess: function (r) {
+                NotificationEngine.success(r.message);
+                refreshStatus();
+              },
+              onError: function (r) {
+                NotificationEngine.error(r.message);
+              },
+            },
+          );
+        },
+      });
+    }
+
+    // ── Helper: تفادي XSS بسيط عند حقن نص في innerHTML ───────────
+    function _esc(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    return {
+      open: open,
+      refreshStatus: refreshStatus,
+      saveConfig: saveConfig,
+      showConfigForm: showConfigForm,
+      logout: logout,
+    };
+  })();
+</script>

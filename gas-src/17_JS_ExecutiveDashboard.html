@@ -1,0 +1,2861 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 17_JS_ExecutiveDashboard.html — لوحة القيادة التنفيذية (Executive ERP Dashboard)
+  // ─────────────────────────────────────────────────────────────────────────
+  // إعادة تصميم كاملة لـ renderDashboard() (انظر Templates.html) لتعطي نظرة
+  // شاملة على كل موديولات النظام (مالية، مخازن، مبيعات، مشتريات، إنتاج، HR،
+  // فودافون كاش) + نشاط مباشر + رسوم بيانية + تنبيهات + ملخص مخازن/فروع +
+  // اختصارات سريعة + رؤى تلقائية (Smart Insights) + تخصيص (طي/إخفاء/ترتيب).
+  //
+  // ملاحظات مهمة (لازم تتقرأ قبل أي تعديل مستقبلي):
+  // 1) القسمين CRM والتقويم/المهام غير موجودين في النظام كموديولات حقيقية
+  //    (لا شيتات ولا Backend) — اتعمل لهم Widgets "قريباً" Placeholder فقط
+  //    بناءً على طلب محمد، لحد ما يُبنى الموديول الحقيقي.
+  // 2) "أفضل مندوب مبيعات" غير موجود كحقل فعلي في الفواتير (مفيش sales_rep) —
+  //    استُبدل بـ "الأنشط في إصدار الفواتير" (created_by) حتى لا يتم proxy
+  //    لمفهوم غير موجود فعلاً في الداتا.
+  // 3) "الذمم المدينة/الدائنة" مُقدّرة من صافي الفواتير غير المدفوعة بالكامل
+  //    (net_total) وليست من حساب أستاذ حقيقي per-party — لذلك مُعلَّم
+  //    "(تقديري)" في الواجهة. لو حابب دقة محاسبية كاملة محتاجين getPartyLedger.
+  // 4) "ملخص الفروع" — النظام مبني على مفهوم "المخازن" (Warehouses) لا "الفروع"
+  //    الفعلية، فاستُخدمت المخازن كوحدة التقسيم الفعلية المتاحة في الداتا.
+  // 5) إعادة الترتيب بسهم أعلى/أسفل (وليس Drag & Drop) لضمان موثوقية 100%
+  //    على كل المتصفحات/الأجهزة بدون مكتبات خارجية.
+  // [DRAG-REORDER] اتضاف لاحقًا سحب مباشر (HTML5 Drag & Drop, بدون أي
+  //    مكتبة خارجية) بنفس فلسفة الموثوقية: الكارت "مقفول" افتراضيًا، ودبل
+  //    كليك على هيدره بس بيفتح وضع السحب لمدة محدودة (أو لحد ما تسحبه/تدبل
+  //    كليك تاني). الأسهم فضلت زي ما هي كخيار بديل مضمون 100% على الموبايل
+  //    واللمس (Drag & Drop غير موثوق على الشاشات اللمسية). انظر §1B تحت.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+  // §1  تخصيص اللوحة — حفظ الترتيب/الإخفاء/الطي في localStorage
+  // ─────────────────────────────────────────────────────────────
+
+  var XD_LAYOUT_VERSION = "v1";
+  var XD_DEFAULT_ORDER = [
+    "quickactions",
+    "finance",
+    "sales",
+    "purchases",
+    "inventory",
+    "production",
+    "hr",
+    "vodafone",
+    "notifications",
+    "charts",
+    "activity",
+    "insights",
+    "warehouses",
+    "crm",
+    "calendar",
+    "tasks",
+  ];
+
+  // كل Widget وحجمه في الشبكة (من 12) — مستخدَم لو الويدجت ظاهر
+  var XD_WIDGET_SPAN = {
+    quickactions: 12,
+    finance: 6,
+    sales: 6,
+    purchases: 4,
+    inventory: 4,
+    production: 4,
+    hr: 6,
+    vodafone: 6,
+    notifications: 4,
+    charts: 8,
+    activity: 6,
+    insights: 6,
+    warehouses: 12,
+    crm: 4,
+    calendar: 4,
+    tasks: 4,
+  };
+
+  // عناوين وأيقونات كل Widget (تُستخدم في الهيدر وفي لوحة "إدارة الـ Widgets")
+  var XD_WIDGET_META = {
+    quickactions: {
+      title: "اختصارات سريعة",
+      icon: "ti-bolt",
+      bg: "var(--accent-soft)",
+      color: "var(--accent)",
+    },
+    finance: {
+      title: "المالية",
+      icon: "ti-currency-dollar",
+      bg: "var(--success-soft)",
+      color: "var(--success)",
+    },
+    sales: {
+      title: "المبيعات",
+      icon: "ti-shopping-cart",
+      bg: "var(--accent-soft)",
+      color: "var(--accent)",
+    },
+    purchases: {
+      title: "المشتريات",
+      icon: "ti-truck-delivery",
+      bg: "var(--orange-soft)",
+      color: "var(--orange)",
+    },
+    inventory: {
+      title: "المخازن",
+      icon: "ti-package",
+      bg: "var(--teal-soft)",
+      color: "var(--teal)",
+    },
+    production: {
+      title: "الإنتاج",
+      icon: "ti-building-factory-2",
+      bg: "var(--warning-soft)",
+      color: "var(--warning)",
+    },
+    hr: {
+      title: "الموارد البشرية",
+      icon: "ti-users",
+      bg: "var(--purple-soft)",
+      color: "var(--purple)",
+    },
+    vodafone: {
+      title: "فودافون كاش",
+      icon: "ti-device-mobile-dollar",
+      bg: "#E6FBF5",
+      color: "#00C896",
+    },
+    notifications: {
+      title: "التنبيهات",
+      icon: "ti-bell",
+      bg: "var(--danger-soft)",
+      color: "var(--danger)",
+    },
+    charts: {
+      title: "الرسوم البيانية",
+      icon: "ti-chart-bar",
+      bg: "var(--accent-soft)",
+      color: "var(--accent)",
+    },
+    activity: {
+      title: "النشاط المباشر",
+      icon: "ti-activity",
+      bg: "var(--purple-soft)",
+      color: "var(--purple)",
+    },
+    insights: {
+      title: "رؤى تلقائية",
+      icon: "ti-bulb",
+      bg: "var(--warning-soft)",
+      color: "var(--warning)",
+    },
+    warehouses: {
+      title: "ملخص المخازن",
+      icon: "ti-building-warehouse",
+      bg: "var(--teal-soft)",
+      color: "var(--teal)",
+    },
+    crm: {
+      title: "CRM — قريباً",
+      icon: "ti-address-book",
+      bg: "var(--surface3)",
+      color: "var(--text3)",
+    },
+    calendar: {
+      title: "التقويم — قريباً",
+      icon: "ti-calendar",
+      bg: "var(--surface3)",
+      color: "var(--text3)",
+    },
+    tasks: {
+      title: "المهام — قريباً",
+      icon: "ti-checklist",
+      bg: "var(--surface3)",
+      color: "var(--text3)",
+    },
+  };
+
+  // صلاحية لازمة لإظهار Widget معيّن (لو غير موجودة الصلاحية بتُستبعد بالكامل)
+  var XD_WIDGET_PERM_GATE = {
+    hr: "viewEmployees",
+    vodafone: "viewVodafoneCash",
+    finance: "viewCashBoxes",
+  };
+
+  function _xdLayoutKey() {
+    return (
+      "xd_dash_layout_" +
+      XD_LAYOUT_VERSION +
+      "_" +
+      ((APP.currentUser && APP.currentUser.username) || "guest")
+    );
+  }
+
+  function _xdLoadLayout() {
+    var def = { order: XD_DEFAULT_ORDER.slice(), hidden: [], collapsed: [] };
+    try {
+      var raw = localStorage.getItem(_xdLayoutKey());
+      if (!raw) return def;
+      var parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.order)) return def;
+      // ضمان وجود أي Widget جديد ضيف بعدين في التحديثات القادمة
+      XD_DEFAULT_ORDER.forEach(function (id) {
+        if (parsed.order.indexOf(id) === -1) parsed.order.push(id);
+      });
+      parsed.hidden = Array.isArray(parsed.hidden) ? parsed.hidden : [];
+      parsed.collapsed = Array.isArray(parsed.collapsed)
+        ? parsed.collapsed
+        : [];
+      return parsed;
+    } catch (e) {
+      return def;
+    }
+  }
+
+  function _xdSaveLayout(state) {
+    try {
+      localStorage.setItem(_xdLayoutKey(), JSON.stringify(state));
+    } catch (e) {}
+  }
+
+  function xdToggleCollapse(id) {
+    var st = _xdLoadLayout();
+    var idx = st.collapsed.indexOf(id);
+    if (idx === -1) st.collapsed.push(id);
+    else st.collapsed.splice(idx, 1);
+    _xdSaveLayout(st);
+    xdRefreshWidget(id);
+  }
+
+  function xdHideWidget(id) {
+    var st = _xdLoadLayout();
+    if (st.hidden.indexOf(id) === -1) st.hidden.push(id);
+    _xdSaveLayout(st);
+    // أنيميشن ثم إزالة من الـ DOM مباشرة بدون full rerender
+    var el = document.getElementById("xd-widget-" + id);
+    if (el) {
+      el.style.transition = "opacity 0.2s ease, transform 0.2s ease";
+      el.style.opacity = "0";
+      el.style.transform = "scale(0.95)";
+      setTimeout(function () {
+        if (el.parentNode) el.parentNode.removeChild(el);
+      }, 220);
+    } else {
+      xdRerenderAll();
+    }
+    NotificationEngine.info("تم إخفاء الويدجت — تقدر ترجّعه من «تخصيص اللوحة»");
+  }
+
+  function xdShowWidget(id) {
+    var st = _xdLoadLayout();
+    var idx = st.hidden.indexOf(id);
+    if (idx !== -1) st.hidden.splice(idx, 1);
+    _xdSaveLayout(st);
+    xdRerenderAll();
+  }
+
+  /** تُستخدم من داخل لوحة "تخصيص اللوحة" — تُظهر الويدجت وتحذف صفه من القائمة فوراً */
+  function xdShowWidgetFromPanel(id) {
+    xdShowWidget(id);
+    var row = document.querySelector('.xd-manage-row[data-id="' + id + '"]');
+    if (row) row.remove();
+  }
+
+  function xdMoveWidget(id, dir) {
+    var st = _xdLoadLayout();
+    var i = st.order.indexOf(id);
+    if (i === -1) return;
+
+    // نحسب القائمة الفعلية المرئية (بدون المخفية)
+    var visible = st.order.filter(function (wid) {
+      return st.hidden.indexOf(wid) === -1;
+    });
+    var vi = visible.indexOf(id);
+    var vj = vi + dir;
+    if (vj < 0 || vj >= visible.length) return;
+
+    var swapId = visible[vj];
+
+    // ── تبديل في الـ order array ──────────────────────────────
+    var oi = st.order.indexOf(id);
+    var oj = st.order.indexOf(swapId);
+    var tmp = st.order[oi];
+    st.order[oi] = st.order[oj];
+    st.order[oj] = tmp;
+    _xdSaveLayout(st);
+
+    // ── تبديل في الـ DOM مباشرة (بدون full rerender) ──────────
+    var grid = document.querySelector(".xd-widgets-grid");
+    if (!grid) {
+      xdRerenderAll();
+      return;
+    }
+
+    var elA = document.getElementById("xd-widget-" + id);
+    var elB = document.getElementById("xd-widget-" + swapId);
+    if (!elA || !elB) {
+      xdRerenderAll();
+      return;
+    }
+
+    // نعمل fade خفيف على الاتنين ثم نبدّل
+    var FADE = 120;
+    elA.style.transition =
+      "opacity " + FADE + "ms ease, transform " + FADE + "ms ease";
+    elB.style.transition =
+      "opacity " + FADE + "ms ease, transform " + FADE + "ms ease";
+    elA.style.opacity = "0.4";
+    elB.style.opacity = "0.4";
+    elA.style.transform = dir < 0 ? "translateY(-4px)" : "translateY(4px)";
+    elB.style.transform = dir < 0 ? "translateY(4px)" : "translateY(-4px)";
+
+    setTimeout(function () {
+      // نبدّل مواضع الـ elements في الـ DOM
+      var refB = elB.nextSibling;
+      if (refB === elA) {
+        // elA جاي بعد elB مباشرة
+        grid.insertBefore(elA, elB);
+      } else {
+        var refA = elA.nextSibling;
+        grid.insertBefore(elA, refB);
+        grid.insertBefore(elB, refA);
+      }
+
+      // restore
+      elA.style.transition =
+        "opacity " + FADE + "ms ease, transform " + FADE + "ms ease";
+      elB.style.transition =
+        "opacity " + FADE + "ms ease, transform " + FADE + "ms ease";
+      elA.style.opacity = "1";
+      elB.style.opacity = "1";
+      elA.style.transform = "";
+      elB.style.transform = "";
+
+      setTimeout(function () {
+        elA.style.transition = "";
+        elB.style.transition = "";
+      }, FADE);
+    }, FADE);
+  }
+
+  function xdResetLayout() {
+    try {
+      localStorage.removeItem(_xdLayoutKey());
+    } catch (e) {}
+    xdRerenderAll();
+    NotificationEngine.success(" تم استرجاع الترتيب الافتراضي للوحة");
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §1B  [DRAG-REORDER] سحب مباشر لإعادة ترتيب الويدجتس (دبل كليك ثم سحب)
+  // ─────────────────────────────────────────────────────────────
+  // فكرة التفعيل: الكارت "مقفول" ومش قابل للسحب افتراضيًا (عشان ميحصلش
+  // سحب عرضي وانت بتستخدم اللوحة عادي). دبل كليك على هيدر الكارت بيفتح
+  // وضع السحب (draggable=true + شكل بصري مميز) لمدة 6 ثوانٍ أو لحد ما
+  // تسحبه فعليًا أو تدبل كليك تاني عليه (toggle). الكود مبني بالكامل على
+  // HTML5 Drag & Drop الأصلي في المتصفح — بدون أي مكتبة خارجية، وبدون
+  // أي تعديل في xdMoveWidget/_xdSaveLayout الحالية (نفس آلية الحفظ).
+  //
+  // مربوطة بـ Event Delegation على document مرة واحدة بس (مش على كل
+  // كارت لوحده)، فبتفضل شغالة حتى بعد أي إعادة رسم كامل للوحة
+  // (xdRerenderAll بيستبدل الـ innerHTML بالكامل).
+
+  var _xdDragEl = null; // العنصر اللي بيتسحب دلوقتي
+  var _xdArmTimer = null; // مؤقّت إلغاء وضع السحب تلقائيًا
+  var _xdDragHintShown = false; // نعرض تلميح الاستخدام مرة واحدة فقط للجلسة
+
+  function _xdArmDrag(el) {
+    if (_xdArmTimer) {
+      clearTimeout(_xdArmTimer);
+      _xdArmTimer = null;
+    }
+    var wasArmed = el.classList.contains("xd-widget-armed");
+    // إلغاء تسليح أي كارت تاني كان مفعّل قبل كده
+    document.querySelectorAll(".xd-widget-armed").forEach(function (prev) {
+      prev.classList.remove("xd-widget-armed");
+      prev.removeAttribute("draggable");
+    });
+    if (wasArmed) return; // دبل كليك تاني على نفس الكارت = إلغاء وضع السحب
+
+    el.classList.add("xd-widget-armed");
+    el.setAttribute("draggable", "true");
+
+    if (!_xdDragHintShown) {
+      NotificationEngine.info(" الكارت جاهز للسحب — امسكه من أي مكان واسحبه لترتيبه زي ما تحب");
+      _xdDragHintShown = true;
+    }
+
+    // إلغاء تلقائي لوضع السحب لو المستخدم مسحبش خلال 6 ثوانٍ
+    _xdArmTimer = setTimeout(function () {
+      el.classList.remove("xd-widget-armed");
+      el.removeAttribute("draggable");
+      _xdArmTimer = null;
+    }, 6000);
+  }
+
+  /** تُقرأ ترتيب الكروت الفعلي من الـ DOM بعد السحب وتُحفظ في localStorage */
+  function _xdPersistDomOrder() {
+    var grid = document.querySelector(".xd-widgets-grid");
+    if (!grid) return;
+    var domIds = Array.prototype.map.call(
+      grid.querySelectorAll(".xd-widget[data-wid]"),
+      function (el) {
+        return el.getAttribute("data-wid");
+      },
+    );
+    if (!domIds.length) return;
+    var st = _xdLoadLayout();
+    // نحافظ على أي Widget مخفي في مكانه النسبي (آخر القائمة) بدل ما يضيع
+    var hiddenIds = st.order.filter(function (id) {
+      return st.hidden.indexOf(id) !== -1 && domIds.indexOf(id) === -1;
+    });
+    st.order = domIds.concat(hiddenIds);
+    _xdSaveLayout(st);
+  }
+
+  /** تهيئة مستمعي السحب — تُستدعى مرة واحدة فقط طول عمر الصفحة (Event Delegation) */
+  function _xdInitDragDrop() {
+    if (window._xdDragDropInited) return;
+    window._xdDragDropInited = true;
+
+    document.addEventListener("dblclick", function (e) {
+      var head = e.target.closest(".xd-widget-head");
+      if (!head) return;
+      if (e.target.closest(".xd-widget-actions")) return; // مش لو دبل كليك على أزرار الطي/الإخفاء
+      var card = head.closest(".xd-widget");
+      if (!card) return;
+      e.preventDefault();
+      _xdArmDrag(card);
+    });
+
+    document.addEventListener("dragstart", function (e) {
+      var card = e.target.closest(".xd-widget");
+      if (!card || card.getAttribute("draggable") !== "true") return;
+      if (_xdArmTimer) {
+        clearTimeout(_xdArmTimer);
+        _xdArmTimer = null;
+      }
+      _xdDragEl = card;
+      card.classList.add("xd-widget-dragging");
+      try {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", card.getAttribute("data-wid"));
+      } catch (err) {}
+    });
+
+    document.addEventListener("dragover", function (e) {
+      if (!_xdDragEl) return;
+      var grid = e.target.closest(".xd-widgets-grid");
+      if (!grid) return;
+      e.preventDefault();
+      var target = e.target.closest(".xd-widget");
+      if (!target || target === _xdDragEl) return;
+      var rect = target.getBoundingClientRect();
+      var before = e.clientY - rect.top < rect.height / 2;
+      if (before) {
+        grid.insertBefore(_xdDragEl, target);
+      } else {
+        grid.insertBefore(_xdDragEl, target.nextSibling);
+      }
+    });
+
+    document.addEventListener("drop", function (e) {
+      if (!_xdDragEl) return;
+      if (e.target.closest(".xd-widgets-grid")) e.preventDefault();
+    });
+
+    document.addEventListener("dragend", function (e) {
+      if (!_xdDragEl) return;
+      _xdDragEl.classList.remove("xd-widget-dragging");
+      _xdDragEl.classList.remove("xd-widget-armed");
+      _xdDragEl.removeAttribute("draggable");
+      _xdDragEl = null;
+      _xdPersistDomOrder();
+      NotificationEngine.success(" تم حفظ الترتيب الجديد للوحة");
+    });
+  }
+
+  // حقن أنماط وضع السحب — نفس أسلوب حقن أنماط xd-manage الموجود تحت
+  (function () {
+    var s = document.createElement("style");
+    s.id = "xd-dragdrop-styles";
+    s.textContent = `
+  .xd-widget-head { cursor: default; }
+  .xd-widget-armed {
+    cursor: grab;
+    outline: 2px dashed var(--accent);
+    outline-offset: 3px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12) !important;
+    animation: xdArmPulse 1.1s ease-in-out infinite;
+  }
+  .xd-widget-armed .xd-widget-head { cursor: grab; }
+  .xd-widget-armed:active,
+  .xd-widget-dragging { cursor: grabbing; }
+  @keyframes xdArmPulse {
+    0%, 100% { outline-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+    50% { outline-color: var(--accent); }
+  }
+  .xd-widget-dragging {
+    opacity: 0.45;
+    transform: scale(0.98);
+  }
+  .xd-widgets-grid { transition: none; }
+`;
+    document.head.appendChild(s);
+  })();
+
+  /** إعادة رسم كل لوحة التحكم (للتغييرات الكبيرة: إخفاء/إظهار/ترتيب) */
+  function xdRerenderAll() {
+    var c =
+      document.getElementById("page-content") ||
+      document.getElementById("content");
+    if (!c) return;
+    if (APP.currentPage !== "dashboard") return;
+    // [FIX-2026-08-08-SCROLL-JUMP] الكونتينر اللي فعليًا عليه overflow-y:auto
+    // هو ".content" (أب #page-content)، مش #page-content نفسه — استبدال
+    // innerHTML بتاعه كان بيفقد مكان السكرول القديم فيرجع المستخدم لأعلى
+    // الشاشة كل مرة. بنحفظ مكان السكرول قبل الاستبدال ونرجّعه فوراً بعده.
+    var scrollContainer = document.querySelector(".content");
+    var _savedScroll = scrollContainer ? scrollContainer.scrollTop : 0;
+    c.innerHTML = renderDashboard();
+    // [FIX-2026-08-08-SCROLL-JUMP] bindDashboard(true) — علامة إن الاستدعاء
+    // ده re-render داخلي (مش أول فتح حقيقي للصفحة)، عشان initExecutiveDashboard
+    // ميعملش subscribe تاني على ensureExtendedData/ensureLevelData (شوف
+    // التعليق التفصيلي هناك).
+    bindDashboard(true);
+    if (scrollContainer) scrollContainer.scrollTop = _savedScroll;
+  }
+
+  // [FIX-2026-08-08-SCROLL-JUMP] initExecutiveDashboard() بتستدعي
+  // xdRefreshWidget() لعدد من الويدجتس (finance/hr من ensureExtendedData،
+  // وsales/insights/purchases/production/warehouses من ensureLevelData)
+  // في نفس اللحظة تقريباً بعد وصول البيانات. أي ويدجت من دول عنصره مش
+  // موجود في الـ DOM (مطوي/مخفي بترتيب المستخدم..إلخ) كان بيسبب استدعاء
+  // منفصل لـ xdRerenderAll() لكل واحد منهم — يعني ممكن تحصل 3-4 عمليات
+  // إعادة رسم كاملة متتالية لنفس اللوحة خلال أجزاء من الثانية، وكل واحدة
+  // بتحس إنها "قفزة" بصرية حتى مع حفظ السكرول. الحل: تجميع كل طلبات
+  // إعادة الرسم الكاملة اللي تحصل في نفس الـ tick في عملية واحدة بس.
+  var _xdFullRerenderScheduled = false;
+  function _xdScheduleFullRerender() {
+    if (_xdFullRerenderScheduled) return;
+    _xdFullRerenderScheduled = true;
+    Promise.resolve().then(function () {
+      _xdFullRerenderScheduled = false;
+      xdRerenderAll();
+    });
+  }
+
+  /** إعادة رسم Widget واحد فقط (أخف من إعادة رسم كل اللوحة — تُستخدم في الطي) */
+  function xdRefreshWidget(id) {
+    var el = document.getElementById("xd-widget-" + id);
+    if (!el) {
+      _xdScheduleFullRerender();
+      return;
+    }
+    var html = xdRenderWidgetById(id);
+    if (!html) return;
+    var tmp = document.createElement("div");
+    tmp.innerHTML = html;
+    var newEl = tmp.firstElementChild;
+    if (newEl) el.replaceWith(newEl);
+  }
+
+  function xdOpenManagePanel() {
+    var st = _xdLoadLayout();
+    var hiddenIds = st.hidden.filter(function (id) {
+      return XD_WIDGET_META[id];
+    });
+
+    // ── الـ Widgets المخفية ──────────────────────────────────────
+    var hiddenRows = hiddenIds.length
+      ? hiddenIds
+          .map(function (id) {
+            var m = XD_WIDGET_META[id];
+            return (
+              '<div class="xd-manage-row" data-id="' +
+              id +
+              '">' +
+              '<div class="xd-manage-badge" style="background:' +
+              m.bg +
+              ";color:" +
+              m.color +
+              '">' +
+              '<i class="ti ' +
+              m.icon +
+              '"></i>' +
+              "</div>" +
+              '<div class="xd-manage-info">' +
+              '<span class="xd-manage-name">' +
+              esc(m.title) +
+              "</span>" +
+              '<span class="xd-manage-status xd-status-hidden"><i class="ti ti-eye-off"></i> مخفي</span>' +
+              "</div>" +
+              '<button class="xd-manage-show-btn" onclick="xdShowWidgetFromPanel(\'' +
+              id +
+              "')\">" +
+              '<i class="ti ti-eye"></i> إظهار' +
+              "</button>" +
+              "</div>"
+            );
+          })
+          .join("")
+      : '<div class="xd-empty-state"><i class="ti ti-checks"></i><p>كل الـ Widgets ظاهرة حالياً</p></div>';
+
+    // ── الـ Widgets الظاهرة ──────────────────────────────────────
+    var visibleIds = st.order.filter(function (id) {
+      return XD_WIDGET_META[id] && st.hidden.indexOf(id) === -1;
+    });
+    var visibleRows = visibleIds
+      .map(function (id, idx) {
+        var m = XD_WIDGET_META[id];
+        var isCollapsed = st.collapsed.indexOf(id) !== -1;
+        return (
+          '<div class="xd-manage-row" data-id="' +
+          id +
+          '">' +
+          '<div class="xd-manage-badge" style="background:' +
+          m.bg +
+          ";color:" +
+          m.color +
+          '">' +
+          '<i class="ti ' +
+          m.icon +
+          '"></i>' +
+          "</div>" +
+          '<div class="xd-manage-info">' +
+          '<span class="xd-manage-name">' +
+          esc(m.title) +
+          "</span>" +
+          (isCollapsed
+            ? '<span class="xd-manage-status xd-status-collapsed"><i class="ti ti-fold"></i> مطوي</span>'
+            : '<span class="xd-manage-status xd-status-visible"><i class="ti ti-eye"></i> ظاهر</span>') +
+          "</div>" +
+          '<div class="xd-manage-btns">' +
+          '<button class="xd-icon-btn-sm" title="نقل لأعلى" onclick="xdMoveWidget(\'' +
+          id +
+          "','up')\"" +
+          (idx === 0 ? " disabled" : "") +
+          '><i class="ti ti-chevron-up"></i></button>' +
+          '<button class="xd-icon-btn-sm" title="نقل لأسفل" onclick="xdMoveWidget(\'' +
+          id +
+          "','down')\"" +
+          (idx === visibleIds.length - 1 ? " disabled" : "") +
+          '><i class="ti ti-chevron-down"></i></button>' +
+          '<button class="xd-icon-btn-sm xd-btn-hide" title="إخفاء" onclick="xdHideWidget(\'' +
+          id +
+          '\')" ><i class="ti ti-eye-off"></i></button>' +
+          "</div>" +
+          "</div>"
+        );
+      })
+      .join("");
+
+    openStyledDrawer({
+      title: "تخصيص لوحة التحكم",
+      subtitle: "تحكم في ترتيب وظهور الـ Widgets",
+      icon: "ti-adjustments",
+      color: "blue",
+      width: 860,
+      body:
+        '<div class="xd-tip-bar">' +
+        '<i class="ti ti-info-circle"></i>' +
+        "<span>تقدر كمان تطوي أو تحرك أي Widget مباشرةً من أزرار أعلى يمينه في اللوحة</span>" +
+        "</div>" +
+        '<div class="xd-manage-section">' +
+        '<div class="xd-manage-section-title"><i class="ti ti-layout-dashboard"></i> الـ Widgets الظاهرة</div>' +
+        '<div id="xd-visible-list" class="xd-manage-list xd-manage-grid">' +
+        visibleRows +
+        "</div>" +
+        "</div>" +
+        '<div class="xd-manage-section">' +
+        '<div class="xd-manage-section-title"><i class="ti ti-eye-off"></i> الـ Widgets المخفية</div>' +
+        '<div id="xd-manage-list" class="xd-manage-list xd-manage-grid">' +
+        hiddenRows +
+        "</div>" +
+        "</div>" +
+        '<button class="xd-reset-btn" onclick="xdResetLayout();closeStyledDrawer()">' +
+        '<i class="ti ti-refresh"></i> استرجاع الترتيب الافتراضي بالكامل' +
+        "</button>",
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §2  دوال مساعدة عامة
+  // ─────────────────────────────────────────────────────────────
+
+  // [إصلاح P2] كانت _xdMoney تفرض "ج.م" يدويًا بتجاهل تام لتفضيل currency
+  // المخزَّن فعليًا — نفس مشكلة _fmtMoney القديمة في FixedAssets. الآن
+  // تُفوِّض لـ formatMoney() المركزية (00_JS_DataLayer.html) مع الحفاظ على
+  // نفس شكل العرض القديم (بدون كسور عشرية) حتى لا يتأثر أي مكان يستخدمها.
+  function _xdMoney(v) {
+    return formatMoney(v, { decimals: 0 });
+  }
+
+  function _xdNum(v) {
+    return Number(v || 0).toLocaleString("en-US", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    });
+  }
+
+  function _xdTodayStr() {
+    return (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().slice(0, 10));
+  }
+
+  function _xdTopKey(map) {
+    var best = null,
+      bv = -Infinity;
+    Object.keys(map).forEach(function (k) {
+      if (!k || k === "undefined" || k === "null") return;
+      if (map[k] > bv) {
+        bv = map[k];
+        best = k;
+      }
+    });
+    return best ? { name: best, value: bv } : null;
+  }
+
+  function _xdSkeleton(rows) {
+    var html = "";
+    for (var i = 0; i < rows; i++) {
+      html += '<div class="xd-skel-row"></div>';
+    }
+    return html;
+  }
+
+  function _xdFmtDateTime(ts) {
+    try {
+      var d = new Date(ts);
+      if (isNaN(d)) return "—";
+      var now = new Date();
+      var diffMin = Math.round((now - d) / 60000);
+      if (diffMin < 1) return "الآن";
+      if (diffMin < 60) return "منذ " + diffMin + " د";
+      var diffH = Math.round(diffMin / 60);
+      if (diffH < 24) return "منذ " + diffH + " س";
+      // [DATE-UNIFY 2026-07-22] كان يعرض تاريخ مطلق بصيغة ar-EG ثابتة
+      // (يوم + اسم شهر مختصر) بغض النظر عن تفضيل date_format — بدّلناه
+      // لاستخدام fmtDate() المركزية عشان يحترم التفضيل مثل باقي النظام.
+      return typeof fmtDate === "function" ? fmtDate(d) : "—";
+    } catch (e) {
+      return "—";
+    }
+  }
+
+  /** غلاف موحّد لكل Widget — هيدر بعنوان + أزرار طي/نقل/إخفاء + جسم */
+  function xdWrap(id, bodyHtml, colSpan) {
+    var meta = XD_WIDGET_META[id] || {
+      title: id,
+      icon: "ti-box",
+      bg: "var(--surface3)",
+      color: "var(--text3)",
+    };
+    var st = _xdLoadLayout();
+    var collapsed = st.collapsed.indexOf(id) !== -1;
+    var span = colSpan || XD_WIDGET_SPAN[id] || 6;
+    return (
+      '<div class="xd-widget xd-col-' +
+      span +
+      '" id="xd-widget-' +
+      id +
+      '" data-wid="' +
+      id +
+      '">' +
+      '<div class="xd-widget-head" title="دبل كليك هنا لتفعيل السحب وإعادة الترتيب">' +
+      '<div class="xd-widget-title">' +
+      iconBadge(meta.icon, meta.bg, meta.color) +
+      "<span>" +
+      esc(meta.title) +
+      "</span></div>" +
+      '<div class="xd-widget-actions">' +
+      '<button class="xd-icon-btn" title="نقل لأعلى" onclick="xdMoveWidget(\'' +
+      id +
+      '\',-1)"><i class="ti ti-arrow-up"></i></button>' +
+      '<button class="xd-icon-btn" title="نقل لأسفل" onclick="xdMoveWidget(\'' +
+      id +
+      '\',1)"><i class="ti ti-arrow-down"></i></button>' +
+      '<button class="xd-icon-btn" title="' +
+      (collapsed ? "عرض" : "طي") +
+      '" onclick="xdToggleCollapse(\'' +
+      id +
+      '\')"><i class="ti ti-chevron-' +
+      (collapsed ? "down" : "up") +
+      '"></i></button>' +
+      '<button class="xd-icon-btn" title="إخفاء الويدجت" onclick="xdHideWidget(\'' +
+      id +
+      '\')"><i class="ti ti-x"></i></button>' +
+      "</div></div>" +
+      '<div class="xd-widget-body"' +
+      (collapsed ? ' style="display:none"' : "") +
+      ">" +
+      bodyHtml +
+      "</div></div>"
+    );
+  }
+
+  // [إصلاح P2] باراميتر sensitive اختياري: مرّر true للمؤشرات المالية
+  // الحساسة (أرصدة/إيرادات) عشان تستفيد من تفضيل hide_balances تلقائيًا —
+  // نفس نمط class="sensitive-balance" المُستخدم في Templates.html.
+  function xdKpi(icon, bg, color, label, val, sub, sensitive, loading) {
+    var valHtml = loading
+      ? '<span class="xd-skel-inline"></span>'
+      : sensitive
+        ? '<span class="sensitive-balance">' + val + "</span>"
+        : val;
+    return (
+      '<div class="xd-kpi">' +
+      '<div class="xd-kpi-ic" style="background:' +
+      bg +
+      '"><i class="ti ' +
+      icon +
+      '" style="color:' +
+      color +
+      '" aria-hidden="true"></i></div>' +
+      '<div class="xd-kpi-info">' +
+      '<div class="xd-kpi-val">' +
+      valHtml +
+      "</div>" +
+      '<div class="xd-kpi-label">' +
+      esc(label) +
+      (sub ? '<span class="xd-kpi-sub">' + esc(sub) + "</span>" : "") +
+      "</div></div></div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §3  حساب المؤشرات (KPIs) من APP.data — كل الحسابات Sync وسريعة
+  // ─────────────────────────────────────────────────────────────
+
+  function xdComputeFinance() {
+    var d = APP.data;
+    // [PERF-FINANCE-LIGHT-2026-08-08] extReady بيستنى cashBoxes (من
+    // Core) و saleInvoicesLight/purchaseInvoicesLight (من الحزمة
+    // الخفيفة الجديدة) مع بعض — قبل كده كان بيستنى cashBoxes بس فكانت
+    // الكروت المعتمدة على الفواتير (إيرادات/ذمم) تفضل صفر حتى لو
+    // extReady بقى true.
+    var extReady =
+      d.cashBoxes !== undefined && d.saleInvoicesLight !== undefined;
+    var todayStr = _xdTodayStr();
+
+    // [PERF-FINANCE-LIGHT-2026-08-08] لو الفواتير الكاملة اتحمّلت
+    // فعلاً (المستخدم فتح شاشة الفواتير في نفس الجلسة) نستخدمها
+    // كأولوية — أدق (فيها كل الحالات المحدّثة لحظياً)، وإلا نرجع
+    // للملخّص الخفيف اللي بيتحمّل مع باقي الداشبورد.
+    var saleInv = d.saleInvoices || d.saleInvoicesLight || [];
+    var purchInv = d.purchaseInvoices || d.purchaseInvoicesLight || [];
+
+    var revenueToday = saleInv
+      .filter(function (i) {
+        return (
+          i.status !== "cancelled" && String(i.date).slice(0, 10) === todayStr
+        );
+      })
+      .reduce(function (s, i) {
+        return s + Number(i.net_total || 0);
+      }, 0);
+
+    var expensesToday = (d.expenses || [])
+      .filter(function (e) {
+        return (
+          e.status !== "cancelled" && String(e.date).slice(0, 10) === todayStr
+        );
+      })
+      .reduce(function (s, e) {
+        return s + Number(e.amount || 0);
+      }, 0);
+
+    var cashBalance = (d.cashBoxes || []).reduce(function (s, c) {
+      return s + Number(c.current_balance || 0);
+    }, 0);
+    var bankBalance = (d.bankAccounts || []).reduce(function (s, b) {
+      return s + Number(b.current_balance || 0);
+    }, 0);
+
+    var receivables = saleInv
+      .filter(function (i) {
+        return i.status !== "cancelled" && i.payment_status !== "paid";
+      })
+      .reduce(function (s, i) {
+        return s + Number(i.net_total || 0);
+      }, 0);
+    var payables = purchInv
+      .filter(function (i) {
+        return i.status !== "cancelled" && i.payment_status !== "paid";
+      })
+      .reduce(function (s, i) {
+        return s + Number(i.net_total || 0);
+      }, 0);
+
+    return {
+      extReady: extReady,
+      revenueToday: revenueToday,
+      expensesToday: expensesToday,
+      netToday: revenueToday - expensesToday,
+      cashBalance: cashBalance,
+      bankBalance: bankBalance,
+      receivables: receivables,
+      payables: payables,
+    };
+  }
+
+  function xdComputeInventory() {
+    var d = APP.data;
+    var totalValue = 0;
+    (d.items || []).forEach(function (item) {
+      var cost = Number(item.cost_price || 0);
+      var qty = (d.stock || [])
+        .filter(function (s) {
+          return s.item_id === item.id;
+        })
+        .reduce(function (s, x) {
+          return s + Number(x.quantity || 0);
+        }, 0);
+      totalValue += qty * cost;
+    });
+    var todayStr = _xdTodayStr();
+    var todayTx = (d.transactions || []).filter(function (t) {
+      return String(t.date).slice(0, 10) === todayStr;
+    }).length;
+    var transfersToday = (d.transactions || []).filter(function (t) {
+      return t.type === "TRANSFER" && String(t.date).slice(0, 10) === todayStr;
+    }).length;
+    return {
+      totalValue: totalValue,
+      alerts: typeof alertCount === "function" ? alertCount() : 0,
+      itemsCount: (d.items || []).length,
+      todayTx: todayTx,
+      transfersToday: transfersToday,
+    };
+  }
+
+  function xdComputeSales() {
+    var d = APP.data;
+    var todayStr = _xdTodayStr();
+    // [PERF-FINANCE-LIGHT-2026-08-08] نفس مبدأ xdComputeFinance: نستخدم
+    // الفواتير الكاملة لو محمّلة فعلاً (من زيارة شاشة الفواتير)، وإلا
+    // نرجع للملخّص الخفيف اللي بيتحمّل مع الداشبورد. الملخّص الخفيف
+    // فيه party/net_total/date/status فبيكفي لـ todaySales/invoicesCount/
+    // bestCustomer، لكن مفيهوش lines_json ولا created_by، فـ bestItem/
+    // topUser بيفضلوا محتاجين الفواتير الكاملة تحديداً (isFullData).
+    var isFullData = !!d.saleInvoices;
+    var invoices = (d.saleInvoices || d.saleInvoicesLight || []).filter(
+      function (i) {
+        return i.status !== "cancelled";
+      },
+    );
+    var todaySales = invoices
+      .filter(function (i) {
+        return String(i.date).slice(0, 10) === todayStr;
+      })
+      .reduce(function (s, i) {
+        return s + Number(i.net_total || 0);
+      }, 0);
+
+    var byCustomer = {},
+      byItem = {},
+      byUser = {};
+    invoices.forEach(function (inv) {
+      byCustomer[inv.party] =
+        (byCustomer[inv.party] || 0) + Number(inv.net_total || 0);
+      if (isFullData) {
+        byUser[inv.created_by] = (byUser[inv.created_by] || 0) + 1;
+        (Array.isArray(inv.lines_json) ? inv.lines_json : []).forEach(
+          function (l) {
+            var key = l.item_name || l.item_id || "—";
+            byItem[key] =
+              (byItem[key] || 0) + Number(l.qty || l.quantity || 0);
+          },
+        );
+      }
+    });
+
+    return {
+      todaySales: todaySales,
+      invoicesCount: invoices.length,
+      bestCustomer: _xdTopKey(byCustomer),
+      bestItem: isFullData ? _xdTopKey(byItem) : null,
+      topUser: isFullData ? _xdTopKey(byUser) : null,
+    };
+  }
+
+  function xdComputePurchases() {
+    var d = APP.data;
+    var todayStr = _xdTodayStr();
+    var invoices = (d.purchaseInvoices || []).filter(function (i) {
+      return i.status !== "cancelled";
+    });
+    var todayPurchases = invoices
+      .filter(function (i) {
+        return String(i.date).slice(0, 10) === todayStr;
+      })
+      .reduce(function (s, i) {
+        return s + Number(i.net_total || 0);
+      }, 0);
+    var unpaidCount = invoices.filter(function (i) {
+      return i.payment_status !== "paid";
+    }).length;
+    var bySupplier = {};
+    invoices.forEach(function (inv) {
+      bySupplier[inv.party] =
+        (bySupplier[inv.party] || 0) + Number(inv.net_total || 0);
+    });
+    return {
+      todayPurchases: todayPurchases,
+      invoicesCount: invoices.length,
+      unpaidCount: unpaidCount,
+      bestSupplier: _xdTopKey(bySupplier),
+    };
+  }
+
+  function xdComputeProduction() {
+    var d = APP.data;
+    var pos = d.productionOrders || [];
+    var inProgress = pos.filter(function (o) {
+      return o.status === "pending" || o.status === "in_progress";
+    }).length;
+    var completed = pos.filter(function (o) {
+      return (
+        o.status === "completed" || o.status === "closed" || o.status === "done"
+      );
+    }).length;
+    var total = pos.length;
+    var pct = total ? Math.round((completed / total) * 100) : 0;
+    return {
+      inProgress: inProgress,
+      completed: completed,
+      pct: pct,
+      total: total,
+    };
+  }
+
+  function xdComputeHR() {
+    var d = APP.data;
+    if (d.employees === undefined) return null;
+    var active = (d.employees || []).filter(function (e) {
+      return e.status === "ACTIVE";
+    });
+    var todayStr = _xdTodayStr();
+    var todayAtt = (d.attendance || []).filter(function (a) {
+      return a.date === todayStr;
+    });
+    var present = todayAtt.filter(function (a) {
+      return a.status === "PRESENT" || a.status === "LATE";
+    }).length;
+    var absent = Math.max(active.length - present, 0);
+    var onLeave = (d.employees || []).filter(function (e) {
+      return e.status === "ON_LEAVE";
+    }).length;
+    var thisMonth = todayStr.slice(0, 7);
+    var newHires = (d.employees || []).filter(function (e) {
+      return String(e.hire_date || "").slice(0, 7) === thisMonth;
+    }).length;
+    return {
+      present: present,
+      absent: absent,
+      onLeave: onLeave,
+      newHires: newHires,
+      activeCount: active.length,
+    };
+  }
+
+  function xdComputeWarehouses() {
+    var d = APP.data;
+    return (d.warehouses || []).map(function (w) {
+      var rows = (d.stock || []).filter(function (s) {
+        return s.warehouse === w.id || s.warehouse === w.name;
+      });
+      var qty = rows.reduce(function (s, r) {
+        return s + Number(r.quantity || 0);
+      }, 0);
+      var value = 0;
+      rows.forEach(function (r) {
+        var item = (d.items || []).find(function (i) {
+          return i.id === r.item_id;
+        });
+        if (item)
+          value += Number(r.quantity || 0) * Number(item.cost_price || 0);
+      });
+      return { id: w.id, name: w.name, qty: qty, value: value };
+    });
+  }
+
+  /** رؤى تلقائية مبنية على بيانات حقيقية فقط */
+  function xdComputeInsights() {
+    var d = APP.data;
+    var insights = [];
+    var now = new Date();
+
+    // 1) مبيعات هذا الأسبوع مقابل الأسبوع السابق
+    var msDay = 86400000;
+    var weekStart = new Date(now.getTime() - 6 * msDay);
+    var prevWeekStart = new Date(now.getTime() - 13 * msDay);
+    var prevWeekEnd = new Date(now.getTime() - 7 * msDay);
+    var thisWeekSum = 0,
+      prevWeekSum = 0;
+    (d.saleInvoices || []).forEach(function (inv) {
+      if (inv.status === "cancelled") return;
+      var dt = new Date(inv.date);
+      if (isNaN(dt)) return;
+      var v = Number(inv.net_total || 0);
+      if (dt >= weekStart) thisWeekSum += v;
+      else if (dt >= prevWeekStart && dt <= prevWeekEnd) prevWeekSum += v;
+    });
+    if (prevWeekSum > 0) {
+      var pct = Math.round(((thisWeekSum - prevWeekSum) / prevWeekSum) * 100);
+      insights.push({
+        icon: pct >= 0 ? "ti-trending-up" : "ti-trending-down",
+        color: pct >= 0 ? "var(--success)" : "var(--danger)",
+        text:
+          "المبيعات هذا الأسبوع " +
+          (pct >= 0 ? "أعلى" : "أقل") +
+          " من الأسبوع السابق بنسبة " +
+          Math.abs(pct) +
+          "%",
+      });
+    } else if (thisWeekSum > 0) {
+      insights.push({
+        icon: "ti-trending-up",
+        color: "var(--success)",
+        text:
+          "تم تسجيل مبيعات بقيمة " + _xdMoney(thisWeekSum) + " خلال آخر 7 أيام",
+      });
+    }
+
+    // 2) أفضل عميل
+    var sales = xdComputeSales();
+    if (sales.bestCustomer) {
+      insights.push({
+        icon: "ti-crown",
+        color: "var(--warning)",
+        text:
+          "أفضل عميل (إجمالي التعامل): " +
+          sales.bestCustomer.name +
+          " — " +
+          _xdMoney(sales.bestCustomer.value),
+      });
+    }
+    if (sales.bestItem) {
+      insights.push({
+        icon: "ti-star",
+        color: "var(--accent)",
+        text:
+          "الأعلى مبيعاً بالكمية: " +
+          sales.bestItem.name +
+          " (" +
+          _xdNum(sales.bestItem.value) +
+          " وحدة)",
+      });
+    }
+
+    // 3) المخزن الذي يحتاج متابعة (أكثر مخزن فيه تنبيهات نقص نسبةً لعدد أصنافه)
+    var whs = xdComputeWarehouses();
+    if (whs.length) {
+      var lowest = whs.slice().sort(function (a, b) {
+        return a.value - b.value;
+      })[0];
+      if (lowest && lowest.value >= 0) {
+        insights.push({
+          icon: "ti-building-warehouse",
+          color: "var(--orange)",
+          text:
+            "مخزن «" +
+            (lowest.name || lowest.id) +
+            "» — أقل قيمة مخزون حالياً (" +
+            _xdMoney(lowest.value) +
+            ")",
+        });
+      }
+    }
+
+    // 4) أعلى موظف إنتاجية (من تنفيذ مراحل الإنتاج لو الموديول موجود وفيه بيانات)
+    if (Array.isArray(d.productionStages)) {
+      var byEmp = {};
+      (d.productionStages || []).forEach(function (st) {
+        (st.executions || []).forEach(function (ex) {
+          byEmp[ex.employee_id] =
+            (byEmp[ex.employee_id] || 0) + Number(ex.qty || 0);
+        });
+      });
+      var topEmpId = _xdTopKey(byEmp);
+      if (topEmpId) {
+        var empObj = (d.employees || []).find(function (e) {
+          return e.id === topEmpId.name;
+        });
+        insights.push({
+          icon: "ti-medal",
+          color: "var(--purple)",
+          text:
+            "أعلى إنتاجية بالقطعة: " +
+            (empObj ? empObj.full_name : topEmpId.name) +
+            " — " +
+            _xdNum(topEmpId.value) +
+            " وحدة منفّذة",
+        });
+      }
+    }
+
+    // 5) تنبيه مخزون منخفض
+    var inv = xdComputeInventory();
+    if (inv.alerts > 0) {
+      insights.push({
+        icon: "ti-alert-triangle",
+        color: "var(--danger)",
+        text:
+          inv.alerts +
+          " صنف/لون وصل للحد الأدنى أو نفد من المخزون — يحتاج تحرّك فوري",
+      });
+    }
+
+    if (!insights.length) {
+      insights.push({
+        icon: "ti-info-circle",
+        color: "var(--text3)",
+        text: "لا توجد رؤى كافية حالياً — البيانات لسه قليلة",
+      });
+    }
+    return insights;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §4  النشاط المباشر — مبني من أحدث السجلات الفعلية في APP.data
+  // (بدون أي نداء سيرفر إضافي — كل البيانات أصلاً محمَّلة)
+  // ─────────────────────────────────────────────────────────────
+
+  function _xdBuildActivityFeed(limit) {
+    var d = APP.data;
+    var events = [];
+
+    function push(ts, user, icon, bg, color, title, desc) {
+      if (!ts) return;
+      var t = new Date(ts).getTime();
+      if (!t || isNaN(t)) return;
+      events.push({
+        ts: t,
+        user: user,
+        icon: icon,
+        bg: bg,
+        color: color,
+        title: title,
+        desc: desc,
+      });
+    }
+
+    (d.saleInvoices || []).forEach(function (i) {
+      push(
+        i.created_at,
+        i.created_by,
+        "ti-file-invoice",
+        "var(--success-soft)",
+        "var(--success)",
+        "فاتورة بيع جديدة",
+        esc(i.party || "—") + " — " + _xdMoney(i.net_total),
+      );
+    });
+    (d.purchaseInvoices || []).forEach(function (i) {
+      push(
+        i.created_at,
+        i.created_by,
+        "ti-shopping-cart",
+        "var(--accent-soft)",
+        "var(--accent)",
+        "فاتورة شراء جديدة",
+        esc(i.party || "—") + " — " + _xdMoney(i.net_total),
+      );
+    });
+    (d.receiptVouchers || []).forEach(function (v) {
+      push(
+        v.created_at,
+        v.created_by,
+        "ti-cash",
+        "var(--success-soft)",
+        "var(--success)",
+        "سند قبض",
+        "من: " + esc(v.from_party || "—") + " — " + _xdMoney(v.amount),
+      );
+    });
+    (d.paymentVouchers || []).forEach(function (v) {
+      push(
+        v.created_at,
+        v.created_by,
+        "ti-cash-banknote",
+        "var(--danger-soft)",
+        "var(--danger)",
+        "سند صرف",
+        "إلى: " + esc(v.to_party || "—") + " — " + _xdMoney(v.amount),
+      );
+    });
+    (d.expenses || []).forEach(function (e) {
+      push(
+        e.created_at,
+        e.created_by,
+        "ti-receipt",
+        "var(--danger-soft)",
+        "var(--danger)",
+        "مصروف جديد",
+        _xdMoney(e.amount),
+      );
+    });
+    (d.productionOrders || []).forEach(function (o) {
+      push(
+        o.created_at || o.date,
+        o.user || o.created_by,
+        "ti-building-factory-2",
+        "var(--warning-soft)",
+        "var(--warning)",
+        "أمر إنتاج",
+        "الكمية: " + _xdNum(o.quantity),
+      );
+    });
+    (d.transactions || []).slice(-40).forEach(function (t) {
+      var TYPE_LABEL = {
+        IN: "حركة وارد",
+        OUT: "حركة صادر",
+        TRANSFER: "تحويل مخزني",
+        DISPATCH: "صرف مصنع",
+        FACTORY_RETURN: "مرتجع مصنع",
+        FG_IN: "استلام منتج تام",
+      };
+      push(
+        t.date,
+        t.user,
+        "ti-arrows-exchange",
+        "var(--purple-soft)",
+        "var(--purple)",
+        TYPE_LABEL[t.type] || "حركة مخزون",
+        "كمية: " + _xdNum(t.quantity),
+      );
+    });
+    (d.customers || []).forEach(function (c) {
+      push(
+        c.created_at,
+        "",
+        "ti-user-plus",
+        "var(--teal-soft)",
+        "var(--teal)",
+        "عميل جديد",
+        esc(c.name || ""),
+      );
+    });
+    (d.suppliers || []).forEach(function (s) {
+      push(
+        s.created_at,
+        "",
+        "ti-building-store",
+        "var(--orange-soft)",
+        "var(--orange)",
+        "مورد جديد",
+        esc(s.name || ""),
+      );
+    });
+    (d.items || []).forEach(function (it) {
+      push(
+        it.created_at,
+        "",
+        "ti-box",
+        "var(--accent-soft)",
+        "var(--accent)",
+        "إضافة صنف",
+        esc(it.name || ""),
+      );
+    });
+
+    events.sort(function (a, b) {
+      return b.ts - a.ts;
+    });
+    return events.slice(0, limit || 15);
+  }
+
+  function xdRenderActivityFeed() {
+    var events = _xdBuildActivityFeed(12);
+    var rows = events.length
+      ? events
+          .map(function (ev) {
+            return (
+              '<div class="xd-activity-item">' +
+              '<span class="xd-activity-ic" style="background:' +
+              ev.bg +
+              '"><i class="ti ' +
+              ev.icon +
+              '" style="color:' +
+              ev.color +
+              '" aria-hidden="true"></i></span>' +
+              '<div class="xd-activity-body">' +
+              '<div class="xd-activity-title">' +
+              esc(ev.title) +
+              "</div>" +
+              '<div class="xd-activity-desc">' +
+              (ev.desc || "") +
+              "</div>" +
+              "</div>" +
+              '<div class="xd-activity-meta">' +
+              (ev.user ? esc(ev.user) + " · " : "") +
+              _xdFmtDateTime(ev.ts) +
+              "</div>" +
+              "</div>"
+            );
+          })
+          .join("")
+      : '<div class="empty-state"><p>لا يوجد نشاط حديث بعد</p></div>';
+
+    var body =
+      '<div class="xd-activity-list">' +
+      rows +
+      "</div>" +
+      '<button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px" onclick="navigate(\'audit_log\')">عرض سجل العمليات الكامل</button>';
+    return xdWrap("activity", body);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §5  الرسوم البيانية — مبيعات/مشتريات آخر 7 أيام + حركة المخزون (موجودة مسبقاً)
+  // ─────────────────────────────────────────────────────────────
+
+  function _xdLast7Days() {
+    var days = [];
+    var now = new Date();
+    for (var i = 6; i >= 0; i--) {
+      var d = new Date(now);
+      d.setDate(d.getDate() - i);
+      days.push({
+        date: d.toISOString().split("T")[0],
+        // [ENGINE-UNIFY] كانت نسخة مكرّرة بنفس منطق DateEngine.weekdayName
+        // بالضبط (نفس locale ونفس fallback) — استبدلناها بالمحرك الموحّد.
+        label:
+          typeof DateEngine !== "undefined"
+            ? DateEngine.weekdayName(d)
+            : d.toLocaleDateString("ar-EG-u-nu-latn", { weekday: "short" }),
+      });
+    }
+    return days;
+  }
+
+  function xdRenderSalesPurchaseChart() {
+    var days = _xdLast7Days();
+    var d = APP.data;
+    days.forEach(function (day) {
+      day.sales = (d.saleInvoices || [])
+        .filter(function (i) {
+          return (
+            i.status !== "cancelled" && String(i.date).slice(0, 10) === day.date
+          );
+        })
+        .reduce(function (s, i) {
+          return s + Number(i.net_total || 0);
+        }, 0);
+      day.purchases = (d.purchaseInvoices || [])
+        .filter(function (i) {
+          return (
+            i.status !== "cancelled" && String(i.date).slice(0, 10) === day.date
+          );
+        })
+        .reduce(function (s, i) {
+          return s + Number(i.net_total || 0);
+        }, 0);
+    });
+    var maxVal = Math.max.apply(
+      null,
+      days
+        .map(function (d2) {
+          return Math.max(d2.sales, d2.purchases);
+        })
+        .concat([1]),
+    );
+    var CHART_H = 140;
+    var bars = days
+      .map(function (d2) {
+        function col(val, color) {
+          var h =
+            maxVal > 0
+              ? Math.max((val / maxVal) * CHART_H, val > 0 ? 4 : 0)
+              : 0;
+          return (
+            '<div style="display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:' +
+            CHART_H +
+            'px">' +
+            (val > 0
+              ? '<div style="font-size:8px;color:' +
+                color +
+                ';font-weight:700;margin-bottom:2px">' +
+                Math.round(val / 1000) +
+                (val >= 1000 ? "k" : "") +
+                "</div>"
+              : "") +
+            '<div style="width:12px;border-radius:4px 4px 0 0;background:' +
+            color +
+            ";height:" +
+            h +
+            'px;transition:height .4s ease"></div>' +
+            "</div>"
+          );
+        }
+        return (
+          '<div style="display:flex;flex-direction:column;align-items:center;flex:1;min-width:0">' +
+          '<div style="display:flex;align-items:flex-end;gap:3px;width:100%;justify-content:center">' +
+          col(d2.sales, "#2563eb") +
+          col(d2.purchases, "#f97316") +
+          "</div>" +
+          '<div style="font-size:10px;color:var(--text2);margin-top:6px;text-align:center;white-space:nowrap">' +
+          d2.label +
+          "</div></div>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div class="card xd-chart-card">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">' +
+      '<div style="font-weight:700;font-size:14px">المبيعات مقابل المشتريات — آخر 7 أيام</div>' +
+      '<div style="display:flex;gap:12px;font-size:11px;color:var(--text2)">' +
+      '<span style="display:flex;align-items:center;gap:4px"><span style="width:9px;height:9px;border-radius:3px;background:#2563eb;display:inline-block"></span> مبيعات</span>' +
+      '<span style="display:flex;align-items:center;gap:4px"><span style="width:9px;height:9px;border-radius:3px;background:#f97316;display:inline-block"></span> مشتريات</span>' +
+      "</div></div>" +
+      '<div style="display:flex;align-items:flex-end;gap:4px;padding:0 4px">' +
+      bars +
+      "</div></div>"
+    );
+  }
+
+  function xdRenderCharts() {
+    var body =
+      '<div class="xd-charts-stack">' +
+      xdRenderSalesPurchaseChart() +
+      renderLast7DaysChart() +
+      "</div>";
+    return xdWrap("charts", body);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §6  التنبيهات — يستخدم نفس محرك _buildNotifications() الموجود في الشل
+  // ─────────────────────────────────────────────────────────────
+
+  function xdRenderNotifications() {
+    var notifs =
+      typeof _buildNotifications === "function" ? _buildNotifications() : [];
+    var top = notifs.slice(0, 6);
+    var rows = top.length
+      ? top
+          .map(function (n) {
+            return (
+              '<div class="xd-notif-row" onclick="toggleNotifDropdown();navigate(\'' +
+              (n.page || "dashboard") +
+              "')\">" +
+              '<span class="xd-notif-ic" style="background:' +
+              (n.iconBg || "var(--surface3)") +
+              '">' +
+              (n.icon || "") +
+              "</span>" +
+              '<div style="flex:1;min-width:0">' +
+              '<div class="xd-notif-title">' +
+              n.title +
+              "</div>" +
+              '<div class="xd-notif-desc">' +
+              n.desc +
+              "</div></div></div>"
+            );
+          })
+          .join("")
+      : '<div class="empty-state"><div class="empty-icon"><span style="display:inline-flex;background:#DCFCE7;border-radius:10px;padding:8px"><i class="ti ti-circle-check" style="font-size:26px;color:#166534"></i></span></div><p>لا توجد تنبيهات حالياً</p></div>';
+
+    var body =
+      rows +
+      (notifs.length > 6
+        ? '<button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px" onclick="toggleNotifDropdown()">عرض كل التنبيهات (' +
+          notifs.length +
+          ")</button>"
+        : "");
+    return xdWrap("notifications", body);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §7  مؤشرات الأداء (KPI Widgets) حسب الموديول
+  // ─────────────────────────────────────────────────────────────
+
+  function xdRenderFinance() {
+    var f = xdComputeFinance();
+    var L = !f.extReady;
+    var body =
+      '<div class="xd-kpi-grid">' +
+      xdKpi(
+        "ti-cash-register",
+        "var(--success-soft)",
+        "var(--success)",
+        "إيرادات اليوم",
+        _xdMoney(f.revenueToday),
+        null,
+        true,
+        L,
+      ) +
+      xdKpi(
+        "ti-receipt-2",
+        "var(--danger-soft)",
+        "var(--danger)",
+        "مصروفات اليوم",
+        _xdMoney(f.expensesToday),
+        null,
+        true,
+        L,
+      ) +
+      xdKpi(
+        "ti-trending-up",
+        "var(--accent-soft)",
+        "var(--accent)",
+        "صافي اليوم",
+        _xdMoney(f.netToday),
+        "تقديري",
+        true,
+        L,
+      ) +
+      xdKpi(
+        "ti-coin",
+        "var(--warning-soft)",
+        "var(--warning)",
+        "رصيد الصندوق",
+        _xdMoney(f.cashBalance),
+        null,
+        true,
+        L,
+      ) +
+      xdKpi(
+        "ti-building-bank",
+        "var(--purple-soft)",
+        "var(--purple)",
+        "رصيد البنوك",
+        _xdMoney(f.bankBalance),
+        null,
+        true,
+        L,
+      ) +
+      xdKpi(
+        "ti-arrow-down-circle",
+        "var(--orange-soft)",
+        "var(--orange)",
+        "ذمم مدينة",
+        _xdMoney(f.receivables),
+        "تقديري",
+        true,
+        L,
+      ) +
+      xdKpi(
+        "ti-arrow-up-circle",
+        "var(--teal-soft)",
+        "var(--teal)",
+        "ذمم دائنة",
+        _xdMoney(f.payables),
+        "تقديري",
+        true,
+        L,
+      ) +
+      "</div>";
+    return xdWrap("finance", body);
+  }
+
+  function xdRenderInventory() {
+    var inv = xdComputeInventory();
+    var body =
+      '<div class="xd-kpi-grid xd-kpi-grid-sm">' +
+      xdKpi(
+        "ti-coin",
+        "var(--warning-soft)",
+        "var(--warning)",
+        "قيمة المخزون",
+        _xdMoney(inv.totalValue),
+        null,
+        true,
+      ) +
+      xdKpi(
+        "ti-bell",
+        "var(--danger-soft)",
+        "var(--danger)",
+        "تنبيهات نقص",
+        _xdNum(inv.alerts),
+      ) +
+      xdKpi(
+        "ti-box",
+        "var(--accent-soft)",
+        "var(--accent)",
+        "إجمالي الأصناف",
+        _xdNum(inv.itemsCount),
+      ) +
+      xdKpi(
+        "ti-arrows-exchange",
+        "var(--purple-soft)",
+        "var(--purple)",
+        "تحويلات اليوم",
+        _xdNum(inv.transfersToday),
+      ) +
+      "</div>";
+    return xdWrap("inventory", body);
+  }
+
+  function xdRenderSales() {
+    var s = xdComputeSales();
+    var body =
+      '<div class="xd-kpi-grid">' +
+      xdKpi(
+        "ti-cash-register",
+        "var(--success-soft)",
+        "var(--success)",
+        "مبيعات اليوم",
+        _xdMoney(s.todaySales),
+      ) +
+      xdKpi(
+        "ti-file-invoice",
+        "var(--accent-soft)",
+        "var(--accent)",
+        "عدد الفواتير",
+        _xdNum(s.invoicesCount),
+      ) +
+      xdKpi(
+        "ti-crown",
+        "var(--warning-soft)",
+        "var(--warning)",
+        "أفضل عميل",
+        s.bestCustomer ? esc(s.bestCustomer.name) : "—",
+      ) +
+      xdKpi(
+        "ti-star",
+        "var(--purple-soft)",
+        "var(--purple)",
+        "الأكثر مبيعاً",
+        s.bestItem ? esc(s.bestItem.name) : "—",
+      ) +
+      "</div>";
+    return xdWrap("sales", body);
+  }
+
+  function xdRenderPurchases() {
+    var p = xdComputePurchases();
+    var body =
+      '<div class="xd-kpi-grid xd-kpi-grid-sm">' +
+      xdKpi(
+        "ti-shopping-cart",
+        "var(--orange-soft)",
+        "var(--orange)",
+        "مشتريات اليوم",
+        _xdMoney(p.todayPurchases),
+      ) +
+      xdKpi(
+        "ti-file-dollar",
+        "var(--danger-soft)",
+        "var(--danger)",
+        "فواتير غير مدفوعة",
+        _xdNum(p.unpaidCount),
+      ) +
+      xdKpi(
+        "ti-building-store",
+        "var(--accent-soft)",
+        "var(--accent)",
+        "أكثر مورد تعاملاً",
+        p.bestSupplier ? esc(p.bestSupplier.name) : "—",
+      ) +
+      "</div>";
+    return xdWrap("purchases", body);
+  }
+
+  function xdRenderProduction() {
+    var pr = xdComputeProduction();
+    var body =
+      '<div class="xd-kpi-grid xd-kpi-grid-sm">' +
+      xdKpi(
+        "ti-building-factory-2",
+        "var(--warning-soft)",
+        "var(--warning)",
+        "أوامر جارية",
+        _xdNum(pr.inProgress),
+      ) +
+      xdKpi(
+        "ti-checks",
+        "var(--success-soft)",
+        "var(--success)",
+        "أوامر مكتملة",
+        _xdNum(pr.completed),
+      ) +
+      xdKpi(
+        "ti-percentage",
+        "var(--accent-soft)",
+        "var(--accent)",
+        "نسبة الإنجاز",
+        pr.pct + "%",
+      ) +
+      "</div>";
+    return xdWrap("production", body);
+  }
+
+  function xdRenderHR() {
+    var hr = xdComputeHR();
+    var L = !hr;
+    hr = hr || { present: 0, absent: 0, onLeave: 0, newHires: 0 };
+    var body =
+      '<div class="xd-kpi-grid">' +
+      xdKpi(
+        "ti-user-check",
+        "var(--success-soft)",
+        "var(--success)",
+        "الحاضرون اليوم",
+        _xdNum(hr.present),
+        null,
+        false,
+        L,
+      ) +
+      xdKpi(
+        "ti-user-x",
+        "var(--danger-soft)",
+        "var(--danger)",
+        "الغائبون اليوم",
+        _xdNum(hr.absent),
+        null,
+        false,
+        L,
+      ) +
+      xdKpi(
+        "ti-beach",
+        "var(--accent-soft)",
+        "var(--accent)",
+        "في إجازة",
+        _xdNum(hr.onLeave),
+        null,
+        false,
+        L,
+      ) +
+      xdKpi(
+        "ti-user-plus",
+        "var(--purple-soft)",
+        "var(--purple)",
+        "تعيينات هذا الشهر",
+        _xdNum(hr.newHires),
+        null,
+        false,
+        L,
+      ) +
+      "</div>";
+    return xdWrap("hr", body);
+  }
+
+  // ─── helpers خاصة بكارت فودافون كاش ────────────────────────
+  function _xdVfcMini(icon, color, label, val, sub) {
+    return (
+      '<div class="xd-vfc-mini">' +
+      '<div class="xd-vfc-mini-icon" style="background:' +
+      color +
+      "20;color:" +
+      color +
+      '">' +
+      '<i class="ti ' +
+      icon +
+      '"></i></div>' +
+      '<div class="xd-vfc-mini-body">' +
+      '<div class="xd-vfc-mini-val">' +
+      val +
+      "</div>" +
+      '<div class="xd-vfc-mini-lbl">' +
+      label +
+      (sub ? ' <span class="xd-vfc-mini-sub">' + sub + "</span>" : "") +
+      "</div>" +
+      "</div></div>"
+    );
+  }
+
+  function _xdVfcProviderDot(name, color, balance, count) {
+    return (
+      '<div class="xd-vfc-prov">' +
+      '<span class="xd-vfc-prov-dot" style="background:' +
+      color +
+      '"></span>' +
+      '<span class="xd-vfc-prov-name">' +
+      esc(name) +
+      "</span>" +
+      '<span class="xd-vfc-prov-count">(' +
+      count +
+      " خط)</span>" +
+      '<span class="xd-vfc-prov-bal sensitive-balance">' +
+      _xdMoney(balance) +
+      "</span>" +
+      "</div>"
+    );
+  }
+
+  function _xdVfcSvgBar(series) {
+    if (!series || !series.length) return "";
+    var maxVal = 0;
+    series.forEach(function (s) {
+      if (s.deposit + s.withdraw > maxVal) maxVal = s.deposit + s.withdraw;
+    });
+    if (!maxVal) return "";
+    var W = 280,
+      H = 56,
+      n = series.length,
+      bw = Math.floor(W / n) - 3;
+    var bars = "";
+    series.forEach(function (s, i) {
+      var x = i * (W / n) + 1;
+      var dh = Math.round((s.deposit / maxVal) * H);
+      var wh = Math.round((s.withdraw / maxVal) * H);
+      bars +=
+        '<rect x="' +
+        x +
+        '" y="' +
+        (H - dh) +
+        '" width="' +
+        bw +
+        '" height="' +
+        dh +
+        '" fill="#10B981" opacity="0.8" rx="2"/>';
+      bars +=
+        '<rect x="' +
+        (x + bw / 2) +
+        '" y="' +
+        (H - wh) +
+        '" width="' +
+        bw / 2 +
+        '" height="' +
+        wh +
+        '" fill="#EF4444" opacity="0.7" rx="2"/>';
+    });
+    return (
+      '<svg viewBox="0 0 ' +
+      W +
+      " " +
+      H +
+      '" style="width:100%;height:56px;display:block">' +
+      bars +
+      "</svg>"
+    );
+  }
+
+  function xdRenderVodafone() {
+    // حالة الـ skeleton قبل تحميل البيانات
+    var skelMini =
+      '<div class="xd-vfc-mini xd-vfc-mini-skel">' +
+      '<div class="xd-vfc-mini-icon" style="background:var(--surface2)"></div>' +
+      '<div class="xd-vfc-mini-body">' +
+      '<div class="xd-skel-row" style="width:70%;height:16px;margin-bottom:4px"></div>' +
+      '<div class="xd-skel-row" style="width:50%;height:11px"></div>' +
+      "</div></div>";
+
+    var body =
+      // ── الصف الأول: KPIs الرئيسية ────────────────────────────
+      '<div class="xd-vfc-kpi-row" id="xd-vfc-kpis">' +
+      skelMini +
+      skelMini +
+      skelMini +
+      skelMini +
+      "</div>" +
+      // ── الصف الثاني: إيداعات/سحوبات اليوم + مخطط الأسبوع ────
+      '<div class="xd-vfc-mid-row">' +
+      '<div class="xd-vfc-io-col" id="xd-vfc-io">' +
+      '<div class="xd-vfc-io-skel">' +
+      '<div class="xd-skel-row" style="width:80%;height:12px;margin-bottom:8px"></div>' +
+      '<div class="xd-skel-row" style="width:60%;height:12px"></div>' +
+      "</div></div>" +
+      '<div class="xd-vfc-chart-col" id="xd-vfc-chart">' +
+      '<div class="xd-vfc-chart-label">الإيداعات والسحوبات (آخر 7 أيام)</div>' +
+      '<div class="xd-skel-row" style="height:56px;border-radius:6px"></div>' +
+      "</div>" +
+      "</div>" +
+      // ── الصف الثالث: توزيع الشركات + أكثر الخطوط استخداماً ──
+      '<div class="xd-vfc-bot-row">' +
+      '<div class="xd-vfc-prov-col" id="xd-vfc-provs">' +
+      '<div class="xd-vfc-sec-title"><i class="ti ti-chart-pie"></i> توزيع الشركات</div>' +
+      '<div class="xd-skel-row" style="height:12px;margin:4px 0"></div>' +
+      '<div class="xd-skel-row" style="height:12px;width:80%;margin:4px 0"></div>' +
+      "</div>" +
+      '<div class="xd-vfc-top-col" id="xd-vfc-top">' +
+      '<div class="xd-vfc-sec-title"><i class="ti ti-medal"></i> أكثر الخطوط استخداماً</div>' +
+      '<div class="xd-skel-row" style="height:12px;margin:4px 0"></div>' +
+      '<div class="xd-skel-row" style="height:12px;width:75%;margin:4px 0"></div>' +
+      "</div>" +
+      "</div>" +
+      // ── زر الانتقال للشاشة الكاملة ───────────────────────────
+      '<div class="xd-vfc-footer">' +
+      '<button class="xd-vfc-link-btn" onclick="renderPage(\'vodafone_cash\')">' +
+      '<i class="ti ti-external-link"></i> فتح مركز عمليات المحافظ الإلكترونية' +
+      "</button></div>";
+
+    return xdWrap("vodafone", body);
+  }
+
+  function xdLoadVodafoneWidget() {
+    if (typeof canDo !== "function" || !canDo("viewVodafoneCash")) return;
+    if (typeof google === "undefined" || !google.script || !google.script.run)
+      return;
+
+    _gsr("getVodafoneCashDashboardStats", null, {
+      label: "XD.vodafoneWidget",
+      onSuccess: function (res) {
+        if (!res || !res.success) {
+          var kEl = document.getElementById("xd-vfc-kpis");
+          if (kEl)
+            kEl.innerHTML =
+              '<div style="color:var(--text3);font-size:12px;padding:8px 0">لا توجد بيانات متاحة</div>';
+          return;
+        }
+        var s = res.data || {};
+        var k = s.kpis || {};
+        var providerUsage = s.providerUsage || [];
+        var topLines = s.topLines || [];
+        var weekSeries = s.weekSeries || [];
+
+        // ── KPIs ─────────────────────────────────────────────────
+        var kEl = document.getElementById("xd-vfc-kpis");
+        if (kEl) {
+          var trendHtml =
+            k.vsYesterdayTxPct != null
+              ? ' <span style="color:' +
+                (k.vsYesterdayTxPct >= 0 ? "#10B981" : "#EF4444") +
+                ';font-size:10px">' +
+                (k.vsYesterdayTxPct >= 0 ? "▲" : "▼") +
+                Math.abs(k.vsYesterdayTxPct) +
+                "%</span>"
+              : "";
+          kEl.innerHTML =
+            _xdVfcMini(
+              "ti-wallet",
+              "#2563EB",
+              "إجمالي الرصيد",
+              '<span class="sensitive-balance">' +
+                _xdMoney(k.totalBalance) +
+                "</span>",
+            ) +
+            _xdVfcMini(
+              "ti-receipt",
+              "#7C3AED",
+              "عمليات اليوم",
+              _xdNum(k.todayTxCount) + trendHtml,
+            ) +
+            _xdVfcMini(
+              "ti-circle-check",
+              "#10B981",
+              "خطوط نشطة",
+              _xdNum(k.activeLines),
+            ) +
+            _xdVfcMini(
+              "ti-alert-triangle",
+              "#F59E0B",
+              "تنبيهات نشطة",
+              _xdNum(
+                (k.nearLimitCount || 0) +
+                  (k.overLimitCount || 0) +
+                  (k.needsRechargeCount || 0),
+              ),
+            );
+        }
+
+        // ── إيداعات / سحوبات اليوم ───────────────────────────────
+        var ioEl = document.getElementById("xd-vfc-io");
+        if (ioEl) {
+          ioEl.innerHTML =
+            _xdVfcMini(
+              "ti-arrow-down-circle",
+              "#10B981",
+              "إيداعات اليوم",
+              _xdMoney(k.todayDeposits),
+            ) +
+            _xdVfcMini(
+              "ti-arrow-up-circle",
+              "#EF4444",
+              "سحوبات اليوم",
+              _xdMoney(k.todayWithdrawals),
+            ) +
+            _xdVfcMini(
+              "ti-percentage",
+              "#F59E0B",
+              "عمولات اليوم",
+              _xdMoney(k.todayCommission),
+            );
+        }
+
+        // ── مخطط الأسبوع ─────────────────────────────────────────
+        var chartEl = document.getElementById("xd-vfc-chart");
+        if (chartEl) {
+          chartEl.innerHTML =
+            '<div class="xd-vfc-chart-label">' +
+            '<span style="color:#10B981">■</span> إيداعات &nbsp;' +
+            '<span style="color:#EF4444">■</span> سحوبات (آخر 7 أيام)' +
+            "</div>" +
+            (_xdVfcSvgBar(weekSeries) ||
+              '<div style="color:var(--text3);font-size:11px;text-align:center;padding:16px 0">لا توجد عمليات بعد</div>');
+        }
+
+        // ── توزيع الشركات ────────────────────────────────────────
+        var provEl = document.getElementById("xd-vfc-provs");
+        if (provEl) {
+          var activeProvs = providerUsage.filter(function (p) {
+            return p.linesCount > 0;
+          });
+          provEl.innerHTML =
+            '<div class="xd-vfc-sec-title"><i class="ti ti-chart-pie"></i> توزيع الشركات</div>' +
+            (activeProvs.length
+              ? activeProvs
+                  .map(function (p) {
+                    return _xdVfcProviderDot(
+                      p.name,
+                      p.color,
+                      p.balance,
+                      p.linesCount,
+                    );
+                  })
+                  .join("")
+              : '<div style="color:var(--text3);font-size:11px">لا توجد خطوط مُفعّلة</div>');
+        }
+
+        // ── أكثر الخطوط استخداماً ───────────────────────────────
+        var topEl = document.getElementById("xd-vfc-top");
+        if (topEl) {
+          topEl.innerHTML =
+            '<div class="xd-vfc-sec-title"><i class="ti ti-medal"></i> أكثر الخطوط استخداماً</div>' +
+            (topLines.length
+              ? topLines
+                  .slice(0, 4)
+                  .map(function (l, i) {
+                    return (
+                      '<div class="xd-vfc-top-row">' +
+                      '<span class="xd-vfc-top-rank">' +
+                      (i + 1) +
+                      "</span>" +
+                      '<span class="xd-vfc-top-name">' +
+                      esc(l.name || l.vf_number || "—") +
+                      "</span>" +
+                      '<span class="xd-vfc-top-cnt">' +
+                      _xdNum(l.txCount) +
+                      " عملية</span>" +
+                      "</div>"
+                    );
+                  })
+                  .join("")
+              : '<div style="color:var(--text3);font-size:11px">لا توجد عمليات بعد</div>');
+        }
+      },
+      onError: function () {
+        var kEl = document.getElementById("xd-vfc-kpis");
+        if (kEl)
+          kEl.innerHTML =
+            '<div style="color:var(--text3);font-size:12px;padding:8px 0">تعذر التحميل</div>';
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §8  ملخص المخازن — Smart Insights — Quick Actions — Placeholders
+  // ─────────────────────────────────────────────────────────────
+
+  function xdRenderWarehouses() {
+    var whs = xdComputeWarehouses();
+    var body = whs.length
+      ? '<div class="xd-branch-grid">' +
+        whs
+          .map(function (w) {
+            return (
+              '<div class="xd-branch-card">' +
+              '<div class="xd-branch-name"><i class="ti ti-building-warehouse" aria-hidden="true"></i> ' +
+              esc(w.name || w.id) +
+              "</div>" +
+              '<div class="xd-branch-stats">' +
+              "<div><span>" +
+              _xdNum(w.qty) +
+              "</span><small>وحدة</small></div>" +
+              "<div><span>" +
+              _xdMoney(w.value) +
+              "</span><small>قيمة</small></div>" +
+              "</div></div>"
+            );
+          })
+          .join("") +
+        "</div>"
+      : '<div class="empty-state"><p>لا توجد مخازن مُعرّفة</p></div>';
+    return xdWrap("warehouses", body);
+  }
+
+  function xdRenderInsights() {
+    var insights = xdComputeInsights();
+    var body =
+      '<div class="xd-insights-list">' +
+      insights
+        .map(function (ins) {
+          return (
+            '<div class="xd-insight-row">' +
+            '<i class="ti ' +
+            ins.icon +
+            '" style="color:' +
+            ins.color +
+            '" aria-hidden="true"></i>' +
+            "<span>" +
+            ins.text +
+            "</span></div>"
+          );
+        })
+        .join("") +
+      "</div>";
+    return xdWrap("insights", body);
+  }
+
+  var XD_QUICK_ACTIONS = [
+    {
+      label: "فاتورة بيع",
+      icon: "ti-file-invoice",
+      page: "sale_invoice_workspace",
+      perm: "addSaleInvoice",
+    },
+    {
+      label: "فاتورة شراء",
+      icon: "ti-shopping-cart",
+      page: "purchase-invoices",
+      perm: "viewPurchaseInvoices",
+    },
+    {
+      label: "عميل جديد",
+      icon: "ti-user-plus",
+      page: "customers",
+      perm: "viewCustomers",
+    },
+    {
+      label: "مورد جديد",
+      icon: "ti-building-store",
+      page: "suppliers",
+      perm: "viewSuppliers",
+    },
+    {
+      label: "قيد يومية",
+      icon: "ti-notebook",
+      page: "journal-entries",
+      perm: "viewJournalEntries",
+    },
+    {
+      label: "سند قبض",
+      icon: "ti-cash",
+      page: "receipt-vouchers",
+      perm: "viewReceiptVouchers",
+    },
+    {
+      label: "سند صرف",
+      icon: "ti-cash-banknote",
+      page: "payment-vouchers",
+      perm: "viewPaymentVouchers",
+    },
+    {
+      label: "أمر إنتاج",
+      icon: "ti-building-factory-2",
+      page: "production",
+      perm: "addProductionOrder",
+    },
+    {
+      label: "تحويل مخزني",
+      icon: "ti-arrows-exchange",
+      page: "tx_transfer",
+      perm: "addTransaction",
+    },
+    {
+      label: "إضافة موظف",
+      icon: "ti-user-plus",
+      page: "employees",
+      perm: "viewEmployees",
+    },
+  ];
+
+  function xdRenderQuickActions() {
+    var actions = XD_QUICK_ACTIONS.filter(function (a) {
+      return typeof canDo !== "function" || !a.perm || canDo(a.perm);
+    });
+    var body =
+      '<div class="xd-qa-grid">' +
+      actions
+        .map(function (a) {
+          return (
+            '<div class="xd-qa-btn" onclick="navigate(\'' +
+            a.page +
+            "')\">" +
+            '<i class="ti ' +
+            a.icon +
+            '" aria-hidden="true"></i>' +
+            "<span>" +
+            esc(a.label) +
+            "</span></div>"
+          );
+        })
+        .join("") +
+      "</div>";
+    return xdWrap("quickactions", body);
+  }
+
+  function _xdComingSoonBody(text) {
+    return (
+      '<div class="xd-coming-soon"><i class="ti ti-rocket" aria-hidden="true"></i><p>' +
+      text +
+      "</p></div>"
+    );
+  }
+  function xdRenderCRM() {
+    return xdWrap(
+      "crm",
+      _xdComingSoonBody("إدارة العملاء المحتملين والصفقات والمتابعات"),
+    );
+  }
+  function xdRenderCalendar() {
+    return xdWrap(
+      "calendar",
+      _xdComingSoonBody("تقويم موحّد لمواعيد التسليم والاجتماعات والاستحقاقات"),
+    );
+  }
+  function xdRenderTasks() {
+    return xdWrap(
+      "tasks",
+      _xdComingSoonBody("متابعة المهام اليومية وتوزيعها على الفريق"),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §9  المُحَرِّك الرئيسي — بناء اللوحة كاملة + التهيئة بعد العرض
+  // ─────────────────────────────────────────────────────────────
+
+  function xdRenderWidgetById(id) {
+    switch (id) {
+      case "quickactions":
+        return xdRenderQuickActions();
+      case "finance":
+        return xdRenderFinance();
+      case "sales":
+        return xdRenderSales();
+      case "purchases":
+        return xdRenderPurchases();
+      case "inventory":
+        return xdRenderInventory();
+      case "production":
+        return xdRenderProduction();
+      case "hr":
+        return xdRenderHR();
+      case "vodafone":
+        return xdRenderVodafone();
+      case "notifications":
+        return xdRenderNotifications();
+      case "charts":
+        return xdRenderCharts();
+      case "activity":
+        return xdRenderActivityFeed();
+      case "insights":
+        return xdRenderInsights();
+      case "warehouses":
+        return xdRenderWarehouses();
+      case "crm":
+        return xdRenderCRM();
+      case "calendar":
+        return xdRenderCalendar();
+      case "tasks":
+        return xdRenderTasks();
+      default:
+        return "";
+    }
+  }
+
+  function _xdHeaderBanner() {
+    var backupHtml =
+      '<span id="backup-status-banner" style="display:none"></span>';
+    return (
+      '<div class="page-header xd-page-header">' +
+      '<div><h1 style="display:flex;align-items:center;gap:10px">' +
+      iconBadge("ti-layout-dashboard", "#DBEAFE", "#1D4ED8") +
+      "<span>لوحة القيادة التنفيذية</span></h1>" +
+      '<p style="margin-top:4px">نظرة شاملة على كل موديولات المؤسسة — محدّثة لحظياً</p>' +
+      "</div>" +
+      '<div class="header-actions" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+      backupHtml +
+      '<button id="btn-refresh-dashboard" class="btn btn-ghost btn-sm"><i class="ti ti-refresh" aria-hidden="true"></i> تحديث البيانات</button>' +
+      '<button class="btn btn-ghost btn-sm" onclick="xdOpenManagePanel()"><i class="ti ti-adjustments" aria-hidden="true"></i> تخصيص اللوحة</button>' +
+      "</div></div>"
+    );
+  }
+
+  /** نقطة الدخول — تستبدل renderDashboard القديمة بالكامل */
+  function renderExecutiveDashboard() {
+    var st = _xdLoadLayout();
+    var order = st.order.slice();
+
+    var html = '<div class="dash-page xd-dash">';
+    html += _xdHeaderBanner();
+    html += '<div class="xd-widgets-grid">';
+    order.forEach(function (id) {
+      if (st.hidden.indexOf(id) !== -1) return;
+      var gate = XD_WIDGET_PERM_GATE[id];
+      if (gate && typeof canDo === "function" && !canDo(gate)) return;
+      var w = xdRenderWidgetById(id);
+      if (w) html += w;
+    });
+    html += "</div></div>";
+    return html;
+  }
+
+  /**
+   * تُستدعى من bindDashboard() — تهيئة الويدجتس اللي تحتاج بيانات إضافية (Lazy)
+   * @param {boolean} [isReRender] [FIX-2026-08-08-SCROLL-JUMP] true لو
+   * الاستدعاء ده جايّ من xdRerenderAll()/xdRefreshWidget() (إعادة رسم داخلية
+   * لنفس زيارة الداشبورد)، مش أول فتح حقيقي للصفحة. كان بيتم تجاهل الفرق
+   * ده قبل كده، فكل مرة نعيد فيها رسم اللوحة (حتى لو السبب كان وصول بيانات
+   * قسم واحد بس) كانت الدالة دي بتعيد تسجيل subscriptions جديدة على
+   * ensureExtendedData/ensureLevelData من الصفر. لو البيانات كانت خلاص
+   * وصلت، الـ subscription الجديد ده بينفّذ الـ callback بتاعه فورًا
+   * (بشكل متزامن)، واللي بينده تاني على xdRefreshWidget لكل الويدجتس —
+   * فلو عنصر واحد لسه مش موجود في الـ DOM لحظة التنفيذ ده، بيتسبب في
+   * xdRerenderAll() إضافية (وبالتالي "قفزة" سكرول واحدة زيادة) رغم إن
+   * البيانات نفسها كانت خلاص جاهزة من الأول. الحل: subscriptions القسم
+   * (1) و(3) بتتسجّل مرة واحدة بس لكل زيارة حقيقية للوحة.
+   */
+  function initExecutiveDashboard(isReRender) {
+    // 0) [DRAG-REORDER] تهيئة مستمعي السحب المباشر — Idempotent (مرة واحدة بس)
+    _xdInitDragDrop();
+
+    if (isReRender) return;
+
+    // 1) المحاسبة والموارد البشرية — تحميل البيانات الموسّعة لو لسه مش محمّلة
+    if (typeof ensureExtendedData === "function") {
+      ensureExtendedData(function () {
+        if (APP.currentPage === "dashboard") {
+          xdRefreshWidget("finance");
+          xdRefreshWidget("hr");
+        }
+      });
+    }
+    // 2) فودافون كاش — نداء مستقل خفيف (Lazy)
+    setTimeout(xdLoadVodafoneWidget, 150);
+
+    // 3) [AUTO-REFRESH-ON-FULL-LOAD] الويدجتس اللي بتتحسب من بيانات مؤجّلة
+    // (فواتير مبيعات/عملاء — مطلوبة لـ "أفضل عميل"/"الأكثر مبيعاً" في
+    // insights، وكذلك sales) بترسم أول مرة بس بالبيانات المتاحة وقت
+    // فتح اللوحة، فلو المستوى الخلفي (BACKGROUND/level 3) لسه مكملش
+    // تحميله، الويدجتس دي تفضل واقفة على "–" أو 0 لحد ما المستخدم يدوس
+    // "تحديث البيانات" يدويًا. بننده هنا على ensureLevelData (موجودة
+    // فعلاً في 01_JS_Core_Auth.html) عشان نعيد رسم الويدجتس دي تلقائيًا
+    // بمجرد ما البيانات الكاملة توصل فعلاً، من غير أي تدخل من المستخدم.
+    if (typeof ensureLevelData === "function") {
+      ensureLevelData(function () {
+        if (APP.currentPage !== "dashboard") return;
+        xdRefreshWidget("sales");
+        xdRefreshWidget("insights");
+        // [FIX-2026-08-08] "المشتريات" و"الإنتاج" و"المخازن" كانت بتترسم
+        // مرة واحدة بس عند أول فتح للوحة، ببيانات APP.data زي ما هي في
+        // تلك اللحظة (غالبًا لسه فاضية، لأن purchaseInvoices/productionOrders
+        // مستوى ON_DEMAND مش محمّلة إلا بعد ensureLevelData). عكس sales/
+        // insights، الويدجتس التلاتة دي مكنش عندها أي استدعاء xdRefreshWidget
+        // بعد وصول البيانات الفعلية، فكانت تفضل عالقة على صفر/فاضي للأبد
+        // حتى لو البيانات وصلت بنجاح في الخلفية. بإضافتها هنا بيتم رسمها
+        // تلقائيًا تاني بمجرد اكتمال تحميل المستوى المطلوب.
+        xdRefreshWidget("purchases");
+        xdRefreshWidget("production");
+        xdRefreshWidget("warehouses");
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §CSS  حقن أنماط xd-manage ديناميكيًا في <head>
+  // ─────────────────────────────────────────────────────────────
+  (function () {
+    var s = document.createElement("style");
+    s.id = "xd-manage-styles";
+    s.textContent = `
+  /* ══════════════════════════════════════════════════════════
+   xd-manage — تصميم لوحة تخصيص الـ Widgets
+   ══════════════════════════════════════════════════════════ */
+
+  /* شريط التلميح */
+  .xd-tip-bar {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+    border-radius: 10px;
+    padding: 11px 14px;
+    margin-bottom: 16px;
+    font-size: 12.5px;
+    color: var(--text2);
+    line-height: 1.5;
+  }
+  .xd-tip-bar i {
+    color: var(--accent);
+    font-size: 15px;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  /* القسم */
+  .xd-manage-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .xd-manage-section-title {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .xd-manage-section-title i {
+    font-size: 13px;
+    color: var(--accent);
+  }
+
+  /* القائمة */
+  .xd-manage-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .xd-manage-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+
+  /* السطر */
+  .xd-manage-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    transition:
+      background 0.15s,
+      border-color 0.15s;
+  }
+  .xd-manage-row:hover {
+    background: var(--surface2);
+    border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  }
+
+  /* الأيقونة الملونة */
+  .xd-manage-badge {
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+
+  /* معلومات الـ widget */
+  .xd-manage-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .xd-manage-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .xd-manage-status {
+    font-size: 11px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .xd-status-visible {
+    color: var(--success);
+  }
+  .xd-status-hidden {
+    color: var(--text3);
+  }
+  .xd-status-collapsed {
+    color: var(--warning);
+  }
+
+  /* أزرار التحكم */
+  .xd-manage-btns {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .xd-icon-btn-sm {
+    width: 30px;
+    height: 30px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text2);
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      border-color 0.15s;
+  }
+  .xd-icon-btn-sm:hover:not(:disabled) {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .xd-icon-btn-sm:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+  .xd-btn-hide:hover:not(:disabled) {
+    background: var(--danger);
+    border-color: var(--danger);
+  }
+
+  /* زر الإظهار */
+  .xd-manage-show-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 14px;
+    border-radius: 7px;
+    border: 1.5px solid var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent);
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: var(--font-arabic);
+    transition:
+      background 0.15s,
+      color 0.15s;
+    white-space: nowrap;
+  }
+  .xd-manage-show-btn:hover {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  /* حالة فارغة */
+  .xd-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 20px;
+    color: var(--text3);
+    font-size: 13px;
+  }
+  .xd-empty-state i {
+    font-size: 24px;
+    color: var(--success);
+  }
+
+  /* زر الريست */
+  .xd-reset-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 10px;
+    border-radius: 9px;
+    border: 1.5px dashed var(--border);
+    background: transparent;
+    color: var(--text3);
+    font-size: 13px;
+    font-family: var(--font-arabic);
+    cursor: pointer;
+    transition:
+      color 0.15s,
+      border-color 0.15s,
+      background 0.15s;
+    margin-top: 4px;
+  }
+  .xd-reset-btn:hover {
+    color: var(--danger);
+    border-color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 6%, transparent);
+  }
+
+  /* dark mode */
+  [data-theme="dark"] .xd-manage-section {
+    background: var(--surface2);
+  }
+  [data-theme="dark"] .xd-manage-row {
+    background: var(--surface);
+  }
+  [data-theme="dark"] .xd-manage-row:hover {
+    background: var(--surface3);
+  }
+
+  /* ══════════════════════════════════════════════════════════
+     xd-vodafone — كارت المحافظ الإلكترونية المطوّر
+     ══════════════════════════════════════════════════════════ */
+
+  /* صف KPIs الرئيسية */
+  .xd-vfc-kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  @media (max-width: 600px) {
+    .xd-vfc-kpi-row { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  /* البطاقة الصغيرة */
+  .xd-vfc-mini {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 11px;
+    min-width: 0;
+  }
+  .xd-vfc-mini-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+  .xd-vfc-mini-body { min-width: 0; flex: 1; }
+  .xd-vfc-mini-val {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .xd-vfc-mini-lbl {
+    font-size: 10.5px;
+    color: var(--text3);
+    margin-top: 2px;
+    white-space: nowrap;
+  }
+  .xd-vfc-mini-sub { font-size: 10px; opacity: 0.8; }
+
+  /* الصف الأوسط: IO + Chart */
+  .xd-vfc-mid-row {
+    display: grid;
+    grid-template-columns: 1fr 1.6fr;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  @media (max-width: 600px) {
+    .xd-vfc-mid-row { grid-template-columns: 1fr; }
+  }
+  .xd-vfc-io-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .xd-vfc-io-col .xd-vfc-mini { padding: 8px 10px; }
+  .xd-vfc-chart-col {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    min-height: 90px;
+  }
+  .xd-vfc-chart-label {
+    font-size: 10.5px;
+    color: var(--text3);
+    margin-bottom: 6px;
+  }
+
+  /* الصف السفلي: Providers + Top Lines */
+  .xd-vfc-bot-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  @media (max-width: 600px) {
+    .xd-vfc-bot-row { grid-template-columns: 1fr; }
+  }
+  .xd-vfc-prov-col,
+  .xd-vfc-top-col {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .xd-vfc-sec-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text2);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .xd-vfc-sec-title i { color: #00C896; font-size: 13px; }
+
+  /* توزيع الشركات */
+  .xd-vfc-prov {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    font-size: 11.5px;
+    border-bottom: 1px solid var(--border);
+  }
+  .xd-vfc-prov:last-child { border-bottom: none; }
+  .xd-vfc-prov-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .xd-vfc-prov-name { flex: 1; color: var(--text2); font-weight: 600; }
+  .xd-vfc-prov-count { color: var(--text3); font-size: 10.5px; }
+  .xd-vfc-prov-bal { color: var(--text); font-weight: 700; font-size: 11.5px; margin-right: auto; }
+
+  /* أكثر الخطوط استخداماً */
+  .xd-vfc-top-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 11.5px;
+  }
+  .xd-vfc-top-row:last-child { border-bottom: none; }
+  .xd-vfc-top-rank {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: #00C89620;
+    color: #00C896;
+    font-size: 10px;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .xd-vfc-top-name { flex: 1; color: var(--text2); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .xd-vfc-top-cnt { color: var(--text3); font-size: 10.5px; white-space: nowrap; }
+
+  /* Footer زر الانتقال */
+  .xd-vfc-footer {
+    text-align: center;
+    padding-top: 4px;
+  }
+  .xd-vfc-link-btn {
+    background: none;
+    border: 1px solid #00C896;
+    color: #00C896;
+    border-radius: 8px;
+    padding: 6px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.15s;
+  }
+  .xd-vfc-link-btn:hover {
+    background: #00C89615;
+  }
+`;
+    document.head.appendChild(s);
+  })();
+</script>

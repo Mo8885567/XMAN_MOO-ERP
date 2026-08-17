@@ -1,0 +1,1091 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 26_JS_DashboardFramework.html
+  // Dashboard Framework المشترك — Phase 2 من "Enterprise ERP Navigation &
+  // Dashboard Modernization"
+  //
+  // [PHASE-2] هذا الملف يضيف فقط: DashboardService + NavigationService +
+  // مكتبة Widgets مشتركة (DashboardWidgets). لا يوجد هنا أي تعديل على أي
+  // Dashboard قسم حالي (accounting-dashboard, hr-dashboard, ...) — التطبيق
+  // على الأقسام نفسها هو Phase 3 لاحقًا. الهدف من هذه المرحلة هو بناء
+  // البنية التحتية المشتركة فقط عشان كل الداشبوردات الجاية تستخدم نفس
+  // الأساس بدل تكرار الكود (زي ما بيحصل حاليًا بين renderAccountingDashboard
+  // و renderBankingDashboard و باقي الداشبوردات).
+  //
+  // يعتمد هذا الملف على عناصر موجودة بالفعل في المشروع ويعيد استخدامها بدل
+  // تكرارها:
+  //   - iconBadge() / statCard() / _renderPageHeader()   (02_JS_UI_Shell + Templates)
+  //   - PreferenceService (get/set/onReady)                (24_JS_JS_UserPreferences)
+  //   - getFavoritePages() / toggleFavoritePage()           (02_JS_UI_Shell)
+  //   - esc() / showToast()                                  (موجودة عالميًا)
+  //
+  // مفاتيح PreferenceService المستخدمة (كلها كانت محجوزة بالفعل في
+  // DEFAULTS بملف 24_JS_UserPreferences.html ولم تكن مستخدمة عمليًا):
+  //   - recent_pages        → آخر الصفحات التي زارها المستخدم (كل النظام)
+  //   - dashboard_layout.<scope>.pinned            → الصفحات المثبّتة لكل قسم
+  //   - dashboard_layout.<scope>.favorite_actions  → الإجراءات المفضّلة لكل قسم
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // §DS  DashboardService — كاش موحّد لحسابات الـ Dashboard + تحميل كسول (Lazy)
+  // ─────────────────────────────────────────────────────────────────────────
+  // ملحوظة تكامل (لتُنفَّذ في Phase 3 عند تطبيق الـ Framework على أي
+  // Dashboard فعلي): بعد أي reloadAfterMutation/reloadAfterMutationFull
+  // مناسب استدعاء DashboardService.invalidateAll() (أو invalidateByPrefix
+  // باسم القسم) عشان الحسابات المخزّنة تتحدّث فورًا بدل ما تنتظر انتهاء الـ
+  // TTL. الكاش هنا افتراضيًا قصير العمر (30 ثانية) فمفيش خطورة لو الربط ده
+  // اتأجل لمرحلة تالية.
+  var DashboardService = (function () {
+    var _cache = {}; // key -> { value, ts }
+    var DEFAULT_TTL = 30000; // 30 ثانية افتراضيًا
+
+    function _now() {
+      return Date.now();
+    }
+
+    /**
+     * يرجّع قيمة محسوبة من الكاش لو لسه صالحة، وإلا بيحسبها من جديد
+     * عن طريق computeFn ويخزنها. مفيد لأي حساب مكرر بين أكثر من widget
+     * في نفس الـ Dashboard (مثلاً: إجمالي المبيعات يظهر في KPI وفي Chart
+     * في نفس الوقت — تحسب مرة واحدة بس).
+     */
+    function getOrCompute(key, computeFn, ttlMs) {
+      var ttl = typeof ttlMs === "number" ? ttlMs : DEFAULT_TTL;
+      var hit = _cache[key];
+      if (hit && _now() - hit.ts < ttl) return hit.value;
+      var value;
+      try {
+        value = computeFn();
+      } catch (e) {
+        console.error("[DashboardService] فشل حساب المفتاح:", key, e);
+        return hit ? hit.value : undefined; // fallback لآخر قيمة معروفة لو موجودة
+      }
+      _cache[key] = { value: value, ts: _now() };
+      return value;
+    }
+
+    function invalidate(key) {
+      delete _cache[key];
+    }
+
+    function invalidateByPrefix(prefix) {
+      Object.keys(_cache).forEach(function (k) {
+        if (k.indexOf(prefix) === 0) delete _cache[k];
+      });
+    }
+
+    function invalidateAll() {
+      _cache = {};
+    }
+
+    // ── تحميل كسول للـ Widgets غير الظاهرة على الشاشة ──────────────────
+    // Widget بيسجّل نفسه بـ id الحاوية + دالة render، ومايتنفذش render
+    // الحقيقي إلا لما الحاوية تدخل ضمن نطاق الرؤية (أو فورًا لو المتصفح
+    // مايدعمش IntersectionObserver).
+    var _lazyQueue = {};
+    var _io = null;
+
+    function registerLazy(containerId, renderFn) {
+      if (!containerId || typeof renderFn !== "function") return;
+      _lazyQueue[containerId] = renderFn;
+      _observe(containerId);
+    }
+
+    function _observe(id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      if (!("IntersectionObserver" in window)) {
+        _mount(id);
+        return;
+      }
+      if (!_io) {
+        _io = new IntersectionObserver(
+          function (entries) {
+            entries.forEach(function (entry) {
+              if (entry.isIntersecting) {
+                _mount(entry.target.id);
+                _io.unobserve(entry.target);
+              }
+            });
+          },
+          { root: null, rootMargin: "150px", threshold: 0.01 },
+        );
+      }
+      _io.observe(el);
+    }
+
+    function _mount(id) {
+      var fn = _lazyQueue[id];
+      if (!fn) return;
+      delete _lazyQueue[id];
+      try {
+        fn();
+      } catch (e) {
+        console.error("[DashboardService] فشل تحميل widget كسول:", id, e);
+        // [FIX-SILENT-WIDGET] قبل كده كان الفشل هنا بيسيب حاوية الـ widget
+        // فاضية تمامًا من غير أي تفسير للمستخدم (شكلها وكأن الشاشة عندها
+        // مشكلة تحميل بلا سبب واضح). دلوقتي بنحط رسالة مكانية بسيطة داخل
+        // نفس الحاوية (أوضح من توست عام لأنها بتحدد بالظبط أي widget فشل)،
+        // مع توست تكميلي لو النظام متاح.
+        var el = document.getElementById(id);
+        if (el) {
+          el.innerHTML =
+            '<div style="padding:16px;text-align:center;color:var(--text3,#888);font-size:13px">' +
+            " تعذّر تحميل هذا العنصر" +
+            "</div>";
+        }
+        if (typeof showToast === "function") {
+          NotificationEngine.warning(" تعذّر تحميل أحد عناصر لوحة التحكم");
+        }
+      }
+    }
+
+    return {
+      getOrCompute: getOrCompute,
+      invalidate: invalidate,
+      invalidateByPrefix: invalidateByPrefix,
+      invalidateAll: invalidateAll,
+      registerLazy: registerLazy,
+    };
+  })();
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // §NS  NavigationService — Recent / Pinned / Favorite Actions لكل قسم
+  // ─────────────────────────────────────────────────────────────────────────
+  // ملحوظة: "Favorite Pages" (تفضيل صفحة كاملة) موجود بالفعل عالميًا في
+  // 02_JS_UI_Shell.html (getFavoritePages/toggleFavoritePage/isFavoritePage)
+  // ومستخدم في الـ breadcrumb — النظام هنا لا يكرره، بل يضيف طبقتين جديدتين
+  // فوقه خاصتين بالـ Dashboards:
+  //   1) Recent Pages   — سجل تلقائي لآخر الصفحات (مش يدوي زي المفضلة)
+  //   2) Pinned Pages   — تثبيت صفحات داخل Dashboard قسم معيّن تحديدًا
+  //   3) Favorite Actions — تفضيل إجراء سريع (Quick Action) بعينه داخل قسم
+  var NavigationService = (function () {
+    var MAX_RECENT = 8;
+
+    function _hasPrefs() {
+      return typeof PreferenceService !== "undefined";
+    }
+
+    function _findIndexByPage(list, page) {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].page === page) return i;
+      }
+      return -1;
+    }
+
+    function _findIndexById(list, id) {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id === id) return i;
+      }
+      return -1;
+    }
+
+    // ── آخر الصفحات التي تمت زيارتها (على مستوى النظام كله) ────────────
+    function trackVisit(page, meta) {
+      if (!page || !_hasPrefs()) return;
+      PreferenceService.onReady(function () {
+        var list = (PreferenceService.get("recent_pages", []) || []).slice();
+        var existingIdx = _findIndexByPage(list, page);
+        if (existingIdx !== -1) list.splice(existingIdx, 1);
+        list.unshift({
+          page: page,
+          label: (meta && meta.label) || page,
+          icon: (meta && meta.icon) || "",
+          ts: Date.now(),
+        });
+        if (list.length > MAX_RECENT) list = list.slice(0, MAX_RECENT);
+        PreferenceService.set("recent_pages", list);
+      });
+    }
+
+    function getRecent(excludePage) {
+      if (!_hasPrefs()) return [];
+      var list = PreferenceService.get("recent_pages", []) || [];
+      if (excludePage) {
+        list = list.filter(function (p) {
+          return p.page !== excludePage;
+        });
+      }
+      return list;
+    }
+
+    // ── الصفحات المثبّتة داخل Dashboard قسم معيّن ────────────────────
+    function _pinnedKey(scope) {
+      return "dashboard_layout." + scope + ".pinned";
+    }
+
+    function getPinned(scope) {
+      if (!_hasPrefs() || !scope) return [];
+      return PreferenceService.get(_pinnedKey(scope), []) || [];
+    }
+
+    function isPinned(scope, page) {
+      return _findIndexByPage(getPinned(scope), page) !== -1;
+    }
+
+    function togglePinned(scope, page, meta) {
+      if (!_hasPrefs() || !scope || !page) return;
+      var list = getPinned(scope).slice();
+      var idx = _findIndexByPage(list, page);
+      if (idx !== -1) {
+        list.splice(idx, 1);
+      } else {
+        list.push({
+          page: page,
+          label: (meta && meta.label) || page,
+          icon: (meta && meta.icon) || "",
+        });
+      }
+      PreferenceService.set(_pinnedKey(scope), list);
+      return idx === -1; // true = اتثبّتت الآن
+    }
+
+    // ── الإجراءات السريعة المفضّلة داخل Dashboard قسم معيّن ──────────
+    function _favActionsKey(scope) {
+      return "dashboard_layout." + scope + ".favorite_actions";
+    }
+
+    function getFavoriteActions(scope) {
+      if (!_hasPrefs() || !scope) return [];
+      return PreferenceService.get(_favActionsKey(scope), []) || [];
+    }
+
+    function isFavoriteAction(scope, actionId) {
+      return _findIndexById(getFavoriteActions(scope), actionId) !== -1;
+    }
+
+    function toggleFavoriteAction(scope, actionId, meta) {
+      if (!_hasPrefs() || !scope || !actionId) return;
+      var list = getFavoriteActions(scope).slice();
+      var idx = _findIndexById(list, actionId);
+      if (idx !== -1) {
+        list.splice(idx, 1);
+      } else {
+        list.push({
+          id: actionId,
+          label: (meta && meta.label) || actionId,
+          icon: (meta && meta.icon) || "",
+          page: (meta && meta.page) || "",
+          onClick: (meta && meta.onClick) || "",
+        });
+      }
+      PreferenceService.set(_favActionsKey(scope), list);
+      return idx === -1;
+    }
+
+    return {
+      trackVisit: trackVisit,
+      getRecent: getRecent,
+      getPinned: getPinned,
+      isPinned: isPinned,
+      togglePinned: togglePinned,
+      getFavoriteActions: getFavoriteActions,
+      isFavoriteAction: isFavoriteAction,
+      toggleFavoriteAction: toggleFavoriteAction,
+    };
+  })();
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // §DW  DashboardWidgets — مكتبة الـ Widgets المشتركة القابلة لإعادة الاستخدام
+  // ─────────────────────────────────────────────────────────────────────────
+  // كل دوال هذا الكائن pure functions بترجع HTML كـ string فقط (نفس نمط
+  // statCard/iconBadge/_renderPageHeader الموجودين بالفعل)، من غير أي
+  // side-effects — الـ binding (event listeners) بيتم بعد الإدراج في الـ DOM
+  // بنفس أسلوب bindXxx() المتّبع في باقي المشروع.
+  var DashboardWidgets = (function () {
+    // ── أدوات مساعدة داخلية ─────────────────────────────────────────
+    function _safeEsc(s) {
+      return typeof esc === "function"
+        ? esc(s == null ? "" : String(s))
+        : s == null
+          ? ""
+          : String(s);
+    }
+
+    function _uid(prefix) {
+      return (prefix || "dw") + "_" + Math.random().toString(36).slice(2, 9);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 1) Header موحّد لكل Dashboard
+    // ═══════════════════════════════════════════════════════════════
+    /**
+     * opts:
+     *  title, subtitle, icon: {bgIcon, bgColor, iconColor}
+     *  lastUpdated: Date|string (اختياري)
+     *  onRefresh, onHelp, onSettings: اسم دالة عالمية كـ string (اختياري)
+     *  extraActions: HTML إضافي (اختياري) — أزرار خاصة بالقسم زي "قيد جديد"
+     */
+    function header(opts) {
+      opts = opts || {};
+      var actions = "";
+      if (opts.onRefresh) {
+        actions +=
+          '<button class="btn btn-icon dw-header-btn" onclick="' +
+          opts.onRefresh +
+          '" title="تحديث"><i class="ti ti-refresh"></i></button>';
+      }
+      if (opts.onSettings) {
+        actions +=
+          '<button class="btn btn-icon dw-header-btn" onclick="' +
+          opts.onSettings +
+          '" title="إعدادات"><i class="ti ti-settings"></i></button>';
+      }
+      if (opts.onHelp) {
+        actions +=
+          '<button class="btn btn-icon dw-header-btn" onclick="' +
+          opts.onHelp +
+          '" title="مساعدة"><i class="ti ti-help-circle"></i></button>';
+      }
+      if (opts.extraActions) actions = opts.extraActions + actions;
+
+      var html = '<div class="page-header dw-header">';
+      html += '<div><h1 style="display:flex;align-items:center;gap:10px">';
+      if (opts.icon) {
+        html += iconBadge(
+          opts.icon.bgIcon,
+          opts.icon.bgColor,
+          opts.icon.iconColor,
+        );
+      }
+      html += "<span>" + _safeEsc(opts.title) + "</span></h1>";
+      if (opts.subtitle) {
+        html += '<p style="margin-top:4px">' + _safeEsc(opts.subtitle) + "</p>";
+      }
+      if (opts.lastUpdated) {
+        html +=
+          '<p class="dw-last-updated"><i class="ti ti-clock" style="font-size:12px"></i> آخر تحديث: ' +
+          _safeEsc(opts.lastUpdated) +
+          "</p>";
+      }
+      html += "</div>";
+      if (actions) html += '<div class="header-actions">' + actions + "</div>";
+      html += "</div>";
+      return html;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 2) KPI Cards
+    // ═══════════════════════════════════════════════════════════════
+    /**
+     * opts: { icon:{tiClass,bg,color}, label, value, unit, trend:{dir:'up'|'down',value,label}, id }
+     * trend اختياري — لو موجود بيظهر سهم + نسبة تحت القيمة.
+     */
+    function kpiCard(opts) {
+      opts = opts || {};
+      var trendHtml = "";
+      if (opts.trend && opts.trend.value != null) {
+        var isUp = opts.trend.dir === "up";
+        trendHtml =
+          '<span class="dw-kpi-trend ' +
+          (isUp ? "dw-trend-up" : "dw-trend-down") +
+          '"><i class="ti ti-arrow-' +
+          (isUp ? "up-right" : "down-right") +
+          '"></i>' +
+          _safeEsc(opts.trend.value) +
+          (opts.trend.label ? " " + _safeEsc(opts.trend.label) : "") +
+          "</span>";
+      }
+      var iconHtml = opts.icon
+        ? iconBadge(opts.icon.tiClass, opts.icon.bg, opts.icon.color)
+        : "";
+      return (
+        '<div class="dw-kpi-card"' +
+        (opts.id ? ' id="' + _safeEsc(opts.id) + '"' : "") +
+        (opts.onClick
+          ? ' onclick="' + opts.onClick + '" style="cursor:pointer"'
+          : "") +
+        ">" +
+        '<div class="stat-icon-wrap" style="flex-shrink:0">' +
+        iconHtml +
+        "</div>" +
+        '<div class="stat-info"><h3>' +
+        _safeEsc(opts.label) +
+        "</h3><h2 style='font-size:28px;line-height:1'>" +
+        (opts.value == null ? "0" : opts.value) +
+        "</h2><small>" +
+        _safeEsc(opts.unit || "") +
+        "</small>" +
+        trendHtml +
+        "</div></div>"
+      );
+    }
+
+    /** يغلّف مجموعة KPI Cards في شبكة موحّدة */
+    function kpiGrid(cardsHtmlArray) {
+      return (
+        '<div class="dw-kpi-grid">' + (cardsHtmlArray || []).join("") + "</div>"
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 3) Charts — SVG خفيف بدون أي مكتبة خارجية (نفس فلسفة pa-chart-svg
+    //    الموجودة بالفعل في Templates.html)
+    // ═══════════════════════════════════════════════════════════════
+    /** opts: { data:[{label, value}], width, height, color } */
+    function _lineOrAreaChartSvg(opts, filled) {
+      opts = opts || {};
+      var data = opts.data || [];
+      var w = opts.width || 560,
+        h = opts.height || 130,
+        pad = 24;
+      var color = opts.color || "var(--primary)";
+      if (!data.length) return "";
+      var max = Math.max.apply(
+        null,
+        data.map(function (d) {
+          return Number(d.value) || 0;
+        }),
+      );
+      max = max || 1;
+      var stepX = (w - pad * 2) / Math.max(1, data.length - 1);
+      var points = data.map(function (d, i) {
+        var x = pad + i * stepX;
+        var y = h - pad - ((Number(d.value) || 0) / max) * (h - pad * 2);
+        return { x: x, y: y, d: d };
+      });
+      var pathD = points
+        .map(function (p, i) {
+          return (i === 0 ? "M" : "L") + p.x.toFixed(1) + "," + p.y.toFixed(1);
+        })
+        .join(" ");
+      var areaPath = "";
+      if (filled) {
+        areaPath =
+          pathD +
+          " L" +
+          points[points.length - 1].x.toFixed(1) +
+          "," +
+          (h - pad) +
+          " L" +
+          points[0].x.toFixed(1) +
+          "," +
+          (h - pad) +
+          " Z";
+      }
+      var dots = points
+        .map(function (p) {
+          return (
+            '<circle cx="' +
+            p.x.toFixed(1) +
+            '" cy="' +
+            p.y.toFixed(1) +
+            '" r="3" fill="' +
+            color +
+            '"></circle>'
+          );
+        })
+        .join("");
+      var xLabels = points
+        .map(function (p) {
+          return (
+            '<text x="' +
+            p.x.toFixed(1) +
+            '" y="' +
+            (h - 6) +
+            '" text-anchor="middle" font-size="9" fill="var(--text3)" font-family="IBM Plex Sans Arabic,sans-serif">' +
+            _safeEsc(p.d.label) +
+            "</text>"
+          );
+        })
+        .join("");
+      var gridLine =
+        '<line x1="' +
+        pad +
+        '" y1="' +
+        (h - pad) +
+        '" x2="' +
+        (w - pad) +
+        '" y2="' +
+        (h - pad) +
+        '" stroke="var(--border)" stroke-width="1"></line>';
+      return (
+        '<svg class="dw-chart-svg" viewBox="0 0 ' +
+        w +
+        " " +
+        h +
+        '" xmlns="http://www.w3.org/2000/svg">' +
+        gridLine +
+        (filled
+          ? '<path d="' +
+            areaPath +
+            '" fill="' +
+            color +
+            '" opacity="0.15"></path>'
+          : "") +
+        '<path d="' +
+        pathD +
+        '" fill="none" stroke="' +
+        color +
+        '" stroke-width="2"></path>' +
+        dots +
+        xLabels +
+        "</svg>"
+      );
+    }
+
+    function lineChartSvg(opts) {
+      return _lineOrAreaChartSvg(opts, false);
+    }
+
+    function areaChartSvg(opts) {
+      return _lineOrAreaChartSvg(opts, true);
+    }
+
+    /** opts: { data:[{label, value, color}], width, height } */
+    function barChartSvg(opts) {
+      opts = opts || {};
+      var data = opts.data || [];
+      var w = opts.width || 560,
+        h = opts.height || 130,
+        pad = 24;
+      if (!data.length) return "";
+      var max = Math.max.apply(
+        null,
+        data.map(function (d) {
+          return Number(d.value) || 0;
+        }),
+      );
+      max = max || 1;
+      var groupW = (w - pad * 2) / data.length;
+      var barW = Math.min(28, groupW * 0.5);
+      var bars = "",
+        xLabels = "";
+      data.forEach(function (d, i) {
+        var x = pad + i * groupW + (groupW - barW) / 2;
+        var barH = ((Number(d.value) || 0) / max) * (h - pad * 2);
+        var y = h - pad - barH;
+        bars +=
+          '<rect x="' +
+          x.toFixed(1) +
+          '" y="' +
+          y.toFixed(1) +
+          '" width="' +
+          barW.toFixed(1) +
+          '" height="' +
+          barH.toFixed(1) +
+          '" rx="3" fill="' +
+          (d.color || "var(--primary)") +
+          '" opacity=".9"></rect>';
+        xLabels +=
+          '<text x="' +
+          (x + barW / 2).toFixed(1) +
+          '" y="' +
+          (h - 6) +
+          '" text-anchor="middle" font-size="9" fill="var(--text3)" font-family="IBM Plex Sans Arabic,sans-serif">' +
+          _safeEsc(d.label) +
+          "</text>";
+      });
+      var gridLine =
+        '<line x1="' +
+        pad +
+        '" y1="' +
+        (h - pad) +
+        '" x2="' +
+        (w - pad) +
+        '" y2="' +
+        (h - pad) +
+        '" stroke="var(--border)" stroke-width="1"></line>';
+      return (
+        '<svg class="dw-chart-svg" viewBox="0 0 ' +
+        w +
+        " " +
+        h +
+        '" xmlns="http://www.w3.org/2000/svg">' +
+        gridLine +
+        bars +
+        xLabels +
+        "</svg>"
+      );
+    }
+
+    /** opts: { data:[{label, value, color}], size } — دائرة/Donut */
+    function pieChartSvg(opts) {
+      opts = opts || {};
+      var data = (opts.data || []).filter(function (d) {
+        return Number(d.value) > 0;
+      });
+      var size = opts.size || 160;
+      var r = size / 2 - 10,
+        ir = opts.donut === false ? 0 : r * 0.55;
+      var cx = size / 2,
+        cy = size / 2;
+      var total = data.reduce(function (s, d) {
+        return s + (Number(d.value) || 0);
+      }, 0);
+      if (!total) return "";
+      var angle = -Math.PI / 2;
+      var slices = "";
+      data.forEach(function (d) {
+        var frac = (Number(d.value) || 0) / total;
+        var start = angle;
+        var end = angle + frac * 2 * Math.PI;
+        angle = end;
+        var x1 = cx + r * Math.cos(start),
+          y1 = cy + r * Math.sin(start);
+        var x2 = cx + r * Math.cos(end),
+          y2 = cy + r * Math.sin(end);
+        var largeArc = frac > 0.5 ? 1 : 0;
+        slices +=
+          '<path d="M' +
+          cx +
+          "," +
+          cy +
+          " L" +
+          x1.toFixed(1) +
+          "," +
+          y1.toFixed(1) +
+          " A" +
+          r +
+          "," +
+          r +
+          " 0 " +
+          largeArc +
+          " 1 " +
+          x2.toFixed(1) +
+          "," +
+          y2.toFixed(1) +
+          ' Z" fill="' +
+          (d.color || "var(--primary)") +
+          '"></path>';
+      });
+      var hole =
+        ir > 0
+          ? '<circle cx="' +
+            cx +
+            '" cy="' +
+            cy +
+            '" r="' +
+            ir +
+            '" fill="var(--surface)"></circle>'
+          : "";
+      return (
+        '<svg width="' +
+        size +
+        '" height="' +
+        size +
+        '" viewBox="0 0 ' +
+        size +
+        " " +
+        size +
+        '" xmlns="http://www.w3.org/2000/svg">' +
+        slices +
+        hole +
+        "</svg>"
+      );
+    }
+
+    /**
+     * opts: { title, icon, type:'line'|'bar'|'pie'|'area', data, legend:bool,
+     *         height, id }
+     * type='pie' بيستخدم legend مع ألوان لكل شريحة، والباقي بيستخدم محاور.
+     */
+    function chartWidget(opts) {
+      opts = opts || {};
+      var svg;
+      var legendHtml = "";
+      if (opts.type === "pie") {
+        svg = pieChartSvg(opts);
+        if (opts.legend !== false) {
+          legendHtml =
+            '<div class="dw-chart-legend">' +
+            (opts.data || [])
+              .map(function (d) {
+                return (
+                  '<div class="dw-chart-legend-item"><span class="dw-chart-legend-dot" style="background:' +
+                  (d.color || "var(--primary)") +
+                  '"></span>' +
+                  _safeEsc(d.label) +
+                  " <b>" +
+                  _safeEsc(d.value) +
+                  "</b></div>"
+                );
+              })
+              .join("") +
+            "</div>";
+        }
+      } else if (opts.type === "bar") {
+        svg = barChartSvg(opts);
+      } else if (opts.type === "area") {
+        svg = areaChartSvg(opts);
+      } else {
+        svg = lineChartSvg(opts);
+      }
+      var body = svg
+        ? '<div class="dw-chart-wrap">' + svg + "</div>" + legendHtml
+        : emptyState({
+            icon: "ti-chart-line",
+            message: "لا توجد بيانات كافية لعرض الرسم البياني",
+          });
+      return (
+        '<div class="dw-widget-card dw-chart-card"' +
+        (opts.id ? ' id="' + _safeEsc(opts.id) + '"' : "") +
+        ">" +
+        '<div class="dw-widget-title">' +
+        (opts.icon ? '<i class="ti ' + opts.icon + '"></i>' : "") +
+        _safeEsc(opts.title) +
+        "</div>" +
+        body +
+        "</div>"
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 4-6) Activity / Notifications / Tasks — قوائم موحّدة الشكل
+    // ═══════════════════════════════════════════════════════════════
+    /** items: [{icon, iconColor, title, subtitle, time, onClick}] */
+    function _listWidget(opts, className) {
+      opts = opts || {};
+      var items = opts.items || [];
+      var body = !items.length
+        ? emptyState({
+            icon: opts.emptyIcon || "ti-inbox",
+            message: opts.emptyMessage || "لا يوجد شيء لعرضه حاليًا",
+          })
+        : '<div class="dw-list ' +
+          className +
+          '">' +
+          items
+            .map(function (it) {
+              return (
+                '<div class="dw-list-item"' +
+                (it.onClick
+                  ? ' onclick="' + it.onClick + '" style="cursor:pointer"'
+                  : "") +
+                ">" +
+                '<span class="dw-list-icon" style="color:' +
+                (it.iconColor || "var(--primary)") +
+                '"><i class="ti ' +
+                (it.icon || "ti-point") +
+                '"></i></span>' +
+                '<div class="dw-list-text"><div class="dw-list-title">' +
+                _safeEsc(it.title) +
+                "</div>" +
+                (it.subtitle
+                  ? '<div class="dw-list-subtitle">' +
+                    _safeEsc(it.subtitle) +
+                    "</div>"
+                  : "") +
+                "</div>" +
+                (it.time
+                  ? '<span class="dw-list-time">' +
+                    _safeEsc(it.time) +
+                    "</span>"
+                  : "") +
+                "</div>"
+              );
+            })
+            .join("") +
+          "</div>";
+      return (
+        '<div class="dw-widget-card"' +
+        (opts.id ? ' id="' + _safeEsc(opts.id) + '"' : "") +
+        ">" +
+        '<div class="dw-widget-title">' +
+        (opts.icon ? '<i class="ti ' + opts.icon + '"></i>' : "") +
+        _safeEsc(opts.title) +
+        (opts.badge != null
+          ? '<span class="dw-widget-badge">' + _safeEsc(opts.badge) + "</span>"
+          : "") +
+        "</div>" +
+        body +
+        "</div>"
+      );
+    }
+
+    function activityWidget(opts) {
+      opts = Object.assign(
+        { title: "آخر النشاطات", icon: "ti-history" },
+        opts || {},
+      );
+      return _listWidget(opts, "dw-activity-list");
+    }
+
+    function notificationWidget(opts) {
+      opts = Object.assign({ title: "التنبيهات", icon: "ti-bell" }, opts || {});
+      return _listWidget(opts, "dw-notification-list");
+    }
+
+    function tasksWidget(opts) {
+      opts = Object.assign(
+        { title: "مهام تحتاج إجراء", icon: "ti-list-check" },
+        opts || {},
+      );
+      return _listWidget(opts, "dw-tasks-list");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 7) Quick Actions
+    // ═══════════════════════════════════════════════════════════════
+    /**
+     * opts: { title, scope, actions:[{id,label,icon,color,onClick,page}] }
+     * لو opts.scope موجود بيظهر زرار "تفضيل " على كل إجراء يتفاعل مع
+     * NavigationService.toggleFavoriteAction.
+     */
+    function quickActionsWidget(opts) {
+      opts = opts || {};
+      var scope = opts.scope || "";
+      var actions = opts.actions || [];
+      var body = !actions.length
+        ? emptyState({
+            icon: "ti-bolt-off",
+            message: "لا توجد إجراءات سريعة معرّفة لهذا القسم",
+          })
+        : '<div class="dw-quick-actions-grid">' +
+          actions
+            .map(function (a) {
+              var isFav =
+                scope && typeof NavigationService !== "undefined"
+                  ? NavigationService.isFavoriteAction(scope, a.id)
+                  : false;
+              return (
+                '<button type="button" class="dw-quick-action-btn" onclick="' +
+                (a.onClick || (a.page ? "navigate('" + a.page + "')" : "")) +
+                '">' +
+                '<span class="dw-qa-icon" style="background:' +
+                (a.bg || "var(--accent-soft)") +
+                ";color:" +
+                (a.color || "var(--primary)") +
+                '"><i class="ti ' +
+                (a.icon || "ti-bolt") +
+                '"></i></span>' +
+                '<span class="dw-qa-label">' +
+                _safeEsc(a.label) +
+                "</span>" +
+                (scope
+                  ? '<span class="dw-qa-fav ' +
+                    (isFav ? "is-fav" : "") +
+                    '" onclick="event.stopPropagation();toggleFavoriteDashboardAction(\'' +
+                    scope +
+                    "','" +
+                    a.id +
+                    "','" +
+                    _safeEsc(a.label) +
+                    "','" +
+                    (a.icon || "") +
+                    "','" +
+                    (a.page || "") +
+                    '\')"><i class="ti ti-star' +
+                    (isFav ? "-filled" : "") +
+                    '"></i></span>'
+                  : "") +
+                "</button>"
+              );
+            })
+            .join("") +
+          "</div>";
+      return (
+        '<div class="dw-widget-card">' +
+        '<div class="dw-widget-title"><i class="ti ti-bolt"></i>' +
+        _safeEsc(opts.title || "إجراءات سريعة") +
+        "</div>" +
+        body +
+        "</div>"
+      );
+    }
+
+    /**
+     * دالة عالمية (مش داخل الكائن) عشان تُستدعى من onclick المُولَّد ديناميكيًا
+     * فوق. بترجع الحالة الجديدة وتحدّث أي عنصر بنفس الـ scope لو موجود.
+     */
+    window.toggleFavoriteDashboardAction = function (
+      scope,
+      id,
+      label,
+      icon,
+      page,
+    ) {
+      if (typeof NavigationService === "undefined") return;
+      NavigationService.toggleFavoriteAction(scope, id, {
+        label: label,
+        icon: icon,
+        page: page,
+      });
+      if (typeof showToast === "function")
+        NotificationEngine.success("تم تحديث الإجراءات المفضّلة");
+    };
+
+    // ═══════════════════════════════════════════════════════════════
+    // 8) Quick Navigation — Recent / Pinned / Favorite Pages كـ chips
+    // ═══════════════════════════════════════════════════════════════
+    /** scope: اسم القسم (لازم لجزئية Pinned) */
+    function quickNavWidget(scope) {
+      if (typeof NavigationService === "undefined") return "";
+      var recent = NavigationService.getRecent(APP && APP.currentPage);
+      var pinned = scope ? NavigationService.getPinned(scope) : [];
+      var favs =
+        typeof getFavoritePages === "function"
+          ? getFavoritePages().map(function (p) {
+              var meta =
+                typeof _getPageNavMeta === "function"
+                  ? _getPageNavMeta(p)
+                  : { label: p, icon: "" };
+              return { page: p, label: meta.label, icon: meta.icon };
+            })
+          : [];
+
+      function _chipsRow(title, icon, list, emptyMsg) {
+        if (!list.length) return "";
+        var chips = list
+          .map(function (p) {
+            return (
+              '<button class="dw-nav-chip" onclick="navigate(\'' +
+              p.page +
+              '\')" title="' +
+              _safeEsc(p.label) +
+              '">' +
+              (p.icon || "") +
+              "<span>" +
+              _safeEsc(p.label) +
+              "</span></button>"
+            );
+          })
+          .join("");
+        return (
+          '<div class="dw-quicknav-row"><span class="dw-quicknav-label"><i class="ti ' +
+          icon +
+          '"></i>' +
+          title +
+          "</span><div class='dw-quicknav-chips'>" +
+          chips +
+          "</div></div>"
+        );
+      }
+
+      var body =
+        _chipsRow("مثبّتة", "ti-pin", pinned, "") +
+        _chipsRow("مفضّلة", "ti-star", favs, "") +
+        _chipsRow("زُرت مؤخرًا", "ti-history", recent, "");
+
+      if (!body) return "";
+      return '<div class="dw-widget-card dw-quicknav-card">' + body + "</div>";
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 9) Search — بحث سريع داخل نطاق القسم
+    // ═══════════════════════════════════════════════════════════════
+    /**
+     * opts: { placeholder, onSearchFn: اسم دالة عالمية كـ string تستقبل
+     *         (value)، id }
+     * الدالة المرجعية بيتم استدعاؤها مع debounce بسيط داخليًا.
+     */
+    function searchWidget(opts) {
+      opts = opts || {};
+      var id = opts.id || _uid("dw_search");
+      var fn = opts.onSearchFn || "";
+      return (
+        '<div class="dw-search-box">' +
+        '<i class="ti ti-search"></i>' +
+        '<input type="text" id="' +
+        id +
+        '" class="dw-search-input" placeholder="' +
+        _safeEsc(opts.placeholder || "بحث سريع...") +
+        '" oninput="_dwDebouncedSearch(this.value, \'' +
+        fn +
+        "', '" +
+        id +
+        "')\">" +
+        '<div class="dw-search-results" id="' +
+        id +
+        '-results"></div>' +
+        "</div>"
+      );
+    }
+
+    var _searchTimers = {};
+    window._dwDebouncedSearch = function (value, fnName, id) {
+      if (!fnName || typeof window[fnName] !== "function") return;
+      clearTimeout(_searchTimers[id]);
+      _searchTimers[id] = setTimeout(function () {
+        window[fnName](value);
+      }, 250);
+    };
+
+    // ═══════════════════════════════════════════════════════════════
+    // 10-12) Empty / Loading / Error States
+    // ═══════════════════════════════════════════════════════════════
+    function emptyState(opts) {
+      opts = opts || {};
+      return (
+        '<div class="dw-empty-state">' +
+        '<i class="ti ' +
+        (opts.icon || "ti-inbox") +
+        '"></i>' +
+        "<p>" +
+        _safeEsc(opts.message || "لا توجد بيانات لعرضها") +
+        "</p>" +
+        (opts.actionLabel && opts.onAction
+          ? '<button class="btn btn-outline btn-sm" onclick="' +
+            opts.onAction +
+            '">' +
+            _safeEsc(opts.actionLabel) +
+            "</button>"
+          : "") +
+        "</div>"
+      );
+    }
+
+    function errorState(opts) {
+      opts = opts || {};
+      return (
+        '<div class="dw-error-state">' +
+        '<i class="ti ti-alert-triangle"></i>' +
+        "<p>" +
+        _safeEsc(opts.message || "حدث خطأ أثناء تحميل البيانات") +
+        "</p>" +
+        (opts.retryFn
+          ? '<button class="btn btn-primary btn-sm" onclick="' +
+            opts.retryFn +
+            '">إعادة المحاولة</button>'
+          : "") +
+        "</div>"
+      );
+    }
+
+    /** Skeleton كامل لصفحة Dashboard (Header + KPI Row + Chart + List) */
+    function loadingSkeleton(opts) {
+      opts = opts || {};
+      var kpiCount = opts.kpiCount || 4;
+      var kpis = "";
+      for (var i = 0; i < kpiCount; i++) {
+        kpis +=
+          '<div class="dw-kpi-card dw-skel">' +
+          '<div class="dw-skel-box" style="width:44px;height:44px;border-radius:10px"></div>' +
+          '<div class="stat-info"><div class="dw-skel-line" style="width:70%"></div>' +
+          '<div class="dw-skel-line" style="width:50%;height:20px;margin-top:8px"></div></div></div>';
+      }
+      return (
+        '<div class="dw-skeleton-wrap">' +
+        '<div class="dw-skel-header"><div class="dw-skel-box" style="width:44px;height:44px;border-radius:10px"></div>' +
+        '<div><div class="dw-skel-line" style="width:180px;height:18px"></div>' +
+        '<div class="dw-skel-line" style="width:260px;margin-top:8px"></div></div></div>' +
+        '<div class="dw-kpi-grid">' +
+        kpis +
+        "</div>" +
+        '<div class="dw-widget-card dw-skel" style="height:200px"></div>' +
+        "</div>"
+      );
+    }
+
+    return {
+      header: header,
+      kpiCard: kpiCard,
+      kpiGrid: kpiGrid,
+      lineChartSvg: lineChartSvg,
+      areaChartSvg: areaChartSvg,
+      barChartSvg: barChartSvg,
+      pieChartSvg: pieChartSvg,
+      chartWidget: chartWidget,
+      activityWidget: activityWidget,
+      notificationWidget: notificationWidget,
+      tasksWidget: tasksWidget,
+      quickActionsWidget: quickActionsWidget,
+      quickNavWidget: quickNavWidget,
+      searchWidget: searchWidget,
+      emptyState: emptyState,
+      errorState: errorState,
+      loadingSkeleton: loadingSkeleton,
+      mountLazy: DashboardService.registerLazy,
+    };
+  })();
+</script>

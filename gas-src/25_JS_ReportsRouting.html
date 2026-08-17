@@ -1,0 +1,206 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 25_JS_ReportsRouting.html — Real URL Routing لمراكز التقارير
+  // ينفّذ البند التاسع من طلب "إعادة تصميم نظام التقارير":
+  //   /reports
+  //   /reports/accounting
+  //   /reports/accounting/trial-balance
+  //   ... إلخ لكل مركز تقارير وكل تقرير جوّاه.
+  // بيستخدم location.hash (بيئة GAS SPA مفيش فيها Server-side Routing
+  // حقيقي، فالمسار المكافئ العملي هو Hash Routing) بحيث:
+  //   - كل رابط قابل للنسخ ومشاركة (Deep Link) ويرجّع نفس الشاشة بالظبط.
+  //   - زرار رجوع/تقدّم المتصفح (Back/Forward) يشتغل صح مع مراكز التقارير.
+  //   - عند تحديث الصفحة (F5) يفضل المستخدم في نفس التقرير اللي كان فيه.
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────────
+  // § 1. خريطة الـ Slugs — تحويل بين page/groupId/reportId والمسار
+  // ─────────────────────────────────────────────────────────────────
+
+  // كل Hub له مسار "/reports/<slug>". الأساس هو نفس الـ id بتاع
+  // المجموعة في REPORT_GROUPS (18_JS_Reports.html) وده بالفعل بالإنجليزي.
+  var REPORTS_ROUTE_GROUP_SLUGS = {
+    inventory: "inventory",
+    sales: "sales",
+    customers: "customers",
+    suppliers: "suppliers",
+    purchases: "purchases",
+    production: "production",
+    accounting: "accounting",
+    hr: "hr",
+    shipping: "shipping",
+    banking: "banking",
+    assets: "assets",
+    tax: "tax",
+  };
+
+  // صفحة "مركز التقارير" الرئيسية = "/reports"
+  var REPORTS_ROUTE_HUB_PAGE = "reports_hub";
+
+  function _rrGroupIdToSlug(groupId) {
+    return REPORTS_ROUTE_GROUP_SLUGS[groupId] || groupId;
+  }
+  function _rrSlugToGroupId(slug) {
+    var found = null;
+    Object.keys(REPORTS_ROUTE_GROUP_SLUGS).forEach(function (gid) {
+      if (REPORTS_ROUTE_GROUP_SLUGS[gid] === slug) found = gid;
+    });
+    return found;
+  }
+
+  /** يبني مسار الـ Hash المكافئ للحالة الحالية */
+  function buildReportsRoute(groupId, reportId) {
+    if (!groupId) return "#/reports";
+    var gSlug = _rrGroupIdToSlug(groupId);
+    if (!reportId) return "#/reports/" + gSlug;
+    return "#/reports/" + gSlug + "/" + reportId;
+  }
+
+  /** يحدّث الـ hash من غير ما يطلق navigate تاني (لتفادي loop) */
+  function _rrSetHash(hash) {
+    if (window.location.hash === hash) return;
+    APP._rrSuppressHashHandler = true;
+    try {
+      window.location.hash = hash;
+    } catch (e) {}
+    setTimeout(function () {
+      APP._rrSuppressHashHandler = false;
+    }, 0);
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // § 2. تحديث الـ URL عند التنقل العادي (navigate/renderPage)
+  // ─────────────────────────────────────────────────────────────────
+  // بنلف renderPage الأصلية (المعرّفة في 01_JS_Core_Auth.html) عشان
+  // كل navigate عادي (مش بس مراكز التقارير) يعكس نفسه على الـ URL،
+  // ولو الصفحة تبع مركز تقارير (page = "<group>_hub") نبني المسار
+  // بصيغة "/reports/<group>" تلقائيًا بدل ما نضيف حالة خاصة منفصلة.
+  (function () {
+    var _origRenderPage = window.renderPage;
+    if (typeof _origRenderPage !== "function") return;
+    window.renderPage = function (page) {
+      _origRenderPage(page);
+      try {
+        _rrReflectPageOnUrl(page);
+      } catch (e) {
+        console.error("[Routing] تعذر تحديث الرابط", e);
+      }
+    };
+  })();
+
+  function _rrReflectPageOnUrl(page) {
+    if (page === REPORTS_ROUTE_HUB_PAGE) {
+      _rrSetHash("#/reports");
+      return;
+    }
+    // صفحات مراكز التقارير كلها بالنمط "<group>_hub"
+    var m = /^([a-z_]+)_hub$/.exec(page || "");
+    if (m) {
+      var groupId = m[1];
+      if (REPORTS_ROUTE_GROUP_SLUGS.hasOwnProperty(groupId)) {
+        _rrSetHash(buildReportsRoute(groupId));
+        return;
+      }
+    }
+    // أي صفحة تانية برّه التقارير: نمسح مسار /reports من الـ hash
+    // (يعني بنرجّع الـ hash فاضي) عشان الروابط تفضل نظيفة ومتوافقة
+    // مع باقي شاشات النظام اللي مش بتستخدم hash أصلًا.
+    if (/^#\/reports/.test(window.location.hash)) {
+      _rrSetHash("");
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // § 3. تحديث الـ URL عند فتح/إغلاق تقرير جوّه مركز تقارير
+  // ─────────────────────────────────────────────────────────────────
+  // بنلف _openGroupReport و _closeGroupReport (المعرّفين في
+  // 18_JS_Reports.html) بنفس أسلوب التغليف عشان أي تعديل مستقبلي في
+  // منطق فتح/قفل التقرير يفضل شغال زي ما هو من غير تكرار كود.
+  (function () {
+    var _origOpen = window._openGroupReport;
+    var _origClose = window._closeGroupReport;
+    if (typeof _origOpen === "function") {
+      window._openGroupReport = function (groupId, reportId) {
+        _origOpen(groupId, reportId);
+        _rrSetHash(buildReportsRoute(groupId, reportId));
+      };
+    }
+    if (typeof _origClose === "function") {
+      window._closeGroupReport = function (groupId) {
+        _origClose(groupId);
+        _rrSetHash(buildReportsRoute(groupId));
+      };
+    }
+  })();
+
+  // ─────────────────────────────────────────────────────────────────
+  // § 4. قراءة الـ URL عند التحميل الأول أو عند Back/Forward
+  //      (Deep Linking + دعم أزرار المتصفح)
+  // ─────────────────────────────────────────────────────────────────
+
+  /** يحلل hash زي "#/reports/accounting/trial-balance" لأجزائه */
+  function _rrParseHash(hash) {
+    hash = (hash || window.location.hash || "").replace(/^#\/?/, "");
+    var parts = hash.split("/").filter(Boolean);
+    if (parts[0] !== "reports") return null;
+    var groupSlug = parts[1] || null;
+    var reportId = parts[2] || null;
+    var groupId = groupSlug ? _rrSlugToGroupId(groupSlug) : null;
+    return { groupId: groupId, reportId: reportId };
+  }
+
+  /** يطبّق حالة الـ URL الحالية على الشاشة (يُستخدم عند أول تحميل
+   * وعند hashchange بسبب أزرار المتصفح) */
+  function applyReportsRouteFromUrl() {
+    var parsed = _rrParseHash(window.location.hash);
+    if (!parsed) return false;
+    if (!parsed.groupId) {
+      // "/reports" بالظبط → مركز التقارير الرئيسي
+      navigate(REPORTS_ROUTE_HUB_PAGE);
+      return true;
+    }
+    var hubPage = parsed.groupId + "_hub";
+    navigate(hubPage);
+    if (parsed.reportId) {
+      // لازم نستنى لحد ما الـ Hub يترسم فعليًا (innerHTML جاهز) قبل
+      // ما نحاول نفتح التقرير جوّاه.
+      setTimeout(function () {
+        if (typeof window._openGroupReport === "function") {
+          window._openGroupReport(parsed.groupId, parsed.reportId);
+        }
+      }, 30);
+    }
+    return true;
+  }
+
+  window.addEventListener("hashchange", function () {
+    // لو إحنا اللي غيّرنا الـ hash برمجيًا (من renderPage/_openGroupReport)
+    // منتجاهلش الحدث عشان منعملش navigate مرتين لنفس الحالة.
+    if (window.APP && APP._rrSuppressHashHandler) return;
+    applyReportsRouteFromUrl();
+  });
+
+  // عند أول تحميل: لو فيه hash جاهز في الرابط (المستخدم فتح رابط
+  // مباشر أو عمل Refresh) نطبّقه بعد ما المستخدم يسجّل دخوله وتترسم
+  // الشاشة الرئيسية، بدل ما يرجع دايمًا لـ dashboard.
+  (function () {
+    var _origRender = window.render;
+    if (typeof _origRender !== "function") return;
+    var _appliedInitialRoute = false;
+    window.render = function () {
+      _origRender();
+      if (
+        !_appliedInitialRoute &&
+        window.APP &&
+        APP.currentUser &&
+        window.location.hash &&
+        /^#\/reports/.test(window.location.hash)
+      ) {
+        _appliedInitialRoute = true;
+        setTimeout(function () {
+          applyReportsRouteFromUrl();
+        }, 50);
+      }
+    };
+  })();
+</script>

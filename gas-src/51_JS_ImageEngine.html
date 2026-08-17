@@ -1,0 +1,177 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 51_JS_ImageEngine.html — محرك الصور التدريجي الموحّد
+  // ═══════════════════════════════════════════════════════════════════
+  // [DATA-LOADING-ENGINE / المرحلة 9] المشكلة اللي هذا الملف بيحلّها:
+  //
+  //   حالياً (مثال حقيقي: عمود "الصورة" في 03_JS_Dashboard_Items.html)
+  //   أي <img src="..."> بيتحط في الـ DOM بيبدأ تحميله من المتصفح فورًا
+  //   بمجرد ما innerHTML يتحط — حتى لو الصف ده مش ظاهر أصلاً في الشاشة
+  //   (تحت الـ fold، أو تاب مقفول، أو حتى صف مش مرسوم لسه فعليًا). مع
+  //   جدول فيه مئات/آلاف الأصناف، ده معناه مئات طلبات صور متوازية لحظة
+  //   فتح الشاشة — بطء + استهلاك Bandwidth/Memory غير ضروري.
+  //
+  //   كمان: نفس رابط الصورة (thumbnail sz=w400) بيتبعت لكل من الجدول
+  //   الصغير (54×54) واللايت بوكس (500px) — يعني مفيش فرق حقيقي بين
+  //   "معاينة" و"عرض كامل".
+  //
+  //   الحل: 3 مراحل حقيقية —
+  //     1) Placeholder  — مربع فاضي فورًا (بدون أي طلب شبكة).
+  //     2) Thumbnail    — يتحمّل بس لما العنصر يبقى قريب من الشاشة
+  //        الظاهرة (IntersectionObserver)، بحجم صغير (sz=w150).
+  //     3) Original     — ما يتحمّلش إلا لما المستخدم يفتح اللايت بوكس
+  //        فعليًا (sz=w1600 بدل w400 — أقرب لمقاس "أصلي" حقيقي).
+  //
+  //   [SYSTEM-UNIFY] أي شاشة تعرض صور مصغّرة (أصناف/موظفين/مرفقات...)
+  //   المفروض تستخدم ImageEngine.thumbHtml() بدل ما تكتب <img src=...>
+  //   مباشرة.
+  // ═══════════════════════════════════════════════════════════════════
+
+  var ImageEngine = (function () {
+    "use strict";
+
+    var _uid = 0;
+    var _io = null;
+
+    (function _injectCSS() {
+      if (document.getElementById("ie-base-style")) return;
+      var s = document.createElement("style");
+      s.id = "ie-base-style";
+      s.textContent = [
+        ".ie-ph{display:flex;align-items:center;justify-content:center;",
+        "background:var(--surface2);border-radius:8px;overflow:hidden;position:relative}",
+        ".ie-ph img{width:100%;height:100%;object-fit:contain;background:#fff;",
+        "opacity:0;transition:opacity .25s}",
+        ".ie-ph img.ie-shown{opacity:1}",
+        ".ie-ph.ie-error{font-size:20px;color:var(--text3)}",
+        ".ie-ph:not(.ie-loaded):not(.ie-error)::after{content:'';position:absolute;inset:0;",
+        "background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);",
+        "animation:ie-shimmer 1.2s infinite}",
+        "@keyframes ie-shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}",
+      ].join("");
+      document.head.appendChild(s);
+    })();
+
+    /** يحوّل sz=w400 (أو أي رابط Drive تمبنيل) لمقاس مختلف — للحصول
+     * على نسخة أصغر (Thumbnail) أو أكبر (شبه Original) من نفس الملف. */
+    function _resize(url, size) {
+      if (!url) return url;
+      if (url.indexOf("drive.google.com/thumbnail") === -1) return url;
+      return url.replace(/sz=w\d+/, "sz=w" + size);
+    }
+
+    function _observer() {
+      if (_io) return _io;
+      if (typeof IntersectionObserver === "undefined") return null;
+      _io = new IntersectionObserver(
+        function (entries) {
+          entries.forEach(function (entry) {
+            if (entry.isIntersecting) {
+              _loadThumb(entry.target);
+              _io.unobserve(entry.target);
+            }
+          });
+        },
+        { rootMargin: "200px" }, // نبدأ التحميل قبل ما الصورة توصل للشاشة بشوية — منع "وميض فاضي"
+      );
+      return _io;
+    }
+
+    function _loadThumb(el) {
+      var url = el.getAttribute("data-thumb");
+      if (!url) {
+        el.classList.add("ie-error");
+        return;
+      }
+      var img = document.createElement("img");
+      img.onload = function () {
+        el.appendChild(img);
+        // rAF عشان الـ transition (opacity) يشتغل فعليًا بدل ما يتخطى مباشرة
+        requestAnimationFrame(function () {
+          img.classList.add("ie-shown");
+        });
+        el.classList.add("ie-loaded");
+      };
+      img.onerror = function () {
+        el.classList.add("ie-error");
+        el.innerHTML = '<i class="ti ti-photo-off"></i>';
+      };
+      img.src = _resize(url, 150);
+      img.alt = el.getAttribute("data-alt") || "";
+    }
+
+    /**
+     * thumbHtml — يبني placeholder جاهز للحقن في أي جدول/كارت
+     * @param {Object} opts
+     * @param {string} opts.url       رابط الصورة (نفس المستخدم حالياً — sz=w400 مثلاً)
+     * @param {string} [opts.alt]
+     * @param {number} [opts.size]    مقاس الصندوق بالبيكسل (افتراضي 54)
+     * @param {string} [opts.title]   يُستخدم كعنوان في اللايت بوكس
+     * @returns {string} HTML
+     */
+    function thumbHtml(opts) {
+      opts = opts || {};
+      if (!opts.url || String(opts.url).trim() === "") {
+        return '<div class="ie-ph ie-error" style="width:' +
+          (opts.size || 54) + "px;height:" + (opts.size || 54) +
+          'px"><i class="ti ti-photo"></i></div>';
+      }
+      var uid = "ie-" + ++_uid;
+      var size = opts.size || 54;
+      var originalUrl = _resize(opts.url, 1600); // "شبه أصلي" — يُطلب بس عند فتح اللايت بوكس
+      return (
+        '<div id="' +
+        uid +
+        '" class="ie-lazy ie-ph" data-thumb="' +
+        _esc(opts.url) +
+        '" data-alt="' +
+        _esc(opts.alt || "") +
+        '" style="width:' +
+        size +
+        "px;height:" +
+        size +
+        'px;cursor:pointer" onclick="event.stopPropagation();ImageEngine.openOriginal(\'' +
+        _escJs(originalUrl) +
+        "','" +
+        _escJs(opts.title || "") +
+        '\')"></div>'
+      );
+    }
+
+    /** يُستدعى بعد أي رسم/تحديث DOM يحتوي عناصر .ie-lazy جديدة —
+     * (ColumnEngine بينادّيها تلقائياً بعد كل رسم جدول، راجع 34_JS_ColumnEngine) */
+    function init(scope) {
+      scope = scope || document;
+      var obs = _observer();
+      var els = scope.querySelectorAll
+        ? scope.querySelectorAll(".ie-lazy:not(.ie-wired)")
+        : [];
+      Array.prototype.forEach.call(els, function (el) {
+        el.classList.add("ie-wired");
+        if (obs) obs.observe(el);
+        else _loadThumb(el); // fallback لو IntersectionObserver مش متاح
+      });
+    }
+
+    /** يفتح اللايت بوكس بالحجم الأصلي — يعتمد على openImageLightbox
+     * الموجودة فعلاً (06_JS_Catalog_Stock.html) فمفيش تكرار منطق */
+    function openOriginal(originalUrl, title) {
+      if (typeof openImageLightbox === "function") {
+        openImageLightbox(originalUrl, title);
+      } else {
+        window.open(originalUrl, "_blank");
+      }
+    }
+
+    function _esc(s) {
+      return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+      });
+    }
+    function _escJs(s) {
+      return String(s == null ? "" : s).replace(/'/g, "\\'");
+    }
+
+    return { thumbHtml: thumbHtml, init: init, openOriginal: openOriginal };
+  })();
+</script>

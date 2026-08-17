@@ -1,0 +1,1770 @@
+<script>
+  // ══════════════════════════════════════════════════════════════════════
+  // 13_JS_AttendanceImport.html
+  // موديول استيراد بيانات الحضور والانصراف (Attendance Integration)
+  // يدعم: ZKTeco · ZK Software · Suprema · Hikvision · CSV · XLSX · TXT
+  // ══════════════════════════════════════════════════════════════════════
+  // البنية:
+  //   §ATI-STYLE   — CSS مضمّن للموديول
+  //   §ATI-STATE   — حالة الاستيراد (State Machine)
+  //   §ATI-RENDER  — renderAttendanceImport() + renderImportLog()
+  //   §ATI-BIND    — bindAttendanceImport() + bindImportLog()
+  //   §ATI-PARSE   — قراءة الملفات (CSV / XLSX / TXT)
+  //   §ATI-MAP     — شاشة ربط الأعمدة
+  //   §ATI-VALID   — التحقق من البيانات
+  //   §ATI-PROCESS — المعالجة والحفظ
+  //   §ATI-LOG     — سجل عمليات الاستيراد
+  //   §ATI-REPORTS — تحديث التقارير
+  //   §ATI-DEVICE  — واجهة إعداد الأجهزة (ZKTeco TCP/IP — مستقبلي)
+  // ══════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §ATI-STYLE  — حقن CSS الخاص بالموديول
+  // ─────────────────────────────────────────────────────────────────────
+  // [FIX] كانت معرّفة كـ IIFE (تُستدعى نفسها مرة واحدة فقط عند تحميل الملف)
+  // بينما باقي الكود في هذا الملف وفي 14_JS_DeviceConnect.html يستدعيها لاحقاً
+  // باسم _injectATIStyles() مباشرة — فكانت تطلع "ReferenceError: is not defined"
+  // لأنها لم تكن مخزّنة كدالة عامة قابلة لإعادة الاستدعاء. الحل: دالة عادية
+  // + استدعاء فوري مرة واحدة هنا (نفس السلوك الأصلي عند التحميل).
+  function _injectATIStyles() {
+    // [CSS-MOVED] الـ CSS نُقل إلى Style.html — هذه الدالة باقية كـ guard فقط
+    // الـ id guard الأصلي يضمن عدم التكرار لو استُدعيت من مكان قديم
+    if (document.getElementById("ati-styles-guard")) return;
+  }
+  _injectATIStyles(); // no-op — CSS already in Style.html عند تحميل الملف — نفس السلوك السابق
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §ATI-STATE  — حالة الاستيراد (State Machine)
+  // ─────────────────────────────────────────────────────────────────────
+  var ATI = {
+    // الخطوة الحالية: 1=اختيار، 2=ربط الأعمدة، 3=التحقق، 4=النتائج
+    step: 1,
+    // نوع الجهاز المختار
+    deviceType: null,
+    // الملف الخام
+    file: null,
+    fileType: null,
+    // بيانات الملف بعد التحليل: [{col0, col1, ...}]
+    rawRows: [],
+    rawHeaders: [],
+    // ربط الأعمدة: { employee_number: 'col0', date: 'col2', ... }
+    mapping: {},
+    // قوالب الربط المحفوظة
+    templates: [],
+    // نتيجة التحقق
+    validRows: [],
+    invalidRows: [],
+    // معالجة
+    processing: false,
+    // جلسة الاستيراد الحالية
+    importSessionId: null,
+    // حقول النظام القابلة للربط
+    FIELDS: [
+      { key: "employee_number", label: "رقم الموظف", required: true },
+      { key: "employee_name", label: "اسم الموظف", required: false },
+      { key: "badge_number", label: "رقم البصمة", required: false },
+      { key: "date", label: "التاريخ", required: true },
+      { key: "check_in", label: "وقت الدخول", required: false },
+      { key: "check_out", label: "وقت الخروج", required: false },
+      { key: "movement_type", label: "حالة الحركة", required: false },
+      { key: "device_name", label: "اسم الجهاز", required: false },
+    ],
+    // أجهزة مدعومة
+    DEVICES: [
+      { id: "zkteco", name: "ZKTeco", icon: "", sub: "ZK4500 / F22 / K40" },
+      {
+        id: "zksoftware",
+        name: "ZK Software",
+        icon: "",
+        sub: "ZKTime.net / ZKHRM",
+      },
+      {
+        id: "suprema",
+        name: "Suprema",
+        icon: "",
+        sub: "BioStation / FaceStation",
+      },
+      {
+        id: "hikvision",
+        name: "Hikvision",
+        icon: "",
+        sub: "DS-K1T / iVMS-4200",
+      },
+      { id: "generic", name: "CSV/Excel/TXT", icon: "", sub: "أي جهاز آخر" },
+    ],
+    // قوالب العمود الافتراضية لكل جهاز
+    DEFAULT_MAPS: {
+      zkteco: {
+        employee_number: "0",
+        employee_name: "1",
+        badge_number: "2",
+        date: "3",
+        check_in: "4",
+        check_out: "5",
+        device_name: "6",
+      },
+      zksoftware: {
+        employee_number: "0",
+        employee_name: "1",
+        date: "2",
+        check_in: "3",
+        check_out: "4",
+        movement_type: "5",
+      },
+      suprema: {
+        badge_number: "0",
+        employee_name: "1",
+        date: "2",
+        check_in: "3",
+        check_out: "4",
+        device_name: "5",
+      },
+      hikvision: {
+        employee_number: "0",
+        employee_name: "1",
+        date: "2",
+        check_in: "3",
+        check_out: "4",
+        movement_type: "5",
+        device_name: "6",
+      },
+      generic: {},
+    },
+  };
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §ATI-RENDER  — بناء HTML الشاشات الرئيسية
+  // ─────────────────────────────────────────────────────────────────────
+
+  /** الشاشة الرئيسية لاستيراد الحضور */
+  function renderAttendanceImport() {
+    return (
+      // ── Hero Header (premium style matching att-hero) ──
+      '<div class="ati-imp-hero">' +
+      '<div class="ati-imp-hero-content">' +
+      '<div class="ati-imp-hero-icon"><i class="ti ti-fingerprint"></i></div>' +
+      '<div class="ati-imp-hero-text">' +
+      '<h2 class="ati-imp-hero-title">استيراد بيانات البصمة</h2>' +
+      '<p class="ati-imp-hero-sub">ZKTeco · Suprema · Hikvision · وأي جهاز يدعم CSV / XLSX / TXT</p>' +
+      "</div></div>" +
+      '<div class="ati-imp-hero-actions">' +
+      (canDo("viewImportLog")
+        ? '<button class="att-btn-secondary" onclick="navigateTo(\'attendance_import_log\')">' +
+          '<i class="ti ti-history"></i> سجل الاستيرادات' +
+          "</button>"
+        : "") +
+      "</div>" +
+      "</div>" +
+      // ── KPI Strip ──
+      '<div class="ati-kpi-strip" id="ati-stats-grid">' +
+      _atiKpiCard(
+        "ti-users",
+        "الموظفون الفاعلون",
+        "—",
+        "ati-sc-emp",
+        "#2563eb",
+        "#dbeafe",
+      ) +
+      _atiKpiCard(
+        "ti-file-import",
+        "إجمالي الاستيرادات",
+        "—",
+        "ati-sc-total",
+        "#059669",
+        "#d1fae5",
+      ) +
+      _atiKpiCard(
+        "ti-calendar-check",
+        "سجلات هذا الشهر",
+        "—",
+        "ati-sc-month",
+        "#7c3aed",
+        "#ede9fe",
+      ) +
+      _atiKpiCard(
+        "ti-alert-triangle",
+        "سجلات بأخطاء",
+        "—",
+        "ati-sc-errors",
+        "#dc2626",
+        "#fee2e2",
+      ) +
+      "</div>" +
+      // ── Wizard Card ──
+      '<div class="ati-wizard-card" id="ati-wizard-card">' +
+      _atiWizardBar(1) +
+      '<div class="ati-panels" id="ati-panels">' +
+      '<div class="ati-panel active" id="ati-panel-1">' +
+      _atiPanel1() +
+      "</div>" +
+      '<div class="ati-panel" id="ati-panel-2">' +
+      _atiPanel2Placeholder() +
+      "</div>" +
+      '<div class="ati-panel" id="ati-panel-3">' +
+      _atiPanel3Placeholder() +
+      "</div>" +
+      '<div class="ati-panel" id="ati-panel-4">' +
+      _atiPanel4Placeholder() +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function _atiKpiCard(icon, label, value, id, color, bg) {
+    return (
+      '<div class="ati-kpi-item">' +
+      '<div class="ati-kpi-ico" style="background:' +
+      bg +
+      ";color:" +
+      color +
+      '">' +
+      '<i class="ti ' +
+      icon +
+      '"></i></div>' +
+      '<div class="ati-kpi-body"><span class="ati-kpi-val" id="' +
+      id +
+      '">' +
+      value +
+      "</span>" +
+      '<span class="ati-kpi-lbl">' +
+      label +
+      "</span></div>" +
+      "</div>"
+    );
+  }
+
+  function _atiWizardBar(active) {
+    var steps = [
+      { num: 1, label: "اختيار الجهاز والملف" },
+      { num: 2, label: "ربط الأعمدة" },
+      { num: 3, label: "التحقق من البيانات" },
+      { num: 4, label: "النتائج" },
+    ];
+    var html = '<div class="ati-wizard" id="ati-wizard-bar">';
+    steps.forEach(function (s, i) {
+      var cls = s.num < active ? "done" : s.num === active ? "active" : "";
+      html +=
+        '<div class="ati-step ' +
+        cls +
+        '">' +
+        '<div class="ati-step-num">' +
+        (s.num < active
+          ? '<i class="ti ti-check" style="font-size:13px"></i>'
+          : s.num) +
+        "</div>" +
+        '<span class="ati-step-label">' +
+        s.label +
+        "</span>" +
+        "</div>";
+      if (i < steps.length - 1) html += '<div class="ati-step-line"></div>';
+    });
+    return html + "</div>";
+  }
+
+  // Panel 1: اختيار الجهاز + رفع الملف
+  function _atiPanel1() {
+    var deviceCards = ATI.DEVICES.map(function (d) {
+      return (
+        '<div class="ati-dcard" data-device="' +
+        d.id +
+        '" onclick="_atiSelectDevice(this)">' +
+        '<div class="ati-dcard-sel"><i class="ti ti-check"></i></div>' +
+        '<div class="ati-dcard-icon"><i class="ti ti-fingerprint"></i></div>' +
+        '<div class="ati-dcard-name">' +
+        d.name +
+        "</div>" +
+        '<div class="ati-dcard-sub">' +
+        d.sub +
+        "</div>" +
+        "</div>"
+      );
+    }).join("");
+
+    return (
+      '<div class="ati-p1">' +
+      // Section: Device
+      '<div class="ati-section">' +
+      '<div class="ati-section-head">' +
+      '<div class="ati-section-num">١</div>' +
+      "<div>" +
+      '<div class="ati-section-title">اختر نوع الجهاز</div>' +
+      '<div class="ati-section-sub">حدد الجهاز لتطبيق إعدادات الأعمدة الافتراضية</div>' +
+      "</div></div>" +
+      '<div class="ati-device-grid">' +
+      deviceCards +
+      "</div>" +
+      "</div>" +
+      // Divider
+      '<div class="ati-divider"><span>ثم ارفع الملف</span></div>' +
+      // Section: File Upload
+      '<div class="ati-section">' +
+      '<div class="ati-section-head">' +
+      '<div class="ati-section-num">٢</div>' +
+      "<div>" +
+      '<div class="ati-section-title">ارفع ملف البيانات</div>' +
+      '<div class="ati-section-sub">CSV أو Excel أو TXT المُصدَّر من جهاز البصمة</div>' +
+      "</div></div>" +
+      '<div class="ati-drop-zone" id="ati-drop-zone" onclick="document.getElementById(\'ati-file-input\').click()" ' +
+      'ondragover="_atiDragOver(event)" ondragleave="_atiDragLeave(event)" ondrop="_atiDrop(event)">' +
+      '<div class="ati-dz-icon"><i class="ti ti-cloud-upload"></i></div>' +
+      '<div class="ati-dz-text">اسحب الملف هنا أو انقر للاختيار</div>' +
+      '<div class="ati-dz-sub">يقبل ملفات جميع أجهزة البصمة المدعومة</div>' +
+      '<div class="ati-dz-formats">' +
+      '<span class="ati-fmt" style="background:#d1fae5;color:#065f46;border-color:#a7f3d0">CSV</span>' +
+      '<span class="ati-fmt" style="background:#dbeafe;color:#1d4ed8;border-color:#93c5fd">XLSX</span>' +
+      '<span class="ati-fmt" style="background:#ede9fe;color:#5b21b6;border-color:#c4b5fd">XLS</span>' +
+      '<span class="ati-fmt" style="background:#fef3c7;color:#92400e;border-color:#fde68a">TXT</span>' +
+      "</div></div>" +
+      '<input type="file" id="ati-file-input" accept=".csv,.xlsx,.xls,.txt" style="display:none" onchange="_atiFileChosen(this)">' +
+      // Selected file info
+      '<div id="ati-file-info" style="display:none;margin-top:14px;padding:14px 18px;background:var(--accent-soft);border:1px solid var(--border);border-radius:12px;display:flex;align-items:center;gap:12px">' +
+      '<i class="ti ti-file-check" style="font-size:24px;color:var(--primary)"></i>' +
+      '<div style="flex:1"><strong id="ati-file-name"></strong><div style="font-size:12px;color:var(--text3);margin-top:2px" id="ati-file-meta"></div></div>' +
+      '<button class="btn-icon" onclick="_atiClearFile()" title="إزالة الملف"><i class="ti ti-x"></i></button>' +
+      "</div>" +
+      // Saved templates
+      '<div id="ati-templates-section" style="margin-top:20px;display:none">' +
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:10px;text-transform:uppercase;letter-spacing:.6px">قوالب الربط المحفوظة</div>' +
+      '<div class="ati-template-list" id="ati-template-list"></div>' +
+      "</div>" +
+      "</div>" +
+      // Footer Actions
+      '<div class="ati-p1-footer">' +
+      '<button class="att-btn-secondary" onclick="_atiReset()"><i class="ti ti-refresh"></i> إعادة تعيين</button>' +
+      '<button class="att-btn-primary" id="ati-btn-next1" disabled onclick="_atiGoStep2()">' +
+      'التالي: ربط الأعمدة <i class="ti ti-arrow-left"></i>' +
+      "</button>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function _atiPanel2Placeholder() {
+    return '<div id="ati-mapping-content"><div class="empty-state"><div class="empty-icon"></div><p>ارفع ملفاً أولاً للمتابعة</p></div></div>';
+  }
+  function _atiPanel3Placeholder() {
+    return '<div id="ati-validation-content"><div class="empty-state"><div class="empty-icon"></div><p>قم بربط الأعمدة أولاً</p></div></div>';
+  }
+  function _atiPanel4Placeholder() {
+    return '<div id="ati-result-content"><div class="empty-state"><div class="empty-icon"></div><p>ستظهر نتائج الاستيراد هنا</p></div></div>';
+  }
+
+  /** صفحة سجل عمليات الاستيراد */
+  function renderImportLog() {
+    return (
+      '<div class="page-header">' +
+      '<div class="page-header-content">' +
+      '<h1 class="page-title"><i class="ti ti-history" style="color:var(--primary)"></i> سجل عمليات الاستيراد</h1>' +
+      '<p class="page-subtitle">تاريخ جميع عمليات استيراد بيانات الحضور والانصراف</p>' +
+      "</div>" +
+      '<div class="page-header-actions">' +
+      (canDo("importAttendance")
+        ? "<button class=\"btn btn-primary\" onclick=\"(document.getElementById('att-mode-tabs') ? document.querySelector('#att-mode-tabs [data-mode=import]').click() : navigateTo('attendance_import'))\">" +
+          '<i class="ti ti-file-import"></i> استيراد جديد' +
+          "</button>"
+        : "") +
+      "</div>" +
+      "</div>" +
+      '<div class="card" style="padding:0">' +
+      '<div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
+      '<input type="date" id="ail-from" class="input" style="width:160px" placeholder="من تاريخ">' +
+      '<input type="date" id="ail-to" class="input" style="width:160px" placeholder="إلى تاريخ">' +
+      '<button class="btn btn-ghost" id="ail-btn-filter"><i class="ti ti-filter"></i> فلتر</button>' +
+      "</div>" +
+      '<div id="ail-ce-container"></div>' +
+      "</div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §ATI-BIND  — ربط الأحداث
+  // ─────────────────────────────────────────────────────────────────────
+
+  function bindAttendanceImport() {
+    _injectATIStyles();
+    _atiLoadStats();
+    _atiLoadTemplates();
+  }
+
+  function bindImportLog() {
+    _injectATIStyles();
+    _ailLoad({});
+    var btnFilter = document.getElementById("ail-btn-filter");
+    if (btnFilter)
+      btnFilter.addEventListener("click", function () {
+        _ailLoad({
+          from: document.getElementById("ail-from").value,
+          to: document.getElementById("ail-to").value,
+        });
+      });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §ATI-PARSE  — قراءة الملفات
+  // ─────────────────────────────────────────────────────────────────────
+
+  /** اختيار نوع الجهاز */
+  function _atiSelectDevice(el) {
+    document
+      .querySelectorAll(".ati-device-card, .ati-dcard")
+      .forEach(function (c) {
+        c.classList.remove("selected");
+      });
+    el.classList.add("selected");
+    ATI.deviceType = el.dataset.device;
+    // تطبيق القالب الافتراضي للجهاز إذا لم يكن هناك ملف محدد بعد
+    if (!ATI.file) {
+      ATI.mapping = Object.assign({}, ATI.DEFAULT_MAPS[ATI.deviceType] || {});
+    }
+    _atiCheckNextReady();
+  }
+
+  /** عند سحب الملف */
+  function _atiDragOver(e) {
+    e.preventDefault();
+    document.getElementById("ati-drop-zone").classList.add("drag-over");
+  }
+  function _atiDragLeave(e) {
+    document.getElementById("ati-drop-zone").classList.remove("drag-over");
+  }
+  function _atiDrop(e) {
+    e.preventDefault();
+    document.getElementById("ati-drop-zone").classList.remove("drag-over");
+    var file = e.dataTransfer.files[0];
+    if (file) _atiProcessFile(file);
+  }
+
+  /** عند اختيار ملف من input */
+  function _atiFileChosen(input) {
+    if (input.files && input.files[0]) _atiProcessFile(input.files[0]);
+  }
+
+  /** معالجة الملف المختار */
+  function _atiProcessFile(file) {
+    var ext = file.name.split(".").pop().toLowerCase();
+    var allowed = ["csv", "xlsx", "xls", "txt"];
+    if (allowed.indexOf(ext) === -1) {
+      NotificationEngine.error("صيغة الملف غير مدعومة. يقبل فقط: " + allowed.join(", "));
+      return;
+    }
+    ATI.file = file;
+    ATI.fileType = ext;
+
+    // عرض معلومات الملف
+    var info = document.getElementById("ati-file-info");
+    document.getElementById("ati-file-name").textContent = file.name;
+    document.getElementById("ati-file-meta").textContent =
+      "الحجم: " + _fmtFileSize(file.size) + " · النوع: " + ext.toUpperCase();
+    if (info) info.style.display = "flex";
+    document.getElementById("ati-drop-zone").style.display = "none";
+
+    _atiCheckNextReady();
+    NotificationEngine.success("تم اختيار الملف بنجاح");
+  }
+
+  function _atiClearFile() {
+    ATI.file = null;
+    ATI.fileType = null;
+    ATI.rawRows = [];
+    ATI.rawHeaders = [];
+    var info = document.getElementById("ati-file-info");
+    if (info) info.style.display = "none";
+    document.getElementById("ati-drop-zone").style.display = "";
+    document.getElementById("ati-file-input").value = "";
+    _atiCheckNextReady();
+  }
+
+  function _atiCheckNextReady() {
+    var btn = document.getElementById("ati-btn-next1");
+    if (btn) btn.disabled = !(ATI.file && ATI.deviceType);
+  }
+
+  /** قراءة محتوى الملف حسب نوعه */
+  function _atiReadFile(callback) {
+    var ext = ATI.fileType;
+    var reader = new FileReader();
+
+    if (ext === "csv" || ext === "txt") {
+      reader.onload = function (e) {
+        var text = e.target.result;
+        var rows = _parseCSVText(text);
+        callback(null, rows);
+      };
+      reader.onerror = function () {
+        callback("خطأ في قراءة الملف");
+      };
+      reader.readAsText(ATI.file, "UTF-8");
+    } else if (ext === "xlsx" || ext === "xls") {
+      reader.onload = function (e) {
+        try {
+          var data = new Uint8Array(e.target.result);
+          var wb = XLSX.read(data, { type: "array" });
+          var ws = wb.Sheets[wb.SheetNames[0]];
+          var json = XLSX.utils.sheet_to_json(ws, {
+            header: 1,
+            raw: false,
+            dateNF: "YYYY-MM-DD",
+          });
+          callback(null, json);
+        } catch (err) {
+          callback("خطأ في قراءة ملف Excel: " + err.message);
+        }
+      };
+      reader.onerror = function () {
+        callback("خطأ في قراءة الملف");
+      };
+      reader.readAsArrayBuffer(ATI.file);
+    } else {
+      callback("صيغة غير مدعومة");
+    }
+  }
+
+  /** تحليل CSV إلى مصفوفة مصفوفات */
+  function _parseCSVText(text) {
+    // دعم فواصل متعددة: comma, semicolon, tab, pipe
+    var lines = text.split(/\r?\n/).filter(function (l) {
+      return l.trim();
+    });
+    if (!lines.length) return [];
+    var delim = ",";
+    var sample = lines[0];
+    if (sample.indexOf("\t") > -1) delim = "\t";
+    else if (sample.indexOf(";") > -1) delim = ";";
+    else if (sample.indexOf("|") > -1) delim = "|";
+
+    return lines.map(function (line) {
+      // CSV parsing مع دعم القيم المحاطة بـ quotes
+      var result = [];
+      var cur = "";
+      var inQ = false;
+      for (var i = 0; i < line.length; i++) {
+        var ch = line[i];
+        if (ch === '"') {
+          inQ = !inQ;
+        } else if (ch === delim && !inQ) {
+          result.push(cur.trim());
+          cur = "";
+        } else {
+          cur += ch;
+        }
+      }
+      result.push(cur.trim());
+      return result;
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §ATI-MAP  — شاشة ربط الأعمدة
+  // ─────────────────────────────────────────────────────────────────────
+
+  function _atiGoStep2() {
+    showLoading("جاري قراءة الملف...");
+    _atiReadFile(function (err, rows) {
+      hideLoading();
+      if (err) {
+        NotificationEngine.error(err);
+        return;
+      }
+      if (!rows || rows.length < 2) {
+        NotificationEngine.error("الملف فارغ أو لا يحتوي بيانات كافية");
+        return;
+      }
+      ATI.rawHeaders = rows[0];
+      ATI.rawRows = rows.slice(1).filter(function (r) {
+        return r.some(function (c) {
+          return String(c).trim();
+        });
+      });
+
+      // تطبيق القالب المناسب
+      if (ATI.deviceType && !Object.keys(ATI.mapping).length) {
+        ATI.mapping = Object.assign({}, ATI.DEFAULT_MAPS[ATI.deviceType] || {});
+      }
+
+      _atiSetStep(2);
+      _atiRenderMappingPanel();
+    });
+  }
+
+  function _atiRenderMappingPanel() {
+    var headers = ATI.rawHeaders;
+    var sample = ATI.rawRows.slice(0, 3);
+
+    var colOptions = '<option value="">— تجاهل —</option>';
+    headers.forEach(function (h, i) {
+      colOptions +=
+        '<option value="' + i + '">' + (h || "عمود " + (i + 1)) + "</option>";
+    });
+
+    var rows = ATI.FIELDS.map(function (f) {
+      var cur = ATI.mapping[f.key] || "";
+      // عرض أمثلة من البيانات
+      var preview = "";
+      if (cur !== "") {
+        preview = sample
+          .map(function (r) {
+            return r[parseInt(cur)] || "";
+          })
+          .filter(Boolean)
+          .slice(0, 2)
+          .join(" / ");
+      }
+      return (
+        "<tr>" +
+        "<td><strong>" +
+        f.label +
+        (f.required ? ' <span style="color:var(--danger)">*</span>' : "") +
+        "</strong></td>" +
+        "<td>" +
+        "<select onchange=\"_atiMapField('" +
+        f.key +
+        "',this.value)\">" +
+        colOptions.replace(
+          'value="' + cur + '"',
+          'value="' + cur + '" selected',
+        ) +
+        "</select>" +
+        (preview
+          ? '<span class="ati-col-preview" id="ati-prev-' +
+            f.key +
+            '">' +
+            preview +
+            "</span>"
+          : '<span class="ati-col-preview" id="ati-prev-' +
+            f.key +
+            '" style="display:none"></span>') +
+        "</td>" +
+        "</tr>"
+      );
+    }).join("");
+
+    var html =
+      '<h3 style="font-size:15px;font-weight:700;margin:0 0 8px">الخطوة 2: ربط أعمدة الملف بحقول النظام</h3>' +
+      '<p style="font-size:13px;color:var(--text3);margin:0 0 20px">حدد أي عمود في ملفك يقابل كل حقل في النظام. الحقول المطلوبة مُعلَّمة بـ <span style="color:var(--danger)">*</span></p>' +
+      // إحصائيات الملف
+      '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px">' +
+      '<div style="padding:10px 16px;background:var(--accent-soft);border-radius:10px;font-size:13px"><strong style="color:var(--primary)" id="ati-count-rows">' +
+      ATI.rawRows.length +
+      '</strong> <span style="color:var(--text3)">سطر بيانات</span></div>' +
+      '<div style="padding:10px 16px;background:var(--surface2);border-radius:10px;font-size:13px"><strong style="color:var(--text2)">' +
+      headers.length +
+      "</strong> <span style='color:var(--text3)'>عمود</span></div>" +
+      '<div style="padding:10px 16px;background:var(--surface2);border-radius:10px;font-size:13px"><strong style="color:var(--text2)">' +
+      ATI.fileType.toUpperCase() +
+      "</strong> <span style='color:var(--text3)'>صيغة الملف</span></div>" +
+      "</div>" +
+      // جدول الربط
+      '<div style="overflow-x:auto;border:1px solid var(--border);border-radius:12px;margin-bottom:20px">' +
+      '<table class="ati-map-table"><thead><tr><th>حقل النظام</th><th>عمود الملف</th></tr></thead>' +
+      "<tbody>" +
+      rows +
+      "</tbody></table>" +
+      "</div>" +
+      // حفظ القالب
+      '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">' +
+      '<div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:10px"><i class="ti ti-template" style="margin-left:6px"></i>حفظ قالب الربط</div>' +
+      '<div style="display:flex;gap:10px;align-items:center">' +
+      '<input type="text" id="ati-template-name" class="input" placeholder="اسم القالب (مثل: ZKTeco مصنع أ)" style="flex:1">' +
+      '<button class="btn btn-ghost" onclick="_atiSaveTemplate()"><i class="ti ti-device-floppy"></i> حفظ</button>' +
+      "</div>" +
+      "</div>" +
+      // معاينة البيانات
+      '<div style="margin-bottom:20px">' +
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:10px;text-transform:uppercase;letter-spacing:.6px">معاينة أول 5 صفوف</div>' +
+      _atiPreviewTable(sample.slice(0, 5), headers) +
+      "</div>" +
+      // أزرار التنقل
+      '<div style="display:flex;justify-content:space-between;margin-top:8px">' +
+      '<button class="btn btn-ghost" onclick="_atiSetStep(1)"><i class="ti ti-arrow-right"></i> السابق</button>' +
+      '<button class="btn btn-primary" onclick="_atiGoStep3()"><i class="ti ti-arrow-left"></i> التالي: التحقق من البيانات</button>' +
+      "</div>";
+
+    document.getElementById("ati-mapping-content").innerHTML = html;
+  }
+
+  function _atiMapField(fieldKey, colIndex) {
+    ATI.mapping[fieldKey] = colIndex;
+    // تحديث المعاينة
+    var preview = "";
+    if (colIndex !== "") {
+      preview = ATI.rawRows
+        .slice(0, 2)
+        .map(function (r) {
+          return r[parseInt(colIndex)] || "";
+        })
+        .filter(Boolean)
+        .join(" / ");
+    }
+    var el = document.getElementById("ati-prev-" + fieldKey);
+    if (el) {
+      el.textContent = preview;
+      el.style.display = preview ? "" : "none";
+    }
+  }
+
+  function _atiPreviewTable(rows, headers) {
+    if (!rows || !rows.length)
+      return '<p style="color:var(--text3);font-size:13px">لا توجد بيانات للمعاينة</p>';
+    var th = headers
+      .map(function (h, i) {
+        return "<th>" + (h || "عمود " + (i + 1)) + "</th>";
+      })
+      .join("");
+    var trs = rows
+      .map(function (r) {
+        return (
+          "<tr>" +
+          r
+            .map(function (c) {
+              return "<td>" + esc(String(c || "")) + "</td>";
+            })
+            .join("") +
+          "</tr>"
+        );
+      })
+      .join("");
+    return (
+      '<div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px">' +
+      '<table class="ati-log-table"><thead><tr>' +
+      th +
+      "</tr></thead><tbody>" +
+      trs +
+      "</tbody></table></div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §ATI-VALID  — التحقق من البيانات
+  // ─────────────────────────────────────────────────────────────────────
+
+  function _atiGoStep3() {
+    // التحقق من وجود الحقول الإلزامية
+    var missing = ATI.FIELDS.filter(function (f) {
+      return (
+        f.required &&
+        (ATI.mapping[f.key] === "" ||
+          ATI.mapping[f.key] === undefined ||
+          ATI.mapping[f.key] === null)
+      );
+    });
+    if (missing.length) {
+      NotificationEngine.error("يجب ربط الحقول الإلزامية: " +
+        missing
+          .map(function (f) {
+            return f.label;
+          })
+          .join("، "));
+      return;
+    }
+
+    showLoading("جاري التحقق من البيانات...");
+    _atiSetStep(3);
+
+    // تحويل الصفوف الخام إلى كائنات
+    var mapped = ATI.rawRows.map(function (row, idx) {
+      var obj = { _rowNum: idx + 2 };
+      ATI.FIELDS.forEach(function (f) {
+        var col = ATI.mapping[f.key];
+        obj[f.key] =
+          col !== "" && col !== undefined && col !== null
+            ? String(row[parseInt(col)] || "").trim()
+            : "";
+      });
+      return obj;
+    });
+
+    // التحقق من الصحة
+    var employees = APP.data.employees || [];
+    var empIndex = {};
+    employees.forEach(function (e) {
+      empIndex[String(e.employee_number || "").trim()] = e;
+      empIndex[String(e.id).trim()] = e;
+    });
+
+    // بناء فهرس البصمات
+    employees.forEach(function (e) {
+      if (e.badge_number)
+        empIndex["badge_" + String(e.badge_number).trim()] = e;
+    });
+
+    var validRows = [];
+    var invalidRows = [];
+    var seenKeys = {};
+
+    mapped.forEach(function (row) {
+      var errors = [];
+
+      // 1. التحقق من رقم الموظف
+      var emp =
+        empIndex[row.employee_number] || empIndex["badge_" + row.badge_number];
+      if (!emp) {
+        if (!row.employee_number && !row.badge_number) {
+          errors.push({
+            type: "missing",
+            msg: "رقم الموظف أو رقم البصمة مطلوب",
+          });
+        } else {
+          errors.push({
+            type: "notfound",
+            msg:
+              "الموظف غير موجود: " + (row.employee_number || row.badge_number),
+          });
+        }
+      } else {
+        row._employee = emp;
+        row.employee_id = emp.id;
+        row.resolved_name = emp.full_name;
+      }
+
+      // 2. التحقق من التاريخ
+      if (!row.date) {
+        errors.push({ type: "missing", msg: "التاريخ مطلوب" });
+      } else {
+        var d = _parseDate(row.date);
+        if (!d) {
+          errors.push({ type: "invalid", msg: "تاريخ غير صحيح: " + row.date });
+        } else {
+          row.date = _formatDateISO(d);
+        }
+      }
+
+      // 3. التحقق من الأوقات
+      if (row.check_in) {
+        var t = _parseTime(row.check_in);
+        if (!t)
+          errors.push({
+            type: "invalid",
+            msg: "وقت الدخول غير صحيح: " + row.check_in,
+          });
+        else row.check_in = t;
+      }
+      if (row.check_out) {
+        var t2 = _parseTime(row.check_out);
+        if (!t2)
+          errors.push({
+            type: "invalid",
+            msg: "وقت الخروج غير صحيح: " + row.check_out,
+          });
+        else row.check_out = t2;
+      }
+
+      // 4. اكتشاف التكرارات
+      if (emp && row.date) {
+        var key = (emp ? emp.id : row.employee_number) + "_" + row.date;
+        if (seenKeys[key]) {
+          errors.push({
+            type: "dup",
+            msg:
+              "سجل مكرر للموظف " +
+              (row.resolved_name || row.employee_number) +
+              " بتاريخ " +
+              row.date,
+          });
+        }
+        seenKeys[key] = true;
+      }
+
+      // حساب ساعات العمل إذا توفرت الأوقات
+      if (
+        row.check_in &&
+        row.check_out &&
+        !errors.find(function (e) {
+          return e.type === "invalid";
+        })
+      ) {
+        row.work_hours = _calcWorkHours(row.check_in, row.check_out);
+      }
+
+      if (errors.length) {
+        row._errors = errors;
+        invalidRows.push(row);
+      } else {
+        validRows.push(row);
+      }
+    });
+
+    ATI.validRows = validRows;
+    ATI.invalidRows = invalidRows;
+
+    hideLoading();
+    _atiRenderValidationPanel();
+  }
+
+  function _atiRenderValidationPanel() {
+    var total = ATI.validRows.length + ATI.invalidRows.length;
+    var dups = ATI.invalidRows.filter(function (r) {
+      return r._errors.some(function (e) {
+        return e.type === "dup";
+      });
+    }).length;
+    var notfound = ATI.invalidRows.filter(function (r) {
+      return r._errors.some(function (e) {
+        return e.type === "notfound";
+      });
+    }).length;
+    var invalid = ATI.invalidRows.filter(function (r) {
+      return r._errors.some(function (e) {
+        return e.type === "invalid";
+      });
+    }).length;
+    var missing = ATI.invalidRows.filter(function (r) {
+      return r._errors.some(function (e) {
+        return e.type === "missing";
+      });
+    }).length;
+
+    var errList = ATI.invalidRows
+      .slice(0, 100)
+      .map(function (row) {
+        return row._errors
+          .map(function (err) {
+            var typeLabel =
+              {
+                dup: "مكرر",
+                missing: "ناقص",
+                invalid: "خاطئ",
+                notfound: "غير موجود",
+              }[err.type] || err.type;
+            return (
+              '<div class="ati-err-item type-' +
+              err.type +
+              '">' +
+              '<div class="ei-row">سطر ' +
+              row._rowNum +
+              "</div>" +
+              '<div class="ei-msg">' +
+              esc(err.msg) +
+              "</div>" +
+              '<div class="ei-type">' +
+              typeLabel +
+              "</div>" +
+              "</div>"
+            );
+          })
+          .join("");
+      })
+      .join("");
+
+    var html =
+      '<h3 style="font-size:15px;font-weight:700;margin:0 0 16px">الخطوة 3: نتائج التحقق من البيانات</h3>' +
+      '<div class="ati-val-summary">' +
+      '<div class="ati-val-card info"><span class="val-num">' +
+      total +
+      "</span><span class='val-label'>إجمالي السجلات</span></div>" +
+      '<div class="ati-val-card ok"><span class="val-num">' +
+      ATI.validRows.length +
+      "</span><span class='val-label'>سجلات صحيحة </span></div>" +
+      '<div class="ati-val-card err"><span class="val-num">' +
+      ATI.invalidRows.length +
+      "</span><span class='val-label'>سجلات بأخطاء</span></div>" +
+      '<div class="ati-val-card warn"><span class="val-num">' +
+      dups +
+      "</span><span class='val-label'>مكررة</span></div>" +
+      "</div>" +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">' +
+      (notfound
+        ? '<div style="padding:8px 14px;background:#fee2e2;border-radius:8px;font-size:12px;font-weight:600;color:#991b1b"> ' +
+          notfound +
+          " موظف غير موجود في النظام</div>"
+        : "") +
+      (invalid
+        ? '<div style="padding:8px 14px;background:#ede9fe;border-radius:8px;font-size:12px;font-weight:600;color:#5b21b6"> ' +
+          invalid +
+          " بيانات غير صحيحة</div>"
+        : "") +
+      (missing
+        ? '<div style="padding:8px 14px;background:#fef3c7;border-radius:8px;font-size:12px;font-weight:600;color:#92400e"> ' +
+          missing +
+          " بيانات ناقصة</div>"
+        : "") +
+      "</div>" +
+      (ATI.invalidRows.length
+        ? '<div style="margin-bottom:20px">' +
+          '<div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.6px">تفاصيل الأخطاء</div>' +
+          '<div class="ati-err-list">' +
+          (errList ||
+            '<div class="ati-err-item"><div class="ei-msg" style="color:var(--text3)">لا توجد أخطاء</div></div>') +
+          "</div>" +
+          (ATI.invalidRows.length > 100
+            ? '<p style="font-size:12px;color:var(--text3);margin-top:8px">يُعرض أول 100 خطأ فقط</p>'
+            : "") +
+          "</div>"
+        : '<div style="padding:16px;background:#d1fae5;border-radius:12px;margin-bottom:20px;color:#065f46;font-weight:600;font-size:13px"><i class="ti ti-check" style="margin-left:8px"></i>جميع البيانات صحيحة! يمكنك المتابعة</div>') +
+      // خيار استيراد الصحيحة فقط
+      (ATI.invalidRows.length && ATI.validRows.length
+        ? '<div style="padding:14px 18px;background:var(--accent-soft);border:1px solid var(--border);border-radius:12px;margin-bottom:20px;display:flex;align-items:center;gap:12px">' +
+          '<input type="checkbox" id="ati-skip-errors" checked style="width:18px;height:18px;cursor:pointer">' +
+          '<label for="ati-skip-errors" style="font-size:13px;font-weight:600;cursor:pointer">استيراد السجلات الصحيحة فقط (' +
+          ATI.validRows.length +
+          " سجل) وتجاهل الأخطاء</label>" +
+          "</div>"
+        : "") +
+      '<div style="display:flex;justify-content:space-between;margin-top:8px">' +
+      '<button class="btn btn-ghost" onclick="_atiSetStep(2)"><i class="ti ti-arrow-right"></i> السابق</button>' +
+      '<div style="display:flex;gap:10px">' +
+      (ATI.validRows.length && canDo("importAttendance")
+        ? '<button class="btn btn-primary" id="ati-btn-process" onclick="_atiProcess()">' +
+          '<i class="ti ti-database-import"></i> استيراد ' +
+          ATI.validRows.length +
+          " سجل</button>"
+        : '<div style="padding:10px 16px;background:var(--surface2);border-radius:8px;color:var(--text3);font-size:13px">لا يوجد سجلات صالحة للاستيراد</div>') +
+      "</div>" +
+      "</div>";
+
+    document.getElementById("ati-validation-content").innerHTML = html;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §ATI-PROCESS  — المعالجة والحفظ
+  // ─────────────────────────────────────────────────────────────────────
+
+  function _atiProcess() {
+    var skipErrors = document.getElementById("ati-skip-errors");
+    var toImport =
+      skipErrors && skipErrors.checked ? ATI.validRows : ATI.validRows;
+
+    if (!toImport.length) {
+      NotificationEngine.error("لا توجد سجلات للاستيراد");
+      return;
+    }
+
+    var btn = document.getElementById("ati-btn-process");
+    if (btn) btn.disabled = true;
+    ATI.processing = true;
+
+    // تجهيز البيانات للإرسال
+    var payload = toImport.map(function (row) {
+      return {
+        employee_id: row.employee_id,
+        employee_number: row.employee_number,
+        date: row.date,
+        check_in: row.check_in || "",
+        check_out: row.check_out || "",
+        work_hours: row.work_hours || 0,
+        movement_type: row.movement_type || "PUNCH",
+        device_name: row.device_name || ATI.deviceType || "",
+        badge_number: row.badge_number || "",
+        source: "import",
+        device_type: ATI.deviceType || "generic",
+      };
+    });
+
+    var meta = {
+      file_name: ATI.file ? ATI.file.name : "",
+      device_type: ATI.deviceType || "generic",
+      total_in_file: ATI.rawRows.length,
+      valid_count: ATI.validRows.length,
+      rejected_count: ATI.invalidRows.length,
+      rejected_details: ATI.invalidRows.slice(0, 200).map(function (r) {
+        return { row: r._rowNum, errors: r._errors };
+      }),
+    };
+
+    // عرض شاشة التقدم
+    _atiSetStep(4);
+    document.getElementById("ati-result-content").innerHTML =
+      '<div style="text-align:center;padding:40px 20px">' +
+      '<div class="spinner" style="margin:0 auto 16px"></div>' +
+      '<h3 style="font-size:16px;font-weight:700;color:var(--text);margin:0 0 8px">جاري الاستيراد...</h3>' +
+      '<p style="color:var(--text3);font-size:13px">يتم معالجة ' +
+      payload.length +
+      " سجل، يرجى الانتظار</p>" +
+      '<div class="ati-progress-wrap" style="max-width:300px;margin:16px auto"><div class="ati-progress-fill" id="ati-prog" style="width:0%"></div></div>' +
+      '<div id="ati-prog-label" style="font-size:12px;color:var(--text3)">0 / ' +
+      payload.length +
+      "</div>" +
+      "</div>";
+
+    // محاكاة تقدم (مع الاستدعاء الفعلي للـ backend)
+    var prog = 0;
+    var progInt = setInterval(function () {
+      prog = Math.min(prog + Math.random() * 8, 85);
+      var el = document.getElementById("ati-prog");
+      if (el) el.style.width = prog + "%";
+    }, 300);
+
+    _gsr("importAttendanceBatch", [_authPayload({ records: payload, meta: meta })], {
+      label: "ATI.importAttendanceBatch",
+      onSuccess: function (res) {
+        clearInterval(progInt);
+        var el = document.getElementById("ati-prog");
+        if (el) el.style.width = "100%";
+        ATI.processing = false;
+
+        setTimeout(function () {
+          ATI.importSessionId = res.session_id;
+          _atiRenderResult(res);
+        }, 400);
+      },
+      onError: function (res) {
+        clearInterval(progInt);
+        ATI.processing = false;
+        NotificationEngine.error((res && res.message) || "خطأ في الاستيراد");
+        var btn2 = document.getElementById("ati-btn-process");
+        if (btn2) btn2.disabled = false;
+      },
+    });
+  }
+
+  function _atiRenderResult(res) {
+    var saved = res.saved || 0;
+    var dupes = res.duplicates || 0;
+    var errs = res.errors || 0;
+
+    var html =
+      '<div style="text-align:center;padding:24px 0 32px">' +
+      '<div style="width:72px;height:72px;border-radius:50%;background:#d1fae5;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:32px"></div>' +
+      '<h2 style="font-size:20px;font-weight:900;color:var(--text);margin:0 0 8px">اكتمل الاستيراد بنجاح!</h2>' +
+      '<p style="color:var(--text3);font-size:14px;margin:0">تمت معالجة ' +
+      (saved + dupes + errs) +
+      " سجل من الملف</p>" +
+      "</div>" +
+      '<div class="ati-val-summary" style="max-width:500px;margin:0 auto 28px">' +
+      '<div class="ati-val-card ok"><span class="val-num">' +
+      saved +
+      "</span><span class='val-label'>تم الحفظ</span></div>" +
+      '<div class="ati-val-card warn"><span class="val-num">' +
+      dupes +
+      "</span><span class='val-label'>مكررة (تجاهل)</span></div>" +
+      '<div class="ati-val-card err"><span class="val-num">' +
+      errs +
+      "</span><span class='val-label'>أخطاء</span></div>" +
+      "</div>" +
+      // التقارير المُحدَّثة
+      '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:500px;margin:0 auto 24px;text-align:right">' +
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:14px;text-transform:uppercase;letter-spacing:.6px">التقارير المُحدَّثة</div>' +
+      '<div style="display:flex;flex-direction:column;gap:10px">' +
+      _atiReportLink("ti-calendar-stats", "كشف الحضور", "attendance") +
+      _atiReportLink(
+        "ti-clock-exclamation",
+        "تقرير التأخير",
+        "attendance_late_report",
+      ) +
+      _atiReportLink(
+        "ti-user-off",
+        "تقرير الغياب",
+        "attendance_absence_report",
+      ) +
+      _atiReportLink(
+        "ti-clock-hour-8",
+        "ساعات العمل",
+        "attendance_hours_report",
+      ) +
+      _atiReportLink("ti-moon", "العمل الإضافي", "attendance_overtime_report") +
+      "</div>" +
+      "</div>" +
+      '<div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">' +
+      '<button class="btn btn-ghost" onclick="navigateTo(\'attendance_import_log\')">' +
+      '<i class="ti ti-history"></i> عرض سجل الاستيرادات' +
+      "</button>" +
+      '<button class="btn btn-primary" onclick="_atiReset()">' +
+      '<i class="ti ti-file-import"></i> استيراد ملف جديد' +
+      "</button>" +
+      "</div>";
+
+    document.getElementById("ati-result-content").innerHTML = html;
+    _atiLoadStats(); // تحديث الإحصائيات
+  }
+
+  function _atiReportLink(icon, label, page) {
+    return (
+      '<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;cursor:pointer" onclick="navigateTo(\'' +
+      page +
+      "')\">" +
+      '<div style="width:32px;height:32px;border-radius:8px;background:var(--accent-soft);display:flex;align-items:center;justify-content:center"><i class="ti ' +
+      icon +
+      '" style="color:var(--primary)"></i></div>' +
+      '<span style="flex:1;font-size:13px;font-weight:600;color:var(--text)">' +
+      label +
+      "</span>" +
+      '<i class="ti ti-arrow-left" style="color:var(--text3)"></i>' +
+      "</div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §ATI-LOG  — سجل عمليات الاستيراد
+  // ─────────────────────────────────────────────────────────────────────
+
+  function _ailLoad(opts) {
+    showLoading("جاري تحميل سجل الاستيرادات...");
+    _gsr("getAttendanceImportLog", [_authPayload(opts)], {
+      label: "ATI.getAttendanceImportLog",
+      onSuccess: function (res) {
+        hideLoading();
+        _ailRender(res.data);
+      },
+      onError: function (res) {
+        hideLoading();
+        NotificationEngine.error((res && res.message) || "خطأ في التحميل");
+      },
+    });
+  }
+
+  var ATI_DEVICE_NAMES = {
+    zkteco: "ZKTeco",
+    zksoftware: "ZK Software",
+    suprema: "Suprema",
+    hikvision: "Hikvision",
+    generic: "عام",
+  };
+
+  // [COLUMN-ENGINE] تعريف أعمدة سجل استيراد الحضور — العرض والحذف بقوا
+  // عبر القائمة السياقية (contextMenuType: "attendance_log" — كانت
+  // معرَّفة بالفعل في 20_JS_ContextMenu.html وتنتظر التفعيل).
+  var _ailColumnsRegistered = false;
+  function _ailRegisterColumns() {
+    if (_ailColumnsRegistered) return;
+    _ailColumnsRegistered = true;
+    ColumnEngine.register(
+      "attendance_import_log",
+      [
+        {
+          key: "created_at",
+          label: "التاريخ والوقت",
+          type: "text",
+          width: 150,
+          frozen: "right",
+          format: function (v) {
+            return (
+              "<span class='mono' style='font-size:12px'>" +
+              fmtDateTime(v) +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "user_name",
+          label: "المستخدم",
+          type: "text",
+          width: 130,
+        },
+        {
+          key: "file_name",
+          label: "الملف",
+          type: "text",
+          width: 180,
+          format: function (v) {
+            return (
+              "<span style='font-size:12px;color:var(--text2)'>" +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "device_type",
+          label: "الجهاز",
+          type: "badge",
+          width: 110,
+          format: function (v) {
+            return (
+              "<span class='badge badge-info' style='font-size:10px'>" +
+              (ATI_DEVICE_NAMES[v] || v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "saved_count",
+          label: "مستوردة",
+          type: "number",
+          width: 100,
+          format: function (v) {
+            return (
+              "<strong style='color:var(--success)'>" + (v || 0) + "</strong>"
+            );
+          },
+        },
+        {
+          key: "rejected_count",
+          label: "مرفوضة",
+          type: "number",
+          width: 100,
+          format: function (v) {
+            return (
+              "<strong style='color:" +
+              (v ? "var(--danger)" : "var(--text3)") +
+              "'>" +
+              (v || 0) +
+              "</strong>"
+            );
+          },
+        },
+        {
+          key: "status",
+          label: "الحالة",
+          type: "badge",
+          width: 100,
+          format: function (v) {
+            return v === "SUCCESS"
+              ? "<span class='badge badge-success'>ناجح</span>"
+              : v === "PARTIAL"
+                ? "<span class='badge badge-warning'>جزئي</span>"
+                : "<span class='badge badge-danger'>فاشل</span>";
+          },
+        },
+        // [COLUMN-ENGINE-FULL-FIELDS] حقول موجودة فعليًا في سجل الاستيراد
+        // (DataLayer.insert("AttendanceImportLog", ...) في Code_15_HR.gs)
+        // لكنها لم تكن معروضة كأعمدة اختيارية. rejected_details بيانات
+        // JSON متداخلة (تفاصيل الأخطاء) وتُعرض بالفعل عبر زر "تفاصيل"
+        // (_ailViewDetails) — مش عمود مسطّح مناسب.
+        {
+          key: "total_in_file",
+          label: "إجمالي صفوف الملف",
+          type: "number",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "valid_count",
+          label: "صفوف صالحة",
+          type: "number",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "duplicates",
+          label: "مكررة",
+          type: "number",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+      ],
+      {
+        rowKey: "id",
+        title: "سجل عمليات الاستيراد",
+        contextMenuType: "attendance_log",
+      },
+    );
+  }
+
+  function _ailRender(logs) {
+    var container = document.getElementById("ail-ce-container");
+    if (!container) return;
+    _ailRegisterColumns();
+    ColumnEngine.renderTable("attendance_import_log", container, logs || []);
+  }
+
+  function _ailViewDetails(logId) {
+    showLoading("جاري التحميل...");
+    _gsr("getAttendanceImportDetail", [_authPayload({ id: logId })], {
+      label: "ATI.getAttendanceImportDetail",
+      onSuccess: function (result) {
+        hideLoading();
+        var log = result.data;
+        var errHtml = "";
+        if (log.rejected_details && log.rejected_details.length) {
+          errHtml =
+            '<div class="ati-err-list" style="margin-top:12px">' +
+            log.rejected_details
+              .slice(0, 50)
+              .map(function (item) {
+                return item.errors
+                  .map(function (e) {
+                    return (
+                      '<div class="ati-err-item type-' +
+                      e.type +
+                      '">' +
+                      '<div class="ei-row">سطر ' +
+                      item.row +
+                      "</div>" +
+                      '<div class="ei-msg">' +
+                      esc(e.msg) +
+                      "</div>" +
+                      '<div class="ei-type">' +
+                      ({
+                        dup: "مكرر",
+                        missing: "ناقص",
+                        invalid: "خاطئ",
+                        notfound: "غير موجود",
+                      }[e.type] || e.type) +
+                      "</div>" +
+                      "</div>"
+                    );
+                  })
+                  .join("");
+              })
+              .join("") +
+            "</div>";
+        }
+        openModal({
+          title: "تفاصيل الاستيراد",
+          size: "lg",
+          body:
+            '<div class="hr-info-grid">' +
+            '<div class="hr-info-card"><div class="label">الملف</div><div class="value" style="font-size:12px">' +
+            esc(log.file_name || "—") +
+            "</div></div>" +
+            '<div class="hr-info-card"><div class="label">التاريخ</div><div class="value" style="font-size:12px">' +
+            fmtDateTime(log.created_at) +
+            "</div></div>" +
+            '<div class="hr-info-card ok" style="background:#d1fae5"><div class="label" style="color:#065f46">مُستوردة</div><div class="value" style="color:#065f46;font-size:20px">' +
+            (log.saved_count || 0) +
+            "</div></div>" +
+            '<div class="hr-info-card" style="background:#fee2e2"><div class="label" style="color:#991b1b">مرفوضة</div><div class="value" style="color:#991b1b;font-size:20px">' +
+            (log.rejected_count || 0) +
+            "</div></div>" +
+            "</div>" +
+            (errHtml
+              ? '<div style="font-size:12px;font-weight:700;color:var(--text3);margin:12px 0 4px">أخطاء مرفوضة:</div>' +
+                errHtml
+              : "<p style='color:var(--text3);font-size:13px'>لا توجد أخطاء</p>"),
+        });
+      },
+      onError: function (result) {
+        hideLoading();
+        NotificationEngine.error((result && result.message) || "خطأ");
+      },
+    });
+  }
+
+  function _ailDelete(logId) {
+    if (!canDo("deleteImport")) {
+      NotificationEngine.error("لا تملك صلاحية حذف الاستيرادات");
+      return;
+    }
+    confirmDialog(
+      "تأكيد الحذف",
+      "هل تريد حذف سجل الاستيراد هذا؟ سيتم حذف جميع سجلات الحضور المرتبطة به.",
+      function () {
+        showLoading("جاري الحذف...");
+        _gsr("deleteAttendanceImport", [_authPayload({ id: logId })], {
+          label: "ATI.deleteAttendanceImport",
+          onSuccess: function (result) {
+            hideLoading();
+            NotificationEngine.success(result.message);
+            _ailLoad({});
+          },
+          onError: function (result) {
+            hideLoading();
+            NotificationEngine.error((result && result.message) || "خطأ");
+          },
+        });
+      },
+    );
+  }
+
+  // [COLUMN-ENGINE] دالة التصدير اليدوية القديمة (_ailExport) حُذفت —
+  // زر "تصدير" بقى متاحًا تلقائيًا داخل شريط أدوات ColumnEngine
+  // (Excel/CSV) بنفس آلية باقي الشاشات المهاجرة.
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §ATI-TEMPLATES  — إدارة قوالب الربط
+  // ─────────────────────────────────────────────────────────────────────
+
+  function _atiLoadTemplates() {
+    try {
+      var saved = JSON.parse(
+        localStorage.getItem("ati_mapping_templates") || "[]",
+      );
+      ATI.templates = saved;
+      _atiRenderTemplates();
+    } catch (e) {
+      ATI.templates = [];
+    }
+  }
+
+  function _atiSaveTemplate() {
+    var name = (document.getElementById("ati-template-name") || {}).value;
+    if (!name || !name.trim()) {
+      NotificationEngine.error("أدخل اسم القالب أولاً");
+      return;
+    }
+    var tmpl = {
+      id: Date.now(),
+      name: name.trim(),
+      device: ATI.deviceType || "generic",
+      mapping: Object.assign({}, ATI.mapping),
+    };
+    ATI.templates = ATI.templates.filter(function (t) {
+      return t.name !== tmpl.name;
+    });
+    ATI.templates.unshift(tmpl);
+    try {
+      localStorage.setItem(
+        "ati_mapping_templates",
+        JSON.stringify(ATI.templates.slice(0, 20)),
+      );
+    } catch (e) {}
+    NotificationEngine.success("تم حفظ القالب: " + tmpl.name);
+    document.getElementById("ati-template-name").value = "";
+    _atiRenderTemplates();
+  }
+
+  function _atiRenderTemplates() {
+    var el = document.getElementById("ati-templates-section");
+    var list = document.getElementById("ati-template-list");
+    if (!el || !list) return;
+    if (!ATI.templates.length) {
+      el.style.display = "none";
+      return;
+    }
+    el.style.display = "";
+    list.innerHTML = ATI.templates
+      .map(function (t) {
+        return (
+          '<div class="ati-template-item">' +
+          '<i class="ti ti-template" style="color:var(--primary)"></i>' +
+          '<div style="flex:1"><div class="ti-name">' +
+          esc(t.name) +
+          "</div><div class='ti-device'>" +
+          (t.device || "") +
+          "</div></div>" +
+          '<button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" onclick="_atiApplyTemplate(' +
+          t.id +
+          ')">تطبيق</button>' +
+          '<button class="btn-icon" onclick="_atiDeleteTemplate(' +
+          t.id +
+          ')" style="color:var(--danger)"><i class="ti ti-trash"></i></button>' +
+          "</div>"
+        );
+      })
+      .join("");
+  }
+
+  function _atiApplyTemplate(id) {
+    var tmpl = ATI.templates.find(function (t) {
+      return t.id === id;
+    });
+    if (!tmpl) return;
+    ATI.mapping = Object.assign({}, tmpl.mapping);
+    // تحديد الجهاز
+    if (tmpl.device) {
+      var card = document.querySelector('[data-device="' + tmpl.device + '"]');
+      if (card) _atiSelectDevice(card);
+    }
+    NotificationEngine.success("تم تطبيق القالب: " + tmpl.name);
+  }
+
+  function _atiDeleteTemplate(id) {
+    ATI.templates = ATI.templates.filter(function (t) {
+      return t.id !== id;
+    });
+    try {
+      localStorage.setItem(
+        "ati_mapping_templates",
+        JSON.stringify(ATI.templates),
+      );
+    } catch (e) {}
+    _atiRenderTemplates();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §ATI-UTILS  — دوال مساعدة
+  // ─────────────────────────────────────────────────────────────────────
+
+  function _atiSetStep(n) {
+    ATI.step = n;
+    // تحديث شريط الخطوات
+    var bar = document.getElementById("ati-wizard-bar");
+    if (bar) bar.outerHTML = _atiWizardBar(n);
+
+    // إظهار اللوحة المناسبة
+    for (var i = 1; i <= 4; i++) {
+      var p = document.getElementById("ati-panel-" + i);
+      if (p) p.classList.toggle("active", i === n);
+    }
+    // التمرير للأعلى
+    var card = document.getElementById("ati-wizard-card");
+    if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function _atiReset() {
+    ATI.step = 1;
+    ATI.file = null;
+    ATI.fileType = null;
+    ATI.rawRows = [];
+    ATI.rawHeaders = [];
+    ATI.mapping = {};
+    ATI.validRows = [];
+    ATI.invalidRows = [];
+    ATI.processing = false;
+    ATI.importSessionId = null;
+    ATI.deviceType = null;
+    // إعادة رسم الصفحة
+    navigateTo("attendance_import");
+  }
+
+  function _atiLoadStats() {
+    _gsr("getAttendanceImportStats", _authArgs(), {
+      label: "ATI.getAttendanceImportStats",
+      onSuccess: function (result) {
+        var d = result.data || {};
+        _setId("ati-sc-emp", d.active_employees || "—");
+        _setId("ati-sc-total", d.total_imports || "—");
+        _setId("ati-sc-month", d.month_records || "—");
+        _setId("ati-sc-errors", d.error_records || "—");
+      },
+      onError: function (e) {
+        // [DEFENSIVE-FIX] كانت بدون معالج فشل — أي استثناء في
+        // getAttendanceImportStats كان يختفي بصمت بدون أي رسالة، والكروت
+        // الأربعة تفضل عارضة "—" للأبد بدون توضيح إن فيه مشكلة فعلية.
+        console.error("getAttendanceImportStats failed:", e);
+        _setId("ati-sc-emp", "—");
+        _setId("ati-sc-total", "—");
+        _setId("ati-sc-month", "—");
+        _setId("ati-sc-errors", "—");
+      },
+    });
+  }
+
+  function _setId(id, val) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = val;
+  }
+
+  function _fmtFileSize(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / 1048576).toFixed(1) + " MB";
+  }
+
+  /** تحليل التاريخ بصيغ متعددة */
+  function _parseDate(str) {
+    if (!str) return null;
+    str = String(str).trim();
+    // صيغ شائعة: YYYY-MM-DD, DD/MM/YYYY, MM/DD/YYYY, DD-MM-YYYY, YYYYMMDD
+    var patterns = [
+      {
+        re: /^(\d{4})-(\d{2})-(\d{2})$/,
+        fn: function (m) {
+          return new Date(m[1], m[2] - 1, m[3]);
+        },
+      },
+      {
+        re: /^(\d{2})\/(\d{2})\/(\d{4})$/,
+        fn: function (m) {
+          return new Date(m[3], m[2] - 1, m[1]);
+        },
+      },
+      {
+        re: /^(\d{2})-(\d{2})-(\d{4})$/,
+        fn: function (m) {
+          return new Date(m[3], m[2] - 1, m[1]);
+        },
+      },
+      {
+        re: /^(\d{8})$/,
+        fn: function (m) {
+          return new Date(
+            m[1].substr(0, 4),
+            m[1].substr(4, 2) - 1,
+            m[1].substr(6, 2),
+          );
+        },
+      },
+    ];
+    for (var i = 0; i < patterns.length; i++) {
+      var match = str.match(patterns[i].re);
+      if (match) {
+        var d = patterns[i].fn(match);
+        if (d && !isNaN(d.getTime())) return d;
+      }
+    }
+    // محاولة أخيرة
+    var d2 = new Date(str);
+    return isNaN(d2.getTime()) ? null : d2;
+  }
+
+  function _formatDateISO(d) {
+    return (
+      d.getFullYear() +
+      "-" +
+      String(d.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(d.getDate()).padStart(2, "0")
+    );
+  }
+
+  /** تحليل الوقت بصيغ متعددة */
+  function _parseTime(str) {
+    if (!str) return "";
+    str = String(str).trim();
+    // HH:MM:SS أو HH:MM
+    var m1 = str.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM))?$/i);
+    if (m1) {
+      var h = parseInt(m1[1]);
+      var min = m1[2];
+      var ampm = m1[4];
+      if (ampm) {
+        if (ampm.toUpperCase() === "PM" && h < 12) h += 12;
+        if (ampm.toUpperCase() === "AM" && h === 12) h = 0;
+      }
+      return String(h).padStart(2, "0") + ":" + min;
+    }
+    // HHMM
+    var m2 = str.match(/^(\d{4})$/);
+    if (m2) return m2[1].substr(0, 2) + ":" + m2[1].substr(2, 2);
+    return null;
+  }
+
+  function _calcWorkHours(inTime, outTime) {
+    if (!inTime || !outTime) return 0;
+    var tp = function (t) {
+      var p = t.split(":");
+      return parseInt(p[0]) * 60 + parseInt(p[1] || 0);
+    };
+    var diff = tp(outTime) - tp(inTime);
+    if (diff < 0) diff += 24 * 60; // انتقل منتصف الليل
+    return Math.round((diff / 60) * 100) / 100;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §ATI-DEVICE  — واجهة إعداد الأجهزة المباشرة (بنية مستقبلية)
+  // ─────────────────────────────────────────────────────────────────────
+  // هذا القسم مصمم للتوسع المستقبلي لدعم الاتصال المباشر عبر TCP/IP أو API
+  // بدون إعادة بناء الموديول. سيتم تفعيله عبر إضافة:
+  //   ATI_DEVICE_ADAPTER = { zkteco: ZKTecoAdapter, ... }
+
+  var ATI_DEVICE_ADAPTERS = {
+    // ZKTeco Direct Connection (TCP/IP) — مستقبلي
+    // zkteco: {
+    //   connect: async function(host, port) { ... },
+    //   getAttendance: async function(startDate, endDate) { ... },
+    //   getEmployees: async function() { ... },
+    // }
+  };
+
+  /** مستقبلي: اختبار الاتصال بجهاز مباشرة */
+  function _atiTestDeviceConnection(host, port, type) {
+    NotificationEngine.info("ميزة الاتصال المباشر ستكون متاحة في الإصدار القادم");
+    // في الإصدار المستقبلي:
+    // var adapter = ATI_DEVICE_ADAPTERS[type];
+    // if (!adapter) { showToast('لا يوجد محول لهذا الجهاز', 'error'); return; }
+    // adapter.connect(host, parseInt(port)).then(...);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §ATI-NAV  — إضافة الصفحات لنظام التنقل (يُستدعى من renderPage)
+  // ─────────────────────────────────────────────────────────────────────
+
+  /**
+   * هذه الدالة تُعيد HTML الصفحة حسب اسمها.
+   * يجب استدعاؤها من renderPage() في Templates.html
+   * بإضافة:
+   *   case "attendance_import":
+   *     return renderAttendanceImport();
+   *   case "attendance_import_log":
+   *     return renderImportLog();
+   */
+
+  /**
+   * هذه الدالة تُنفّذ bind الأحداث حسب اسم الصفحة.
+   * يجب استدعاؤها من bindPage() في JavaScript.html
+   * بإضافة:
+   *   case "attendance_import":
+   *     return bindAttendanceImport();
+   *   case "attendance_import_log":
+   *     return bindImportLog();
+   */
+
+  // تصدير دوال التنقل للنظام
+  if (typeof window !== "undefined") {
+    window.renderAttendanceImport = renderAttendanceImport;
+    window.renderImportLog = renderImportLog;
+    window.bindAttendanceImport = bindAttendanceImport;
+    window.bindImportLog = bindImportLog;
+  }
+</script>

@@ -1,0 +1,232 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 45_JS_SearchEngine.html — محرك البحث الموحّد (SearchEngine)
+  // ═══════════════════════════════════════════════════════════════════
+  // [SEARCH-ENGINE-DESIGN] لا يوجد محرك بحث مركزي سابق — كل جدول كان
+  // بيبني منطق الفلترة/الترتيب بنفسه. SearchEngine مرجع واحد لكل عمليات
+  // البحث/الفلترة/الترتيب/الترقيم على أي مصفوفة بيانات محمّلة بالفعل من
+  // DataLayer (لا يقرأ من الشيت مباشرة — يعمل على البيانات الموجودة في
+  // الذاكرة، بنفس فلسفة DataModule الحالية). البحث المتقدم/الشامل عبر
+  // الشيتات (Global Search) يُبنى فوق نفس _gsr المستخدمة في 31_JS_DataLayer.
+  //
+  //   var res = SearchEngine.run(rows, {
+  //     quick: "أحمد",                              // بحث سريع في كل الحقول النصية
+  //     columns: { status: "معتمد" },                // Column Search
+  //     filters: [{ field: "total", op: ">=", value: 1000 }],
+  //     sort: { field: "date", dir: "desc" },
+  //     page: 1, pageSize: 25,
+  //   });
+  //   // res => { rows, total, page, pageSize, totalPages }
+  //
+  //   SearchEngine.saveSearch("invoices_overdue", criteria);
+  //   var saved = SearchEngine.getSavedSearches("invoices");
+  // ═══════════════════════════════════════════════════════════════════
+
+  var SearchEngine = (function () {
+    "use strict";
+
+    var MAX_HISTORY = 20;
+    var _history = [];
+
+    function _s(v) {
+      return v === null || v === undefined ? "" : String(v).toLowerCase();
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §1 — Quick Search (كل الحقول النصية)
+    // ══════════════════════════════════════════════════════════════════
+    function quickSearch(rows, term) {
+      if (!term || !String(term).trim()) return rows.slice();
+      var q = _s(term).trim();
+      return rows.filter(function (row) {
+        return Object.keys(row).some(function (k) {
+          var v = row[k];
+          if (v === null || v === undefined) return false;
+          if (typeof v === "object") return false; // تجاهل كائنات متداخلة
+          return _s(v).indexOf(q) !== -1;
+        });
+      });
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §2 — Column Search (فلتر لكل عمود على حدة)
+    // ══════════════════════════════════════════════════════════════════
+    function columnSearch(rows, columns) {
+      if (!columns) return rows.slice();
+      var keys = Object.keys(columns).filter(function (k) {
+        return columns[k] !== "" && columns[k] !== null && columns[k] !== undefined;
+      });
+      if (!keys.length) return rows.slice();
+      return rows.filter(function (row) {
+        return keys.every(function (k) {
+          return _s(row[k]).indexOf(_s(columns[k])) !== -1;
+        });
+      });
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §3 — Advanced Filters (operators)
+    // ══════════════════════════════════════════════════════════════════
+    var OPS = {
+      "=": function (a, b) {
+        return _s(a) === _s(b);
+      },
+      "!=": function (a, b) {
+        return _s(a) !== _s(b);
+      },
+      ">": function (a, b) {
+        return Number(a) > Number(b);
+      },
+      ">=": function (a, b) {
+        return Number(a) >= Number(b);
+      },
+      "<": function (a, b) {
+        return Number(a) < Number(b);
+      },
+      "<=": function (a, b) {
+        return Number(a) <= Number(b);
+      },
+      contains: function (a, b) {
+        return _s(a).indexOf(_s(b)) !== -1;
+      },
+      between: function (a, b) {
+        return Number(a) >= Number(b[0]) && Number(a) <= Number(b[1]);
+      },
+      in: function (a, b) {
+        return (b || []).map(_s).indexOf(_s(a)) !== -1;
+      },
+    };
+
+    function advancedFilter(rows, filters) {
+      if (!filters || !filters.length) return rows.slice();
+      return rows.filter(function (row) {
+        return filters.every(function (f) {
+          var op = OPS[f.op || "="];
+          if (!op) return true;
+          return op(row[f.field], f.value);
+        });
+      });
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §4 — Sorting
+    // ══════════════════════════════════════════════════════════════════
+    function sort(rows, sortSpec) {
+      if (!sortSpec || !sortSpec.field) return rows.slice();
+      var field = sortSpec.field;
+      var dir = sortSpec.dir === "desc" ? -1 : 1;
+      return rows.slice().sort(function (a, b) {
+        var va = a[field],
+          vb = b[field];
+        var na = Number(va),
+          nb = Number(vb);
+        var isNum = !isNaN(na) && !isNaN(nb) && va !== "" && vb !== "";
+        if (isNum) return (na - nb) * dir;
+        return _s(va).localeCompare(_s(vb), "ar") * dir;
+      });
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §5 — Pagination
+    // ══════════════════════════════════════════════════════════════════
+    function paginate(rows, page, pageSize) {
+      page = Math.max(1, Number(page) || 1);
+      pageSize = Number(pageSize) || 25;
+      var total = rows.length;
+      var totalPages = Math.max(1, Math.ceil(total / pageSize));
+      page = Math.min(page, totalPages);
+      var start = (page - 1) * pageSize;
+      return {
+        rows: rows.slice(start, start + pageSize),
+        total: total,
+        page: page,
+        pageSize: pageSize,
+        totalPages: totalPages,
+      };
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §6 — التشغيل الموحّد (Quick + Column + Filters + Sort + Pagination)
+    // ══════════════════════════════════════════════════════════════════
+    function run(rows, criteria) {
+      criteria = criteria || {};
+      rows = rows || [];
+
+      var out = rows;
+      if (criteria.quick) {
+        out = quickSearch(out, criteria.quick);
+        _recordHistory(criteria.quick);
+      }
+      if (criteria.columns) out = columnSearch(out, criteria.columns);
+      if (criteria.filters) out = advancedFilter(out, criteria.filters);
+      if (criteria.sort) out = sort(out, criteria.sort);
+
+      var total = out.length;
+      if (criteria.page || criteria.pageSize) {
+        var paged = paginate(out, criteria.page, criteria.pageSize);
+        return paged;
+      }
+      return { rows: out, total: total, page: 1, pageSize: total, totalPages: 1 };
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §7 — Search History
+    // ══════════════════════════════════════════════════════════════════
+    function _recordHistory(term) {
+      if (!term) return;
+      _history = _history.filter(function (t) {
+        return t !== term;
+      });
+      _history.unshift(term);
+      if (_history.length > MAX_HISTORY) _history.length = MAX_HISTORY;
+      try {
+        if (typeof PreferenceService !== "undefined") {
+          PreferenceService.set("recent_searches", _history.slice(0, 10));
+        }
+      } catch (e) {}
+    }
+
+    function getHistory() {
+      return _history.slice();
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §8 — Saved Search (مخزّنة داخل تفضيلات المستخدم — tables.<key>)
+    // ══════════════════════════════════════════════════════════════════
+    function saveSearch(key, criteria) {
+      try {
+        if (typeof PreferenceService === "undefined") return false;
+        var tables = PreferenceService.get("tables", {}) || {};
+        tables[key] = tables[key] || {};
+        tables[key].savedSearches = tables[key].savedSearches || {};
+        tables[key].savedSearches[criteria.name || "افتراضي"] = criteria;
+        PreferenceService.set("tables", tables);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function getSavedSearches(key) {
+      try {
+        if (typeof PreferenceService === "undefined") return {};
+        var tables = PreferenceService.get("tables", {}) || {};
+        return (tables[key] && tables[key].savedSearches) || {};
+      } catch (e) {
+        return {};
+      }
+    }
+
+    return {
+      run: run,
+      quickSearch: quickSearch,
+      columnSearch: columnSearch,
+      advancedFilter: advancedFilter,
+      sort: sort,
+      paginate: paginate,
+      getHistory: getHistory,
+      saveSearch: saveSearch,
+      getSavedSearches: getSavedSearches,
+    };
+  })();
+</script>

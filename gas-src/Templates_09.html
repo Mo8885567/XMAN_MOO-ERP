@@ -1,0 +1,2470 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════
+  // Templates_09.html — جزء من Templates.html الأصلي (تقسيم آلي نصي بحت، 2026-07-04)
+  // النطاق: renderChartOfAccounts → renderSaleInvoices (Accounting الأساسية + Sale Invoices)
+  // راجع Architecture Audit 2026-07-03، المرحلة 5 — تقسيم بحسب الحجم،
+  // على حدود دوال كاملة فقط (لا قطع لأي دالة في نص). تحقق برمجيًا:
+  // التركيب النهائي لكل الأجزاء الـ10 مطابق 100% لمحتوى Templates.html
+  // القديم حرفيًا (نفس الترتيب، بدون فقد أو تكرار).
+  // يُحمَّل بالترتيب عبر <script> في Index.html مع باقي الأجزاء.
+  // ═══════════════════════════════════════════════════════════════
+  function renderChartOfAccounts() {
+    var html = _renderPageHeader(
+      "دليل الحسابات",
+      "شجرة الحسابات — الأصول، الخصوم، حقوق الملكية، الإيرادات، المصروفات",
+      {
+        bgIcon: "ti-chart-bar",
+        bgColor: "var(--accent-soft)",
+        iconColor: "var(--accent)",
+      },
+      canDo("addChartAccount")
+        ? '<button class="btn btn-primary" id="coa-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("ACC_NEW_ACCOUNT") +
+            "</button>"
+        : "",
+    );
+
+    // شرائط إحصائية — تعمل كفلتر بالنوع بدل الـ Select
+    html += '<div class="coa-chips" id="coa-chips">';
+    COA_TYPE_ORDER.forEach(function (t) {
+      var meta = t === "ALL" ? null : COA_TYPE_COLORS[t];
+      html +=
+        '<div class="coa-chip' +
+        (t === "ALL" ? " coa-chip-active" : "") +
+        '" data-type="' +
+        t +
+        '">' +
+        '<span class="coa-chip-label">' +
+        (t === "ALL" ? "كل الحسابات" : meta.label) +
+        "</span>" +
+        '<span class="coa-chip-count" id="coa-chip-count-' +
+        t +
+        '"' +
+        (meta ? ' style="color:' + meta.color + '"' : "") +
+        ">0</span>" +
+        "</div>";
+    });
+    html += "</div>";
+
+    html += '<div class="card">';
+    html += '<div class="coa-toolbar">';
+    html +=
+      '<div class="coa-search-wrap"><i class="ti ti-search"></i><input type="text" id="coa-search" placeholder="' +
+      I18N.t("ACC_PH_SEARCH_CODE_ACCOUNT") +
+      '" class="search-input"></div>';
+    html += "</div>";
+
+    html += '<div id="coa-tree-container"></div>';
+    html += "</div>";
+
+    return html;
+  }
+
+  // ── Cash Boxes — الخزائن ──
+  function renderCashBoxes() {
+    var html = _renderPageHeader(
+      "الخزائن",
+      "إدارة الخزائن والأرصدة النقدية",
+      {
+        bgIcon: "ti-cash",
+        bgColor: "var(--success-soft)",
+        iconColor: "var(--success-dark)",
+      },
+      canDo("addCashBox")
+        ? '<button class="btn btn-primary" id="cb-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("ACC_NEW_CASHBOX") +
+            "</button>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    html += '<div class="table-wrap">';
+    html +=
+      '<table class="table"><thead><tr><th>' +
+      I18N.t("LBL_CODE") +
+      "</th><th>" +
+      I18N.t("LBL_NAME") +
+      "</th><th>" +
+      I18N.t("HR_BRANCH") +
+      "</th><th>" +
+      I18N.t("HR_CURRENCY") +
+      '</th><th style="text-align:center">' +
+      I18N.t("PAGE_STOCK") +
+      "</th><th>" +
+      I18N.t("LBL_RESPONSIBLE") +
+      "</th></tr></thead>";
+    html +=
+      '<tbody id="cb-table-body"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text3)">' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</td></tr></tbody>";
+    html += "</table></div></div>";
+
+    return html;
+  }
+
+  // ── Banks — البنوك (Banking Module Phase 1) ──
+  function renderBanks() {
+    var html = _renderPageHeader(
+      "البنوك",
+      "إدارة بيانات البنوك المتعامل معها",
+      {
+        bgIcon: "ti-building",
+        bgColor: "var(--info-soft)",
+        iconColor: "var(--info)",
+      },
+      canDo("addBank")
+        ? '<button class="btn btn-primary" id="bk-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("ACC_NEW_BANK") +
+            "</button>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    html += '<div class="table-wrap">';
+    html +=
+      '<table class="table"><thead><tr><th>' +
+      I18N.t("ACC_BANK") +
+      "</th><th>" +
+      I18N.t("LBL_COUNTRY") +
+      "</th><th>" +
+      I18N.t("LBL_CITY") +
+      "</th><th>" +
+      I18N.t("HR_BRANCH") +
+      "</th><th>" +
+      I18N.t("LBL_CONTACT_METHODS") +
+      "</th><th>" +
+      I18N.t("LBL_STATUS") +
+      "</th><th>" +
+      I18N.t("ACC_ACCOUNTS_COUNT") +
+      "</th></tr></thead>";
+    html +=
+      '<tbody id="bk-table-body"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text3)">' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</td></tr></tbody>";
+    html += "</table></div></div>";
+
+    return html;
+  }
+
+  // ── Cheque Books — دفاتر الشيكات (Banking Module Phase 2) ──
+  function renderChequeBooks() {
+    var html = _renderPageHeader(
+      "دفاتر الشيكات",
+      "إدارة دفاتر الشيكات لكل حساب بنكي",
+      {
+        bgIcon: "ti-file-invoice",
+        bgColor: "var(--warning-soft)",
+        iconColor: "var(--warning)",
+      },
+      canDo("addChequeBook")
+        ? '<button class="btn btn-primary" id="chb-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("ACC_NEW_CHEQUEBOOK") +
+            "</button>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    html += '<div class="table-wrap">';
+    html +=
+      '<table class="table"><thead><tr><th>' +
+      I18N.t("LBL_CODE") +
+      "</th><th>" +
+      I18N.t("ACC_BANK_ACCOUNT") +
+      "</th><th>" +
+      I18N.t("ACC_ISSUE_DATE") +
+      "</th><th>" +
+      I18N.t("LBL_RANGE") +
+      "</th><th>" +
+      I18N.t("LBL_TOTAL") +
+      "</th><th>" +
+      I18N.t("LBL_USER") +
+      "</th><th>" +
+      I18N.t("LBL_REMAINING") +
+      "</th><th>" +
+      I18N.t("LBL_STATUS") +
+      "</th></tr></thead>";
+    html +=
+      '<tbody id="chb-table-body"><tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text3)">' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</td></tr></tbody>";
+    html += "</table></div></div>";
+
+    return html;
+  }
+
+  // ── Cheques — الشيكات (Banking Module Phase 3) ──
+  // [CHQ-WORKFLOW] — إعادة تصميم الشاشة كـ Interactive Workflow Dashboard
+  // (واجهة/تجربة استخدام فقط — بدون أي تغيير في منطق أو API الشيكات).
+  // كل البيانات المعروضة هنا مأخوذة من نفس APP.data.cheques الجاهزة أصلاً
+  // (تُحمَّل عبر ensureExtendedData داخل bindCheques كما كانت بالضبط).
+  var CHQ_WORKFLOW_STAGES = [
+    {
+      key: "PENDING",
+      label: "بانتظار التحصيل/الصرف",
+      icon: "ti-clock",
+      color: "var(--warning)",
+      soft: "var(--warning-soft)",
+    },
+    {
+      key: "COLLECTED",
+      label: "تم التحصيل/الصرف",
+      icon: "ti-circle-check",
+      color: "var(--success-dark)",
+      soft: "var(--success-soft)",
+    },
+    {
+      key: "BOUNCED",
+      label: "مرتد",
+      icon: "ti-alert-triangle",
+      color: "var(--danger)",
+      soft: "var(--danger-soft)",
+    },
+    {
+      key: "REPLACED",
+      label: "مستبدل بشيك آخر",
+      icon: "ti-replace",
+      color: "var(--teal)",
+      soft: "var(--teal-soft)",
+    },
+    {
+      key: "CANCELLED",
+      label: "ملغي",
+      icon: "ti-ban",
+      color: "var(--text3)",
+      soft: "var(--surface3)",
+    },
+    // ── [CHQ-WORKFLOW-V2 — Phase 2] حالات العُقد الجديدة — إضافي فقط،
+    // بتُستخدم أساساً عشان Timeline widget (آخر العمليات) يلاقي أيقونة/لون
+    // مناسب لأي شيك بقى في حالة جديدة (بدل ما يرجع لأيقونة افتراضية).
+    // الرسمة الفعلية (Flow Diagram) بتُبنى من CHQ_FLOW_LANES تحت، مش من هنا.
+    {
+      key: "RECEIVED",
+      label: "تم الاستلام",
+      icon: "ti-inbox-in",
+      color: "var(--info)",
+      soft: "var(--info-soft)",
+    },
+    {
+      key: "DEPOSITED_FOR_COLLECTION",
+      label: "إيداع للتحصيل",
+      icon: "ti-building-bank",
+      color: "var(--accent)",
+      soft: "var(--accent-soft)",
+    },
+    {
+      key: "ENDORSED",
+      label: "مظهّر لطرف آخر",
+      icon: "ti-signature",
+      color: "var(--purple)",
+      soft: "var(--purple-soft)",
+    },
+    {
+      key: "RETURNED",
+      label: "مرتجع",
+      icon: "ti-arrow-back-up",
+      color: "var(--warning)",
+      soft: "var(--warning-soft)",
+    },
+    {
+      key: "RETURNED_TO_OWNER",
+      label: "تم رده لمالكه",
+      icon: "ti-corner-down-left",
+      color: "var(--text3)",
+      soft: "var(--surface3)",
+    },
+    {
+      key: "CASHED",
+      label: "تم الصرف",
+      icon: "ti-cash-banknote",
+      color: "var(--success-dark)",
+      soft: "var(--success-soft)",
+    },
+    {
+      key: "DRAFTED",
+      label: "محرَّر",
+      icon: "ti-file-invoice",
+      color: "var(--warning)",
+      soft: "var(--warning-soft)",
+    },
+    {
+      key: "PAID",
+      label: "تم الصرف",
+      icon: "ti-cash-banknote",
+      color: "var(--success-dark)",
+      soft: "var(--success-soft)",
+    },
+    {
+      key: "RETURNED_OUT",
+      label: "مرتجع",
+      icon: "ti-arrow-back-up",
+      color: "var(--warning)",
+      soft: "var(--warning-soft)",
+    },
+  ];
+
+  // ═══════════════════════════════════════════════════════════════
+  // [CHQ-WORKFLOW-V2 — Phase 2] تعريف "رسمة التدفق" (Flow Diagram) بفرعين
+  // (الأوراق الواردة / الصادرة) — مبنية حرفياً على نفس عُقد الـ state
+  // machine الموجودة في الـ backend (CHEQUE_INCOMING_WORKFLOW_TRANSITIONS /
+  // CHEQUE_OUTGOING_WORKFLOW_TRANSITIONS في Code_Banking.gs). أي عقدة هنا
+  // لازم يكون ليها مقابل فعلي في transitions الـ backend — مفيش عُقد
+  // بصرية وهمية.
+  // كل عقدة: { key, label, icon, col, row, terminal, legacyKeys }
+  //   - col/row: إحداثيات في CSS grid (RTL — col 1 = أقصى الشمال/النهاية،
+  //     أعلى رقم col = البداية/أقصى اليمين، متوافق مع اتجاه القراءة).
+  //   - legacyKeys: حالات قديمة (PENDING) بتتحسب ضمن نفس عدّاد العقدة دي
+  //     ولما تتفلتر بيها، بدون أي تغيير في الـ backend (نفس فلسفة
+  //     "PENDING = نقطة دخول قديمة" الموثقة في ملف التقدم).
+  //   - terminal: حالة نهائية (مفيش خروج منها) — تتلوّن بحدود أوضح.
+  // ═══════════════════════════════════════════════════════════════
+  var CHQ_FLOW_LANES = {
+    INCOMING: {
+      title: "الأوراق الواردة",
+      icon: "ti-arrow-bar-to-left",
+      color: "var(--info)",
+      cols: 4,
+      rows: 3,
+      nodes: [
+        {
+          key: "RECEIVED",
+          legacyKeys: ["PENDING"],
+          label: "تم الاستلام",
+          icon: "ti-inbox-in",
+          col: 1,
+          row: 2,
+        },
+        {
+          key: "ENDORSED",
+          label: "مظهّر لطرف آخر",
+          icon: "ti-signature",
+          col: 2,
+          row: 1,
+        },
+        {
+          key: "DEPOSITED_FOR_COLLECTION",
+          label: "إيداع للتحصيل",
+          icon: "ti-building-bank",
+          col: 2,
+          row: 3,
+        },
+        {
+          key: "RETURNED",
+          label: "إرتجاع ورقة مالية",
+          icon: "ti-arrow-back-up",
+          col: 3,
+          row: 2,
+        },
+        {
+          key: "RETURNED_TO_OWNER",
+          label: "تم رده لمالكه",
+          icon: "ti-corner-down-left",
+          col: 4,
+          row: 1,
+          terminal: true,
+        },
+        {
+          key: "CASHED",
+          label: "تم الصرف",
+          icon: "ti-cash-banknote",
+          col: 4,
+          row: 3,
+          terminal: true,
+        },
+      ],
+      edges: [
+        ["RECEIVED", "DEPOSITED_FOR_COLLECTION"],
+        ["RECEIVED", "ENDORSED"],
+        ["DEPOSITED_FOR_COLLECTION", "CASHED"],
+        ["DEPOSITED_FOR_COLLECTION", "RETURNED"],
+        ["ENDORSED", "RETURNED"],
+        ["RETURNED", "RETURNED_TO_OWNER"],
+      ],
+      // حالات استثنائية/قديمة — بتظهر كـ chips جنب الرسمة مش كعُقد فيها
+      // (البنك بيرتد الشيك أو بيتلغي من أي نقطة تقريباً، مش تدفق خطي؛
+      // REPLACED هنا كمان — بتحصل من عقدة RETURNED لكن مش عرضها كعقدة
+      // رئيسية زي التصميم المرجعي).
+      extraStatuses: ["BOUNCED", "CANCELLED", "COLLECTED", "REPLACED"],
+    },
+    OUTGOING: {
+      title: "الأوراق الصادرة",
+      icon: "ti-arrow-bar-to-right",
+      color: "var(--purple)",
+      cols: 3,
+      rows: 2,
+      nodes: [
+        {
+          key: "DRAFTED",
+          legacyKeys: ["PENDING"],
+          label: "محرَّر",
+          icon: "ti-file-invoice",
+          col: 1,
+          row: 2,
+        },
+        {
+          key: "PAID",
+          label: "تم الصرف",
+          icon: "ti-cash-banknote",
+          col: 2,
+          row: 1,
+          terminal: true,
+        },
+        {
+          key: "RETURNED_OUT",
+          label: "مرتجع",
+          icon: "ti-arrow-back-up",
+          col: 2,
+          row: 2,
+        },
+      ],
+      edges: [
+        ["DRAFTED", "PAID"],
+        ["DRAFTED", "RETURNED_OUT"],
+        ["RETURNED_OUT", "DRAFTED"], // إعادة تحرير — عكس اتجاه التدفق (خط متقطع)
+      ],
+      extraStatuses: ["BOUNCED", "CANCELLED", "COLLECTED", "REPLACED"],
+    },
+  };
+
+  /** يبني HTML رسمة تدفق واحدة (لين) — واردة أو صادرة — شبكة CSS Grid
+   * للعُقد + طبقة SVG فوقها للخطوط الموصّلة (بترسم فعلياً بعد الإدراج
+   * في الـ DOM عبر _bindChqFlowLane في 11_JS_Accounting.html، لأن حساب
+   * إحداثيات الخطوط محتاج getBoundingClientRect بعد ما العناصر تتعرض). */
+  function _renderChqFlowLane(laneKey, lane) {
+    var html =
+      '<div class="chq-flow-lane" data-lane="' +
+      laneKey +
+      '">' +
+      '<div class="chq-flow-lane-title" style="color:' +
+      lane.color +
+      '"><i class="ti ' +
+      lane.icon +
+      '"></i> ' +
+      lane.title +
+      "</div>";
+
+    html +=
+      '<div class="chq-flow-lane-body" id="chq-flow-body-' +
+      laneKey +
+      '" style="grid-template-columns:repeat(' +
+      lane.cols +
+      ",1fr);grid-template-rows:repeat(" +
+      lane.rows +
+      ',auto)">';
+
+    html +=
+      '<svg class="chq-flow-svg" id="chq-flow-svg-' + laneKey + '"></svg>';
+
+    lane.nodes.forEach(function (n) {
+      html +=
+        '<div class="chq-flow-node' +
+        (n.terminal ? " chq-flow-node-terminal" : "") +
+        '" data-lane="' +
+        laneKey +
+        '" data-node="' +
+        n.key +
+        '" id="chq-flow-node-' +
+        laneKey +
+        "-" +
+        n.key +
+        '" style="grid-column:' +
+        n.col +
+        ";grid-row:" +
+        n.row +
+        '">' +
+        '<div class="chq-flow-node-icon"><i class="ti ' +
+        n.icon +
+        '"></i></div>' +
+        '<div class="chq-flow-node-count" id="chq-flow-count-' +
+        laneKey +
+        "-" +
+        n.key +
+        '">0</div>' +
+        '<div class="chq-flow-node-label">' +
+        n.label +
+        "</div>" +
+        "</div>";
+    });
+
+    html += "</div>"; // .chq-flow-lane-body
+
+    // ── chips الحالات الاستثنائية (مرتد/ملغي/تحصيل قديم) ──
+    html += '<div class="chq-flow-extra-row">';
+    lane.extraStatuses.forEach(function (statusKey) {
+      var meta =
+        CHQ_WORKFLOW_STAGES.find(function (s) {
+          return s.key === statusKey;
+        }) || {};
+      html +=
+        '<div class="chq-flow-extra-chip" data-lane="' +
+        laneKey +
+        '" data-status="' +
+        statusKey +
+        '" id="chq-flow-extra-' +
+        laneKey +
+        "-" +
+        statusKey +
+        '">' +
+        '<i class="ti ' +
+        (meta.icon || "ti-point") +
+        '" style="color:' +
+        (meta.color || "var(--text3)") +
+        '"></i> ' +
+        (meta.label || statusKey) +
+        ' <b id="chq-flow-extra-count-' +
+        laneKey +
+        "-" +
+        statusKey +
+        '">0</b>' +
+        "</div>";
+    });
+    html += "</div>";
+
+    html += "</div>"; // .chq-flow-lane
+    return html;
+  }
+
+  function _renderChqFlowLanesHTML() {
+    var html = '<div class="chq-flow-lanes">';
+    // ملحوظة تجريبية: الحاوية دي بتتصرف كـ LTR فعليًا رغم إن الصفحة عربي
+    // (مفيش direction:rtl فعّال عليها) — يعني أول عنصر في الـ DOM بيظهر
+    // على الشمال. عشان "الأوراق الواردة" تفضل شمال و"الأوراق الصادرة"
+    // يمين (زي التصميم المرجعي)، لازم الواردة تترسم أولاً.
+    html += _renderChqFlowLane("INCOMING", CHQ_FLOW_LANES.INCOMING);
+    html += _renderChqFlowLane("OUTGOING", CHQ_FLOW_LANES.OUTGOING);
+    html += "</div>";
+    return html;
+  }
+
+  function renderCheques() {
+    var html = _renderPageHeader(
+      "الشيكات",
+      "إدارة الشيكات الواردة والصادرة",
+      {
+        bgIcon: "ti-receipt-2",
+        bgColor: "var(--danger-soft)",
+        iconColor: "var(--danger)",
+      },
+      canDo("addCheque")
+        ? '<button class="btn btn-primary" id="chq-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("ACC_NEW_CHEQUE") +
+            "</button>"
+        : "",
+    );
+
+    // ── CSS خاص بالـ Workflow (مضمّن هنا فقط — بنفس أسلوب شاشات أخرى
+    // بالنظام مثل renderLoginScreen — بدون أي ملف جديد) ──
+    html +=
+      "<style>" +
+      // ── [CHQ-WORKFLOW-V2 — Phase 2] رسمة التدفق المتفرعة (لينين) ──
+      ".chq-flow-lanes{display:flex;flex-direction:row;gap:14px;align-items:stretch;flex-wrap:wrap}" +
+      ".chq-flow-lane{flex:1 1 0;min-width:280px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);padding:14px}" +
+      ".chq-flow-lane-title{font-weight:600;display:flex;align-items:center;gap:6px;margin-bottom:14px;font-size:13px}" +
+      ".chq-flow-lane-body{position:relative;display:grid;gap:16px 10px;padding:6px 0}" +
+      ".chq-flow-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}" +
+      ".chq-flow-node{position:relative;z-index:1;background:transparent;border:none;box-shadow:none;" +
+      "padding:2px;cursor:pointer;transition:transform .15s ease;text-align:center;" +
+      "display:flex;flex-direction:column;align-items:center;gap:5px;min-width:0}" +
+      ".chq-flow-node:hover{transform:translateY(-2px)}" +
+      ".chq-flow-node:hover .chq-flow-node-icon{box-shadow:0 0 0 3px var(--accent-soft)}" +
+      ".chq-flow-node.chq-flow-node-active .chq-flow-node-icon{background:var(--accent-soft);color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}" +
+      ".chq-flow-node-terminal .chq-flow-node-icon{border:1px dashed var(--border)}" +
+      ".chq-flow-node-icon{position:relative;width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;" +
+      "font-size:17px;background:var(--surface2);color:var(--text2)}" +
+      ".chq-flow-node-count{position:absolute;top:-5px;left:-5px;min-width:16px;height:16px;padding:0 3px;border-radius:8px;" +
+      "background:var(--accent);color:#fff;font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1}" +
+      ".chq-flow-node-count.chq-flow-count-zero{display:none}" +
+      ".chq-flow-node-label{font-size:10.5px;color:var(--text3);line-height:1.25;max-width:76px}" +
+      ".chq-flow-extra-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}" +
+      ".chq-flow-extra-chip{font-size:11px;color:var(--text3);background:var(--surface2);border:1px solid var(--border);" +
+      "border-radius:999px;padding:4px 10px;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .15s ease}" +
+      ".chq-flow-extra-chip:hover{border-color:var(--accent);color:var(--text1)}" +
+      ".chq-flow-extra-chip.chq-flow-extra-active{border-color:var(--accent);background:var(--accent-soft);color:var(--text1)}" +
+      "@media (max-width:900px){.chq-flow-lanes{flex-direction:column}.chq-flow-lane-body{overflow-x:auto}}" +
+      ".chq-layout{display:flex;gap:14px;align-items:flex-start}" +
+      ".chq-main-col{flex:1 1 auto;min-width:0}" +
+      ".chq-timeline-col{flex:0 0 300px}" +
+      "@media (max-width:1100px){.chq-layout{flex-direction:column}.chq-timeline-col{flex:1 1 auto;width:100%}}" +
+      ".chq-search-wrap{position:relative;flex:1 1 220px;max-width:280px}" +
+      ".chq-search-wrap i{position:absolute;top:50%;transform:translateY(-50%);right:10px;color:var(--text3);font-size:14px}" +
+      ".chq-search-wrap input{width:100%;padding:7px 32px 7px 10px}" +
+      "</style>";
+
+    // ── دورة حياة الشيك — Flow Diagram بفرعين (واردة/صادرة) ──
+    html += '<div class="card" id="chq-workflow-card">';
+    html +=
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">' +
+      '<div style="font-weight:600;display:flex;align-items:center;gap:6px">' +
+      '<i class="ti ti-timeline-event" style="color:var(--accent)"></i> دورة حياة الأوراق المالية' +
+      "</div>" +
+      '<div style="font-size:11px;color:var(--text3)">' +
+      I18N.t("LBL_CLICK_NODE_TO_FILTER") +
+      "</div>" +
+      "</div>";
+    html += _renderChqFlowLanesHTML();
+    html += "</div>";
+
+    // ── بطاقات إحصائية Dashboard (واردة / صادرة) ──
+    html += '<div id="chq-kpi-incoming" class="card" style="padding:14px">';
+    html +=
+      '<div style="font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:6px">' +
+      '<i class="ti ti-arrow-bar-to-left" style="color:var(--info)"></i> ' +
+      I18N.t("ACC_INCOMING_CHEQUES") +
+      "</div>";
+    html += '<div id="chq-kpi-incoming-grid"></div>';
+    html += "</div>";
+
+    html += '<div id="chq-kpi-outgoing" class="card" style="padding:14px">';
+    html +=
+      '<div style="font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:6px">' +
+      '<i class="ti ti-arrow-bar-to-right" style="color:var(--purple)"></i> ' +
+      I18N.t("ACC_OUTGOING_CHEQUES") +
+      "</div>";
+    html += '<div id="chq-kpi-outgoing-grid"></div>';
+    html += "</div>";
+
+    // ── الفلاتر + الجدول (يمين) و Timeline (يسار) ──
+    html += '<div class="chq-layout">';
+    html += '<div class="chq-main-col">';
+
+    html +=
+      '<div class="card" style="padding:10px 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
+    html +=
+      // [CHQ-WORKFLOW-V2 — التبديل النهائي] زر "تحت التحصيل" المسطّح القديم
+      // اتشال من هنا — أصبح مكرر ومضلّل بعد تفعيل الترحيل (مش هيلاقي أي شيك
+      // status==='PENDING' حرفيًا بعد التهجير). نفس الفلتر بالظبط (وأدق، لأنه
+      // type-aware) متاح دلوقتي بالنقر على عقدة "تم الاستلام"/"محرَّر" في
+      // رسمة التدفق فوق (بتشمل PENDING القديمة تلقائيًا عبر legacyKeys لأي
+      // شيك لسه ماتهاجرش).
+      '<button class="btn btn-sm btn-outline chq-filter-btn active" data-filter="ALL">' +
+      I18N.t("LBL_ALL") +
+      "</button>" +
+      '<button class="btn btn-sm btn-outline chq-filter-btn" data-filter="INCOMING">' +
+      I18N.t("LBL_INCOMING") +
+      "</button>" +
+      '<button class="btn btn-sm btn-outline chq-filter-btn" data-filter="OUTGOING">' +
+      I18N.t("LBL_OUTGOING") +
+      "</button>";
+    // [BANKING-INTEGRATION — المرحلة 11] chip فلتر الطرف — يظهر بس لو
+    // الشاشة اتفتحت من "شيكات هذا الطرف" في كشف حساب عميل/مورد
+    html += '<span id="chq-party-filter-chip" style="display:none"></span>';
+    // [BANKING-DASHBOARD] chip فلتر الحالة — يظهر بس لو الشاشة اتفتحت من
+    // إحدى بطاقات "الوصول السريع" في لوحة تحكم البنوك (نظرة عامة)
+    html += '<span id="chq-status-filter-chip" style="display:none"></span>';
+    html +=
+      '<span class="chq-search-wrap"><i class="ti ti-search"></i>' +
+      '<input type="text" id="chq-search-input" class="input" placeholder="' +
+      I18N.t("ACC_PH_SEARCH_CHEQUE_PARTY") +
+      '"></span>';
+    html += "</div>";
+
+    html += '<div class="card">';
+    html += '<div class="table-wrap">';
+    html +=
+      '<table class="table"><thead><tr><th>' +
+      I18N.t("LBL_TYPE") +
+      "</th><th>" +
+      I18N.t("ACC_CHEQUE_NUMBER") +
+      "</th><th>" +
+      I18N.t("ACC_PARTY") +
+      "</th><th>" +
+      I18N.t("ACC_BANK_ACCOUNT") +
+      '</th><th style="text-align:center">' +
+      I18N.t("HR_VALUE") +
+      "</th><th>" +
+      I18N.t("LBL_DUE_DATE") +
+      "</th><th>" +
+      I18N.t("LBL_STATUS") +
+      "</th></tr></thead>";
+    html +=
+      '<tbody id="chq-table-body"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text3)">' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</td></tr></tbody>";
+    html += "</table></div></div>";
+
+    html += "</div>"; // .chq-main-col
+
+    html +=
+      '<div class="chq-timeline-col"><div id="chq-timeline-widget"></div></div>';
+
+    html += "</div>"; // .chq-layout
+
+    return html;
+  }
+
+  function renderBankAccounts() {
+    var html = _renderPageHeader(
+      "الحسابات البنكية",
+      "إدارة حسابات البنوك والأرصدة",
+      {
+        bgIcon: "ti-building-bank",
+        bgColor: "var(--warning-soft)",
+        iconColor: "var(--warning)",
+      },
+      canDo("addBankAccount")
+        ? '<button class="btn btn-primary" id="ba-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("ACC_BANK_ACCOUNT_2") +
+            "</button>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    html += '<div class="table-wrap">';
+    html +=
+      '<table class="table"><thead><tr><th>' +
+      I18N.t("LBL_CODE") +
+      "</th><th>" +
+      I18N.t("ACC_ACCOUNT_NAME") +
+      "</th><th>النوع</th><th>" +
+      I18N.t("ACC_BANK") +
+      "</th><th>" +
+      I18N.t("HR_ACCOUNT_NUMBER") +
+      "</th><th>IBAN</th><th>" +
+      I18N.t("ACC_OPEN_DATE") +
+      "</th><th>" +
+      I18N.t("LBL_BALANCE") +
+      "</th></tr></thead>";
+    html +=
+      '<tbody id="ba-table-body"><tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text3)">' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</td></tr></tbody>";
+    html += "</table></div></div>";
+
+    return html;
+  }
+
+  // ── Journal Entries — القيود اليومية ──
+  function renderJournalEntries() {
+    var html = _renderPageHeader(
+      "القيود اليومية",
+      "إدارة القيود المحاسبية — القيد المزدوج",
+      {
+        bgIcon: "ti-file-invoice",
+        bgColor: "var(--purple-soft)",
+        iconColor: "var(--purple)",
+      },
+      canDo("addJournalEntry")
+        ? '<button class="btn btn-primary" id="je-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("ACC_NEW_ENTRY") +
+            "</button>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    // ── Filters row: Status (يمين) + Date Range (شمال) ──
+    html +=
+      '<div style="display:flex;align-items:center;justify-content:flex-start;gap:10px;margin-bottom:16px;flex-wrap:wrap">';
+
+    html += '<div id="je-drp-root" style="position:relative">';
+
+    html +=
+      '<button type="button" class="je-drp-trigger" id="je-drp-trigger">' +
+      '<i class="ti ti-calendar-event"></i>' +
+      '<span id="je-drp-trigger-label">' +
+      I18N.t("LBL_ALL_PERIODS") +
+      "</span>" +
+      '<i class="ti ti-chevron-down je-drp-trigger-chevron"></i>' +
+      "</button>";
+
+    html += '<div class="je-drp-popover" id="je-drp-popover">';
+
+    // Header
+    html += '<div class="je-drp-card">';
+    html += '<div class="je-drp-header">';
+    html +=
+      '<div class="je-drp-hicon"><i class="ti ti-calendar-event"></i></div>';
+    html +=
+      '<div><div class="je-drp-title">' +
+      I18N.t("LBL_DATE_FILTER") +
+      '</div><div class="je-drp-sub">' +
+      I18N.t("ACC_CHOOSE_RANGE_FILTER_ENTRIES") +
+      "</div></div>";
+    html += "</div>";
+
+    // Body
+    html += '<div class="je-drp-body">';
+
+    // Fields row
+    html += '<div class="je-drp-fields">';
+    html +=
+      '<div class="je-drp-field"><label class="je-drp-label">' +
+      I18N.t("HR_FROM_DATE") +
+      "</label>";
+    html += '<div class="je-drp-inp-wrap"><i class="ti ti-calendar"></i>';
+    html +=
+      '<input type="date" id="je-filter-from" class="je-drp-inp" autocomplete="off">';
+    html += "</div></div>";
+    html += '<div class="je-drp-sep"><div class="je-drp-sep-line"></div></div>';
+    html +=
+      '<div class="je-drp-field"><label class="je-drp-label">' +
+      I18N.t("HR_TO_DATE") +
+      "</label>";
+    html += '<div class="je-drp-inp-wrap"><i class="ti ti-calendar"></i>';
+    html +=
+      '<input type="date" id="je-filter-to" class="je-drp-inp" autocomplete="off">';
+    html += "</div></div>";
+    html += "</div>";
+
+    // Quick ranges
+    html += '<div class="je-drp-ql">' + I18N.t("LBL_QUICK_PERIODS") + "</div>";
+    html += '<div class="je-drp-grid">';
+    html +=
+      '<button class="je-drp-qb" data-je-range="all"><i class="ti ti-infinity"></i>' +
+      I18N.t("LBL_ALL_PERIODS") +
+      "</button>";
+    html +=
+      '<button class="je-drp-qb" data-je-range="today"><i class="ti ti-clock"></i>' +
+      I18N.t("LBL_TODAY") +
+      "</button>";
+    html +=
+      '<button class="je-drp-qb" data-je-range="7days"><i class="ti ti-calendar-week"></i>' +
+      I18N.t("DASH_LAST_7_DAYS") +
+      "</button>";
+    html +=
+      '<button class="je-drp-qb" data-je-range="month"><i class="ti ti-calendar-month"></i>' +
+      I18N.t("LBL_THIS_MONTH") +
+      "</button>";
+    html +=
+      '<button class="je-drp-qb" data-je-range="30days"><i class="ti ti-calendar-time"></i>' +
+      I18N.t("DASH_LAST_30_DAYS") +
+      "</button>";
+    html +=
+      '<button class="je-drp-qb" data-je-range="3months"><i class="ti ti-chart-line"></i>' +
+      I18N.t("DASH_LAST_3_MONTHS") +
+      "</button>";
+    html +=
+      '<button class="je-drp-qb je-drp-qb-full" data-je-range="year"><i class="ti ti-calendar-stats"></i>' +
+      I18N.t("LBL_THIS_YEAR") +
+      "</button>";
+    html += "</div>";
+    html += "</div>"; // /body
+
+    // Divider
+    html += '<div class="je-drp-div"></div>';
+
+    // Footer
+    html += '<div class="je-drp-footer">';
+    html +=
+      '<div class="je-drp-info"><i class="ti ti-info-circle"></i><span id="je-drp-info">' +
+      I18N.t("MSG_NO_RANGE_SELECTED_YET") +
+      "</span></div>";
+    html += '<div class="je-drp-acts">';
+    html +=
+      '<button class="je-drp-bclear" id="je-drp-clear"><i class="ti ti-x"></i>' +
+      I18N.t("LBL_CLEAR") +
+      "</button>";
+    html +=
+      '<button class="je-drp-bapply" id="je-btn-filter"><i class="ti ti-check"></i>' +
+      I18N.t("BTN_APPLY") +
+      "</button>";
+    html += "</div>";
+    html += "</div>";
+    html += "</div>"; // /card
+    html += "</div>"; // /popover
+    html += "</div>"; // /root
+
+    // Standalone status filter — custom dropdown راقي
+    html += '<div class="je-sf-root" id="je-sf-root">';
+    html += '<button type="button" class="je-sf-trigger" id="je-sf-trigger">';
+    html += '<i class="ti ti-filter"></i>';
+    html += '<span id="je-sf-label">' + I18N.t("LBL_ALL_STATUSES") + "</span>";
+    html += '<i class="ti ti-chevron-down je-sf-chevron"></i>';
+    html += "</button>";
+    html += '<div class="je-sf-menu" id="je-sf-menu">';
+    html +=
+      '<button class="je-sf-item je-sf-active" data-je-status="">' +
+      '<span class="je-sf-dot je-sf-dot-all"></span>' +
+      '<span class="je-sf-item-label">' +
+      I18N.t("LBL_ALL_STATUSES") +
+      "</span>" +
+      '<i class="ti ti-check je-sf-check"></i>' +
+      "</button>";
+    html +=
+      '<button class="je-sf-item" data-je-status="DRAFT">' +
+      '<span class="je-sf-dot je-sf-dot-draft"></span>' +
+      '<span class="je-sf-item-label">' +
+      I18N.t("STATUS_DRAFT") +
+      "</span>" +
+      '<i class="ti ti-check je-sf-check"></i>' +
+      "</button>";
+    html +=
+      '<button class="je-sf-item" data-je-status="POSTED">' +
+      '<span class="je-sf-dot je-sf-dot-posted"></span>' +
+      '<span class="je-sf-item-label">' +
+      I18N.t("STATUS_APPROVED") +
+      "</span>" +
+      '<i class="ti ti-check je-sf-check"></i>' +
+      "</button>";
+    html +=
+      '<button class="je-sf-item" data-je-status="CANCELLED">' +
+      '<span class="je-sf-dot je-sf-dot-cancelled"></span>' +
+      '<span class="je-sf-item-label">' +
+      I18N.t("STATUS_CANCELLED") +
+      "</span>" +
+      '<i class="ti ti-check je-sf-check"></i>' +
+      "</button>";
+    html += "</div>";
+    html += "</div>";
+    // hidden input to carry the value (used by existing filter logic)
+    html += '<input type="hidden" id="je-filter-status" value="">';
+
+    html += "</div>"; // /filters row
+
+    html += '<div class="table-wrap">';
+    html +=
+      '<table class="table"><thead><tr><th>' +
+      I18N.t("ACC_ENTRY_NUMBER") +
+      "</th><th>" +
+      I18N.t("LBL_DATE") +
+      "</th><th>" +
+      I18N.t("LBL_DESCRIPTION") +
+      '</th><th style="text-align:center">' +
+      I18N.t("ACC_DEBIT") +
+      '</th><th style="text-align:center">' +
+      I18N.t("ACC_CREDIT") +
+      "</th><th>" +
+      I18N.t("LBL_STATUS") +
+      "</th></tr></thead>";
+    html +=
+      '<tbody id="je-table-body"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text3)">' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</td></tr></tbody>";
+    html += "</table></div></div>";
+
+    return html;
+  }
+
+  // ── Receipt Vouchers — سندات القبض ──
+  function renderReceiptVouchers() {
+    var html = _renderPageHeader(
+      "سندات القبض",
+      "سندات استلام النقود — نقدي وبنكي",
+      {
+        bgIcon: "ti-arrow-bar-down",
+        bgColor: "var(--success-soft)",
+        iconColor: "var(--success-dark)",
+      },
+      canDo("addReceiptVoucher")
+        ? '<button class="btn btn-primary" id="rv-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("ACC_RECEIPT_VOUCHER") +
+            "</button>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    html += _renderTableFilters("rv");
+    html += '<div class="table-wrap">';
+    html +=
+      '<table class="table"><thead><tr><th>' +
+      I18N.t("VF_LBL_NUMBER") +
+      "</th><th>" +
+      I18N.t("LBL_DATE") +
+      "</th><th>" +
+      I18N.t("LBL_FROM") +
+      '</th><th style="text-align:center">' +
+      I18N.t("HR_AMOUNT") +
+      "</th><th>" +
+      I18N.t("LBL_METHOD") +
+      "</th><th>" +
+      I18N.t("LBL_STATUS") +
+      "</th></tr></thead>";
+    html +=
+      '<tbody id="rv-table-body"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text3)">' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</td></tr></tbody>";
+    html += "</table></div></div>";
+
+    return html;
+  }
+
+  // ── Payment Vouchers — سندات الصرف ──
+  function renderPaymentVouchers() {
+    var html = _renderPageHeader(
+      "سندات الصرف",
+      "سندات صرف النقود — نقدي وبنكي",
+      {
+        bgIcon: "ti-arrow-bar-up",
+        bgColor: "var(--danger-soft)",
+        iconColor: "var(--danger-dark)",
+      },
+      canDo("addPaymentVoucher")
+        ? '<button class="btn btn-primary" id="pv-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("ACC_PAYMENT_VOUCHER") +
+            "</button>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    html += _renderTableFilters("pv");
+    html += '<div class="table-wrap">';
+    html +=
+      '<table class="table"><thead><tr><th>' +
+      I18N.t("VF_LBL_NUMBER") +
+      "</th><th>" +
+      I18N.t("LBL_DATE") +
+      "</th><th>" +
+      I18N.t("LBL_TO") +
+      '</th><th style="text-align:center">' +
+      I18N.t("HR_AMOUNT") +
+      "</th><th>" +
+      I18N.t("LBL_METHOD") +
+      "</th><th>" +
+      I18N.t("LBL_STATUS") +
+      "</th></tr></thead>";
+    html +=
+      '<tbody id="pv-table-body"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text3)">' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</td></tr></tbody>";
+    html += "</table></div></div>";
+
+    return html;
+  }
+
+  // ── Expenses — المصروفات ──
+  function renderExpenses() {
+    var html = _renderPageHeader(
+      "المصروفات",
+      "تسجيل واعتماد المصروفات اليومية — نقدي وبنكي",
+      {
+        bgIcon: "ti-receipt-2",
+        bgColor: "var(--orange-soft)",
+        iconColor: "var(--orange)",
+      },
+      canDo("addExpense")
+        ? '<button class="btn btn-primary" id="exp-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("ACC_NEW_EXPENSE") +
+            "</button>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    html += _renderTableFilters("exp");
+    html += '<div class="table-wrap">';
+    html +=
+      '<table class="table"><thead><tr><th>' +
+      I18N.t("VF_LBL_NUMBER") +
+      "</th><th>" +
+      I18N.t("LBL_DATE") +
+      "</th><th>" +
+      I18N.t("HR_ITEM") +
+      '</th><th style="text-align:center">' +
+      I18N.t("HR_AMOUNT") +
+      "</th><th>" +
+      I18N.t("LBL_METHOD") +
+      "</th><th>" +
+      I18N.t("LBL_STATUS") +
+      "</th></tr></thead>";
+    html +=
+      '<tbody id="exp-table-body"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text3)">' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</td></tr></tbody>";
+    html += "</table></div></div>";
+
+    return html;
+  }
+
+  // ── Transfer Vouchers — سندات التحويل ──
+  function renderTransferVouchers() {
+    var html = _renderPageHeader(
+      "سندات التحويل",
+      "التحويل بين الخزائن والحسابات البنكية",
+      {
+        bgIcon: "ti-transfer",
+        bgColor: "var(--accent-soft)",
+        iconColor: "var(--accent)",
+      },
+      canDo("addTransferVoucher")
+        ? '<button class="btn btn-primary" id="tv-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("ACC_TRANSFER_VOUCHER") +
+            "</button>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    html += _renderTableFilters("tv");
+    html += '<div class="table-wrap">';
+    html +=
+      '<table class="table"><thead><tr><th>' +
+      I18N.t("VF_LBL_NUMBER") +
+      "</th><th>" +
+      I18N.t("LBL_DATE") +
+      "</th><th>" +
+      I18N.t("LBL_FROM_TO_ARROW") +
+      '</th><th style="text-align:center">' +
+      I18N.t("HR_AMOUNT") +
+      "</th><th>" +
+      I18N.t("LBL_STATUS") +
+      "</th></tr></thead>";
+    html +=
+      '<tbody id="tv-table-body"><tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text3)">' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</td></tr></tbody>";
+    html += "</table></div></div>";
+
+    return html;
+  }
+
+  // ── Bank Reconciliation — المطابقة البنكية (Banking Module Phase 8) ──
+  function renderBankReconciliation() {
+    var html = _renderPageHeader(
+      "المطابقة البنكية",
+      "مطابقة كشف الحساب البنكي مع حركات النظام (شيكات، تحويلات، سندات، مصروفات)",
+      {
+        bgIcon: "ti-clipboard-check",
+        bgColor: "var(--success-soft)",
+        iconColor: "var(--success-dark)",
+      },
+      canDo("addBankReconciliation")
+        ? '<button class="btn btn-primary" id="br-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("ACC_NEW_RECONCILIATION_SESSION") +
+            "</button>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    html += '<div class="tbl-filters-row" style="margin-bottom:14px">';
+    html +=
+      '<select id="br-filter-bank" class="form-select" style="min-width:220px"><option value="">' +
+      I18N.t("ACC_ALL_BANK_ACCOUNTS_DASH") +
+      "</option></select>";
+    html +=
+      '<select id="br-filter-status" class="form-select" style="min-width:150px">' +
+      '<option value="">' +
+      I18N.t("LBL_ALL_STATUSES") +
+      "</option>" +
+      '<option value="DRAFT">' +
+      I18N.t("LBL_IN_PROGRESS") +
+      "</option>" +
+      '<option value="COMPLETED">' +
+      I18N.t("LBL_APPROVED_F") +
+      "</option>" +
+      "</select>";
+    html += "</div>";
+
+    html += '<div class="table-wrap">';
+    html +=
+      '<table class="table"><thead><tr>' +
+      "<th>' + I18N.t('VF_LBL_NUMBER') + '</th><th>' + I18N.t('ACC_BANK_ACCOUNT') + '</th><th>' + I18N.t('ACC_STATEMENT_DATE') + '</th>" +
+      '<th style="text-align:center">' +
+      I18N.t("ACC_STATEMENT_BALANCE") +
+      "</th>" +
+      '<th style="text-align:center">' +
+      I18N.t("LBL_DIFFERENCE") +
+      "</th>" +
+      "<th>' + I18N.t('LBL_STATUS') + '</th><th></th>" +
+      "</tr></thead>";
+    html +=
+      '<tbody id="br-table-body"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text3)">' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</td></tr></tbody>";
+    html += "</table></div></div>";
+
+    return html;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // ── التعاملات البنكية (Banking Transactions) — شاشة موحّدة بالتابات ──
+  // ═══════════════════════════════════════════════════════════════════
+  // [BANKING-UNIFIED] بتجمع كل شاشات موديول البنوك (كانت متفرقة في
+  // القائمة الجانبية) + تقارير البنوك (كانت في مركز التقارير) في شاشة
+  // واحدة بنظام Tabs. كل تاب بيستخدم نفس render/bind functions الأصلية
+  // من غير أي تكرار في المنطق أو استدعاءات السيرفر.
+  var _bankingUIState = {
+    tab: "overview",
+    reportSub: "bank_account_statement",
+  };
+
+  var _BANKING_TABS = [
+    {
+      id: "overview",
+      label: "نظرة عامة",
+      icon: "ti-layout-dashboard",
+      perm: "viewBankAccounts",
+      render: function () {
+        return renderBankingDashboard();
+      },
+      bind: function () {
+        bindBankingDashboard();
+      },
+    },
+    {
+      id: "banks",
+      label: "البنوك",
+      icon: "ti-building",
+      perm: "viewBanks",
+      render: function () {
+        return renderBanks();
+      },
+      bind: function () {
+        bindBanks();
+      },
+    },
+    {
+      id: "accounts",
+      label: "الحسابات البنكية",
+      icon: "ti-building-bank",
+      perm: "viewBankAccounts",
+      render: function () {
+        return renderBankAccounts();
+      },
+      bind: function () {
+        bindBankAccounts();
+      },
+    },
+    {
+      id: "chequebooks",
+      label: "دفاتر الشيكات",
+      icon: "ti-file-invoice",
+      perm: "viewChequeBooks",
+      render: function () {
+        return renderChequeBooks();
+      },
+      bind: function () {
+        bindChequeBooks();
+      },
+    },
+    {
+      id: "cheques",
+      label: "الشيكات",
+      icon: "ti-receipt-2",
+      perm: "viewCheques",
+      render: function () {
+        return renderCheques();
+      },
+      bind: function () {
+        bindCheques();
+      },
+    },
+    // [TRANSFERS-STANDALONE] تاب "سندات التحويل" اتشال من هنا — بقت شاشة
+    // مستقلة في السايد بار (صفحة "transfer-vouchers" في 01_JS_Core_Auth.html
+    // بترندر renderTransferVouchers/bindTransferVouchers مباشرة، من غير
+    // ما تتضمّن جوه شاشة "التعاملات البنكية" الموحّدة).
+    {
+      id: "reconciliation",
+      label: "المطابقة البنكية",
+      icon: "ti-clipboard-check",
+      perm: "viewBankReconciliation",
+      render: function () {
+        return renderBankReconciliation();
+      },
+      bind: function () {
+        bindBankReconciliation();
+      },
+    },
+    // [REPORTS-UNIFIED] تاب "التقارير" اتشال من هنا — التقارير بقت
+    // معتمدة بالكامل على مجموعة "تقارير البنوك" الرسمية في مركز
+    // التقارير بالسايد بار (نفس الدوال: renderBankAccountStatementReport/
+    // renderChequesReport/renderTransfersReport/renderBankReconciliationReport
+    // — بدون أي تكرار أو داتا مختلفة). _renderBankingReportsTab و
+    // _bindBankingReportsTab فضلوا موجودين تحت (مش متشالين) عشان أي كود
+    // قديم بيرجع عليهم بالغلط ميكسرش، لكن مبقاش ليهم تاب ظاهر هنا.
+  ];
+
+  function _bankingVisibleTabs() {
+    return _BANKING_TABS.filter(function (t) {
+      return !t.perm || canDo(t.perm);
+    });
+  }
+
+  function renderBankingTransactions() {
+    var visible = _bankingVisibleTabs();
+    if (
+      !visible.some(function (t) {
+        return t.id === _bankingUIState.tab;
+      })
+    ) {
+      _bankingUIState.tab = visible.length ? visible[0].id : "overview";
+    }
+    var active = _bankingUIState.tab;
+
+    var html = _renderPageHeader(
+      "التعاملات البنكية",
+      "كل شاشات البنوك: الحسابات، الشيكات، التحويلات، المطابقة، والتقارير في مكان واحد",
+      {
+        bgIcon: "ti-building-bank",
+        bgColor: "var(--success-soft)",
+        iconColor: "var(--success-dark)",
+      },
+    );
+
+    html += '<div class="ati-mode-tabs" id="bt-tabs" style="flex-wrap:wrap">';
+    visible.forEach(function (t) {
+      html +=
+        '<button class="ati-mode-tab' +
+        (t.id === active ? " active" : "") +
+        '" data-bt-tab="' +
+        t.id +
+        '" style="flex:0 1 auto" onclick="_btSwitchTab(\'' +
+        t.id +
+        "')\">" +
+        '<i class="ti ' +
+        t.icon +
+        '"></i><span class="tab-label">' +
+        t.label +
+        "</span></button>";
+    });
+    html += "</div>";
+
+    html += '<div id="bt-tab-content">' + _btRenderTab(active) + "</div>";
+    return html;
+  }
+
+  function _btRenderTab(tabId) {
+    var tab = _BANKING_TABS.filter(function (t) {
+      return t.id === tabId;
+    })[0];
+    if (!tab) return "";
+    try {
+      return tab.render();
+    } catch (e) {
+      console.error("[BankingTransactions] خطأ في عرض تاب " + tabId, e);
+      return (
+        '<div class="card" style="text-align:center;color:var(--danger);padding:24px">' +
+        I18N.t("MSG_SECTION_DISPLAY_FAILED") +
+        "</div>"
+      );
+    }
+  }
+
+  function bindBankingTransactions() {
+    var tab = _BANKING_TABS.filter(function (t) {
+      return t.id === _bankingUIState.tab;
+    })[0];
+    if (!tab) return;
+    try {
+      tab.bind();
+    } catch (e) {
+      console.error("[BankingTransactions] خطأ في bind تاب " + tab.id, e);
+      if (typeof showToast === "function") {
+        NotificationEngine.warning(" بعض عناصر هذا القسم قد لا تعمل بشكل صحيح");
+      }
+    }
+  }
+
+  /** تبديل التاب بدون إعادة تحميل الصفحة كلها */
+  window._btSwitchTab = function (tabId) {
+    _bankingUIState.tab = tabId;
+    document.querySelectorAll("#bt-tabs .ati-mode-tab").forEach(function (b) {
+      b.classList.toggle("active", b.getAttribute("data-bt-tab") === tabId);
+    });
+    var c = document.getElementById("bt-tab-content");
+    if (!c) return;
+    c.innerHTML = _btRenderTab(tabId);
+    bindBankingTransactions();
+  };
+
+  // ── تاب "التقارير" — تقارير البنوك (كانت في مركز التقارير) ──────────
+  var _BANKING_REPORT_TABS = [
+    {
+      id: "bank_account_statement",
+      label: "كشف حساب بنكي",
+      fn: "renderBankAccountStatementReport",
+    },
+    { id: "cheques_report", label: "تقرير الشيكات", fn: "renderChequesReport" },
+    {
+      id: "transfers_report",
+      label: "تقرير التحويلات البنكية",
+      fn: "renderTransfersReport",
+    },
+    {
+      id: "bank_reconciliation_report",
+      label: "تقرير المطابقة البنكية",
+      fn: "renderBankReconciliationReport",
+    },
+  ];
+
+  function _renderBankingReportsTab() {
+    var sub = _bankingUIState.reportSub || "bank_account_statement";
+    if (
+      !_BANKING_REPORT_TABS.some(function (s) {
+        return s.id === sub;
+      })
+    ) {
+      sub = "bank_account_statement";
+    }
+    var html =
+      '<div class="ati-mode-tabs" id="bt-report-tabs" style="margin-bottom:16px">';
+    _BANKING_REPORT_TABS.forEach(function (s) {
+      html +=
+        '<button class="ati-mode-tab' +
+        (s.id === sub ? " active" : "") +
+        '" data-bt-report-tab="' +
+        s.id +
+        '" style="flex:0 1 auto" onclick="_btSwitchReportTab(\'' +
+        s.id +
+        '\')"><span class="tab-label">' +
+        s.label +
+        "</span></button>";
+    });
+    html +=
+      '</div><div id="bt-report-content">' + _btRenderReport(sub) + "</div>";
+    return html;
+  }
+
+  function _btRenderReport(reportId) {
+    var def = _BANKING_REPORT_TABS.filter(function (s) {
+      return s.id === reportId;
+    })[0];
+    if (!def || typeof window[def.fn] !== "function") return "";
+    try {
+      return window[def.fn]();
+    } catch (e) {
+      console.error("[BankingTransactions] خطأ في عرض تقرير " + reportId, e);
+      return (
+        '<div class="card" style="text-align:center;color:var(--danger);padding:24px">' +
+        I18N.t("MSG_REPORT_DISPLAY_FAILED") +
+        "</div>"
+      );
+    }
+  }
+
+  function _bindBankingReportsTab() {
+    // التقارير ذاتيّة الربط (onclick مباشر داخل الـ HTML)، مفيش داعي لـ bind إضافي
+  }
+
+  window._btSwitchReportTab = function (reportId) {
+    _bankingUIState.reportSub = reportId;
+    document
+      .querySelectorAll("#bt-report-tabs .ati-mode-tab")
+      .forEach(function (b) {
+        b.classList.toggle(
+          "active",
+          b.getAttribute("data-bt-report-tab") === reportId,
+        );
+      });
+    var c = document.getElementById("bt-report-content");
+    if (c) c.innerHTML = _btRenderReport(reportId);
+  };
+
+  // ── General Ledger — الأستاذ العام ──
+  function renderGeneralLedger() {
+    var html = _renderPageHeader(
+      "الأستاذ العام",
+      "كشف تفصيلي بجميع حركات الحسابات",
+      {
+        bgIcon: "ti-book",
+        bgColor: "var(--purple-soft)",
+        iconColor: "var(--purple)",
+      },
+      "",
+    );
+
+    html += '<div class="card">';
+    html +=
+      '<div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">';
+    html +=
+      '<select id="gl-account-select" class="form-select" style="flex:1;min-width:200px"><option value="">' +
+      I18N.t("ACC_ALL_ACCOUNTS_DASH") +
+      "</option></select>";
+    html +=
+      '<input type="date" id="gl-from-date" class="form-input" style="width:150px">';
+    html +=
+      '<input type="date" id="gl-to-date" class="form-input" style="width:150px">';
+    html +=
+      '<button class="btn btn-primary" id="gl-btn-load"><i class="ti ti-search"></i> ' +
+      I18N.t("LBL_VIEW") +
+      "</button>";
+    html += "</div>";
+    html +=
+      '<div id="gl-results"><div class="empty-state"><div class="empty-icon"></div><p>' +
+      I18N.t("ACC_CHOOSE_ACCOUNT_PERIOD_LEDGER") +
+      "</p></div></div>";
+    html += "</div>";
+
+    return html;
+  }
+
+  // ── Trial Balance — ميزان المراجعة ──
+  function renderTrialBalance() {
+    var html = _renderPageHeader(
+      "ميزان المراجعة",
+      "تحقق من توازن الحسابات (المدين = الدائن)",
+      {
+        bgIcon: "ti-scale",
+        bgColor: "var(--accent-soft)",
+        iconColor: "var(--primary)",
+      },
+      "",
+    );
+
+    html += '<div class="card">';
+    html += _renderReportDateBar({
+      fromId: "tb-from-date",
+      toId: "tb-to-date",
+      btnId: "tb-btn-load",
+      btnLabel: "عرض",
+    });
+
+    html += '<div id="tb-ce-container"></div></div>';
+
+    return html;
+  }
+
+  // ── Income Statement — قائمة الدخل ──
+  function renderIncomeStatement() {
+    var html = _renderPageHeader(
+      "قائمة الدخل",
+      "الإيرادات والمصروفات وصافي الدخل",
+      {
+        bgIcon: "ti-chart-line",
+        bgColor: "var(--success-soft)",
+        iconColor: "var(--success-dark)",
+      },
+      "",
+    );
+
+    html += '<div class="card">';
+    html += _renderReportDateBar({
+      fromId: "is-from-date",
+      toId: "is-to-date",
+      btnId: "is-btn-load",
+      btnLabel: "عرض",
+    });
+    html +=
+      '<div id="is-results"><div class="empty-state"><div class="empty-icon"></div><p>' +
+      I18N.t("ACC_CHOOSE_PERIOD_INCOME_STATEMENT") +
+      "</p></div></div>";
+    html += "</div>";
+
+    return html;
+  }
+
+  // ── Balance Sheet — الميزانية العمومية ──
+  function renderBalanceSheet() {
+    var html = _renderPageHeader(
+      "الميزانية العمومية",
+      "الأصول = الخصوم + حقوق الملكية",
+      {
+        bgIcon: "ti-scale",
+        bgColor: "var(--warning-soft)",
+        iconColor: "var(--warning)",
+      },
+      "",
+    );
+
+    html += '<div class="card">';
+    html += _renderReportDateBar({
+      fromId: false,
+      toId: "bs-date",
+      btnId: "bs-btn-load",
+      btnLabel: "عرض الميزانية",
+      extra:
+        '<button class="btn btn-ghost" id="bs-btn-expand-all" style="display:none"><i class="ti ti-arrows-maximize"></i> ' +
+        I18N.t("LBL_EXPAND_ALL") +
+        "</button>" +
+        '<button class="btn btn-ghost" id="bs-btn-collapse-all" style="display:none"><i class="ti ti-arrows-minimize"></i> ' +
+        I18N.t("LBL_COLLAPSE_ALL") +
+        "</button>" +
+        '<button class="btn btn-ghost" id="bs-btn-print" style="display:none;margin-right:auto"><i class="ti ti-printer"></i> ' +
+        I18N.t("BTN_PRINT") +
+        "</button>",
+    });
+
+    // بطاقات الملخص الإجمالي
+    html +=
+      '<div id="bs-summary-cards" style="display:none;gap:12px;margin-bottom:20px;grid-template-columns:repeat(3,1fr)" class="bs-summary-grid">';
+    html +=
+      '<div class="bs-summary-card bs-card-assets"><div class="bs-summary-icon"><i class="ti ti-building-bank"></i></div><div class="bs-summary-body"><div class="bs-summary-label">' +
+      I18N.t("ACC_TOTAL_ASSETS") +
+      '</div><div class="bs-summary-value" id="bs-total-assets">—</div></div></div>';
+    html +=
+      '<div class="bs-summary-card bs-card-liabilities"><div class="bs-summary-icon"><i class="ti ti-credit-card"></i></div><div class="bs-summary-body"><div class="bs-summary-label">' +
+      I18N.t("ACC_TOTAL_LIABILITIES") +
+      '</div><div class="bs-summary-value" id="bs-total-liabilities">—</div></div></div>';
+    html +=
+      '<div class="bs-summary-card bs-card-equity"><div class="bs-summary-icon"><i class="ti ti-chart-pie"></i></div><div class="bs-summary-body"><div class="bs-summary-label">' +
+      I18N.t("ACC_EQUITY") +
+      '</div><div class="bs-summary-value" id="bs-total-equity">—</div></div></div>';
+    html += "</div>";
+
+    // حالة التوازن
+    html +=
+      '<div id="bs-balance-indicator" style="display:none;margin-bottom:16px"></div>';
+
+    // منطقة الشجرة الرئيسية
+    html +=
+      '<div id="bs-results"><div class="empty-state"><div class="empty-icon"></div><p>' +
+      I18N.t("ACC_CHOOSE_DATE_BALANCE_SHEET") +
+      "</p></div></div>";
+    html += "</div>";
+
+    return html;
+  }
+
+  // ── Cash Flow Statement — قائمة التدفقات النقدية ──
+  function renderCashFlowStatement() {
+    var html = _renderPageHeader(
+      "قائمة التدفقات النقدية",
+      "تصنيف التدفقات إلى: تشغيل · استثمار · تمويل",
+      {
+        bgIcon: "ti-cash-banknote",
+        bgColor: "var(--teal-soft)",
+        iconColor: "var(--teal)",
+      },
+      "",
+    );
+
+    html += '<div class="card">';
+    html += _renderReportDateBar({
+      fromId: "cf-from-date",
+      toId: "cf-to-date",
+      btnId: "cf-btn-load",
+      btnLabel: "عرض",
+      extra:
+        '<button class="btn btn-ghost" id="cf-btn-print" style="display:none"><i class="ti ti-printer"></i> ' +
+        I18N.t("BTN_PRINT") +
+        "</button>",
+    });
+    html +=
+      '<div id="cf-results"><div class="empty-state"><div class="empty-icon"></div><p>' +
+      I18N.t("ACC_CHOOSE_PERIOD_CASH_FLOW") +
+      "</p></div></div>";
+    html += "</div>";
+
+    return html;
+  }
+
+  // ── Account Statement — كشف حساب ──
+  function renderAccountStatement() {
+    var html = _renderPageHeader(
+      "كشف حساب",
+      "عرض حركات حساب معين (عميل، مورد، خزنة، بنك...)",
+      {
+        bgIcon: "ti-file-search",
+        bgColor: "var(--purple-soft)",
+        iconColor: "var(--purple)",
+      },
+      "",
+    );
+
+    html += '<div class="card">';
+    html +=
+      '<div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">';
+    html +=
+      '<select id="stmt-account-select" class="form-select" style="flex:1;min-width:200px"><option value="">' +
+      I18N.t("ACC_CHOOSE_ACCOUNT_DASH") +
+      "</option></select>";
+    html +=
+      '<input type="date" id="stmt-from-date" class="form-input" style="width:150px">';
+    html +=
+      '<input type="date" id="stmt-to-date" class="form-input" style="width:150px">';
+    html +=
+      '<button class="btn btn-primary" id="stmt-btn-load"><i class="ti ti-search"></i> ' +
+      I18N.t("LBL_VIEW") +
+      "</button>";
+    html += "</div>";
+    html +=
+      '<div id="stmt-results"><div class="empty-state"><div class="empty-icon"></div><p>' +
+      I18N.t("ACC_CHOOSE_ACCOUNT_STATEMENT") +
+      "</p></div></div>";
+    html += "</div>";
+
+    return html;
+  }
+
+  // ================================================================
+  // §R-HR  HR Module — موديول الموارد البشرية
+  // ================================================================
+
+  // ── HR Dashboard ──
+  function renderHRDashboard() {
+    var html = _renderPageHeader(
+      "الموارد البشرية",
+      "نظرة عامة على الموظفين والحضور والرواتب",
+      {
+        bgIcon: "ti-users",
+        bgColor: "var(--accent-soft)",
+        iconColor: "var(--primary)",
+      },
+      "",
+    );
+
+    html += '<div class="stat-grid">';
+    html += statCard(
+      iconBadge("ti-users", "var(--accent-soft)", "var(--primary)"),
+      "إجمالي الموظفين",
+      '<span id="hr-stat-total">0</span>',
+      "موظف",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-user-check", "var(--success-soft)", "var(--success-dark)"),
+      "الموظفون النشطون",
+      '<span id="hr-stat-active">0</span>',
+      "موظف",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-clock", "var(--warning-soft)", "var(--warning)"),
+      "الحضور اليوم",
+      '<span id="hr-stat-present">0</span>',
+      "حاضر",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-user-x", "var(--danger-soft)", "var(--danger)"),
+      "الغياب اليوم",
+      '<span id="hr-stat-absent">0</span>',
+      "غائب",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-calendar", "var(--purple-soft)", "var(--purple)"),
+      "إجازات معلقة",
+      '<span id="hr-stat-pending-leaves">0</span>',
+      "طلب",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-cash", "var(--teal-soft)", "var(--teal)"),
+      "متوسط الراتب",
+      '<span id="hr-stat-avg-salary" class="sensitive-balance">0</span>',
+      "EGP",
+      "",
+    );
+    html += "</div>";
+
+    // جدول الحضور اليوم
+    html += '<div class="card" style="margin-top:24px">';
+    html +=
+      '<h4 style="margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="ti ti-clock" style="color:var(--warning)"></i> ' +
+      I18N.t("HR_ATTENDANCE_TODAY") +
+      "</h4>";
+    html += '<div class="table-wrap">';
+    html +=
+      '<table class="table"><thead><tr><th>' +
+      I18N.t("HR_EMPLOYEE") +
+      "</th><th>" +
+      I18N.t("HR_ATTENDANCE") +
+      "</th><th>" +
+      I18N.t("HR_CHECK_OUT") +
+      "</th><th>" +
+      I18N.t("LBL_STATUS") +
+      "</th></tr></thead>";
+    html +=
+      '<tbody id="hr-today-attendance"><tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text3)">' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</td></tr></tbody>";
+    html += "</table></div></div>";
+
+    return html;
+  }
+
+  // ── Departments — الأقسام ──
+  function renderDepartments() {
+    var html = _renderPageHeader(
+      "الأقسام",
+      "إدارة أقسام الشركة",
+      {
+        bgIcon: "ti-building",
+        bgColor: "var(--accent-soft)",
+        iconColor: "var(--primary)",
+      },
+      canDo("addDepartment")
+        ? '<button class="btn btn-primary" id="dept-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("HR_NEW_DEPARTMENT") +
+            "</button>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    html +=
+      '<div id="dept-table-wrap"><div class="empty-state"><p>' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</p></div></div></div>";
+
+    return html;
+  }
+
+  // ── Salary Components — بنود الرواتب [SALARY-COMPONENTS-P1] ──
+  function renderSalaryComponents() {
+    var html = _renderPageHeader(
+      "بنود الرواتب",
+      "إدارة أنواع البدلات والخصومات المستخدمة في رواتب الموظفين",
+      {
+        bgIcon: "ti-list-details",
+        bgColor: "var(--accent-soft)",
+        iconColor: "var(--primary)",
+      },
+      canDo("addSalaryComponent")
+        ? '<button class="btn btn-primary" id="slc-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("ACC_NEW_ITEM") +
+            "</button>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    html +=
+      '<div id="slc-table-wrap"><div class="empty-state"><p>' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</p></div></div></div>";
+
+    return html;
+  }
+
+  // ── Job Titles — الوظائف ──
+  function renderJobTitles() {
+    var html = _renderPageHeader(
+      "الوظائف",
+      "إدارة الوظائف والأدوار",
+      {
+        bgIcon: "ti-briefcase",
+        bgColor: "var(--warning-soft)",
+        iconColor: "var(--warning)",
+      },
+      canDo("addJobTitle")
+        ? '<button class="btn btn-primary" id="job-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("HR_NEW_JOB") +
+            "</button>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    html +=
+      '<div id="job-table-wrap"><div class="empty-state"><p>' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</p></div></div></div>";
+
+    return html;
+  }
+
+  // ── Employees — الموظفين ──
+  function renderEmployees() {
+    var html = _renderPageHeader(
+      "الموظفون",
+      "إدارة بيانات الموظفين",
+      {
+        bgIcon: "ti-users",
+        bgColor: "var(--success-soft)",
+        iconColor: "var(--success-dark)",
+      },
+      canDo("addEmployee")
+        ? '<div style="display:flex;gap:8px">' +
+            '<button class="btn btn-secondary" id="emp-btn-import"><i class="ti ti-file-import"></i> ' +
+            I18N.t("HR_IMPORT_EMPLOYEES") +
+            "</button>" +
+            '<button class="btn btn-primary" id="emp-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("HR_NEW_EMPLOYEE") +
+            "</button>" +
+            "</div>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    // فلاتر
+    html +=
+      '<div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">';
+    html +=
+      '<input type="text" id="emp-search" placeholder="' +
+      I18N.t("LBL_PH_SEARCH_NAME_NUMBER") +
+      '" class="search-input" style="flex:1;min-width:200px">';
+    html +=
+      '<select id="emp-filter-status" class="form-select" style="width:150px">';
+    html += '<option value="">' + I18N.t("LBL_ALL_STATUSES") + "</option>";
+    html += '<option value="ACTIVE">' + I18N.t("STATUS_ACTIVE") + "</option>";
+    html += '<option value="ON_LEAVE">' + I18N.t("HR_ON_LEAVE") + "</option>";
+    html +=
+      '<option value="SUSPENDED">' + I18N.t("STATUS_STOPPED") + "</option>";
+    html += '<option value="TERMINATED">' + I18N.t("LBL_EXPIRED") + "</option>";
+    html += "</select>";
+    html += "</div>";
+
+    html +=
+      '<div id="emp-table-wrap"><div class="empty-state"><p>' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</p></div></div></div>";
+
+    return html;
+  }
+
+  // ── Attendance — الحضور والانصراف ──
+  function renderAttendance() {
+    var showImportTab = canDo("importAttendance");
+    var showImportLogTab = canDo("viewImportLog");
+    var canAdd = canDo("recordAttendance");
+
+    // ── Header الاحترافي ──
+    var html = '<div class="att-page">';
+
+    // Hero Header
+    html += '<div class="att-hero">';
+    html += '<div class="att-hero-content">';
+    html +=
+      '<div class="att-hero-icon"><i class="ti ti-clock-check"></i></div>';
+    html += '<div class="att-hero-text">';
+    html += '<h1 class="att-hero-title">' + I18N.t("PAGE_ATTENDANCE") + "</h1>";
+    html +=
+      '<p class="att-hero-sub">' +
+      I18N.t("HR_ATTENDANCE_REALTIME_DESC") +
+      "</p>";
+    html += "</div></div>";
+    html += '<div class="att-hero-actions">';
+    if (canAdd) {
+      html +=
+        '<button class="att-btn-secondary" id="att-btn-export"><i class="ti ti-download"></i> ' +
+        I18N.t("LBL_EXPORT") +
+        "</button>";
+      html +=
+        '<button class="att-btn-primary" id="att-btn-add"><i class="ti ti-plus"></i> ' +
+        I18N.t("PERM_RECORD_ATTENDANCE") +
+        "</button>";
+    }
+    html += "</div></div>";
+
+    // KPI Cards Row
+    html += '<div class="att-kpi-row">';
+    html +=
+      '<div class="att-kpi-card att-kpi-present"><div class="att-kpi-icon"><i class="ti ti-users-check"></i></div><div class="att-kpi-body"><span class="att-kpi-num" id="kpi-present">—</span><span class="att-kpi-lbl">' +
+      I18N.t("HR_PRESENT_TODAY") +
+      "</span></div></div>";
+    html +=
+      '<div class="att-kpi-card att-kpi-absent"><div class="att-kpi-icon"><i class="ti ti-user-off"></i></div><div class="att-kpi-body"><span class="att-kpi-num" id="kpi-absent">—</span><span class="att-kpi-lbl">' +
+      I18N.t("HR_ABSENTEES") +
+      "</span></div></div>";
+    html +=
+      '<div class="att-kpi-card att-kpi-late"><div class="att-kpi-icon"><i class="ti ti-clock-exclamation"></i></div><div class="att-kpi-body"><span class="att-kpi-num" id="kpi-late">—</span><span class="att-kpi-lbl">' +
+      I18N.t("HR_LATE_EMPLOYEES") +
+      "</span></div></div>";
+    html +=
+      '<div class="att-kpi-card att-kpi-overtime"><div class="att-kpi-icon"><i class="ti ti-clock-plus"></i></div><div class="att-kpi-body"><span class="att-kpi-num" id="kpi-overtime">—</span><span class="att-kpi-lbl">' +
+      I18N.t("HR_OVERTIME_2") +
+      "</span></div></div>";
+    html += "</div>";
+
+    // Mode Tabs
+    html += '<div class="att-mode-bar" id="att-mode-tabs">';
+    html +=
+      '<button class="att-mode-btn active" data-mode="manual"><i class="ti ti-table"></i> ' +
+      I18N.t("HR_ATTENDANCE_RECORDS") +
+      "</button>";
+    if (showImportTab) {
+      html +=
+        '<button class="att-mode-btn" data-mode="import"><i class="ti ti-fingerprint"></i> ' +
+        I18N.t("HR_IMPORT_FINGERPRINT") +
+        "</button>";
+    }
+    if (showImportLogTab) {
+      html +=
+        '<button class="att-mode-btn" data-mode="log"><i class="ti ti-history"></i> ' +
+        I18N.t("HR_IMPORT_LOG") +
+        "</button>";
+    }
+    html += "</div>";
+
+    // ── Panel: Manual Records ──
+    html += '<div class="att-panel active" id="att-panel-manual">';
+
+    // Filter Bar
+    html += '<div class="att-filter-bar">';
+    html += '<div class="att-filter-group">';
+    html +=
+      '<div class="att-filter-field"><label>' +
+      I18N.t("HR_FROM_DATE") +
+      '</label><div class="att-input-wrap"><i class="ti ti-calendar"></i><input type="date" id="att-date-from" class="att-date-input" placeholder="yyyy/mm/dd"></div></div>';
+    html +=
+      '<div class="att-filter-field"><label>' +
+      I18N.t("HR_TO_DATE") +
+      '</label><div class="att-input-wrap"><i class="ti ti-calendar"></i><input type="date" id="att-date-to" class="att-date-input" placeholder="yyyy/mm/dd"></div></div>';
+    html +=
+      '<button class="att-btn-search" id="att-btn-filter"><i class="ti ti-search"></i> ' +
+      I18N.t("LBL_VIEW_RESULTS") +
+      "</button>";
+    html += "</div>";
+    html +=
+      '<div class="att-filter-info" id="att-records-count" style="display:none"></div>';
+    html += "</div>";
+
+    // Table Card
+    html += '<div class="att-table-card">';
+    html +=
+      '<div id="att-table-wrap"><div class="att-empty-state"><i class="ti ti-calendar-search"></i><p>' +
+      I18N.t("LBL_CHOOSE_RANGE_VIEW_RECORDS") +
+      "</p></div></div>";
+    html += "</div>"; // table-card
+
+    html += "</div>"; // end att-panel-manual
+
+    // ── Panel: Fingerprint Import ──
+    if (showImportTab) {
+      html += '<div class="att-panel" id="att-panel-import">';
+      html +=
+        '<div id="att-import-container"><div class="att-empty-state att-empty-large"><i class="ti ti-fingerprint"></i><p>' +
+        I18N.t("MSG_LOADING_ELLIPSIS") +
+        "</p></div></div>";
+      html += "</div>";
+    }
+
+    // ── Panel: Import Log ──
+    if (showImportLogTab) {
+      html += '<div class="att-panel" id="att-panel-log">';
+      html +=
+        '<div id="att-log-container"><div class="att-empty-state att-empty-large"><i class="ti ti-history"></i><p>' +
+        I18N.t("MSG_LOADING_ELLIPSIS") +
+        "</p></div></div>";
+      html += "</div>";
+    }
+
+    html += "</div>"; // end att-page
+    return html;
+  }
+
+  // ── Leave Requests — طلبات الإجازة ──
+  function renderLeaveRequests() {
+    var html = _renderPageHeader(
+      "طلبات الإجازة",
+      "إدارة طلبات الإجازات — اعتماد ورفض",
+      {
+        bgIcon: "ti-calendar",
+        bgColor: "var(--purple-soft)",
+        iconColor: "var(--purple)",
+      },
+      (canDo("requestLeave")
+        ? '<button class="btn btn-primary" id="leave-btn-add"><i class="ti ti-plus"></i> ' +
+          I18N.t("PERM_REQUEST_LEAVE") +
+          "</button>"
+        : "") +
+        '<button class="btn btn-ghost" id="leave-btn-all">' +
+        I18N.t("LBL_ALL") +
+        "</button>" +
+        '<button class="btn btn-ghost" id="leave-btn-pending">' +
+        I18N.t("STATUS_PENDING") +
+        "</button>",
+    );
+
+    html += '<div class="card">';
+    html +=
+      '<div id="leave-table-wrap"><div class="empty-state"><p>' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</p></div></div></div>";
+
+    return html;
+  }
+
+  // ── Leave Types — أنواع الإجازات ──
+  function renderLeaveTypes() {
+    var html = _renderPageHeader(
+      "أنواع الإجازات",
+      "تعريف أنواع الإجازات والحدود",
+      {
+        bgIcon: "ti-calendar-stats",
+        bgColor: "var(--teal-soft)",
+        iconColor: "var(--teal)",
+      },
+      canDo("addLeaveType")
+        ? '<button class="btn btn-primary" id="lt-btn-add"><i class="ti ti-plus"></i> ' +
+            I18N.t("LBL_NEW_TYPE") +
+            "</button>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    html +=
+      '<div id="lt-table-wrap"><div class="empty-state"><p>' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</p></div></div></div>";
+
+    return html;
+  }
+
+  // ── Loan Requests — طلبات السلف ──
+  function renderLoanRequests() {
+    var html = _renderPageHeader(
+      "السلف",
+      "إدارة طلبات السلف والسلف الشخصية",
+      {
+        bgIcon: "ti-cash",
+        bgColor: "var(--success-soft)",
+        iconColor: "var(--success-dark)",
+      },
+      (canDo("requestLoan")
+        ? '<button class="btn btn-primary" id="loan-btn-add"><i class="ti ti-plus"></i> ' +
+          I18N.t("PERM_REQUEST_LOAN") +
+          "</button>"
+        : "") +
+        '<button class="btn btn-ghost" id="loan-btn-all">' +
+        I18N.t("LBL_ALL") +
+        "</button>" +
+        '<button class="btn btn-ghost" id="loan-btn-pending">' +
+        I18N.t("STATUS_PENDING") +
+        "</button>",
+    );
+
+    html += '<div class="card">';
+    html +=
+      '<div id="loan-table-wrap"><div class="empty-state"><p>' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</p></div></div></div>";
+
+    return html;
+  }
+
+  // ── Payroll — مسير الرواتب ──
+  function renderPayroll() {
+    var html = _renderPageHeader(
+      "مسير الرواتب",
+      "توليد وصرف وإدارة رواتب الموظفين",
+      {
+        bgIcon: "ti-coin",
+        bgColor: "var(--warning-soft)",
+        iconColor: "var(--warning)",
+      },
+      canDo("generatePayroll")
+        ? '<button class="btn btn-primary" id="payroll-btn-add-period"><i class="ti ti-plus"></i> ' +
+            I18N.t("HR_NEW_PERIOD") +
+            "</button>"
+        : "",
+    );
+
+    html += '<div class="card">';
+    html +=
+      '<div id="payroll-periods-wrap"><div class="empty-state"><p>' +
+      I18N.t("MSG_LOADING_ELLIPSIS") +
+      "</p></div></div></div>";
+
+    return html;
+  }
+
+  // ── Payslip — كشف راتب ──
+  function renderPayslip() {
+    var html = _renderPageHeader(
+      "كشف الراتب",
+      "عرض وطباعة كشوف الرواتب الفردية",
+      {
+        bgIcon: "ti-file-invoice",
+        bgColor: "var(--purple-soft)",
+        iconColor: "var(--purple)",
+      },
+      "",
+    );
+
+    html += '<div class="card">';
+    html +=
+      '<div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">';
+    html +=
+      '<select id="payslip-emp-select" class="form-select" style="flex:1;min-width:200px"><option value="">' +
+      I18N.t("HR_CHOOSE_EMPLOYEE") +
+      "</option></select>";
+    html +=
+      '<select id="payslip-period-select" class="form-select" style="flex:1;min-width:200px"><option value="">' +
+      I18N.t("HR_CHOOSE_PERIOD") +
+      "</option></select>";
+    html +=
+      '<button class="btn btn-primary" id="payslip-btn-load"><i class="ti ti-search"></i> ' +
+      I18N.t("LBL_VIEW") +
+      "</button>";
+    html += "</div>";
+    html +=
+      '<div id="payslip-results"><div class="empty-state"><div class="empty-icon"></div><p>' +
+      I18N.t("HR_CHOOSE_EMPLOYEE_PERIOD_PAYSLIP") +
+      "</p></div></div>";
+    html += "</div>";
+
+    return html;
+  }
+
+  // ═════════════════════════════════════════════════════════════════
+  // §renderInvoices — شاشة الفواتير (بيع + شراء)
+  // ═════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+  // ═════════════════════════════════════════════════════════════════
+  // §renderPurchaseOrders — أوامر الشراء
+  // ═════════════════════════════════════════════════════════════════
+  function renderPurchaseOrders() {
+    var orders = (APP.data.purchaseOrders || []).slice().reverse();
+    var suppliers = APP.data.suppliers || [];
+
+    var totalOrders = orders.length;
+    var draftCount = orders.filter(function (o) {
+      return o.status === "مسودة";
+    }).length;
+    var approvedCount = orders.filter(function (o) {
+      return o.status === "معتمد";
+    }).length;
+    var receivedCount = orders.filter(function (o) {
+      return o.status === "مستلم";
+    }).length;
+    var totalValue = orders.reduce(function (s, o) {
+      return s + Number(o.net_total || 0);
+    }, 0);
+
+    var statsHtml =
+      '<div class="stat-grid" style="margin-bottom:20px">' +
+      statCard(
+        iconBadge("ti-clipboard-list", "var(--purple-soft)", "var(--purple)"),
+        "إجمالي الأوامر",
+        totalOrders,
+        "أمر",
+        "#F5F3FF",
+      ) +
+      statCard(
+        iconBadge("ti-pencil", "var(--warning-soft)", "var(--warning)"),
+        "مسودة",
+        draftCount,
+        "أمر",
+        "var(--warning-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-check", "var(--success-soft)", "var(--success-dark)"),
+        "معتمد",
+        approvedCount,
+        "أمر",
+        "var(--success-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-package", "var(--purple-soft)", "var(--purple)"),
+        "مستلم",
+        receivedCount,
+        "أمر",
+        "#EDE9FE",
+      ) +
+      "</div>";
+
+    // [COLUMN-ENGINE PILOT] بناء الصفوف والجدول الثابت (Hardcoded <table>)
+    // انتقل بالكامل إلى ColumnEngine (راجع 34_JS_ColumnEngine.html و
+    // _poRenderTable/_poRegisterColumns في 22_JS_PurchaseOrders.html).
+    // الأعمدة الآن Metadata قابلة للتخصيص (إظهار/إخفاء/ترتيب/تثبيت) بدل
+    // كودها هنا. _poBadge انتقلت لدالة عامة poStatusBadge() في نفس الملف
+    // (22_JS_PurchaseOrders.html) لأنها أصبحت تُستخدم من column.format.
+
+    var tableSection =
+      '<div class="card" style="padding:0;overflow:hidden">' +
+      '<div style="padding:14px 16px;border-bottom:1px solid var(--border);background:var(--surface2);display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+      '<div style="display:flex;gap:6px;align-items:center">' +
+      '<div style="display:flex;gap:4px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:3px">' +
+      '<button class="po-filter-btn" data-status="" style="border:none;background:#7C3AED;color:#fff;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">' +
+      I18N.t("LBL_ALL") +
+      "</button>" +
+      '<button class="po-filter-btn" data-status="مسودة" style="border:none;background:transparent;color:var(--text2);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">' +
+      I18N.t("STATUS_DRAFT") +
+      "</button>" +
+      '<button class="po-filter-btn" data-status="معتمد" style="border:none;background:transparent;color:var(--text2);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">' +
+      I18N.t("STATUS_APPROVED") +
+      "</button>" +
+      '<button class="po-filter-btn" data-status="مستلم" style="border:none;background:transparent;color:var(--text2);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">' +
+      I18N.t("LBL_RECIPIENT") +
+      "</button>" +
+      "</div>" +
+      '<span style="font-size:12px;color:var(--text3);background:var(--bg);border:1px solid var(--border);padding:4px 10px;border-radius:20px;font-weight:600">' +
+      totalOrders +
+      " أمر</span>" +
+      "</div></div>" +
+      '<div id="po-ce-container" style="padding:12px"></div></div>';
+
+    return (
+      '<div class="page-header">' +
+      '<div style="display:flex;align-items:center;gap:12px">' +
+      iconBadge("ti-clipboard-list", "var(--purple-soft)", "var(--purple)") +
+      '<div><h1 style="font-size:22px;margin:0">' +
+      I18N.t("PAGE_PURCHASE_ORDERS") +
+      "</h1>" +
+      '<p style="margin:2px 0 0;color:var(--text3);font-size:13px">' +
+      totalOrders +
+      " أمر — " +
+      approvedCount +
+      " معتمد — " +
+      receivedCount +
+      " مستلم</p>" +
+      "</div></div>" +
+      '<div style="display:flex;gap:8px">' +
+      withPermission(
+        '<button class="btn btn-primary" id="po-new-btn" style="background:#7C3AED;border-color:#7C3AED"><i class="ti ti-plus" style="font-size:14px"></i> ' +
+          I18N.t("DASH_NEW_PURCHASE_ORDER") +
+          "</button>",
+        "addPurchaseOrder",
+      ) +
+      "</div></div>" +
+      statsHtml +
+      tableSection
+    );
+  }
+
+  // §renderSaleInvoices — فواتير البيع
+  // ─────────────────────────────────────────────────────────────
+  function renderSaleInvoices() {
+    var invoices = (APP.data.saleInvoices || []).slice().reverse();
+    var pendingTx = _getPendingOutTransactions(); // أذونات صادر لم تُفوتَر بعد
+
+    var totalInvoiced = invoices.length;
+    var totalPending = pendingTx.length;
+    var totalAmount = invoices.reduce(function (s, inv) {
+      return s + Number(inv.net_total || 0);
+    }, 0);
+    var unpaidCount = invoices.filter(function (inv) {
+      return inv.payment_status === "آجل";
+    }).length;
+
+    var statsHtml =
+      '<div class="stat-grid" style="margin-bottom:20px">' +
+      statCard(
+        iconBadge("ti-file-invoice", "var(--accent-soft)", "var(--primary)"),
+        "إجمالي الفواتير",
+        totalInvoiced,
+        "فاتورة",
+        "var(--accent-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-clock", "var(--warning-soft)", "var(--warning)"),
+        "في انتظار الفوترة",
+        totalPending,
+        "إذن",
+        "var(--warning-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-currency-pound", "var(--success-soft)", "var(--success)"),
+        "إجمالي المبيعات",
+        formatMoney(totalAmount, { decimals: 0, withSymbol: false }),
+        "ج.م",
+        "var(--success-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-alert-circle", "var(--danger-soft)", "var(--danger)"),
+        "آجل غير محصّل",
+        unpaidCount,
+        "فاتورة",
+        "var(--danger-soft)",
+      ) +
+      "</div>";
+
+    // ── جدول الأذونات المعلّقة ──────────────────────────────────
+    var pendingRows = pendingTx
+      .map(function (tx) {
+        var item =
+          (APP.data.items || []).find(function (i) {
+            return i.id === tx.item_id;
+          }) || {};
+        var d = tx.date ? fmtDate(tx.date) : "—";
+        return (
+          "<tr>" +
+          '<td><span class="mono" style="font-size:11px;color:var(--accent)">' +
+          esc(tx.permit_id || tx.id || "") +
+          "</span></td>" +
+          "<td>" +
+          d +
+          "</td>" +
+          "<td>" +
+          esc(tx.party || "—") +
+          "</td>" +
+          "<td>" +
+          esc(item.name || tx.item_id || "—") +
+          "</td>" +
+          '<td style="text-align:center">' +
+          esc(String(tx.quantity || 0)) +
+          "</td>" +
+          "<td>" +
+          esc(tx.from_warehouse || "—") +
+          "</td>" +
+          "<td>" +
+          esc(tx.user || "—") +
+          "</td>" +
+          "<td>" +
+          withPermission(
+            '<button class="btn btn-primary btn-xs" onclick="openCreateSaleInvoiceModal(\'' +
+              esc(tx.permit_id || tx.id) +
+              '\')" style="white-space:nowrap">' +
+              '<i class="ti ti-file-plus" style="font-size:12px"></i> ' +
+              I18N.t("DASH_CREATE_INVOICE") +
+              "</button>",
+            "addSaleInvoice",
+          ) +
+          "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    var pendingSection =
+      totalPending > 0
+        ? '<div class="card" style="margin-bottom:20px;border:2px solid #FCD34D">' +
+          '<div style="padding:14px 16px;border-bottom:1px solid var(--border);background:#FEFCE8;display:flex;align-items:center;gap:10px">' +
+          iconBadge("ti-clock", "var(--warning-soft)", "var(--warning)") +
+          '<div><b style="color:#92400E">' +
+          I18N.t("DASH_ISSUE_VOUCHERS_PENDING_INVOICE") +
+          "</b>" +
+          '<span style="margin-right:10px;font-size:12px;color:var(--text3)">' +
+          totalPending +
+          " إذن</span></div></div>" +
+          '<div class="table-wrap" style="margin:0"><table>' +
+          "<thead><tr><th>" +
+          I18N.t("PH_PERMIT_NUMBER") +
+          "</th><th>" +
+          I18N.t("LBL_DATE") +
+          "</th><th>" +
+          I18N.t("LBL_CUSTOMER") +
+          "</th><th>" +
+          I18N.t("COL_ITEM") +
+          '</th><th style="text-align:center">' +
+          I18N.t("COL_QTY") +
+          "</th><th>" +
+          I18N.t("LBL_WAREHOUSE") +
+          "</th><th>" +
+          I18N.t("LBL_BY") +
+          "</th><th>" +
+          I18N.t("LBL_ACTION") +
+          "</th></tr></thead>" +
+          "<tbody>" +
+          (pendingRows ||
+            '<tr><td colspan="8" class="empty-state">' +
+              I18N.t("DASH_NO_PENDING_VOUCHERS") +
+              "</td></tr>") +
+          "</tbody>" +
+          "</table></div></div>"
+        : "";
+
+    // ── جدول الفواتير المُصدرة ────────────────────────────────
+    // [COLUMN-ENGINE] الجدول الثابت (Hardcoded <table>) انتقل بالكامل
+    // إلى ColumnEngine (راجع 34_JS_ColumnEngine.html و
+    // _sinvRenderTable/_sinvRegisterColumns في 15_JS_Invoices.html).
+    // الأعمدة الآن Metadata قابلة للتخصيص (إظهار/إخفاء/ترتيب/تثبيت)
+    // بدل كودها هنا، وعمود الشحن انتقل إلى column.format.
+    var tableSection =
+      '<div class="card" style="padding:0;overflow:hidden">' +
+      '<div style="padding:14px 16px;border-bottom:1px solid var(--border);background:var(--surface2);display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+      '<div style="display:flex;gap:6px;align-items:center">' +
+      '<div style="display:flex;gap:4px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:3px">' +
+      '<button class="sinv-filter-btn active" data-status="" style="border:none;background:var(--accent);color:#fff;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">' +
+      I18N.t("LBL_ALL") +
+      "</button>" +
+      '<button class="sinv-filter-btn" data-status="كاش" style="border:none;background:transparent;color:var(--text2);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">' +
+      I18N.t("LBL_CASH") +
+      "</button>" +
+      '<button class="sinv-filter-btn" data-status="آجل" style="border:none;background:transparent;color:var(--text2);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">' +
+      I18N.t("LBL_PAYMENT_DEFERRED") +
+      "</button>" +
+      "</div>" +
+      '<span style="font-size:12px;color:var(--text3);background:var(--bg);border:1px solid var(--border);padding:4px 10px;border-radius:20px;font-weight:600">' +
+      totalInvoiced +
+      " فاتورة</span>" +
+      "</div></div>" +
+      '<div id="sinv-ce-container" style="padding:12px"></div></div>';
+
+    return (
+      '<div class="page-header">' +
+      '<div style="display:flex;align-items:center;gap:12px">' +
+      iconBadge("ti-file-invoice", "var(--accent-soft)", "var(--primary)") +
+      '<div><h1 style="font-size:22px;margin:0">' +
+      I18N.t("PAGE_SALE_INVOICES") +
+      "</h1>" +
+      '<p style="margin:2px 0 0;color:var(--text3);font-size:13px">' +
+      totalInvoiced +
+      " فاتورة — " +
+      totalPending +
+      " إذن في الانتظار</p>" +
+      "</div></div>" +
+      '<div style="display:flex;gap:8px">' +
+      withPermission(
+        '<button class="btn btn-primary" id="sinv-new-btn"><i class="ti ti-plus" style="font-size:14px"></i> ' +
+          I18N.t("DASH_NEW_INVOICE") +
+          "</button>",
+        "addSaleInvoice",
+      ) +
+      "</div></div>" +
+      statsHtml +
+      pendingSection +
+      tableSection
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §renderPurchaseInvoices — فواتير الشراء
+  // ─────────────────────────────────────────────────────────────
+</script>

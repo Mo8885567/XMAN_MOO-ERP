@@ -1,0 +1,764 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 49_JS_SelectionEngine.html — محرك الاختيار الموحّد (AppSelect)
+  // ═══════════════════════════════════════════════════════════════════
+  // [SELECTION-ENGINE] بديل مركزي واحد لكل عناصر الاختيار في النظام
+  // (Select / Dropdown / Multi Select / Searchable Select / Autocomplete /
+  // ComboBox / Lookup / Tree Select / Cascading Select). لا يعتمد على
+  // <select> المتصفح إطلاقًا في الشكل/السلوك — بيستخدم توكِنز وستايلات
+  // Style_14_AppSelect.html فقط. يحل محل SplitSelect.html وinitCustomSelects
+  // (cs-wrap) القديمين تدريجيًا (راجع خطة الترحيل بالتقرير المرفق).
+  //
+  // ── وضعين للاستخدام ──
+  // 1) ترقية <select> موجود (Backward-compatible، الأسهل في الترحيل):
+  //      AppSelect.upgrade('item-filter-wh', {
+  //        icon: 'ti-building-warehouse', placeholder: 'اختر المخزن'
+  //      });
+  //    - بيسيب الـ <select> الأصلي شغال (مخفي) فأي كود قديم بيقرأ
+  //      select.value / بيعمل addEventListener('change', ...) يفضل
+  //      شغال زي ما هو من غير أي تعديل في الشاشات.
+  //
+  // 2) إنشاء مستقل من بيانات مباشرة (للحالات اللي محتاجة صور/شارات/
+  //    Tree/Server Search/آلاف العناصر):
+  //      var inst = AppSelect.create('#container', {
+  //        data: rows, valueField: 'id', textField: 'name',
+  //        multiple: true, searchable: true, virtual: true,
+  //        onChange: function (value, items) { ... }
+  //      });
+  //
+  // ── API مشترك بعد init/upgrade (ترجع instance) ──
+  //   inst.getValue() / inst.setValue(v)
+  //   inst.setOptions(data) / inst.setLoading(bool) / inst.setError(msg)
+  //   inst.open() / inst.close() / inst.destroy()
+  //
+  // كل الأبعاد/الألوان/الظلال/الحركة تتجاب من Style_14_AppSelect.html
+  // فقط — ممنوع أي تعريف شكل داخل الشاشات (راجع Design Tokens Policy).
+  // ═══════════════════════════════════════════════════════════════════
+
+  var AppSelect = (function () {
+    "use strict";
+
+    var REGISTRY = {}; // id -> instance
+    var UID = 0;
+    var VIRTUAL_THRESHOLD = 200; // عدد عناصر يفعّل بيه Virtual Scrolling تلقائيًا
+    var SEARCH_THRESHOLD = 10; // عدد عناصر يظهر بيه صندوق البحث تلقائيًا (متطلب رابعاً)
+    var ITEM_H = 40;
+
+    // ── أدوات عامة ──
+    function esc(s) {
+      return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+      });
+    }
+    function debounce(fn, ms) {
+      var t;
+      return function () {
+        var args = arguments, ctx = this;
+        clearTimeout(t);
+        t = setTimeout(function () { fn.apply(ctx, args); }, ms);
+      };
+    }
+    function norm(v) {
+      return String(v == null ? "" : v).toLowerCase()
+        .replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه");
+    }
+    function highlight(text, q) {
+      if (!q) return esc(text);
+      var t = String(text == null ? "" : text);
+      var i = norm(t).indexOf(norm(q));
+      if (i === -1) return esc(t);
+      return esc(t.slice(0, i)) + "<mark>" + esc(t.slice(i, i + q.length)) + "</mark>" + esc(t.slice(i + q.length));
+    }
+    function isRTL() {
+      return (document.documentElement.getAttribute("dir") || "ltr").toLowerCase() === "rtl";
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // §1 — الفئة الأساسية Instance
+    // ═══════════════════════════════════════════════════════════════
+    function Instance(root, opts) {
+      this.id = "as_" + (++UID);
+      this.root = root;
+      this.opts = opts;
+      this.multiple = !!opts.multiple;
+      this.valueField = opts.valueField || "value";
+      this.textField = opts.textField || "text";
+      this.iconField = opts.iconField || null;
+      this.imageField = opts.imageField || null;
+      this.hexField = opts.hexField || null;
+      this.badgeField = opts.badgeField || null;
+      this.descField = opts.descField || null;
+      this.groupField = opts.groupField || null;
+      this.childrenField = opts.childrenField || (opts.tree ? "children" : null);
+      this.disabledField = opts.disabledField || "disabled";
+      this._rawData = [];
+      this._flat = []; // بعد التسطيح (Tree) والتجميع
+      this._filtered = [];
+      this._expanded = {}; // Tree: parentId -> bool
+      this._value = this.multiple ? [] : null;
+      this._query = "";
+      this._open = false;
+      this._activeIndex = -1;
+      this._cache = {};
+      this._nativeSelect = opts._nativeSelect || null;
+      this._destroyed = false;
+
+      this._buildDOM();
+      this._bindEvents();
+
+      if (typeof opts.data === "function") {
+        this.setLoading(true);
+        Promise.resolve(opts.data()).then(function (rows) {
+          this.setLoading(false);
+          this.setOptions(rows || []);
+          if (opts.value !== undefined) this.setValue(opts.value);
+        }.bind(this)).catch(function (err) {
+          this.setLoading(false);
+          this.setError((err && err.message) || "تعذّر تحميل البيانات");
+        }.bind(this));
+      } else {
+        this.setOptions(opts.data || []);
+        if (opts.value !== undefined) this.setValue(opts.value, true);
+      }
+
+      REGISTRY[this.id] = this;
+    }
+
+    Instance.prototype._buildDOM = function () {
+      var o = this.opts;
+      var root = this.root;
+      root.classList.add("as-root");
+      root.setAttribute("data-size", o.size || "md");
+      // [ICON-ONLY-TRIGGER] المنسدل بيظهر كأيقونة فقط (بدون نص) وهو
+      // مقفول — بيُستخدم لمنسدلات صغيرة زي "طريقة توليد الكود" (تلقائي/
+      // يدوي) عشان ما ياخدش مساحة كبيرة جنب حقل الكود. النص/الأيقونة
+      // الكاملة بتفضل ظاهرة عادي جوه القائمة المفتوحة (_optionHTML).
+      if (o.iconOnlyTrigger) root.classList.add("as-icon-trigger");
+
+      // ── Accessibility (بند تاسعاً): combobox/listbox pattern كامل ──
+      root.setAttribute("role", "combobox");
+      root.setAttribute("aria-haspopup", "listbox");
+      root.setAttribute("aria-expanded", "false");
+      root.setAttribute("aria-controls", this.id + "-listbox");
+      if (o.ariaLabel) root.setAttribute("aria-label", o.ariaLabel);
+      root.setAttribute("tabindex", o.disabled ? "-1" : "0");
+      if (o.disabled) root.setAttribute("aria-disabled", "true");
+      if (o.required) { root.classList.add("as-required"); root.setAttribute("aria-required", "true"); }
+
+      var trigger = document.createElement("div");
+      trigger.className = "as-trigger";
+      trigger.innerHTML =
+        ((o.icon || o.iconOnlyTrigger) ? '<span class="as-icon"><i class="ti ' + esc(o.icon || "ti-adjustments") + '" aria-hidden="true"></i></span>' : "") +
+        (this.multiple
+          ? '<div class="as-tags"></div>'
+          : '<div class="as-value as-placeholder"></div>') +
+        (o.required ? '<span class="as-required-mark" aria-hidden="true">*</span>' : "") +
+        '<span class="as-clear" title="مسح" role="button" aria-label="مسح"><i class="ti ti-x"></i></span>' +
+        '<span class="as-spinner" role="status" aria-live="polite"></span>' +
+        // [INLINE-ADD-2026-08-06] زرار "+" جوه صندوق الـ select، جنب السهم
+        // المنسد مباشرة (بدل زرار خارجي منفصل). يُفعَّل فقط لو opts.addAction
+        // موجود. راجع Style_14_AppSelect.html (.as-inline-add) و
+        // SplitSelect.html اللي بتمرر الخيار ده.
+        (o.addAction
+          ? '<span class="as-inline-add" title="' + esc(o.addAction.title || "إضافة") + '" role="button" aria-label="' + esc(o.addAction.title || "إضافة") + '"><i class="ti ' + esc(o.addAction.icon || "ti-plus") + '"></i></span>'
+          : "") +
+        '<span class="as-chevron" aria-hidden="true"><i class="ti ti-chevron-down"></i></span>';
+      root.appendChild(trigger);
+
+      var errMsg = document.createElement("div");
+      errMsg.className = "as-error-msg";
+      errMsg.setAttribute("role", "alert");
+      root.appendChild(errMsg);
+
+      var panel = document.createElement("div");
+      panel.id = this.id + "-listbox-panel";
+      panel.className = "as-panel";
+      panel.setAttribute("data-size", o.size || "md");
+      panel.innerHTML =
+        '<div class="as-search-row" style="display:none">' +
+        '<i class="ti ti-search" aria-hidden="true"></i>' +
+        '<input type="text" class="as-search-input" autocomplete="off" aria-label="' + esc(o.searchPlaceholder || "بحث...") + '" placeholder="' + esc(o.searchPlaceholder || "بحث...") + '">' +
+        "</div>" +
+        '<div class="as-list"><div class="as-viewport" id="' + this.id + '-listbox" role="listbox" aria-multiselectable="' + (this.multiple ? "true" : "false") + '"></div></div>' +
+        (this.multiple ? '<div class="as-footer"><button type="button" data-act="clear">مسح الكل</button><button type="button" data-act="all">تحديد الكل</button></div>' : "");
+      document.body.appendChild(panel);
+
+      this.el = { trigger: trigger, errMsg: errMsg, panel: panel,
+        value: trigger.querySelector(".as-value"), tags: trigger.querySelector(".as-tags"),
+        clear: trigger.querySelector(".as-clear"), inlineAdd: trigger.querySelector(".as-inline-add"),
+        icon: trigger.querySelector(".as-icon"),
+        searchRow: panel.querySelector(".as-search-row"),
+        searchInput: panel.querySelector(".as-search-input"), list: panel.querySelector(".as-list"),
+        viewport: panel.querySelector(".as-viewport") };
+
+      if (o.disabled) root.setAttribute("data-disabled", "true");
+      if (o.readOnly) { root.setAttribute("data-readonly", "true"); root.setAttribute("aria-readonly", "true"); }
+    };
+
+    Instance.prototype._bindEvents = function () {
+      var self = this;
+      var o = this.opts;
+
+      this.el.trigger.addEventListener("click", function (e) {
+        if (self.root.getAttribute("data-disabled") === "true" || self.root.getAttribute("data-readonly") === "true") return;
+        if (e.target.closest(".as-clear")) { e.stopPropagation(); self.clear(); return; }
+        if (e.target.closest(".as-inline-add")) {
+          e.stopPropagation();
+          self.close();
+          if (o.addAction && typeof o.addAction.onClick === "function") o.addAction.onClick(self);
+          return;
+        }
+        self._open ? self.close() : self.open();
+      });
+
+      this.root.addEventListener("keydown", function (e) { self._onKeydown(e); });
+
+      var doSearch = debounce(function (q) { self._onSearch(q); }, 180);
+      this.el.searchInput.addEventListener("input", function () { doSearch(this.value); });
+      this.el.searchInput.addEventListener("click", function (e) { e.stopPropagation(); });
+
+      this.el.viewport.addEventListener("click", function (e) {
+        var toggle = e.target.closest(".as-opt-tree-toggle");
+        if (toggle) { e.stopPropagation(); self._toggleExpand(toggle.closest(".as-option").getAttribute("data-key")); return; }
+        var row = e.target.closest(".as-option");
+        if (!row || row.classList.contains("as-disabled")) return;
+        self._selectByKey(row.getAttribute("data-key"));
+      });
+
+      this.el.panel.addEventListener("click", function (e) {
+        var act = e.target.closest("[data-act]");
+        if (!act) return;
+        if (act.getAttribute("data-act") === "clear") self.clear();
+        if (act.getAttribute("data-act") === "all") self._selectAllVisible();
+      });
+
+      this.el.list.addEventListener("scroll", function () { if (self._virtual) self._renderVirtual(); });
+
+      document.addEventListener("click", function (e) {
+        if (self._destroyed) return;
+        if (!self.root.contains(e.target) && !self.el.panel.contains(e.target)) self.close();
+      });
+      window.addEventListener("resize", function () { if (self._open) self._position(); });
+      window.addEventListener("scroll", function () { if (self._open) self._position(); }, true);
+    };
+
+    // ═══ §2 — البيانات: Static / Tree / Grouping ═══
+    Instance.prototype.setOptions = function (rows, silent) {
+      this._rawData = rows || [];
+      this._rebuildFlat();
+      this._applyFilter();
+      this._syncNativeSelect(silent);
+      this._renderValue();
+    };
+
+    Instance.prototype._rebuildFlat = function () {
+      var self = this;
+      var out = [];
+      function walk(list, depth, parentKey) {
+        list.forEach(function (item, i) {
+          var key = String(item[self.valueField]);
+          out.push({ raw: item, key: key, depth: depth, parentKey: parentKey,
+            hasChildren: !!(self.childrenField && item[self.childrenField] && item[self.childrenField].length) });
+          if (self.childrenField && item[self.childrenField] && self._expanded[key]) {
+            walk(item[self.childrenField], depth + 1, key);
+          }
+        });
+      }
+      if (this.childrenField) {
+        walk(this._rawData, 0, null);
+      } else if (this.groupField) {
+        var groups = {};
+        var order = [];
+        this._rawData.forEach(function (item) {
+          var g = item[self.groupField] || "";
+          if (!groups[g]) { groups[g] = []; order.push(g); }
+          groups[g].push(item);
+        });
+        order.forEach(function (g) {
+          if (g) out.push({ isGroupLabel: true, key: "__g_" + g, label: g });
+          groups[g].forEach(function (item) { out.push({ raw: item, key: String(item[self.valueField]), depth: 0 }); });
+        });
+      } else {
+        this._rawData.forEach(function (item) { out.push({ raw: item, key: String(item[self.valueField]), depth: 0 }); });
+      }
+      this._flat = out;
+      this._virtual = (this.opts.virtual !== false) && out.length > VIRTUAL_THRESHOLD;
+    };
+
+    Instance.prototype._toggleExpand = function (key) {
+      this._expanded[key] = !this._expanded[key];
+      this._rebuildFlat();
+      this._applyFilter();
+    };
+
+    // ═══ §3 — البحث (فوري + عربي/إنجليزي + كود/اسم + Server-side) ═══
+    Instance.prototype._onSearch = function (q) {
+      this._query = q || "";
+      this._activeIndex = -1;
+      if (this.opts.serverSearch) {
+        var self = this;
+        var cacheKey = this._query;
+        if (this._cache[cacheKey]) { this._applyServerResult(this._cache[cacheKey]); return; }
+        this.setLoading(true);
+        Promise.resolve(this.opts.serverSearch(this._query)).then(function (rows) {
+          self.setLoading(false);
+          self._cache[cacheKey] = rows || [];
+          self._applyServerResult(rows || []);
+        }).catch(function () { self.setLoading(false); self._renderList([]); });
+        return;
+      }
+      this._applyFilter();
+    };
+
+    Instance.prototype._applyServerResult = function (rows) {
+      this._rawData = rows;
+      this._rebuildFlat();
+      this._filtered = this._flat.slice();
+      this._renderList(this._filtered);
+    };
+
+    Instance.prototype._applyFilter = function () {
+      var self = this;
+      var q = this._query.trim();
+      if (!q) { this._filtered = this._flat.slice(); this._renderList(this._filtered); return; }
+      var codeField = this.opts.codeField;
+      this._filtered = this._flat.filter(function (row) {
+        if (row.isGroupLabel) return false;
+        var text = row.raw[self.textField];
+        var code = codeField ? row.raw[codeField] : null;
+        return norm(text).indexOf(norm(q)) !== -1 || (code && norm(code).indexOf(norm(q)) !== -1);
+      });
+      this._renderList(this._filtered);
+    };
+
+    // ═══ §4 — الرسم (عادي أو Virtual Scrolling) ═══
+    Instance.prototype._optionHTML = function (row) {
+      if (row.isGroupLabel) return '<div class="as-group-label">' + esc(row.label) + "</div>";
+      var self = this;
+      var item = row.raw;
+      var text = item[self.textField];
+      var selected = this.multiple ? this._value.indexOf(row.key) !== -1 : String(this._value) === row.key;
+      var disabled = !!item[self.disabledField];
+      var cls = "as-option" + (selected ? " as-selected" : "") + (disabled ? " as-disabled" : "");
+      var media = "";
+      if (self.imageField && item[self.imageField]) media = '<img class="as-opt-media" src="' + esc(item[self.imageField]) + '">';
+      else if (self.hexField && item[self.hexField]) media = '<span class="as-opt-swatch" style="display:inline-block;width:12px;height:12px;border-radius:50%;background:' + esc(item[self.hexField]) + ';border:1px solid rgba(0,0,0,.15);flex-shrink:0"></span>';
+      else if (self.iconField && item[self.iconField]) media = '<span class="as-opt-icon"><i class="ti ' + esc(item[self.iconField]) + '"></i></span>';
+      var toggle = row.hasChildren
+        ? '<span class="as-opt-tree-toggle' + (self._expanded[row.key] ? " as-expanded" : "") + '"><i class="ti ti-chevron-right"></i></span>'
+        : (row.depth ? '<span style="width:18px;flex:0 0 auto"></span>' : "");
+      var desc = self.descField && item[self.descField] ? '<div class="as-opt-desc">' + esc(item[self.descField]) + "</div>" : "";
+      var badge = self.badgeField && item[self.badgeField] != null ? '<span class="as-opt-badge">' + esc(item[self.badgeField]) + "</span>" : "";
+      return '<div class="' + cls + '" id="' + self.id + '-opt-' + esc(row.key) + '" data-key="' + esc(row.key) + '" data-indent' + (self.multiple ? " data-multi" : "") +
+        ' style="--as-depth:' + (row.depth || 0) + '" role="option" aria-selected="' + selected + '"' + (disabled ? ' aria-disabled="true"' : "") + '>' +
+        toggle +
+        '<span class="as-opt-check"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M13.7 3.7 6 11.4 2.3 7.7 1 9l5 5 9-9z"/></svg></span>' +
+        media +
+        '<span class="as-opt-body"><span class="as-opt-name">' + highlight(text, self._query) + "</span>" + desc + "</span>" +
+        badge + "</div>";
+    };
+
+    Instance.prototype._renderList = function (rows) {
+      if (this.opts.loading) return;
+      if (!rows || !rows.length) {
+        this.el.viewport.innerHTML = '<div class="as-empty"><i class="ti ti-mood-empty" style="font-size:22px"></i>' +
+          esc(this.opts.emptyText || "لا توجد نتائج") + "</div>";
+        this.el.viewport.style.height = "";
+        return;
+      }
+      if (this._virtual) { this._renderVirtual(rows); return; }
+      this.el.viewport.style.position = "static";
+      this.el.viewport.style.height = "";
+      this.el.viewport.innerHTML = rows.map(this._optionHTML.bind(this)).join("");
+    };
+
+    Instance.prototype._renderVirtual = function (rowsArg) {
+      var rows = rowsArg || this._filtered;
+      var listH = this.el.list.clientHeight || 320;
+      var scrollTop = this.el.list.scrollTop;
+      var total = rows.length * ITEM_H;
+      this.el.viewport.style.position = "relative";
+      this.el.viewport.style.height = total + "px";
+      var startIdx = Math.max(0, Math.floor(scrollTop / ITEM_H) - 4);
+      var endIdx = Math.min(rows.length, Math.ceil((scrollTop + listH) / ITEM_H) + 4);
+      var html = "";
+      for (var i = startIdx; i < endIdx; i++) {
+        html += '<div style="position:absolute;top:' + (i * ITEM_H) + 'px;left:0;right:0">' + this._optionHTML(rows[i]) + "</div>";
+      }
+      this.el.viewport.innerHTML = html;
+    };
+
+    // ═══ §5 — الاختيار / القيمة ═══
+    Instance.prototype._findRow = function (key) {
+      for (var i = 0; i < this._flat.length; i++) if (this._flat[i].key === key && !this._flat[i].isGroupLabel) return this._flat[i];
+      return null;
+    };
+
+    Instance.prototype._selectByKey = function (key) {
+      if (this.multiple) {
+        var idx = this._value.indexOf(key);
+        if (idx === -1) this._value.push(key); else this._value.splice(idx, 1);
+        this._commit();
+        this._renderList(this._filtered.length ? this._filtered : this._flat);
+      } else {
+        this._value = key;
+        this._commit();
+        this.close();
+      }
+    };
+
+    Instance.prototype._selectAllVisible = function () {
+      var self = this;
+      (this._filtered.length ? this._filtered : this._flat).forEach(function (r) {
+        if (!r.isGroupLabel && self._value.indexOf(r.key) === -1) self._value.push(r.key);
+      });
+      this._commit();
+      this._renderList(this._filtered.length ? this._filtered : this._flat);
+    };
+
+    Instance.prototype.clear = function (e) {
+      if (e) e.stopPropagation();
+      this._value = this.multiple ? [] : null;
+      this._commit();
+    };
+
+    Instance.prototype._commit = function () {
+      this._renderValue();
+      this._syncNativeSelect();
+      this.setError(false);
+      if (typeof this.opts.onChange === "function") {
+        this.opts.onChange(this.getValue(), this._selectedItems());
+      }
+      this.root.dispatchEvent(new CustomEvent("as-change", { bubbles: true, detail: { value: this.getValue() } }));
+    };
+
+    Instance.prototype._selectedItems = function () {
+      var self = this;
+      var keys = this.multiple ? this._value : [this._value];
+      return this._rawDataFlatAll().filter(function (r) { return keys.indexOf(r.key) !== -1; }).map(function (r) { return r.raw; });
+    };
+
+    Instance.prototype._rawDataFlatAll = function () {
+      // بيرجع كل الصفوف بما فيها الأبناء غير المفتوحين حاليًا (لعرض التاجز صح)
+      var self = this, out = [];
+      function walk(list) {
+        list.forEach(function (item) {
+          out.push({ key: String(item[self.valueField]), raw: item });
+          if (self.childrenField && item[self.childrenField]) walk(item[self.childrenField]);
+        });
+      }
+      walk(this._rawData);
+      return out;
+    };
+
+    Instance.prototype._renderValue = function () {
+      var self = this;
+      this.root.classList.toggle("as-has-value", this.multiple ? this._value.length > 0 : (this._value !== null && this._value !== "" && this._value !== undefined));
+      if (this.multiple) {
+        var items = this._selectedItems();
+        if (!items.length) {
+          this.el.tags.innerHTML = '<span class="as-value as-placeholder">' + esc(this.opts.placeholder || "اختر...") + "</span>";
+          return;
+        }
+        var MAX_SHOW = 3;
+        var html = items.slice(0, MAX_SHOW).map(function (it) {
+          return '<span class="as-tag"><span>' + esc(it[self.textField]) + '</span><i class="ti ti-x" data-key="' + esc(String(it[self.valueField])) + '"></i></span>';
+        }).join("");
+        if (items.length > MAX_SHOW) html += '<span class="as-tag-more">+' + (items.length - MAX_SHOW) + "</span>";
+        this.el.tags.innerHTML = html;
+        this.el.tags.querySelectorAll(".as-tag i").forEach(function (x) {
+          x.addEventListener("click", function (e) { e.stopPropagation(); self._selectByKey(x.getAttribute("data-key")); });
+        });
+      } else {
+        var row = this._findRow(String(this._value));
+        if (!row) {
+          this.el.value.className = "as-value as-placeholder";
+          this.el.value.textContent = this.opts.placeholder || "اختر...";
+        } else {
+          this.el.value.className = "as-value";
+          this.el.value.textContent = row.raw[this.textField];
+        }
+        // [ICON-ONLY-TRIGGER] حدّث أيقونة الـ trigger حسب العنصر المختار
+        // حاليًا (باستخدام iconField)، وحط النص الكامل كـ title (tooltip)
+        // عشان المستخدم يقدر يعرف الوضع الحالي وهو مقفول من غير ما يفتح.
+        if (this.opts.iconOnlyTrigger && this.el.icon) {
+          var curText = row ? row.raw[this.textField] : (this.opts.placeholder || "");
+          var curIcon = (row && self.iconField && row.raw[self.iconField]) || this.opts.icon || "ti-adjustments";
+          this.el.icon.innerHTML = '<i class="ti ' + esc(curIcon) + '" aria-hidden="true"></i>';
+          this.root.title = curText || "";
+        }
+      }
+    };
+
+    // مزامنة مع <select> الأصلي لو في وضع upgrade — للحفاظ على التوافق
+    // الكامل مع الكود القديم اللي بيقرأ select.value / بيعمل submit ﻟﻠﻔﻮﺭم
+    // [FIX-2026-08-05] لازم نستقبل silent ونمرره من setValue/refresh: من
+    // غيرها، أي refresh() برمجي (زي كاسكيد مخزن↔مجموعة) بيدي dispatch
+    // لحدث change حتى لو مفيش تغيير فعلي من المستخدم، فلو في select تاني
+    // مرتبط بيرد بنفس الطريقة (refresh على الأول تاني) بيدخلوا في حلقة
+    // لا نهائية (Maximum call stack). دلوقتي: change بيتبعت بس لو مش silent.
+    Instance.prototype._syncNativeSelect = function (silent) {
+      var ns = this._nativeSelect;
+      if (!ns) return;
+      if (this.multiple) {
+        Array.prototype.forEach.call(ns.options, function (o) { o.selected = false; });
+        this._value.forEach(function (v) {
+          var o = ns.querySelector('option[value="' + CSS.escape(String(v)) + '"]');
+          if (o) o.selected = true;
+        });
+      } else {
+        ns.value = this._value == null ? "" : this._value;
+      }
+      if (!silent) ns.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+
+    // ═══ §6 — فتح/غلق + Smart Positioning ═══
+    Instance.prototype.open = function () {
+      if (this._open || this.root.getAttribute("data-disabled") === "true") return;
+      document.querySelectorAll(".as-panel.as-visible").forEach(function (p) {
+        var inst = p._instRef; if (inst && inst !== this) inst.close();
+      }.bind(this));
+      this._open = true;
+      this.root.classList.add("as-open");
+      this.root.setAttribute("aria-expanded", "true");
+      this.el.panel._instRef = this;
+      var showSearch = this.opts.searchable !== false && (this.opts.searchable || this._flat.length > SEARCH_THRESHOLD || this.opts.serverSearch);
+      this.el.searchRow.style.display = showSearch ? "flex" : "none";
+      this._query = "";
+      this.el.searchInput.value = "";
+      this._applyFilter();
+      this._position();
+      requestAnimationFrame(function () { this.el.panel.classList.add("as-visible"); }.bind(this));
+      if (showSearch) setTimeout(function () { this.el.searchInput.focus(); }.bind(this), 30);
+    };
+
+    Instance.prototype.close = function () {
+      if (!this._open) return;
+      this._open = false;
+      this.root.classList.remove("as-open");
+      this.root.setAttribute("aria-expanded", "false");
+      this.root.removeAttribute("aria-activedescendant");
+      this.el.panel.classList.remove("as-visible");
+    };
+
+    Instance.prototype._position = function () {
+      var rect = this.root.getBoundingClientRect();
+      var panel = this.el.panel;
+      var vh = window.innerHeight, vw = window.innerWidth;
+      var estH = Math.min(360, 60 + this._flat.length * ITEM_H);
+      var spaceBelow = vh - rect.bottom, spaceAbove = rect.top;
+      var openUp = spaceBelow < estH && spaceAbove > spaceBelow;
+      panel.classList.toggle("as-panel-up", openUp);
+      // [ICON-TRIGGER-PANEL-WIDTH-2026-08-07] كان عرض اللوحة = عرض الـ
+      // trigger بالظبط (rect.width). ده مظبوط لـ trigger عادي (نص+سهم)
+      // بس بيكسر القائمة تمامًا لو iconOnlyTrigger (زرار أيقونة صغير
+      // ~36px بس) — النص جوه الخيارات كان بيتزنق/يختفي فعليًا. اللوحة
+      // دلوقتي بتاخد أكبر قيمة بين عرض الـ trigger وحد أدنى معقول
+      // (180px لو iconOnlyTrigger، وإلا مفيش حد أدنى إضافي).
+      var panelWidth = Math.max(rect.width, this.opts.iconOnlyTrigger ? 180 : rect.width);
+      panel.style.width = panelWidth + "px";
+      panel.style.left = Math.max(4, Math.min(rect.left, vw - panelWidth - 4)) + "px";
+      if (openUp) { panel.style.bottom = (vh - rect.top + 6) + "px"; panel.style.top = "auto"; }
+      else { panel.style.top = (rect.bottom + 6) + "px"; panel.style.bottom = "auto"; }
+    };
+
+    // ═══ §7 — لوحة المفاتيح ═══
+    Instance.prototype._onKeydown = function (e) {
+      var rows = (this._filtered.length ? this._filtered : this._flat).filter(function (r) { return !r.isGroupLabel; });
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          if (!this._open) { this.open(); return; }
+          this._activeIndex = Math.min(rows.length - 1, this._activeIndex + 1);
+          this._scrollActiveIntoView(rows);
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          if (!this._open) { this.open(); return; }
+          this._activeIndex = Math.max(0, this._activeIndex - 1);
+          this._scrollActiveIntoView(rows);
+          break;
+        case "Home":
+          if (this._open) { e.preventDefault(); this._activeIndex = 0; this._scrollActiveIntoView(rows); }
+          break;
+        case "End":
+          if (this._open) { e.preventDefault(); this._activeIndex = rows.length - 1; this._scrollActiveIntoView(rows); }
+          break;
+        case "PageDown":
+          if (this._open) { e.preventDefault(); this._activeIndex = Math.min(rows.length - 1, this._activeIndex + 8); this._scrollActiveIntoView(rows); }
+          break;
+        case "PageUp":
+          if (this._open) { e.preventDefault(); this._activeIndex = Math.max(0, this._activeIndex - 8); this._scrollActiveIntoView(rows); }
+          break;
+        case "Enter":
+          if (this._open && this._activeIndex >= 0 && rows[this._activeIndex]) {
+            e.preventDefault();
+            this._selectByKey(rows[this._activeIndex].key);
+          } else if (!this._open) { this.open(); }
+          break;
+        case "Escape":
+          if (this._open) { e.preventDefault(); this.close(); }
+          break;
+        case "Tab":
+          this.close();
+          break;
+      }
+    };
+
+    Instance.prototype._scrollActiveIntoView = function (rows) {
+      this.el.viewport.querySelectorAll(".as-option").forEach(function (o) { o.classList.remove("as-active"); });
+      if (this._virtual) {
+        this.el.list.scrollTop = this._activeIndex * ITEM_H - this.el.list.clientHeight / 2;
+        this._renderVirtual(rows);
+      }
+      var activeRow = rows[this._activeIndex];
+      var el = this.el.viewport.querySelector('[data-key="' + CSS.escape(activeRow ? activeRow.key : "") + '"]');
+      if (el) {
+        el.classList.add("as-active");
+        el.scrollIntoView({ block: "nearest" });
+        this.root.setAttribute("aria-activedescendant", el.id);
+      } else {
+        this.root.removeAttribute("aria-activedescendant");
+      }
+    };
+
+    // ═══ §8 — Public state helpers ═══
+    Instance.prototype.getValue = function () { return this.multiple ? this._value.slice() : this._value; };
+    Instance.prototype.setValue = function (v, silent) {
+      this._value = this.multiple ? (Array.isArray(v) ? v.map(String) : []) : (v == null ? null : String(v));
+      this._renderValue();
+      this._syncNativeSelect(silent);
+      if (!silent && typeof this.opts.onChange === "function") this.opts.onChange(this.getValue(), this._selectedItems());
+    };
+    Instance.prototype.setLoading = function (state) {
+      this.opts.loading = state;
+      this.root.setAttribute("data-loading", state ? "true" : "false");
+      if (state) this.el.viewport.innerHTML = '<div class="as-loading-row"><span class="as-spinner" style="display:block"></span> جاري التحميل...</div>';
+      else this._renderList(this._filtered.length ? this._filtered : this._flat);
+    };
+    Instance.prototype.setError = function (msg) {
+      this.root.setAttribute("data-error", msg ? "true" : "false");
+      this.el.errMsg.textContent = msg || "";
+    };
+    Instance.prototype.setDisabled = function (state) {
+      this.root.setAttribute("data-disabled", state ? "true" : "false");
+      this.root.setAttribute("aria-disabled", state ? "true" : "false");
+      this.root.setAttribute("tabindex", state ? "-1" : "0");
+    };
+    Instance.prototype.setReadOnly = function (state) {
+      this.root.setAttribute("data-readonly", state ? "true" : "false");
+      this.root.setAttribute("aria-readonly", state ? "true" : "false");
+    };
+    Instance.prototype.destroy = function () {
+      this._destroyed = true;
+      this.el.panel.remove();
+      if (this._nativeSelect) this._nativeSelect.style.display = "";
+      delete REGISTRY[this.id];
+    };
+
+    // ═══════════════════════════════════════════════════════════════
+    // §9 — Public factory: create() و upgrade()
+    // ═══════════════════════════════════════════════════════════════
+    function create(idOrEl, opts) {
+      var container = typeof idOrEl === "string" ? document.querySelector(idOrEl) || document.getElementById(idOrEl) : idOrEl;
+      if (!container) return null;
+      opts = opts || {};
+      return new Instance(container, opts);
+    }
+
+    function upgrade(idOrEl, opts) {
+      var select = typeof idOrEl === "string" ? document.getElementById(idOrEl) : idOrEl;
+      if (!select || select.tagName !== "SELECT") return null;
+      if (select.dataset.asInit) return REGISTRY[select.dataset.asInit] || null;
+
+      opts = opts || {};
+      // [ICON-PER-OPTION] لو الـ <option> فيه data-icon، بننقله لصف
+      // البيانات تحت مفتاح icon، عشان opts.iconField (لو اتحدد) يقدر
+      // يعرضه في القائمة/الـ trigger من غير ما نغيّر شكل أي select تاني
+      // ملوش data-icon (بيفضل زي ما هو بالظبط).
+      var rows = Array.prototype.map.call(select.options, function (o) {
+        var iconAttr = o.getAttribute("data-icon");
+        var hexAttr = o.getAttribute("data-hex");
+        return {
+          value: o.value,
+          text: o.textContent,
+          disabled: o.disabled,
+          icon: iconAttr || undefined,
+          hex: hexAttr || undefined,
+        };
+      });
+
+      var wrap = document.createElement("div");
+      wrap.id = (select.id || "as") + "-wrap";
+      select.style.display = "none";
+      select.parentNode.insertBefore(wrap, select);
+      wrap.appendChild(select);
+
+      opts.data = opts.data || rows;
+      opts.valueField = opts.valueField || "value";
+      opts.textField = opts.textField || "text";
+      opts.hexField = opts.hexField || (rows.some(function (r) { return r.hex; }) ? "hex" : null);
+      opts.multiple = opts.multiple != null ? opts.multiple : select.multiple;
+      opts._nativeSelect = select;
+      opts.value = opts.value !== undefined ? opts.value
+        : (select.multiple ? Array.prototype.filter.call(select.options, function (o) { return o.selected; }).map(function (o) { return o.value; })
+          : select.value);
+
+      var inst = new Instance(wrap, opts);
+      select.dataset.asInit = inst.id;
+      return inst;
+    }
+
+    function upgradeAll(container, opts) {
+      var scope = container ? (typeof container === "string" ? document.querySelector(container) : container) : document;
+      var out = [];
+      scope.querySelectorAll("select:not([data-as-init]):not([data-as-skip])").forEach(function (sel) {
+        out.push(upgrade(sel, Object.assign({}, opts)));
+      });
+      return out;
+    }
+
+    // إعادة قراءة الـ <option> من select الأصلي بعد ما كود الشاشة يغيّر
+    // innerHTML بتاعه يدويًا (حالة الـ Cascading Select — مجموعة بتتفلتر
+    // حسب مخزن مختار مثلاً). بيحافظ على القيمة الحالية لو لسه موجودة.
+    function refresh(idOrEl) {
+      var select = typeof idOrEl === "string" ? document.getElementById(idOrEl) : idOrEl;
+      if (!select || !select.dataset || !select.dataset.asInit) return;
+      var inst = REGISTRY[select.dataset.asInit];
+      if (!inst) return;
+      var rows = Array.prototype.map.call(select.options, function (o) {
+        var iconAttr = o.getAttribute("data-icon");
+        var hexAttr = o.getAttribute("data-hex");
+        return {
+          value: o.value,
+          text: o.textContent,
+          disabled: o.disabled,
+          icon: iconAttr || undefined,
+          hex: hexAttr || undefined,
+        };
+      });
+      var curVal = inst.multiple
+        ? Array.prototype.filter.call(select.options, function (o) { return o.selected; }).map(function (o) { return o.value; })
+        : select.value;
+      inst.setOptions(rows, true);
+      inst.setValue(curVal, true);
+    }
+
+    function get(idOrEl) {
+      if (typeof idOrEl !== "string") return idOrEl;
+      var select = document.getElementById(idOrEl);
+      if (select && select.dataset && select.dataset.asInit) return REGISTRY[select.dataset.asInit];
+      return REGISTRY[idOrEl] || null;
+    }
+
+    return {
+      create: create,
+      upgrade: upgrade,
+      upgradeAll: upgradeAll,
+      get: get,
+      refresh: refresh,
+      VIRTUAL_THRESHOLD: VIRTUAL_THRESHOLD,
+      SEARCH_THRESHOLD: SEARCH_THRESHOLD,
+    };
+  })();
+</script>

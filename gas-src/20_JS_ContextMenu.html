@@ -1,0 +1,1211 @@
+<script>
+  // ════════════════════════════════════════════════════════════════════════
+  //  20_JS_ContextMenu.html — [CTX-ENGINE-REBUILD 2026-07-16]
+  //  محرك موحّد واحد لقوائم السياق (كليك يمين) على مستوى النظام بالكامل.
+  //
+  // ملاحظة تاريخية مهمة: هذا الملف كان يحتوي فعليًا على نسخة طبق الأصل
+  //  من Code_20_Sales.js (نفس كل الدوال حرفيًا: getSaleInvoices,
+  //  addSaleInvoice, getCustomers... إلخ) — محتوى سيرفر-سايد اتحط غلط في
+  //  ملف بالاسم ده، وبدون أي وسم إحاطة سكريبت حوله، يعني كان بيتقرا من
+  //  القرص في كل تحميل صفحة (lazyScriptFiles) لكن بيترجع فاضي تمامًا (لأن
+  //  آلية التحميل بتستخرج محتوى وسم السكريبت فقط عبر Regex) — أي إهدار
+  //  كامل بدون أي فايدة. المحتوى الحقيقي محفوظ فعلاً وسليم في
+  //  Code_20_Sales.js (تم التأكد بالمقارنة الحرفية الكاملة، صفر فروق)
+  //  فمفيش أي داتا أو منطق اتفقد بحذفه من هنا.
+  //
+  // تحذير لأي تعديل مستقبلي على هذا الملف: ممنوع كتابة النص الحرفي
+  //  لوسم فتح/قفل السكريبت جوه أي تعليق بالملف ده — لأن دالة الاستخراج في
+  //  Code_12_Core.js بتستخدم Regex غير-جشع (non-greedy) بيوقف عند أول
+  //  تطابق قفل يلاقيه، حتى لو جوه تعليق نصي، فبيقطع الملف الفعلي منتصف
+  //  الطريق (زي بالظبط الغلطة اللي كسرت الملف ده قبل كده). لو محتاج تتكلم
+  //  عن الوسم في تعليق، استخدم عبارة "وسم السكريبت" بدل كتابته حرفيًا.
+  //
+  //  الأخطر: window.CTX نفسه — الكائن اللي عشرات الشاشات بتنادي عليه فعليًا
+  //  (CTX.register(...)) عبر النمط الموحّد:
+  //      if (window.CTX) CTX.register(container, "menuType");
+  //  — كان غير معرَّف في المشروع كله. الاستدعاء موحّد بالفعل من زمان
+  //  (وده حاجة كويسة)، لكن المحرك نفسه ضاع في مكان ما أثناء إعادة الهيكلة
+  //  ومحدش لاحظ لأن الـ guard (if (window.CTX)) بيرجع بصمت من غير أي
+  //  Error — يعني كل قوائم كليك يمين (تعديل/حذف/...) في كل الشاشات اللي
+  //  فيها [CTX-REFACTOR] كانت مش شغالة خالص.
+  //
+  //  هذا الملف الآن هو التعريف الحقيقي الوحيد للمحرك + كل تعريفات القوائم
+  //  (CTX_DEFINITIONS) لكل الشاشات اللي بتعتمد عليه. بُنيت التعريفات من
+  //  خلال فحص كل نقطة CTX.register / contextMenuType في المشروع، ومطابقة
+  //  الأزرار المتوقعة بدوال التعديل/الحذف/... الفعلية الموجودة أصلاً بكل
+  //  شاشة (كتير منها كان جاهز فعلاً بنمط window.ctx_* في الحسابات والموارد
+  //  البشرية والإنتاج والفواتير وسجل الواتساب — كأنها كانت بتستنى المحرك).
+  // ════════════════════════════════════════════════════════════════════════
+
+  // ── الأنماط (CSS) — نفس لغة تصميم ce-colctx-menu في 34_JS_ColumnEngine.html
+  //    (نفس الـ CSS variables ونفس التفاصيل البصرية) عشان قائمة الصفوف
+  //    وقائمة رأس العمود يبقوا متسقين شكليًا تمامًا. حقن مرة واحدة فقط. ──
+  (function () {
+    if (document.getElementById("ctx-engine-css")) return;
+    var css = [
+      ".ctx-menu{position:fixed;z-index:9999;background:var(--surface);",
+      "border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);",
+      "padding:6px;min-width:210px;max-height:80vh;overflow:auto;font-size:12.5px}",
+      ".ctx-item{display:flex;align-items:center;gap:8px;padding:8px 10px;",
+      "border-radius:8px;cursor:pointer;color:var(--text)}",
+      ".ctx-item:hover{background:var(--surface2)}",
+      ".ctx-item i{font-size:15px;width:16px;text-align:center;color:var(--text3)}",
+      ".ctx-item.danger i,.ctx-item.danger span{color:var(--danger-dark,#dc2626)}",
+      ".ctx-item.danger:hover{background:var(--danger-soft,#fef2f2)}",
+      ".ctx-item.disabled{opacity:.4;pointer-events:none}",
+      ".ctx-sep{height:1px;background:var(--border);margin:5px 2px}",
+      ".ctx-sub{padding:6px 10px;font-size:11px;color:var(--text3);font-weight:700}",
+    ].join("");
+    var s = document.createElement("style");
+    s.id = "ctx-engine-css";
+    s.textContent = css;
+    document.head.appendChild(s);
+  })();
+
+  // ── [CTX-GLOBAL-BLOCK] منع قائمة المتصفح الافتراضية في كل صفحات
+  //    النظام (وليس بس داخل الجداول المسجّلة عبر CTX.register) — طلب
+  //    صريح: "لا يسمح بظهور قائمة المتصفح داخل النظام" بشكل كامل.
+  //    الاستثناء الوحيد: حقول الكتابة (input/textarea/contenteditable)
+  //    عشان المستخدم يقدر يستخدم قص/نسخ/لصق والتدقيق الإملائي الأصلي
+  //    من غير ما تتأثر تجربة الكتابة العادية.
+  (function () {
+    if (window.__CTX_GLOBAL_BLOCK__) return;
+    window.__CTX_GLOBAL_BLOCK__ = true;
+    var EDITABLE_SELECTOR =
+      "input, textarea, select, [contenteditable=''], " +
+      "[contenteditable='true'], .ql-editor, [data-allow-native-menu]";
+    document.addEventListener(
+      "contextmenu",
+      function (e) {
+        var el = e.target;
+        var isEditable =
+          el && el.closest && el.closest(EDITABLE_SELECTOR);
+        if (isEditable) return; // سيب القائمة الأصلية شغالة جوه حقول الكتابة
+        e.preventDefault();
+      },
+      false,
+    );
+  })();
+
+  // ── المحرك (Engine) ───────────────────────────────────────────────────
+  var CTX = (function () {
+    var _definitions = {}; // menuType -> Array<item|sep>
+    var _menuEl = null;
+    var LONG_PRESS_MS = 550; // دعم الموبايل: ضغط مطوّل بدل كليك يمين
+
+    function _closeOnce(e) {
+      if (e.target && e.target.closest && e.target.closest(".ctx-menu")) return;
+      close();
+    }
+
+    function close() {
+      if (_menuEl) {
+        _menuEl.remove();
+        _menuEl = null;
+      }
+      document.removeEventListener("click", _closeOnce);
+      document.removeEventListener("contextmenu", _closeOnce);
+    }
+
+    // بيحوّل أي data-* موجودة على عنصر الصف لكائن JS (camelCase)، ودايمًا
+    // بيضمن وجود id. لو الشاشة محتاجة بيانات إضافية (زي partyType) مش
+    // موجودة كـ data-attribute، تقدر تمرر extractor خاص بيها في register().
+    function _defaultExtract(rowEl) {
+      var data = {};
+      var attrs = rowEl.attributes;
+      for (var i = 0; i < attrs.length; i++) {
+        var name = attrs[i].name;
+        if (name.indexOf("data-") !== 0) continue;
+        var key = name.slice(5).replace(/-([a-z0-9])/g, function (_, c) {
+          return c.toUpperCase();
+        });
+        data[key] = attrs[i].value;
+      }
+      if (!data.id) data.id = rowEl.getAttribute("data-id") || "";
+      return data;
+    }
+
+    function open(menuType, rowData, x, y) {
+      close();
+      var defs = _definitions[menuType];
+      if (!defs || !defs.length) return;
+
+      var visible = [];
+      var html = "";
+      defs.forEach(function (def) {
+        if (def.sep) {
+          if (visible.length) html += '<div class="ctx-sep"></div>';
+          return;
+        }
+        if (typeof def.showIf === "function" && !def.showIf(rowData)) return;
+        // [CTX-PERM] دعم موحّد لفلترة العنصر حسب صلاحية المستخدم — أي
+        // تعريف عنصر يقدر يضيف perm: "keyName" (نفس مفاتيح canDo()
+        // المستخدمة في باقي النظام) بدل ما يكتب showIf يدوي في كل مرة.
+        // العنصر يتخفي تلقائيًا لو المستخدم مالوش الصلاحية دي.
+        if (
+          def.perm &&
+          typeof canDo === "function" &&
+          !canDo(def.perm)
+        )
+          return;
+        var label =
+          typeof def.label === "function" ? def.label(rowData) : def.label;
+        visible.push(def);
+        html +=
+          '<div class="ctx-item' +
+          (def.danger ? " danger" : "") +
+          '" data-idx="' +
+          (visible.length - 1) +
+          '"><i class="ti ' +
+          def.icon +
+          '"></i><span>' +
+          label +
+          "</span></div>";
+      });
+      if (!visible.length) return;
+
+      var menu = document.createElement("div");
+      menu.className = "ctx-menu";
+      menu.innerHTML = html;
+      document.body.appendChild(menu);
+
+      // منع خروج القائمة برة حدود الشاشة (نفس منطق ColumnEngine بالظبط)
+      var mw = menu.offsetWidth,
+        mh = menu.offsetHeight;
+      var left = Math.min(x, window.innerWidth - mw - 8);
+      var top = Math.min(y, window.innerHeight - mh - 8);
+      menu.style.left = Math.max(8, left) + "px";
+      menu.style.top = Math.max(8, top) + "px";
+
+      menu.querySelectorAll(".ctx-item").forEach(function (el) {
+        el.addEventListener("click", function () {
+          var idx = Number(el.getAttribute("data-idx"));
+          var def = visible[idx];
+          close();
+          if (!def || typeof def.handler !== "function") return;
+          try {
+            def.handler(rowData.id, rowData);
+          } catch (err) {
+            console.error("[CTX] handler error:", menuType, err);
+            // [FIX-SILENT-CTX] قبل كده المستخدم كان بيدوس على إجراء (تعديل/حذف/
+            // أي أمر من القائمة) وبيتقفل القائمة من غير أي رد فعل لو الدالة
+            // فشلت — يبان وكأن الضغطة "ماحصلتش" بلا أي تفسير. دلوقتي بنعرض
+            // توست خطأ عام لو نظام الإشعارات متاح.
+            if (typeof showToast === "function") {
+              NotificationEngine.error(" تعذّر تنفيذ هذا الإجراء");
+            }
+          }
+        });
+      });
+
+      _menuEl = menu;
+      setTimeout(function () {
+        document.addEventListener("click", _closeOnce);
+      }, 0);
+    }
+
+    // container: العنصر الحاوي للصفوف (tbody / div الجدول)
+    // menuType: مفتاح CTX_DEFINITIONS
+    // extractor(rowEl) اختياري: بيرجع كائن البيانات الخاص بالصف (لو محتاج
+    //   حقول إضافية مش موجودة كـ data-attribute عادي — زي party_categories)
+    function register(container, menuType, extractor) {
+      if (!container || container._ctxBound) return;
+      container._ctxBound = true;
+
+      function findRow(target) {
+        var el = target.closest ? target.closest("[data-id]") : null;
+        return el && container.contains(el) ? el : null;
+      }
+
+      container.addEventListener("contextmenu", function (e) {
+        var rowEl = findRow(e.target);
+        if (!rowEl) return;
+        e.preventDefault();
+        var rowData = extractor
+          ? extractor(rowEl) || {}
+          : _defaultExtract(rowEl);
+        if (!rowData.id) rowData.id = rowEl.getAttribute("data-id") || "";
+        open(menuType, rowData, e.clientX, e.clientY);
+      });
+
+      // ضغط مطوّل على الموبايل (مفيش كليك يمين على تاتش) — نفس تجربة
+      // كليك يمين، بيفتح نفس القائمة عند إحداثيات نقطة اللمس.
+      var pressTimer = null,
+        pressRow = null,
+        moved = false;
+      container.addEventListener(
+        "touchstart",
+        function (e) {
+          var rowEl = findRow(e.target);
+          if (!rowEl) return;
+          pressRow = rowEl;
+          moved = false;
+          var touch = e.touches[0];
+          pressTimer = setTimeout(function () {
+            if (moved || !pressRow) return;
+            var rowData = extractor
+              ? extractor(pressRow) || {}
+              : _defaultExtract(pressRow);
+            if (!rowData.id)
+              rowData.id = pressRow.getAttribute("data-id") || "";
+            if (navigator.vibrate) navigator.vibrate(15);
+            open(menuType, rowData, touch.clientX, touch.clientY);
+          }, LONG_PRESS_MS);
+        },
+        { passive: true },
+      );
+      container.addEventListener(
+        "touchmove",
+        function () {
+          moved = true;
+        },
+        { passive: true },
+      );
+      ["touchend", "touchcancel"].forEach(function (evt) {
+        container.addEventListener(evt, function () {
+          if (pressTimer) clearTimeout(pressTimer);
+          pressTimer = null;
+          pressRow = null;
+        });
+      });
+    }
+
+    function define(menuType, items) {
+      _definitions[menuType] = items;
+    }
+
+    return {
+      register: register,
+      define: define,
+      open: open,
+      close: close,
+      DEFINITIONS: _definitions,
+    };
+  })();
+  window.CTX = CTX;
+  window.CTX_DEFINITIONS = CTX.DEFINITIONS; // للتوافق مع تعليقات قديمة بتشاور لـ CTX_DEFINITIONS.xxx
+
+  // ── تعريفات القوائم (CTX_DEFINITIONS) ──────────────────────────────────
+  // كل تعريف هنا اتبنى من فحص فعلي للدوال الموجودة بالفعل بكل شاشة (زرار
+  // تعديل/حذف قديم كان بينادي عليها قبل [CTX-REFACTOR])، مش دوال مخترعة.
+  // اللي كانت أصلاً معرَّفة بنمط window.ctx_* (المحاسبة/HR/الإنتاج/
+  // الفواتير/سجل الواتساب) بيتنادى عليها مباشرة بالاسم. الباقي بينادي
+  // على الدالة الأصلية للشاشة مباشرة (أو Wrapper بسيط هنا لو الدالة
+  // الأصلية محتاجة باراميتر إضافي زي الاسم أو index بدل id).
+
+  (function () {
+    function h(name) {
+      // مرجع آمن لدالة global بالاسم (تتقيّم وقت الاستدعاء الفعلي مش وقت
+      // التعريف، عشان نضمن إن كل ملفات الموديولات اتحملت فعلاً)
+      return function (id, row) {
+        if (typeof window[name] === "function") window[name](id, row);
+        else console.warn("[CTX] missing handler:", name);
+      };
+    }
+
+    // ═══ المحاسبة ═══
+    CTX.define("chart_of_accounts", [
+      { icon: "ti-edit", label: "تعديل الحساب", handler: h("ctx_editAccount") },
+      {
+        icon: "ti-trash",
+        label: "حذف الحساب",
+        danger: true,
+        handler: h("ctx_deleteAccount"),
+      },
+    ]);
+
+    CTX.define("cash_boxes", [
+      {
+        icon: "ti-edit",
+        label: "تعديل الخزينة",
+        handler: h("ctx_editCashBox"),
+      },
+      { sep: true },
+      {
+        icon: "ti-arrow-down-circle",
+        label: "سند قبض",
+        handler: h("ctx_cashBoxReceipt"),
+      },
+      {
+        icon: "ti-arrow-up-circle",
+        label: "سند صرف",
+        handler: h("ctx_cashBoxPayment"),
+      },
+      {
+        icon: "ti-transfer",
+        label: "تحويل رصيد",
+        handler: h("ctx_cashBoxTransfer"),
+      },
+      { sep: true },
+      {
+        icon: "ti-report-money",
+        label: "كشف حركة",
+        handler: h("ctx_cashBoxStatement"),
+      },
+      {
+        icon: "ti-printer",
+        label: "طباعة كشف الحركة",
+        handler: h("ctx_printCashBoxStatement"),
+      },
+      { sep: true },
+      {
+        icon: "ti-trash",
+        label: "حذف الخزينة",
+        danger: true,
+        handler: h("ctx_deleteCashBox"),
+      },
+    ]);
+
+    CTX.define("size_groups", [
+      {
+        icon: "ti-edit",
+        label: "تعديل المجموعة",
+        handler: function (id) {
+          if (typeof openSizeGroupModal === "function")
+            openSizeGroupModal(id);
+        },
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف المجموعة",
+        danger: true,
+        handler: function (id, row) {
+          if (typeof deleteSizeGroupConfirm !== "function") return;
+          var grp =
+            (row && row.name) ||
+            ((window.APP && APP.data && APP.data.sizeGroups) || []).find(
+              function (g) {
+                return String(g.id) === String(id);
+              },
+            );
+          deleteSizeGroupConfirm(id, typeof grp === "object" ? grp.name : grp);
+        },
+      },
+    ]);
+
+    CTX.define("bank_accounts", [
+      {
+        icon: "ti-edit",
+        label: "تعديل الحساب البنكي",
+        handler: h("ctx_editBankAccount"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف الحساب البنكي",
+        danger: true,
+        handler: h("ctx_deleteBankAccount"),
+      },
+    ]);
+
+    CTX.define("journal", [
+      { icon: "ti-eye", label: "عرض القيد", handler: h("ctx_viewJournal") },
+      {
+        // [FEATURE-JE-MANUAL-ENTRY] تعديل مسموح فقط لقيد لسه DRAFT (لم
+        // يُرحَّل) — قيد معتمد/ملغي أداته الصحيحة "عكس القيد" لا التعديل.
+        icon: "ti-edit",
+        label: "تعديل القيد",
+        showIf: function (row) {
+          var e = (APP.data.journalEntries || []).find(function (x) {
+            return String(x.id) === String(row && row.id);
+          });
+          return !!e && e.status === "DRAFT";
+        },
+        handler: h("ctx_editJournal"),
+      },
+      {
+        icon: "ti-link",
+        label: "عرض المستند المرتبط",
+        handler: h("ctx_viewLinkedDoc"),
+      },
+      {
+        icon: "ti-printer",
+        label: "طباعة القيد",
+        handler: h("ctx_printJournal"),
+      },
+      {
+        icon: "ti-file-type-pdf",
+        label: "تصدير PDF",
+        handler: h("ctx_exportJournalPdf"),
+      },
+      {
+        icon: "ti-copy",
+        label: "نسخ رقم المرجع",
+        handler: h("ctx_copyJournalRef"),
+      },
+      { sep: true },
+      {
+        icon: "ti-arrow-back-up",
+        label: "عكس القيد",
+        handler: h("ctx_reverseJournal"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف القيد",
+        danger: true,
+        handler: h("ctx_deleteJournal"),
+      },
+    ]);
+
+    CTX.define("receipt_vouchers", [
+      {
+        icon: "ti-edit",
+        label: "تعديل السند",
+        handler: h("ctx_editReceiptVoucher"),
+      },
+      {
+        icon: "ti-printer",
+        label: "طباعة السند",
+        handler: h("ctx_printReceiptVoucher"),
+      },
+      {
+        icon: "ti-ban",
+        label: "إلغاء السند",
+        handler: h("ctx_cancelReceiptVoucher"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف السند",
+        danger: true,
+        handler: h("ctx_deleteReceiptVoucher"),
+      },
+    ]);
+
+    CTX.define("payment_vouchers", [
+      {
+        icon: "ti-edit",
+        label: "تعديل السند",
+        handler: h("ctx_editPaymentVoucher"),
+      },
+      {
+        icon: "ti-printer",
+        label: "طباعة السند",
+        handler: h("ctx_printPaymentVoucher"),
+      },
+      {
+        icon: "ti-ban",
+        label: "إلغاء السند",
+        handler: h("ctx_cancelPaymentVoucher"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف السند",
+        danger: true,
+        handler: h("ctx_deletePaymentVoucher"),
+      },
+    ]);
+
+    CTX.define("expenses", [
+      {
+        icon: "ti-edit",
+        label: "تعديل المصروف",
+        handler: h("ctx_editExpense"),
+      },
+      {
+        icon: "ti-printer",
+        label: "طباعة المصروف",
+        handler: h("ctx_printExpense"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف المصروف",
+        danger: true,
+        handler: h("ctx_deleteExpense"),
+      },
+    ]);
+
+    CTX.define("transfer_vouchers", [
+      {
+        icon: "ti-edit",
+        label: "تعديل سند التحويل",
+        handler: h("ctx_editTransferVoucher"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف سند التحويل",
+        danger: true,
+        handler: h("ctx_deleteTransferVoucher"),
+      },
+    ]);
+
+    // ═══ الموارد البشرية ═══
+    CTX.define("departments", [
+      {
+        icon: "ti-edit",
+        label: "تعديل القسم",
+        handler: h("ctx_editDepartment"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف القسم",
+        danger: true,
+        handler: h("ctx_deleteDepartment"),
+      },
+    ]);
+
+    CTX.define("salary_components", [
+      {
+        icon: "ti-edit",
+        label: "تعديل بند الراتب",
+        handler: h("ctx_editSalaryComponent"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف بند الراتب",
+        danger: true,
+        handler: h("ctx_deleteSalaryComponent"),
+      },
+    ]);
+
+    CTX.define("job_titles", [
+      {
+        icon: "ti-edit",
+        label: "تعديل المسمى الوظيفي",
+        handler: h("ctx_editJobTitle"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف المسمى الوظيفي",
+        danger: true,
+        handler: h("ctx_deleteJobTitle"),
+      },
+    ]);
+
+    CTX.define("employees", [
+      {
+        icon: "ti-edit",
+        label: "تعديل بيانات الموظف",
+        handler: h("ctx_editEmployee"),
+      },
+      { sep: true },
+      {
+        icon: "ti-report-money",
+        label: "عرض قسائم الراتب",
+        handler: h("ctx_viewEmpPayslip"),
+      },
+      {
+        icon: "ti-calendar-time",
+        label: "عرض رصيد الإجازات",
+        handler: h("ctx_viewEmpLeaves"),
+      },
+      {
+        icon: "ti-clock",
+        label: "عرض سجل الحضور",
+        handler: h("ctx_viewEmpAttendance"),
+      },
+      { sep: true },
+      {
+        icon: "ti-user-check",
+        label: "تفعيل",
+        handler: h("ctx_activateEmployee"),
+      },
+      {
+        icon: "ti-player-pause",
+        label: "إيقاف مؤقت",
+        handler: h("ctx_suspendEmployee"),
+      },
+      {
+        icon: "ti-user-x",
+        label: "إنهاء الخدمة",
+        danger: true,
+        handler: h("ctx_terminateEmployee"),
+      },
+      { sep: true },
+      {
+        icon: "ti-trash",
+        label: "حذف الموظف",
+        danger: true,
+        handler: h("ctx_deleteEmployee"),
+      },
+    ]);
+
+    CTX.define("attendance", [
+      {
+        icon: "ti-edit",
+        label: "تعديل سجل الحضور",
+        handler: h("ctx_editAttendance"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف سجل الحضور",
+        danger: true,
+        handler: h("ctx_deleteAttendance"),
+      },
+    ]);
+
+    CTX.define("leave_types", [
+      {
+        icon: "ti-edit",
+        label: "تعديل نوع الإجازة",
+        handler: h("ctx_editLeaveType"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف نوع الإجازة",
+        danger: true,
+        handler: h("ctx_deleteLeaveType"),
+      },
+    ]);
+
+    CTX.define("leave_requests", [
+      {
+        icon: "ti-check",
+        label: "اعتماد الطلب",
+        handler: h("ctx_approveLeaveRequest"),
+      },
+      {
+        icon: "ti-x",
+        label: "رفض الطلب",
+        danger: true,
+        handler: h("ctx_rejectLeaveRequest"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف الطلب",
+        danger: true,
+        handler: h("ctx_deleteLeaveRequest"),
+      },
+    ]);
+
+    CTX.define("loan_requests", [
+      {
+        icon: "ti-check",
+        label: "اعتماد الطلب",
+        handler: h("ctx_approveLoanRequest"),
+      },
+      {
+        icon: "ti-x",
+        label: "رفض الطلب",
+        danger: true,
+        handler: h("ctx_rejectLoanRequest"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف الطلب",
+        danger: true,
+        handler: h("ctx_deleteLoanRequest"),
+      },
+    ]);
+
+    CTX.define("payroll_periods", [
+      {
+        icon: "ti-calculator",
+        label: "توليد الرواتب",
+        handler: h("ctx_generatePayroll"),
+      },
+      { icon: "ti-cash", label: "صرف الرواتب", handler: h("ctx_payPayroll") },
+      {
+        icon: "ti-list-details",
+        label: "عرض تفاصيل الرواتب",
+        handler: h("ctx_viewPayrollRecords"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف الفترة",
+        danger: true,
+        handler: h("ctx_deletePayrollPeriod"),
+      },
+    ]);
+
+    // ═══ الإنتاج ═══
+    CTX.define("production_orders", [
+      {
+        icon: "ti-eye",
+        label: "عرض أمر الإنتاج",
+        handler: h("ctx_viewProductionOrder"),
+      },
+      {
+        icon: "ti-edit",
+        label: "تعديل أمر الإنتاج",
+        handler: h("ctx_editProductionOrder"),
+      },
+      { sep: true },
+      {
+        icon: "ti-player-play",
+        label: "بدء الإنتاج",
+        handler: h("ctx_startProduction"),
+      },
+      {
+        icon: "ti-flag-checkered",
+        label: "إنهاء الإنتاج",
+        handler: h("ctx_completeProduction"),
+      },
+      { sep: true },
+      {
+        icon: "ti-trash",
+        label: "حذف أمر الإنتاج",
+        danger: true,
+        handler: h("ctx_deleteProductionOrder"),
+      },
+    ]);
+
+    // ═══ الفواتير ═══
+    CTX.define("invoices", [
+      { icon: "ti-eye", label: "عرض الفاتورة", handler: h("ctx_viewInvoice") },
+      {
+        icon: "ti-edit",
+        label: "تعديل الفاتورة",
+        handler: h("ctx_editInvoice"),
+      },
+      {
+        icon: "ti-printer",
+        label: "طباعة الفاتورة",
+        handler: h("ctx_printInvoice"),
+      },
+      {
+        icon: "ti-copy",
+        label: "نسخ صورة طبق الأصل",
+        handler: h("ctx_duplicateInvoice"),
+      },
+      {
+        icon: "ti-receipt-refund",
+        label: "إنشاء مرتجع من الفاتورة",
+        handler: h("createReturnFromInvoice"),
+      },
+      { sep: true },
+      {
+        icon: "ti-brand-whatsapp",
+        label: "إرسال عبر واتساب",
+        handler: h("ctx_sendInvoiceWA"),
+      },
+      {
+        icon: "ti-copy",
+        label: "نسخ رقم الفاتورة",
+        handler: h("ctx_copyInvoiceRef"),
+      },
+      { sep: true },
+      {
+        icon: "ti-trash",
+        label: "حذف الفاتورة",
+        danger: true,
+        handler: h("ctx_deleteInvoice"),
+      },
+    ]);
+
+    // ═══ الواتساب ═══
+    CTX.define("whatsapp_log", [
+      { icon: "ti-eye", label: "عرض التفاصيل", handler: h("ctx_viewWALog") },
+      {
+        icon: "ti-refresh",
+        label: "إعادة الإرسال",
+        handler: h("ctx_resendWALog"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف السجل",
+        danger: true,
+        handler: h("ctx_deleteWALog"),
+      },
+    ]);
+
+    CTX.define("whatsapp_templates", [
+      {
+        icon: "ti-edit",
+        label: "تعديل القالب",
+        handler: function (id) {
+          // rowKey = "code" مش index — نلاقي الـ index الحقيقي وقت التنفيذ
+          if (
+            typeof WA_TPL === "undefined" ||
+            typeof openWhatsappTemplateEditor !== "function"
+          )
+            return;
+          var list = WA_TPL.getAll();
+          var idx = list.findIndex(function (t) {
+            return String(t.code) === String(id);
+          });
+          if (idx > -1) openWhatsappTemplateEditor(idx);
+        },
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف القالب",
+        danger: true,
+        handler: function (id) {
+          if (
+            typeof WA_TPL === "undefined" ||
+            typeof deleteWhatsappTemplate !== "function"
+          )
+            return;
+          var list = WA_TPL.getAll();
+          var idx = list.findIndex(function (t) {
+            return String(t.code) === String(id);
+          });
+          if (idx > -1) deleteWhatsappTemplate(idx);
+        },
+      },
+    ]);
+
+    // ═══ تصنيفات الأطراف (العملاء/الموردين) ═══
+    CTX.define("party_categories", [
+      {
+        icon: "ti-edit",
+        label: "تعديل التصنيف",
+        handler: h("editPartyCategoryFromCtx"),
+      },
+      {
+        icon: "ti-folder-plus",
+        label: "إضافة تصنيف فرعي",
+        handler: h("addChildPartyCategoryFromCtx"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف التصنيف",
+        danger: true,
+        handler: h("deletePartyCategoryFromCtx"),
+      },
+    ]);
+
+    // ═══ الأصناف والمجموعات ═══
+    // [CTX-MOVE-2026-07-27] الأربع أزرار (سجل التعديلات / طباعة باركود-QR /
+    // نسخ الصنف / أرشفة) كانت "Quick Actions" جوه شاشة إضافة/تعديل الصنف
+    // نفسها — اتنقلوا هنا لقائمة كليك يمين (right-click) على صف الصنف في
+    // الجدول بناءً على طلب المستخدم. لسه نفس السلوك القديم (توست "قيد
+    // التطوير") لحد ما تتنفذ فعليًا، ما عدا تسمية الأرشفة اللي بتتغيّر
+    // حسب حالة الصنف الفعلية (لازم نجيبها من APP.data.items لأن صف
+    // الجدول مفيهوش غير data-id).
+    function _ctxFindItem(id) {
+      var items = (window.APP && APP.data && APP.data.items) || [];
+      for (var i = 0; i < items.length; i++) {
+        if (String(items[i].id) === String(id)) return items[i];
+      }
+      return null;
+    }
+    function _ctxItemTodo() {
+      if (typeof NotificationEngine !== "undefined") {
+        NotificationEngine.info(
+          "هذه الميزة قيد التطوير — ستتوفر في مرحلة لاحقة من خطة إعادة بناء شاشة الصنف",
+        );
+      }
+    }
+    CTX.define("items", [
+      { icon: "ti-edit", label: "تعديل الصنف", handler: h("editItem") },
+      { sep: true },
+      {
+        icon: "ti-history",
+        label: "سجل التعديلات",
+        handler: _ctxItemTodo,
+      },
+      {
+        icon: "ti-printer",
+        label: "طباعة باركود / QR",
+        handler: _ctxItemTodo,
+      },
+      {
+        icon: "ti-copy",
+        label: "نسخ الصنف",
+        handler: _ctxItemTodo,
+      },
+      {
+        icon: "ti-archive",
+        label: function (rowData) {
+          var it = _ctxFindItem(rowData.id);
+          return it && it.status === "archived" ? "إلغاء الأرشفة" : "أرشفة";
+        },
+        handler: _ctxItemTodo,
+      },
+      { sep: true },
+      {
+        icon: "ti-trash",
+        label: "حذف الصنف",
+        danger: true,
+        perm: "deleteItem",
+        handler: h("deleteItemConfirm"),
+      },
+    ]);
+
+    CTX.define("groups", [
+      { icon: "ti-edit", label: "تعديل المجموعة", handler: h("editGroup") },
+      {
+        icon: "ti-trash",
+        label: "حذف المجموعة",
+        danger: true,
+        handler: h("deleteGroupConfirm"),
+      },
+    ]);
+
+    // ═══ أرصدة أول المدة (Opening Stock) ═══
+    // [CTX] الجدول مسجَّل بـ rowKey: "_key" في 06_JS_Catalog_Stock.html
+    // (ColumnEngine.register)، و"_key" مركّبة بصيغة "item_id|color" —
+    // بما إن الاستخراج الافتراضي (_defaultExtract) بيرجّع rowData.id
+    // = نفس الـ data-id (يعني الـ "_key" الكاملة)، بنفكّها هنا بدل ما
+    // نحتاج extractor مخصص، بنفس أسلوب زر تعديل/حذف الموجود في عمود
+    // _actions (openOpeningStockModal/deleteOpeningStockConfirm).
+    function _osSplitKey(compositeId) {
+      var s = String(compositeId || "");
+      var i = s.indexOf("|");
+      if (i === -1) return { item_id: s, color: "" };
+      return { item_id: s.slice(0, i), color: s.slice(i + 1) };
+    }
+    CTX.define("opening_stock", [
+      {
+        icon: "ti-edit",
+        label: "تعديل رصيد أول المدة",
+        showIf: function () {
+          return typeof canDo !== "function" || canDo("addOpeningStock");
+        },
+        handler: function (id) {
+          var k = _osSplitKey(id);
+          if (typeof openOpeningStockModal === "function")
+            openOpeningStockModal(k.item_id, k.color);
+        },
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف رصيد أول المدة",
+        danger: true,
+        showIf: function () {
+          return typeof canDo !== "function" || canDo("deleteOpeningStock");
+        },
+        handler: function (id) {
+          var k = _osSplitKey(id);
+          if (typeof deleteOpeningStockConfirm === "function")
+            deleteOpeningStockConfirm(k.item_id, k.color);
+        },
+      },
+    ]);
+
+    // ═══ العملاء والموردون ═══
+    CTX.define("customers", [
+      {
+        icon: "ti-edit",
+        label: "تعديل بيانات العميل",
+        handler: h("editCustomer"),
+      },
+      {
+        icon: "ti-report-money",
+        label: "كشف حساب / حركة العميل",
+        handler: function (id) {
+          if (typeof openPartyMovements === "function")
+            openPartyMovements(id, "customer");
+        },
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف العميل",
+        danger: true,
+        handler: h("deleteCustomerConfirm"),
+      },
+    ]);
+
+    CTX.define("suppliers", [
+      {
+        icon: "ti-edit",
+        label: "تعديل بيانات المورد",
+        handler: h("editSupplier"),
+      },
+      {
+        icon: "ti-report-money",
+        label: "كشف حساب / حركة المورد",
+        handler: function (id) {
+          if (typeof openPartyMovements === "function")
+            openPartyMovements(id, "supplier");
+        },
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف المورد",
+        danger: true,
+        handler: h("deleteSupplierConfirm"),
+      },
+    ]);
+
+    // ═══ المخازن وشركات الشحن والألوان والمقاسات ═══
+    CTX.define("warehouses", [
+      { icon: "ti-edit", label: "تعديل المخزن", handler: h("editWarehouse") },
+      {
+        icon: "ti-trash",
+        label: "حذف المخزن",
+        danger: true,
+        handler: h("delWarehouse"),
+      },
+    ]);
+
+    CTX.define("shipping_companies", [
+      {
+        icon: "ti-edit",
+        label: "تعديل شركة الشحن",
+        handler: h("editShippingCompany"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف شركة الشحن",
+        danger: true,
+        handler: h("deleteShippingCompanyConfirm"),
+      },
+    ]);
+
+    CTX.define("colors", [
+      { icon: "ti-edit", label: "تعديل اللون", handler: h("editColorDef") },
+      {
+        icon: "ti-trash",
+        label: "حذف اللون",
+        danger: true,
+        handler: function (id, row) {
+          if (typeof deleteColorDefConfirm !== "function") return;
+          var rec =
+            (row && row.name) ||
+            ((window.APP && APP.data && APP.data.colors) || []).find(
+              function (c) {
+                return String(c.id) === String(id);
+              },
+            );
+          deleteColorDefConfirm(id, typeof rec === "object" ? rec.name : rec);
+        },
+      },
+    ]);
+
+    CTX.define("sizes", [
+      { icon: "ti-edit", label: "تعديل المقاس", handler: h("editSizeDef") },
+      {
+        icon: "ti-trash",
+        label: "حذف المقاس",
+        danger: true,
+        handler: function (id, row) {
+          if (typeof deleteSizeDefConfirm !== "function") return;
+          var rec =
+            (row && row.name) ||
+            ((window.APP && APP.data && APP.data.sizes) || []).find(
+              function (s) {
+                return String(s.id) === String(id);
+              },
+            );
+          deleteSizeDefConfirm(id, typeof rec === "object" ? rec.name : rec);
+        },
+      },
+    ]);
+
+    // [UNITS-2026-08-06] نفس نمط "sizes" فوق بالحرف — قائمة كليك يمين
+    // لجدول "تعريف الوحدات" (contextMenuType:"units" في
+    // _unitsRegisterColumns، 07_JS_Shipping_Colors_Excel.html).
+    CTX.define("units", [
+      { icon: "ti-edit", label: "تعديل الوحدة", handler: h("editUnitDef") },
+      {
+        icon: "ti-trash",
+        label: "حذف الوحدة",
+        danger: true,
+        handler: function (id, row) {
+          if (typeof deleteUnitDefConfirm !== "function") return;
+          var rec =
+            (row && row.name) ||
+            ((window.APP && APP.data && APP.data.units) || []).find(
+              function (u) {
+                return String(u.id) === String(id);
+              },
+            );
+          deleteUnitDefConfirm(id, typeof rec === "object" ? rec.name : rec);
+        },
+      },
+    ]);
+
+    // ═══ المستخدمون ═══
+    CTX.define("users", [
+      { icon: "ti-edit", label: "تعديل المستخدم", handler: h("editUser") },
+      {
+        icon: "ti-trash",
+        label: "حذف المستخدم",
+        danger: true,
+        handler: h("delUser"),
+      },
+    ]);
+
+    // ═══ المشتريات والأصول الثابتة ═══
+    CTX.define("purchase_orders", [
+      {
+        icon: "ti-eye",
+        label: "عرض أمر الشراء",
+        handler: h("viewPurchaseOrder"),
+      },
+      {
+        icon: "ti-check",
+        label: "اعتماد أمر الشراء",
+        handler: h("approvePurchaseOrderConfirm"),
+      },
+      {
+        icon: "ti-truck-delivery",
+        label: "استلام الأصناف",
+        handler: h("openReceivePOModal"),
+      },
+      {
+        icon: "ti-ban",
+        label: "إلغاء أمر الشراء",
+        danger: true,
+        handler: h("cancelPurchaseOrderConfirm"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف أمر الشراء",
+        danger: true,
+        handler: h("deletePurchaseOrderConfirm"),
+      },
+    ]);
+
+    CTX.define("fixed_assets", [
+      { icon: "ti-edit", label: "تعديل الأصل", handler: h("faEditAsset") },
+      {
+        icon: "ti-archive-off",
+        label: "استبعاد / بيع الأصل",
+        danger: true,
+        handler: h("faOpenDispose"),
+      },
+    ]);
+
+    // ═══ التصنيع ═══
+    CTX.define("work_centers", [
+      {
+        icon: "ti-edit",
+        label: "تعديل مركز العمل",
+        handler: h("editWorkCenter"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف مركز العمل",
+        danger: true,
+        handler: h("deleteWorkCenterConfirm"),
+      },
+    ]);
+
+    CTX.define("machines", [
+      { icon: "ti-edit", label: "تعديل الآلة", handler: h("editMachine") },
+      {
+        icon: "ti-trash",
+        label: "حذف الآلة",
+        danger: true,
+        handler: h("deleteMachineConfirm"),
+      },
+    ]);
+
+    CTX.define("boms", [
+      { icon: "ti-edit", label: "تعديل قائمة المكونات", handler: h("editBOM") },
+      {
+        icon: "ti-trash",
+        label: "حذف قائمة المكونات",
+        danger: true,
+        handler: h("deleteBOMConfirm"),
+      },
+    ]);
+
+    CTX.define("routings", [
+      {
+        icon: "ti-edit",
+        label: "تعديل مسار التصنيع",
+        handler: h("editRouting"),
+      },
+      {
+        icon: "ti-trash",
+        label: "حذف مسار التصنيع",
+        danger: true,
+        handler: h("deleteRoutingConfirm"),
+      },
+    ]);
+
+    // ═══ سجل استيراد الحضور ═══
+    CTX.define("attendance_log", [
+      { icon: "ti-eye", label: "عرض التفاصيل", handler: h("_ailViewDetails") },
+      {
+        icon: "ti-trash",
+        label: "حذف السجل",
+        danger: true,
+        handler: h("_ailDelete"),
+      },
+    ]);
+  })();
+</script>

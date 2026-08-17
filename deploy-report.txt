@@ -1,0 +1,60 @@
+deploy-all.js run report
+Date: 8/15/2026, 11:12:09 PM
+============================================================
+
+
+------------------------------------------------------------
+  [1] Syntax check for all .js/.gs files in gas-src
+------------------------------------------------------------
+[OK] All 82 files are syntax-clean.
+
+------------------------------------------------------------
+  [2] Checking allowlist (google.script.run vs DOPOST_ALLOWED_FUNCTIONS)
+------------------------------------------------------------
+Unique functions called from the frontend: 352
+Functions in DOPOST_ALLOWED_FUNCTIONS: 559
+Functions in DOPOST_PUBLIC_FUNCTIONS: 14
+
+=== Real gaps — function exists in the backend but is not permitted in doPost (0) ===
+ (none — all covered)
+
+=== Names called from the frontend with no "function X(" definition found in any .js file (5) ===
+    (likely placeholder examples in comments or aliases — review manually, these will NOT be auto-added)
+  - fn   [31_JS_DataLayer.html (via _gsr())]
+  - getFunctionName   [31_JS_DataLayer.html (via _gsr())]
+  - getItemAttachmentsDetails   [55_JS_AttachmentEngine.html (via _gsr())]
+  - getItemsUsageStats   [52_JS_LoadingEngine.html (via _gsr())]
+  - sendWhatsAppCloudAPI   [19_JS_WhatsApp.html (via _gsr())]
+
+=== ℹ️  Functions that require a valid sessionToken in args (not public) — count: 338 ===
+   (client.js attaches the token automatically, so usually no action is needed here)
+
+[OK] No missing allowlist functions.
+
+------------------------------------------------------------
+  [3] Building the static frontend (public/index.html + catalog.html)
+------------------------------------------------------------
+$ C:\Program Files\nodejs\node.exe D:\X-MAN\MOO_ERP\moo-erp-vercel\scripts\build-static.js
+[OK] Frontend built successfully.
+
+------------------------------------------------------------
+  [4] Pushing backend code to Apps Script (clasp push)
+------------------------------------------------------------
+$ clasp push --force
+[OK] Backend pushed to Apps Script.
+
+------------------------------------------------------------
+  [5] Updating the active deployment (clasp deploy -i)
+------------------------------------------------------------
+$ clasp deploy --deploymentId AKfycbxgrlbvU9lJK97EIj7QgryPUzWV7X0JW_bAQZpaKW4ltltLn72_RjxOUzLxvyacvueYgA --description update  15/8/26 
+[OK] Deployment (AKfycbxgrlbvU9lJK97EIj7QgryPUzWV7X0JW_bAQZpaKW4ltltLn72_RjxOUzLxvyacvueYgA) updated — the URL (GAS_URL) stays the same.
+
+------------------------------------------------------------
+  [6] Pushing the built frontend via Git (will trigger auto-deploy on Vercel)
+------------------------------------------------------------
+$ git add -A
+$ git commit -m update  15/8/26 
+$ git push
+[OK] Pushed to Git — Vercel will start building and deploying automatically within a minute or two.
+
+🎉 All steps completed successfully.

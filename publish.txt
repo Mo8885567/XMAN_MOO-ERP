@@ -1,0 +1,2 @@
+node scripts/deploy-all.js "update  15/8/26 "
+const HARDCODED_GAS_URL =    اكتب الرابط بتاعك بين علامتي التنصيص،

@@ -1,0 +1,2850 @@
+<script>
+  // ─────────────────────────────────────────────────────────────────────────────
+  // 09_JS_AIAssistant.html — المساعد الذكي v6.0 — AI Agent
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Tool Calling — تنفيذ عمليات حقيقية في النظام
+  // Confirmation Flow — موافقة المستخدم قبل أي تنفيذ
+  // Rate Limiting — حد 30 طلب/يوم لكل مستخدم
+  // Audit Logging — تسجيل جميع العمليات
+  // Permission-Aware — يعرض فقط ما يملك المستخدم صلاحيته
+  // Context Management — 25 رسالة + System Prompt ديناميكي خفيف
+  // Extended Data — يضمن تحميل بيانات المحاسبة والـ HR
+  // TTS: Gemini → ElevenLabs → Web Speech
+  // Export PDF / Excel
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  var GROQ_MODEL = "llama-3.3-70b-versatile";
+  var ELEVENLABS_VOICE = "pqHfZKP75CvOlQylNhV4";
+  var AI_AGENT_V = "6.0";
+
+  // [TTS-VOICES-FIX] نطلب قائمة أصوات المتصفح بدري من هنا (وقت تحميل
+  // الملف) عشان نبدأ تحميلها الغير متزامن فورًا، فتكون جاهزة غالبًا قبل
+  // أول ضغطة فعلية على زرار الصوت — بيقلل احتمال ظهور تحذير "الجهاز لا
+  // يدعم النطق العربي" الخاطئ بسبب قائمة لسه فاضية.
+  if (window.speechSynthesis) {
+    window.speechSynthesis.getVoices();
+  }
+
+  // ── حالة المساعد ──────────────────────────────────────────────────────────
+  var AI_CHAT = {
+    history: [],
+    loading: false,
+    open: false,
+    ttsEnabled: true,
+    // [FIX-AI-VOICE-FLASH-2026-08-12] كانت هنا تُقرأ من مفتاح localStorage
+    // قديم ("ai_voice") من قبل ما ai_voice يبقى تفضيل مستخدم حقيقي مخزّن
+    // على السيرفر (راجع [FIX-AUDIT #4] في Code_23_UserPreferences.js).
+    // المفتاح ده بقى Dead — مفيش حد بيكتب فيه تاني — لكن لسه بيتقرا هنا
+    // مرة واحدة عند تحميل الملف، فبيظهر صوت افتراضي غلط للحظة قبل ما
+    // الـHook في 24_JS_UserPreferences.html يزامن القيمة الحقيقية من
+    // السيرفر بعد اللوجين. القيمة الصح الوحيدة الآن مصدرها السيرفر —
+    // فبنبدأ بالافتراضي الثابت مباشرة (بيتزامن فورًا بعده) بدل قراءة
+    // مفتاح قديم ممكن يكون فيه قيمة قديمة/غلط من جهاز تاني.
+    geminiVoice: "Kore",
+    suggTimer: null,
+    rateRemaining: 30,
+    pendingTool: null, // أداة تنتظر تأكيد المستخدم
+    extDataLoaded: false, // هل بيانات المحاسبة والـ HR محملة؟
+  };
+
+  // ── أدوات المساعد (Tool Definitions للفرونت إند) ─────────────────────────
+  var AI_TOOL_DEFS = {
+    // Read Tools
+    get_stock_report: {
+      label: '<i class="ti ti-package"></i> تقرير المخزون',
+      cat: "read",
+      permission: "viewTransactions",
+    },
+    get_low_stock_items: {
+      label: '<i class="ti ti-alert-triangle"></i> الأصناف ناقصة',
+      cat: "read",
+      permission: "viewTransactions",
+    },
+    get_financial_summary: {
+      label: '<i class="ti ti-currency-dollar"></i> الملخص المالي',
+      cat: "read",
+      permission: "viewAccounting",
+    },
+    get_sales_analysis: {
+      label: '<i class="ti ti-shopping-cart"></i> تحليل المبيعات',
+      cat: "read",
+      permission: "viewTransactions",
+    },
+    get_purchase_analysis: {
+      label: '<i class="ti ti-arrow-down-circle"></i> تحليل المشتريات',
+      cat: "read",
+      permission: "viewTransactions",
+    },
+    get_overdue_customers: {
+      label: '<i class="ti ti-clock"></i> العملاء المتأخرون',
+      cat: "read",
+      permission: "viewCustomers",
+    },
+    get_hr_summary: {
+      label: '<i class="ti ti-users"></i> ملخص HR',
+      cat: "read",
+      permission: "viewHR",
+    },
+    get_production_status: {
+      label: '<i class="ti ti-building-factory-2"></i> حالة الإنتاج',
+      cat: "read",
+      permission: "viewProduction",
+    },
+    get_kpi_dashboard: {
+      label: '<i class="ti ti-chart-bar"></i> مؤشرات KPI',
+      cat: "read",
+      permission: "viewTransactions",
+    },
+    get_idle_items: {
+      label: '<i class="ti ti-zzz"></i> الأصناف الراكدة',
+      cat: "read",
+      permission: "viewTransactions",
+    },
+    get_unbalanced_entries: {
+      label: '<i class="ti ti-scale"></i> قيود غير متوازنة',
+      cat: "read",
+      permission: "viewAccounting",
+    },
+    // Write Tools
+    create_customer: {
+      label: '<i class="ti ti-plus"></i> عميل جديد',
+      cat: "write",
+      permission: "addCustomer",
+    },
+    create_supplier: {
+      label: '<i class="ti ti-plus"></i> مورد جديد',
+      cat: "write",
+      permission: "addSupplier",
+    },
+    create_item: {
+      label: '<i class="ti ti-plus"></i> صنف جديد',
+      cat: "write",
+      permission: "addItem",
+    },
+    create_transaction_in: {
+      label: '<i class="ti ti-arrow-down-circle"></i> إذن إضافة',
+      cat: "write",
+      permission: "addTransaction",
+    },
+    create_transaction_out: {
+      label: '<i class="ti ti-arrow-up-circle"></i> إذن صرف',
+      cat: "write",
+      permission: "addTransaction",
+    },
+    create_journal_entry: {
+      label: '<i class="ti ti-clipboard-list"></i> قيد يومية',
+      cat: "write",
+      permission: "addJournalEntry",
+    },
+    create_receipt_voucher: {
+      label: '<i class="ti ti-cash"></i> سند قبض',
+      cat: "write",
+      permission: "addReceiptVoucher",
+    },
+    create_payment_voucher: {
+      label: '<i class="ti ti-receipt-2"></i> سند صرف',
+      cat: "write",
+      permission: "addPaymentVoucher",
+    },
+    create_expense: {
+      label: '<i class="ti ti-receipt"></i> مصروف',
+      cat: "write",
+      permission: "addExpense",
+    },
+    create_production_order: {
+      label: '<i class="ti ti-building-factory-2"></i> أمر إنتاج',
+      cat: "write",
+      permission: "addProductionOrder",
+    },
+  };
+
+  // ── خريطة الصفحات ─────────────────────────────────────────────────────────
+  var AI_PAGE_NAMES = {
+    dashboard: "لوحة التحكم",
+    items: "الأصناف",
+    groups: "مجموعات الأصناف",
+    warehouses: "المخازن",
+    current_stock: "الرصيد الحالي",
+    stocktake: "الجرد",
+    opening_stock: "الأرصدة الافتتاحية",
+    barcode: "الباركود",
+    color_definitions: "تعريف الألوان",
+    size_definitions: "تعريف المقاسات",
+    unit_definitions: "تعريف الوحدات",
+    code_guide: "دليل الأكواد",
+    tx_in: "إذن إضافة",
+    tx_out: "إذن صرف",
+    tx_transfer: "تحويل بين المخازن",
+    transactions: "سجل الحركات",
+    statement: "كشف الحساب",
+    shipping: "الشحنات",
+    "purchase-invoices": "فواتير المشتريات",
+    "purchase-returns": "مرتجعات المشتريات",
+    "sale-invoices": "فواتير المبيعات",
+    "sale-returns": "مرتجعات المبيعات",
+    catalog_send: "الكتالوج",
+    customers: "العملاء",
+    customer_statement: "كشف حساب العميل",
+    whatsapp_templates: "قوالب WhatsApp",
+    whatsapp_hub: "واتساب",
+    suppliers: "الموردون",
+    supplier_statement: "كشف حساب المورد",
+    production: "أوامر الإنتاج",
+    dispatch: "إذن صرف للمصنع",
+    fg_receive: "استلام إنتاج",
+    factory_return: "مرتجع المصنع",
+    cutting_statement: "بيان التقطيع",
+    production_reports: "تقارير الإنتاج",
+    "production-stages": "موظفو الإنتاج (أجور القطعة)",
+    "accounting-dashboard": "لوحة المحاسبة",
+    "chart-of-accounts": "دليل الحسابات",
+    "journal-entries": "القيود اليومية",
+    "receipt-vouchers": "سندات القبض",
+    "payment-vouchers": "سندات الصرف",
+    expenses: "المصروفات",
+    "transfer-vouchers": "سندات التحويل",
+    "bank-reconciliation": "المطابقة البنكية",
+    "banking-dashboard": "لوحة تحكم البنوك",
+    "cash-boxes": "الصناديق",
+    "bank-accounts": "الحسابات البنكية",
+    vodafone_cash: "فودافون كاش",
+    "general-ledger": "الأستاذ العام",
+    "trial-balance": "ميزان المراجعة",
+    "income-statement": "قائمة الدخل",
+    "balance-sheet": "الميزانية العمومية",
+    "cash-flow-statement": "التدفق النقدي",
+    "account-statement": "كشف حساب",
+    "hr-dashboard": "لوحة HR",
+    employees: "الموظفون",
+    departments: "الأقسام",
+    "job-titles": "المسميات",
+    attendance: "الحضور",
+    "leave-requests": "طلبات الإجازة",
+    "loan-requests": "طلبات السلف",
+    "salary-components": "بنود الرواتب",
+    payroll: "الرواتب",
+    payslip: "قسيمة الراتب",
+    "leave-types": "أنواع الإجازات",
+    "leave-balance": "رصيد الإجازات",
+    "monthly-attendance": "تقرير الحضور",
+    reports_hub: "التقارير",
+    users: "المستخدمون",
+    system_settings: "الإعدادات",
+    alerts: "التنبيهات",
+  };
+
+  var AI_MODULE_MAP = {
+    items: "inventory",
+    groups: "inventory",
+    warehouses: "inventory",
+    current_stock: "inventory",
+    stocktake: "inventory",
+    opening_stock: "inventory",
+    barcode: "inventory",
+    tx_in: "transactions",
+    tx_out: "transactions",
+    tx_transfer: "transactions",
+    transactions: "transactions",
+    statement: "transactions",
+    shipping: "transactions",
+    "purchase-invoices": "purchases",
+    "purchase-returns": "purchases",
+    "sale-invoices": "sales",
+    "sale-returns": "sales",
+    customers: "sales",
+    customer_statement: "sales",
+    suppliers: "purchases",
+    supplier_statement: "purchases",
+    production: "production",
+    dispatch: "production",
+    fg_receive: "production",
+    "accounting-dashboard": "accounting",
+    "chart-of-accounts": "accounting",
+    "journal-entries": "accounting",
+    "receipt-vouchers": "accounting",
+    "payment-vouchers": "accounting",
+    expenses: "accounting",
+    "transfer-vouchers": "accounting",
+    "bank-reconciliation": "accounting",
+    "banking-dashboard": "accounting",
+    "cash-boxes": "accounting",
+    "bank-accounts": "accounting",
+    "general-ledger": "accounting",
+    "trial-balance": "accounting",
+    "income-statement": "accounting",
+    "balance-sheet": "accounting",
+    "hr-dashboard": "hr",
+    employees: "hr",
+    departments: "hr",
+    attendance: "hr",
+    payroll: "hr",
+    users: "admin",
+    system_settings: "admin",
+    alerts: "reports",
+  };
+
+  // ── الأسئلة السريعة ────────────────────────────────────────────────────────
+  var AI_QUICK_CATEGORIES = [
+    {
+      label: '<i class="ti ti-package"></i> المخزون',
+      module: "inventory",
+      questions: [
+        "ما الأصناف التي رصيدها تحت الحد الأدنى؟",
+        "ما الأصناف التي رصيدها صفر؟",
+        "ما إجمالي الكميات في كل مخزن؟",
+        "اكتشف الأصناف الراكدة خلال 90 يوم",
+        "اعمل تقرير مخزون كامل",
+      ],
+    },
+    {
+      label: '<i class="ti ti-currency-dollar"></i> المحاسبة',
+      module: "accounting",
+      questions: [
+        "ما رصيد الصناديق الآن؟",
+        "اعمل ملخص مالي شامل",
+        "ما آخر القيود اليومية؟",
+        "هل هناك قيود غير متوازنة؟",
+        "ما إجمالي سندات القبض والصرف؟",
+      ],
+    },
+    {
+      label: '<i class="ti ti-shopping-cart"></i> المبيعات',
+      module: "sales",
+      questions: [
+        "تحليل مبيعات هذا الشهر",
+        "من أكثر العملاء شراءً؟",
+        "من العملاء المتأخرون في السداد؟",
+        "تحليل المشتريات والموردين",
+      ],
+    },
+    {
+      label: '<i class="ti ti-users"></i> HR',
+      module: "hr",
+      questions: [
+        "ملخص الموارد البشرية",
+        "كم عدد الموظفين النشطين؟",
+        "طلبات الإجازة المعلقة",
+        "طلبات السلف المعلقة",
+      ],
+    },
+    {
+      label: '<i class="ti ti-building-factory-2"></i> الإنتاج',
+      module: "production",
+      questions: [
+        "ما أوامر الإنتاج المفتوحة؟",
+        "ما الطلبيات المتأخرة؟",
+        "ملخص حالة الإنتاج",
+      ],
+    },
+    {
+      label: '<i class="ti ti-chart-bar"></i> KPIs',
+      module: "reports",
+      questions: [
+        "اعمل لي لوحة مؤشرات KPI",
+        "تقرير شامل للنظام",
+        "أبرز التنبيهات الحالية",
+      ],
+    },
+  ];
+
+  var AI_REPORT_BTNS = [
+    {
+      key: "stock_alert",
+      label: '<i class="ti ti-alert-triangle"></i> نقص المخزون',
+      tool: "get_low_stock_items",
+    },
+    {
+      key: "financial_summary",
+      label: '<i class="ti ti-currency-dollar"></i> الملخص المالي',
+      tool: "get_financial_summary",
+    },
+    { key: "sales_summary", label: '<i class="ti ti-shopping-cart"></i> المبيعات', tool: "get_sales_analysis" },
+    { key: "hr_summary", label: '<i class="ti ti-users"></i> HR', tool: "get_hr_summary" },
+    {
+      key: "production_summary",
+      label: '<i class="ti ti-building-factory-2"></i> الإنتاج',
+      tool: "get_production_status",
+    },
+    { key: "kpi_dashboard", label: '<i class="ti ti-chart-bar"></i> KPIs', tool: "get_kpi_dashboard" },
+  ];
+
+  var _aiActiveQuickCat = 0;
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  PERMISSION HELPERS
+  // ════════════════════════════════════════════════════════════════════════════
+  function _aiHasPerm(permission) {
+    // [PERM-UNIFY-AI] كان بيقرا APP.currentUser.permissions — حقل مش
+    // بيتحط في أي حتة في السيستم (المصدر الوحيد الفعلي هو
+    // APP.currentUser.effectivePermissions، اللي canDo() بيقرا منه في
+    // 01_JS_Core_Auth.html). ده كان يعني إن perms دايمًا undefined
+    // فـ _aiHasPerm بترجع true دايمًا لأي مستخدم ولأي أداة — الفحص هنا
+    // كان بيمر شكليًا بس والحماية الحقيقية كانت بتحصل بعدين على السيرفر
+    // (_checkPermission جوه proxyAIAgent) — يعني مفيش ثغرة أمنية، بس
+    // الواجهة كانت بتعرض/تحاول تنفّذ أدوات المستخدم أصلاً مش مسموح له
+    // بيها بدل ما تخفيها أو توقفها من الأول. دلوقتي بتفوّض لـ canDo()،
+    // نفس المصدر الموحّد المستخدم في 23 ملف تاني في السيستم.
+    if (!permission) return true;
+    try {
+      if (typeof canDo === "function") return canDo(permission);
+      return true; // fallback نادر لو canDo مش متاحة لأي سبب
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function _aiGetUserRole() {
+    return (APP && APP.currentUser && APP.currentUser.role) || "viewer";
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  EXTENDED DATA — يضمن تحميل المحاسبة والـ HR
+  // ════════════════════════════════════════════════════════════════════════════
+  function _ensureExtendedDataForAI(callback) {
+    if (AI_CHAT.extDataLoaded) {
+      if (callback) callback();
+      return;
+    }
+    if (!APP || !APP.data) {
+      if (callback) callback();
+      return;
+    }
+    var d = APP.data;
+    var needsExt =
+      !d.cashBoxes || !d.cashBoxes.length || !d.journalEntries || !d.employees;
+    if (!needsExt) {
+      AI_CHAT.extDataLoaded = true;
+      if (callback) callback();
+      return;
+    }
+    // طلب تحميل البيانات الموسعة
+    var callerUser = APP && APP.currentUser ? APP.currentUser.username : "";
+    var sessionTok =
+      typeof SESSION !== "undefined" && SESSION ? SESSION.token : "";
+    if (typeof ensureExtendedData === "function") {
+      try {
+        ensureExtendedData(function () {
+          AI_CHAT.extDataLoaded = true;
+          if (callback) callback();
+        });
+        return;
+      } catch (e) {}
+    }
+    // fallback: نحاول نجيب البيانات مباشرة من Backend
+    // [DATA-LOADING-ENGINE] لو ensureExtendedData مش متاحة (استثناء نادر)،
+    // بنستخدم برضه Level 3 (BACKGROUND) بدل getAllData() الكاملة الثقيلة —
+    // نفس الحقول المطلوبة هنا (cashBoxes/journalEntries/employees/...) مسجّلة
+    // BACKGROUND في Code_53_DataRegistryEngine.js بأسماء مسبوقة (accCashBoxes
+    // إلخ)، فبنعيد تسميتها للأسماء المسطّحة اللي باقي الدالة دي بتستنى.
+    if (callerUser && sessionTok) {
+      DL.Core.getAllDataByLevel([3], {
+        label: "AI.extendedDataFallback",
+        onSuccess: function (result) {
+          var raw = (result && result.data) || {};
+          var ext = {
+            cashBoxes: raw.accCashBoxes || raw.cashBoxes,
+            bankAccounts: raw.accBankAccounts || raw.bankAccounts,
+            journalEntries: raw.accJournalEntries || raw.journalEntries,
+            employees: raw.hrEmployees || raw.employees,
+            departments: raw.hrDepartments || raw.departments,
+            leaveRequests: raw.hrLeaveRequests || raw.leaveRequests,
+            loanRequests: raw.hrLoanRequests || raw.loanRequests,
+            payrollPeriods: raw.hrPayrollPeriods || raw.payrollPeriods,
+          };
+          if (ext) {
+            if (ext.cashBoxes) APP.data.cashBoxes = ext.cashBoxes;
+            if (ext.bankAccounts) APP.data.bankAccounts = ext.bankAccounts;
+            if (ext.journalEntries)
+              APP.data.journalEntries = ext.journalEntries;
+            if (ext.employees) APP.data.employees = ext.employees;
+            if (ext.departments) APP.data.departments = ext.departments;
+            if (ext.leaveRequests) APP.data.leaveRequests = ext.leaveRequests;
+            if (ext.loanRequests) APP.data.loanRequests = ext.loanRequests;
+            if (ext.payrollPeriods)
+              APP.data.payrollPeriods = ext.payrollPeriods;
+          }
+          AI_CHAT.extDataLoaded = true;
+          if (callback) callback();
+        },
+        onError: function () {
+          AI_CHAT.extDataLoaded = true;
+          if (callback) callback();
+        },
+      });
+    } else {
+      AI_CHAT.extDataLoaded = true;
+      if (callback) callback();
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  INIT
+  // ════════════════════════════════════════════════════════════════════════════
+  function initFloatingAI() {
+    var existing = document.getElementById("ai-float-root");
+    if (existing) {
+      if (existing.style.display === "none") existing.style.display = "";
+      return;
+    }
+    try {
+      var saved = localStorage.getItem("moo_ai_history");
+      if (saved) AI_CHAT.history = JSON.parse(saved);
+    } catch (e) {}
+
+    var root = document.createElement("div");
+    root.id = "ai-float-root";
+    root.innerHTML = _buildFloatingHTML();
+    document.body.appendChild(root);
+
+    _bindFloatingEvents();
+    _initFabDrag();
+    _applyFabPosition();
+    _initFabHideFeature();
+    _initFABNotifWatch();
+    _initTTS();
+    _checkRateLimit();
+    _initNotifTabWatch();
+
+    var _resizeTimer = null;
+    window.addEventListener("resize", function () {
+      clearTimeout(_resizeTimer);
+      _resizeTimer = setTimeout(function () {
+        var fab = document.getElementById("ai-fab");
+        if (!fab) return;
+        var size = fab.offsetWidth || 60,
+          margin = 22;
+        var targetTop = Math.max(60, window.innerHeight - size - margin - 10);
+        fab.style.transition = "left 0.3s ease, top 0.3s ease, right 0.3s ease";
+        fab.style.top = targetTop + "px";
+        fab.style.bottom = "auto";
+        fab.style.left = margin + "px";
+        fab.style.right = "auto";
+        document.body.classList.remove("ai-fab-right");
+        _fabPos = { side: "left", top: targetTop };
+        try {
+          localStorage.setItem("moo_ai_fab_pos", JSON.stringify(_fabPos));
+        } catch (e) {}
+        setTimeout(function () {
+          if (fab) fab.style.transition = "";
+        }, 350);
+        if (AI_CHAT.open) _positionAIPanel();
+      }, 80);
+    });
+  }
+
+  // ── Rate Limit Check ──────────────────────────────────────────────────────
+  function _checkRateLimit() {
+    var callerUser = APP && APP.currentUser ? APP.currentUser.username : "";
+    var sessionTok =
+      typeof SESSION !== "undefined" && SESSION ? SESSION.token : "";
+    if (!callerUser || !sessionTok) return;
+    _gsr("getAIRateLimitStatus", [callerUser, sessionTok], {
+      label: "AI.rateLimitStatus",
+      onSuccess: function (result) {
+        if (result.data) {
+          AI_CHAT.rateRemaining = result.data.remaining;
+          _updateRateBadge();
+        }
+      },
+      onError: function () {},
+    });
+  }
+
+  function _updateRateBadge() {
+    var el = document.getElementById("ai-rate-indicator");
+    if (!el) return;
+    var r = AI_CHAT.rateRemaining;
+    el.textContent = r + " طلب متبقي";
+    el.style.color =
+      r < 5
+        ? "var(--error, #dc2626)"
+        : r < 10
+          ? "var(--warning, #d97706)"
+          : "var(--text-muted, #6b7280)";
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  NOTIFICATION WATCHER
+  // ════════════════════════════════════════════════════════════════════════════
+  var _fabNotifState = false,
+    _fabHoverTimer = null;
+  function _initFABNotifWatch() {
+    setInterval(function () {
+      var fab = document.getElementById("ai-fab");
+      if (!fab) return;
+      var notifBadge = document.getElementById("notif-count-bubble");
+      var hasNotif = false;
+      if (notifBadge) {
+        var cnt = parseInt(notifBadge.textContent || "0", 10);
+        hasNotif = cnt > 0 && notifBadge.classList.contains("show");
+      }
+      if (!hasNotif) {
+        var aiBadge = document.getElementById("ai-fab-badge");
+        if (aiBadge && aiBadge.style.display !== "none") hasNotif = true;
+      }
+      if (hasNotif && !_fabNotifState) {
+        _fabNotifState = true;
+        fab.classList.remove("ai-fab-hovering");
+        fab.classList.add("ai-fab-has-notif");
+        clearTimeout(_fabHoverTimer);
+        _fabHoverTimer = setTimeout(function () {
+          if (_fabNotifState) {
+            fab.classList.remove("ai-fab-has-notif");
+            fab.classList.add("ai-fab-hovering");
+          }
+        }, 700);
+      } else if (!hasNotif && _fabNotifState) {
+        _fabNotifState = false;
+        clearTimeout(_fabHoverTimer);
+        fab.classList.remove("ai-fab-has-notif", "ai-fab-hovering");
+        fab.style.animation = "none";
+        fab.offsetHeight;
+        fab.style.animation = "";
+      }
+    }, 800);
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  [NOTIF-HISTORY] تبويب "الإشعارات" داخل المساعد الذكي
+  // ════════════════════════════════════════════════════════════════════════════
+  var _notifTabActive = false;
+  var _notifTabFilter = ""; // "" = الكل
+  var _notifTabQuery = "";
+
+  var _NOTIF_CATEGORY_LABELS = {
+    success: "نجاح",
+    error: "خطأ",
+    warning: "تحذير",
+    info: "معلومة",
+    validation: "تحقق",
+    permission: "صلاحيات",
+    background: "عملية خلفية",
+    import: "استيراد",
+    export: "تصدير",
+    ai: "المساعد الذكي",
+    sync: "مزامنة",
+    save: "حفظ",
+    delete: "حذف",
+    print: "طباعة",
+    apiError: "خطأ API",
+    session: "الجلسة",
+  };
+
+  /** يتابع أي تغيير في NotificationEngine ويحدّث جرس المساعد + التبويب لو مفتوح */
+  function _initNotifTabWatch() {
+    if (typeof NotificationEngine === "undefined" || typeof NotificationEngine.onChange !== "function")
+      return;
+    NotificationEngine.onChange(function () {
+      _updateNotifBellBadge();
+      if (_notifTabActive) _aiRenderNotifPanel();
+    });
+    _updateNotifBellBadge();
+  }
+
+  function _updateNotifBellBadge() {
+    var badge = document.getElementById("ai-notif-bell-badge");
+    if (!badge || typeof NotificationEngine === "undefined") return;
+    var n = NotificationEngine.getUnreadCount();
+    if (n > 0) {
+      badge.textContent = n > 99 ? "99+" : String(n);
+      badge.style.display = "";
+    } else {
+      badge.style.display = "none";
+    }
+  }
+
+  /** يبدّل بين محادثة المساعد وتبويب سجل الإشعارات */
+  function _aiToggleNotifTab() {
+    var msgs = document.getElementById("ai-float-messages");
+    var notifPanel = document.getElementById("ai-notif-panel");
+    var quick = document.getElementById("ai-float-quick");
+    var reports = document.querySelector(".ai-float-reports");
+    var inputWrap = document.querySelector(".ai-float-input-wrap");
+    if (!notifPanel) return;
+
+    _notifTabActive = !_notifTabActive;
+
+    if (_notifTabActive) {
+      if (msgs) msgs.style.display = "none";
+      if (quick) quick.style.display = "none";
+      if (reports) reports.style.display = "none";
+      if (inputWrap) inputWrap.style.display = "none";
+      notifPanel.style.display = "";
+      if (!AI_CHAT.open) toggleAIChat();
+      _aiRenderNotifPanel();
+      setTimeout(function () {
+        var searchInp = document.getElementById("ai-notif-search-input");
+        if (searchInp) searchInp.focus();
+      }, 250);
+    } else {
+      notifPanel.style.display = "none";
+      if (msgs) msgs.style.display = "";
+      if (reports) reports.style.display = "";
+      if (inputWrap) inputWrap.style.display = "";
+      if (quick && AI_CHAT.history.length === 0) quick.style.display = "";
+    }
+  }
+
+  function _notifFormatTime(d) {
+    try {
+      d = d instanceof Date ? d : new Date(d);
+      return d.toLocaleString("ar-EG", {
+        hour: "2-digit",
+        minute: "2-digit",
+        day: "2-digit",
+        month: "2-digit",
+      });
+    } catch (e) {
+      return "";
+    }
+  }
+
+  /** يبني ويعرض محتوى تبويب الإشعارات (بحث + فلترة + قائمة + إجراءات).
+      التوليبار بيتبنى مرة واحدة بس (عشان مربّع البحث ميفقدش الـ focus
+      عند كل حرف)، وبعدين كل تحديث بيمس قائمة النتائج فقط. */
+  function _aiRenderNotifPanel() {
+    var notifPanel = document.getElementById("ai-notif-panel");
+    if (!notifPanel || typeof NotificationEngine === "undefined") return;
+
+    if (!document.getElementById("ai-notif-toolbar")) {
+      var filterOptionsHtml =
+        '<option value="">كل الأنواع</option>' +
+        Object.keys(_NOTIF_CATEGORY_LABELS)
+          .map(function (cat) {
+            return (
+              '<option value="' +
+              cat +
+              '"' +
+              (cat === _notifTabFilter ? " selected" : "") +
+              ">" +
+              _NOTIF_CATEGORY_LABELS[cat] +
+              "</option>"
+            );
+          })
+          .join("");
+
+      notifPanel.innerHTML =
+        '<div class="ai-notif-toolbar" id="ai-notif-toolbar">' +
+        '<input type="text" class="ai-notif-search" id="ai-notif-search-input" placeholder="بحث في الإشعارات..." aria-label="بحث في الإشعارات" value="' +
+        esc(_notifTabQuery) +
+        '" oninput="_aiNotifSearch(this.value)" />' +
+        '<select class="ai-notif-filter" aria-label="فلترة حسب النوع" onchange="_aiNotifFilter(this.value)">' +
+        filterOptionsHtml +
+        "</select>" +
+        '<button class="ai-hdr-btn" title="تعليم الكل كمقروء" aria-label="تعليم الكل كمقروء" onclick="_aiNotifMarkAllRead()"><i class="ti ti-checks"></i></button>' +
+        "</div>" +
+        '<div class="ai-notif-list" id="ai-notif-list" role="list" aria-label="سجل الإشعارات"></div>';
+    }
+
+    var items = NotificationEngine.query({
+      category: _notifTabFilter || null,
+      q: _notifTabQuery || null,
+    });
+
+    var listHtml = items.length
+      ? items
+          .map(function (n) {
+            var label = _NOTIF_CATEGORY_LABELS[n.category] || n.category;
+            return (
+              '<div class="ai-notif-item ai-notif-type-' +
+              esc(n.type) +
+              (n.read ? "" : " ai-notif-unread") +
+              '" data-id="' +
+              esc(n.id) +
+              '" tabindex="0" role="button" aria-label="' +
+              esc(label) +
+              ": " +
+              esc(n.message) +
+              (n.read ? "" : " (غير مقروء)") +
+              '" onclick="_aiNotifMarkRead(\'' +
+              n.id +
+              '\')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();_aiNotifMarkRead(\'' +
+              n.id +
+              "');}\">" +
+              '<div class="ai-notif-item-top">' +
+              '<span class="ai-notif-badge">' +
+              esc(label) +
+              "</span>" +
+              '<span class="ai-notif-time">' +
+              _notifFormatTime(n.at) +
+              "</span>" +
+              '<button class="ai-notif-del" title="حذف" aria-label="حذف الإشعار" onclick="event.stopPropagation();_aiNotifDelete(\'' +
+              n.id +
+              '\')"><i class="ti ti-x"></i></button>' +
+              "</div>" +
+              '<div class="ai-notif-msg">' +
+              esc(n.message) +
+              "</div>" +
+              (n.screen
+                ? '<div class="ai-notif-screen"><i class="ti ti-map-pin"></i> ' + esc(n.screen) + "</div>"
+                : "") +
+              "</div>"
+            );
+          })
+          .join("")
+      : '<div class="ai-float-empty"><div class="ai-float-empty-icon"><i class="ti ti-bell-off"></i></div>' +
+        '<div class="ai-float-empty-title">لا توجد إشعارات</div></div>';
+
+    var listEl = document.getElementById("ai-notif-list");
+    if (listEl) listEl.innerHTML = listHtml;
+  }
+
+  function _aiNotifSearch(v) {
+    _notifTabQuery = v || "";
+    _aiRenderNotifPanel();
+  }
+  function _aiNotifFilter(v) {
+    _notifTabFilter = v || "";
+    _aiRenderNotifPanel();
+  }
+  function _aiNotifMarkRead(id) {
+    NotificationEngine.markRead(id);
+  }
+  function _aiNotifMarkAllRead() {
+    NotificationEngine.markAllRead();
+  }
+  function _aiNotifDelete(id) {
+    NotificationEngine.remove(id);
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  HTML BUILDER
+  // ════════════════════════════════════════════════════════════════════════════
+  function _buildFloatingHTML() {
+    var currentPageName = _getCurrentPageName();
+    var role = _aiGetUserRole();
+    return (
+      '<button id="ai-fab" onclick="toggleAIChat()" title="المساعد الذكي MOO.ERP v' +
+      AI_AGENT_V +
+      '">' +
+      '<span id="ai-fab-icon"><i class="ti ti-robot-face"></i></span>' +
+      '<span id="ai-fab-badge" class="ai-fab-badge" style="display:none">!</span>' +
+      "</button>" +
+      '<div id="ai-panel" class="ai-panel" style="display:none">' +
+      // Header
+      '<div class="ai-panel-header">' +
+      '<div class="ai-panel-title">' +
+      '<div class="ai-panel-avatar"><i class="ti ti-robot-face"></i></div>' +
+      "<div>" +
+      '<div class="ai-panel-name">مساعد MOO.ERP <span style="font-size:11px;opacity:0.6">v' +
+      AI_AGENT_V +
+      "</span></div>" +
+      '<div class="ai-panel-status" id="ai-status-txt">متصل · جاهز للمساعدة</div>' +
+      "</div></div>" +
+      '<div class="ai-panel-actions">' +
+      '<button class="ai-hdr-btn" id="ai-notif-bell-btn" onclick="_aiToggleNotifTab()" title="سجل الإشعارات" aria-label="سجل الإشعارات" aria-haspopup="true">' +
+      '<i class="ti ti-bell"></i>' +
+      '<span id="ai-notif-bell-badge" class="ai-fab-badge" style="display:none;position:absolute;top:2px;left:2px" aria-hidden="true"></span>' +
+      "</button>" +
+      '<button class="ai-hdr-btn" onclick="_aiShowTools()" title="الأدوات المتاحة"><i class="ti ti-tool"></i></button>' +
+      '<button class="ai-hdr-btn" onclick="_aiExportPDF()" title="تصدير PDF"><i class="ti ti-file-type-pdf"></i></button>' +
+      '<button class="ai-hdr-btn" onclick="_aiExportExcel()" title="تصدير Excel"><i class="ti ti-file-spreadsheet"></i></button>' +
+      '<button class="ai-hdr-btn active" id="ai-tts-btn" onclick="_toggleTTS()" title="إيقاف الصوت"><i class="ti ti-volume"></i></button>' +
+      '<button class="ai-hdr-btn" onclick="_clearAIHistory()" title="مسح المحادثة"><i class="ti ti-trash"></i></button>' +
+      '<button class="ai-hdr-btn ai-hdr-close" onclick="toggleAIChat()" title="إغلاق"><i class="ti ti-x"></i></button>' +
+      "</div></div>" +
+      // Context bar
+      '<div id="ai-context-bar" class="ai-context-bar">' +
+      '<span class="ai-context-icon"><i class="ti ti-map-pin"></i></span>' +
+      '<span id="ai-context-page">' +
+      currentPageName +
+      "</span>" +
+      '<span id="ai-rate-indicator" style="margin-right:auto;font-size:11px;margin-left:8px"></span>' +
+      "</div>" +
+      // Report buttons
+      '<div class="ai-float-reports">' +
+      AI_REPORT_BTNS.map(function (r) {
+        return (
+          '<button class="ai-float-report-btn" onclick="runAIReport(\'' +
+          r.key +
+          "')\">" +
+          r.label +
+          "</button>"
+        );
+      }).join("") +
+      "</div>" +
+      // Messages area
+      '<div class="ai-float-messages" id="ai-float-messages">' +
+      _buildMessagesHTML() +
+      "</div>" +
+      // [NOTIF-HISTORY] Notifications tab — مخفي افتراضياً، بيتفعّل بـ _aiToggleNotifTab
+      '<div id="ai-notif-panel" style="display:none"></div>' +
+      // Confirmation dialog (hidden by default)
+      '<div id="ai-confirm-box" class="ai-confirm-box" style="display:none"></div>' +
+      // Quick questions
+      '<div class="ai-float-quick" id="ai-float-quick"' +
+      (AI_CHAT.history.length > 0 ? ' style="display:none"' : "") +
+      ">" +
+      '<div class="ai-float-cat-tabs" id="ai-float-cat-tabs">' +
+      AI_QUICK_CATEGORIES.map(function (c, i) {
+        return (
+          '<button class="ai-float-cat' +
+          (i === _aiActiveQuickCat ? " active" : "") +
+          '" onclick="setAIQuickCat(' +
+          i +
+          ')">' +
+          c.label +
+          "</button>"
+        );
+      }).join("") +
+      "</div>" +
+      '<div class="ai-float-quick-btns" id="ai-float-quick-btns">' +
+      _buildQuickBtns(_aiActiveQuickCat) +
+      "</div></div>" +
+      // Input
+      '<div class="ai-float-input-wrap">' +
+      '<div class="ai-float-suggestions" id="ai-float-sugg" style="display:none"></div>' +
+      '<div class="ai-float-input-row">' +
+      '<textarea id="ai-float-input" class="ai-float-textarea" rows="1" placeholder="اسألني أو اطلب مني تنفيذ عملية... (Enter إرسال)"></textarea>' +
+      '<button id="ai-float-send" class="ai-float-send" onclick="sendAIMessage()"><i class="ti ti-send"></i></button>' +
+      "</div></div></div>"
+    );
+  }
+
+  function _buildQuickBtns(catIdx) {
+    return AI_QUICK_CATEGORIES[catIdx].questions
+      .map(function (q) {
+        return (
+          '<button class="ai-float-quick-btn" onclick="sendAIQuick(\'' +
+          q.replace(/'/g, "\\'") +
+          "')\">" +
+          esc(q) +
+          "</button>"
+        );
+      })
+      .join("");
+  }
+
+  function _buildMessagesHTML() {
+    if (AI_CHAT.history.length === 0) {
+      var role = _aiGetUserRole();
+      return (
+        '<div class="ai-float-empty">' +
+        '<div class="ai-float-empty-icon"><i class="ti ti-robot-face"></i></div>' +
+        '<div class="ai-float-empty-title">أهلاً! أنا مساعد MOO.ERP</div>' +
+        '<p class="ai-float-empty-sub">اسألني عن المخزون، المحاسبة، الموظفين، الإنتاج، وأكثر.<br>يمكنني أيضاً <strong>تنفيذ عمليات</strong> في النظام بإذنك.</p>' +
+        "</div>"
+      );
+    }
+    return AI_CHAT.history.map(_renderFloatMsg).join("");
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  CONTEXT AWARENESS
+  // ════════════════════════════════════════════════════════════════════════════
+  function _getCurrentPageName() {
+    var page = APP && APP.currentPage ? APP.currentPage : "";
+    return AI_PAGE_NAMES[page] || page || "الصفحة الرئيسية";
+  }
+  function _getCurrentModule() {
+    var page = APP && APP.currentPage ? APP.currentPage : "";
+    return AI_MODULE_MAP[page] || "general";
+  }
+  function _updateContextBar() {
+    var el = document.getElementById("ai-context-page");
+    if (el) el.textContent = _getCurrentPageName();
+    _updateRateBadge();
+  }
+  function onAIPageChange() {
+    _updateContextBar();
+    AI_CHAT.extDataLoaded = false; // إعادة تحميل البيانات عند تغيير الصفحة
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  EVENTS
+  // ════════════════════════════════════════════════════════════════════════════
+  function _bindFloatingEvents() {
+    var inp = document.getElementById("ai-float-input");
+    if (!inp) return;
+    inp.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        _hideSuggestions();
+        sendAIMessage();
+      }
+      setTimeout(function () {
+        inp.style.height = "auto";
+        inp.style.height = Math.min(inp.scrollHeight, 120) + "px";
+      }, 0);
+    });
+    inp.addEventListener("input", function () {
+      clearTimeout(AI_CHAT.suggTimer);
+      AI_CHAT.suggTimer = setTimeout(function () {
+        _showSuggestions(inp.value);
+      }, 300);
+    });
+    inp.addEventListener("blur", function () {
+      setTimeout(_hideSuggestions, 200);
+    });
+    document.addEventListener("mousedown", function (e) {
+      if (!AI_CHAT.open) return;
+      var panel = document.getElementById("ai-panel"),
+        fab = document.getElementById("ai-fab");
+      if (!panel) return;
+      if (panel.contains(e.target)) return;
+      if (fab && fab.contains(e.target)) return;
+      toggleAIChat();
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  FAB DRAG
+  // ════════════════════════════════════════════════════════════════════════════
+  var _fabDrag = {
+    active: false,
+    moved: false,
+    startX: 0,
+    startY: 0,
+    startLeft: 0,
+    startTop: 0,
+    suppressClick: false,
+  };
+  function _initFabDrag() {
+    var fab = document.getElementById("ai-fab");
+    if (!fab) return;
+    fab.addEventListener("pointerdown", function (e) {
+      if (e.button !== undefined && e.button !== 0 && e.pointerType === "mouse")
+        return;
+      var rect = fab.getBoundingClientRect();
+      _fabDrag.active = true;
+      _fabDrag.moved = false;
+      _fabDrag.startX = e.clientX;
+      _fabDrag.startY = e.clientY;
+      _fabDrag.startLeft = rect.left;
+      _fabDrag.startTop = rect.top;
+      try {
+        fab.setPointerCapture(e.pointerId);
+      } catch (err) {}
+    });
+    fab.addEventListener("pointermove", function (e) {
+      if (!_fabDrag.active) return;
+      var dx = e.clientX - _fabDrag.startX,
+        dy = e.clientY - _fabDrag.startY;
+      if (!_fabDrag.moved && Math.sqrt(dx * dx + dy * dy) > 8) {
+        _fabDrag.moved = true;
+        fab.classList.add("ai-fab-dragging");
+        fab.style.transition = "none";
+        fab.style.right = "auto";
+        fab.style.bottom = "auto";
+      }
+      if (_fabDrag.moved) {
+        var size = fab.offsetWidth;
+        fab.style.left =
+          Math.max(
+            6,
+            Math.min(window.innerWidth - size - 6, _fabDrag.startLeft + dx),
+          ) + "px";
+        fab.style.top =
+          Math.max(
+            60,
+            Math.min(window.innerHeight - size - 6, _fabDrag.startTop + dy),
+          ) + "px";
+      }
+    });
+    fab.addEventListener("pointerup", function (e) {
+      if (!_fabDrag.active) return;
+      _fabDrag.active = false;
+      try {
+        fab.releasePointerCapture(e.pointerId);
+      } catch (err) {}
+      if (!_fabDrag.moved) return;
+      e.preventDefault();
+      e.stopPropagation();
+      fab.classList.remove("ai-fab-dragging");
+      _snapFab(fab);
+      _fabDrag.suppressClick = true;
+      setTimeout(function () {
+        _fabDrag.suppressClick = false;
+      }, 50);
+    });
+    fab.addEventListener(
+      "click",
+      function (e) {
+        if (_fabDrag.suppressClick) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      },
+      true,
+    );
+  }
+  function _snapFab(fab) {
+    var rect = fab.getBoundingClientRect(),
+      size = fab.offsetWidth,
+      margin = 22;
+    var snapLeft = rect.left + size / 2 < window.innerWidth / 2;
+    var top = Math.max(
+      60,
+      Math.min(window.innerHeight - size - margin, rect.top),
+    );
+    fab.style.transition =
+      "left 0.25s cubic-bezier(0.34,1.56,0.64,1),right 0.25s cubic-bezier(0.34,1.56,0.64,1),top 0.25s cubic-bezier(0.34,1.56,0.64,1)";
+    fab.style.top = top + "px";
+    fab.style.bottom = "auto";
+    if (snapLeft) {
+      fab.style.left = margin + "px";
+      fab.style.right = "auto";
+    } else {
+      fab.style.right = margin + "px";
+      fab.style.left = "auto";
+    }
+    document.body.classList.toggle("ai-fab-right", !snapLeft);
+    _fabPos = { side: snapLeft ? "left" : "right", top: top };
+    try {
+      localStorage.setItem("moo_ai_fab_pos", JSON.stringify(_fabPos));
+    } catch (err) {}
+    _positionAIPanel();
+  }
+  var _fabPos = null;
+  function _applyFabPosition() {
+    var fab = document.getElementById("ai-fab");
+    if (!fab) return;
+    try {
+      var saved = localStorage.getItem("moo_ai_fab_pos");
+      if (saved) _fabPos = JSON.parse(saved);
+    } catch (e) {}
+    var size = fab.offsetWidth || 60,
+      margin = 22;
+    if (!_fabPos)
+      _fabPos = { side: "left", top: window.innerHeight - size - margin - 24 };
+    var top = Math.max(
+      60,
+      Math.min(window.innerHeight - size - margin, _fabPos.top),
+    );
+    fab.style.transition = "none";
+    fab.style.bottom = "auto";
+    fab.style.top = top + "px";
+    if (_fabPos.side === "right") {
+      fab.style.right = margin + "px";
+      fab.style.left = "auto";
+      document.body.classList.add("ai-fab-right");
+    } else {
+      fab.style.left = margin + "px";
+      fab.style.right = "auto";
+      document.body.classList.remove("ai-fab-right");
+    }
+    requestAnimationFrame(function () {
+      fab.style.transition = "";
+    });
+    _positionAIPanel();
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  [AI-FAB-HIDE] إخفاء الأيقونة بطريقة راقية + شريط استرجاع (Peek Tab)
+  //  كليك يمين على الأيقونة يفتح قائمة سياق مصغّرة فيها خيار "إخفاء الأيقونة".
+  //  الحالة تُحفَظ في localStorage (نفس أسلوب moo_ai_fab_pos الحالي) — تُطبَّق
+  //  فورًا بدون أنيميشن عند تحميل الصفحة لو كانت محفوظة كـ "مخفية".
+  // ════════════════════════════════════════════════════════════════════════════
+  var AI_FAB_HIDDEN_KEY = "moo_ai_fab_hidden";
+
+  function _initFabHideFeature() {
+    var fab = document.getElementById("ai-fab");
+    if (!fab) return;
+
+    fab.addEventListener("contextmenu", function (e) {
+      e.preventDefault();
+      _openAIFabMenu(e.clientX, e.clientY);
+    });
+
+    var hidden = false;
+    try {
+      hidden = localStorage.getItem(AI_FAB_HIDDEN_KEY) === "1";
+    } catch (e) {}
+    if (hidden) _hideAIFab(true);
+  }
+
+  function _openAIFabMenu(x, y) {
+    _closeAIFabMenu();
+    var menu = document.createElement("div");
+    menu.id = "ai-fab-menu";
+    menu.className = "ai-fab-menu";
+    menu.innerHTML =
+      '<button type="button" onclick="toggleAIChat();_closeAIFabMenu()">' +
+      '<span class="ai-fab-menu-icon"><i class="ti ti-message-circle"></i></span> فتح المساعد</button>' +
+      '<button type="button" onclick="_snapFabToOtherSide();_closeAIFabMenu()">' +
+      '<span class="ai-fab-menu-icon"><i class="ti ti-arrows-horizontal"></i></span> نقل للجهة الأخرى</button>' +
+      "<hr>" +
+      '<button type="button" onclick="_hideAIFab();_closeAIFabMenu()">' +
+      '<span class="ai-fab-menu-icon"><i class="ti ti-eye-off"></i></span> إخفاء الأيقونة</button>';
+    document.body.appendChild(menu);
+
+    var mw = menu.offsetWidth || 200,
+      mh = menu.offsetHeight || 130;
+    var left = Math.min(x, window.innerWidth - mw - 10);
+    var top = Math.min(y, window.innerHeight - mh - 10);
+    menu.style.left = Math.max(10, left) + "px";
+    menu.style.top = Math.max(10, top) + "px";
+
+    requestAnimationFrame(function () {
+      menu.classList.add("ai-fab-menu-open");
+    });
+    setTimeout(function () {
+      document.addEventListener("pointerdown", _onAIFabMenuOutsideClick);
+    }, 0);
+  }
+
+  function _onAIFabMenuOutsideClick(e) {
+    var menu = document.getElementById("ai-fab-menu");
+    if (menu && !menu.contains(e.target)) _closeAIFabMenu();
+  }
+
+  function _closeAIFabMenu() {
+    var menu = document.getElementById("ai-fab-menu");
+    if (!menu) return;
+    menu.classList.remove("ai-fab-menu-open");
+    document.removeEventListener("pointerdown", _onAIFabMenuOutsideClick);
+    setTimeout(function () {
+      if (menu && menu.parentNode) menu.parentNode.removeChild(menu);
+    }, 180);
+  }
+
+  // إخفاء راقٍ: الأيقونة تضمر (scale+fade) بدل الاختفاء الفجائي، ويفضل مكانها
+  // شريط رفيع شبه شفاف على حافة الشاشة (Peek Tab) للاسترجاع في أي وقت.
+  function _hideAIFab(skipAnimation) {
+    var fab = document.getElementById("ai-fab");
+    if (!fab) return;
+    if (AI_CHAT.open) toggleAIChat();
+    fab.classList.add("ai-fab-hidden");
+    try {
+      localStorage.setItem(AI_FAB_HIDDEN_KEY, "1");
+    } catch (e) {}
+    _showAIFabPeek(skipAnimation);
+    if (!skipAnimation && typeof showToast === "function") {
+      NotificationEngine.info("تم إخفاء المساعد الذكي — اضغط على الشريط الجانبي لإظهاره مجددًا");
+    }
+  }
+
+  function _showAIFabPeek(skipAnimation) {
+    if (document.getElementById("ai-fab-peek")) return;
+    var fab = document.getElementById("ai-fab");
+    var peek = document.createElement("div");
+    peek.id = "ai-fab-peek";
+    peek.className = "ai-fab-peek";
+    peek.title = "إظهار المساعد الذكي";
+    peek.innerHTML = '<span><i class="ti ti-robot-face"></i></span>';
+    peek.addEventListener("click", _restoreAIFabFromPeek);
+    peek.style.top = (fab && fab.style.top) || "calc(100vh - 120px)";
+    if (skipAnimation) peek.style.transition = "none";
+    document.body.appendChild(peek);
+    if (skipAnimation) {
+      requestAnimationFrame(function () {
+        peek.style.transition = "";
+      });
+    }
+  }
+
+  function _restoreAIFabFromPeek() {
+    var fab = document.getElementById("ai-fab");
+    var peek = document.getElementById("ai-fab-peek");
+    if (fab) fab.classList.remove("ai-fab-hidden");
+    if (peek && peek.parentNode) peek.parentNode.removeChild(peek);
+    try {
+      localStorage.setItem(AI_FAB_HIDDEN_KEY, "0");
+    } catch (e) {}
+  }
+
+  // نقل سريع للجهة المقابلة من قائمة السياق — نفس منطق _snapFab لكن بدون
+  // الحاجة لسحب الأيقونة فعليًا.
+  function _snapFabToOtherSide() {
+    var fab = document.getElementById("ai-fab");
+    if (!fab) return;
+    var isRight = document.body.classList.contains("ai-fab-right");
+    var rect = fab.getBoundingClientRect();
+    var margin = 22;
+    fab.style.transition =
+      "left 0.3s cubic-bezier(0.34,1.56,0.64,1),right 0.3s cubic-bezier(0.34,1.56,0.64,1)";
+    if (isRight) {
+      fab.style.left = margin + "px";
+      fab.style.right = "auto";
+      document.body.classList.remove("ai-fab-right");
+      _fabPos = { side: "left", top: rect.top };
+    } else {
+      fab.style.right = margin + "px";
+      fab.style.left = "auto";
+      document.body.classList.add("ai-fab-right");
+      _fabPos = { side: "right", top: rect.top };
+    }
+    try {
+      localStorage.setItem("moo_ai_fab_pos", JSON.stringify(_fabPos));
+    } catch (e) {}
+    setTimeout(function () {
+      if (fab) fab.style.transition = "";
+    }, 320);
+    _positionAIPanel();
+  }
+  function _positionAIPanel() {
+    var fab = document.getElementById("ai-fab"),
+      panel = document.getElementById("ai-panel");
+    if (!fab || !panel) return;
+    if (window.innerWidth <= 600) {
+      panel.style.left =
+        panel.style.right =
+        panel.style.bottom =
+        panel.style.top =
+          "";
+      return;
+    }
+    var rect = fab.getBoundingClientRect(),
+      panelH = panel.offsetHeight || 600,
+      gap = 14;
+    var top =
+      rect.top >= panelH + gap + 10
+        ? rect.top - panelH - gap
+        : Math.min(rect.bottom + gap, window.innerHeight - panelH - 10);
+    top = Math.max(10, top);
+    panel.style.top = top + "px";
+    panel.style.bottom = "auto";
+    if (document.body.classList.contains("ai-fab-right")) {
+      panel.style.right = window.innerWidth - rect.right + "px";
+      panel.style.left = "auto";
+    } else {
+      panel.style.left = rect.left + "px";
+      panel.style.right = "auto";
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  TOGGLE
+  // ════════════════════════════════════════════════════════════════════════════
+  function toggleAIChat() {
+    AI_CHAT.open = !AI_CHAT.open;
+    var panel = document.getElementById("ai-panel"),
+      fab = document.getElementById("ai-fab");
+    if (!panel) return;
+    if (AI_CHAT.open) {
+      _updateContextBar();
+      panel.style.display = "flex";
+      _positionAIPanel();
+      setTimeout(function () {
+        panel.classList.add("ai-panel-open");
+      }, 10);
+      fab.classList.add("ai-fab-active");
+      var badge = document.getElementById("ai-fab-badge");
+      if (badge) badge.style.display = "none";
+      setTimeout(function () {
+        var inp = document.getElementById("ai-float-input");
+        if (inp) inp.focus();
+      }, 300);
+      // ضمان تحميل البيانات الموسعة عند الفتح
+      _ensureExtendedDataForAI(null);
+    } else {
+      panel.classList.remove("ai-panel-open");
+      fab.classList.remove("ai-fab-active");
+      setTimeout(function () {
+        panel.style.display = "none";
+      }, 300);
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  SEND MESSAGE — يحلل النص لاكتشاف Tool Calls
+  // ════════════════════════════════════════════════════════════════════════════
+  function sendAIMessage() {
+    if (AI_CHAT.loading) return;
+    var inp = document.getElementById("ai-float-input");
+    if (!inp) return;
+    var msg = inp.value.trim();
+    if (!msg) return;
+    inp.value = "";
+    inp.style.height = "auto";
+    _hideSuggestions();
+
+    AI_CHAT.history.push({ role: "user", content: msg, time: _nowTime() });
+    _saveAIHistory();
+    _refreshMessages();
+    _ensureExtendedDataForAI(function () {
+      _callAIBackend(msg);
+    });
+  }
+
+  function sendAIQuick(question) {
+    var inp = document.getElementById("ai-float-input");
+    if (inp) inp.value = question;
+    sendAIMessage();
+  }
+
+  // ── تشغيل تقرير سريع عبر Tool Call مباشرة ──────────────────────────────
+  function runAIReport(reportKey) {
+    if (AI_CHAT.loading) return;
+    var btn = AI_REPORT_BTNS.find(function (b) {
+      return b.key === reportKey;
+    });
+    if (!btn) return;
+    var label = btn.label,
+      toolName = btn.tool;
+
+    // التحقق من الصلاحية
+    var toolDef = AI_TOOL_DEFS[toolName];
+    if (toolDef && !_aiHasPerm(toolDef.permission)) {
+      NotificationEngine.error("ليس لديك صلاحية هذا التقرير");
+      return;
+    }
+
+    AI_CHAT.history.push({ role: "user", content: label, time: _nowTime() });
+    _saveAIHistory();
+    _refreshMessages();
+    AI_CHAT.loading = true;
+    _appendLoadingBubble();
+    _setStatus("يجلب البيانات...", true);
+    document.querySelectorAll(".ai-float-report-btn").forEach(function (b) {
+      b.disabled = true;
+    });
+
+    _ensureExtendedDataForAI(function () {
+      _executeTool(toolName, {}, function (result) {
+        var summary = _buildERPSystemPrompt();
+        var prompt =
+          "البيانات التالية من النظام:\n" +
+          JSON.stringify(result, null, 2).substring(0, 3000) +
+          "\n\nقدم تحليلاً واضحاً ومنظماً بالعربي.";
+        _callGroqWithPrompt(summary, prompt, function (reply) {
+          _aiOnResult({ success: true, reply: reply });
+          document
+            .querySelectorAll(".ai-float-report-btn")
+            .forEach(function (b) {
+              b.disabled = false;
+            });
+        });
+      });
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  CORE API CALL — proxyAIAgent
+  // ════════════════════════════════════════════════════════════════════════════
+  function _callAIBackend(userMsg) {
+    AI_CHAT.loading = true;
+    _appendLoadingBubble();
+    _setStatus("يفكر...", true);
+    var sendBtn = document.getElementById("ai-float-send");
+    if (sendBtn) sendBtn.disabled = true;
+
+    var systemPrompt = _buildERPSystemPrompt();
+    var messages = [{ role: "system", content: systemPrompt }];
+    AI_CHAT.history.forEach(function (m) {
+      if (m.role === "user" || m.role === "assistant")
+        messages.push({ role: m.role, content: m.content });
+    });
+
+    var callerUser = APP && APP.currentUser ? APP.currentUser.username : "";
+    var sessionTok =
+      typeof SESSION !== "undefined" && SESSION ? SESSION.token : "";
+
+    _gsr(
+      "proxyAIAgent",
+      [callerUser, sessionTok, { mode: "chat", messages: messages }],
+      {
+        label: "AI.proxyAIAgent.chat",
+        rawResponse: true,
+        onSuccess: _handleAIProxyResult,
+        onError: function (result) {
+          // [توحيد] لو الباك-إند فعلاً رد (حتى برسالة success:false) فـ result.data
+          // موجود ونعامله زي أي رد عادي؛ null فقط لما يكون فشل اتصال حقيقي.
+          if (result && result.data) return _handleAIProxyResult(result);
+          _aiOnFail(result);
+        },
+      },
+    );
+  }
+
+  // معالج موحّد لرد proxyAIAgent (مود chat) — نفس منطق withSuccessHandler
+  // القديم بالحرف، سواء جه عبر success أو fail (لو الرد نفسه فيه بيانات)
+  function _handleAIProxyResult(result) {
+    var data = result.data;
+    if (data && data.rate_limited) {
+      AI_CHAT.rateRemaining = 0;
+      _updateRateBadge();
+      _aiOnResult({ success: false, reply: " " + data.message });
+      return;
+    }
+    if (data && data.success) {
+      if (data.rate_remaining !== undefined) {
+        AI_CHAT.rateRemaining = data.rate_remaining;
+        _updateRateBadge();
+      }
+      // هل الرد يتضمن Tool Call؟
+      var reply = data.reply || "";
+      var toolCall = _detectToolCall(reply);
+      if (toolCall && _aiHasPerm(toolCall.permission)) {
+        _handleToolCall(toolCall, reply);
+      } else {
+        _aiOnResult({ success: true, reply: reply });
+      }
+    } else {
+      _aiOnResult({
+        success: false,
+        reply: " " + ((data && data.message) || "لم يرد المساعد"),
+      });
+    }
+  }
+
+  function _callGroqWithPrompt(systemPrompt, userPrompt, callback) {
+    var callerUser = APP && APP.currentUser ? APP.currentUser.username : "";
+    var sessionTok =
+      typeof SESSION !== "undefined" && SESSION ? SESSION.token : "";
+    function handleResult(result) {
+      var data = result && result.data;
+      var reply = data && data.success ? data.reply : " خطأ في الاتصال";
+      if (data && data.rate_remaining !== undefined) {
+        AI_CHAT.rateRemaining = data.rate_remaining;
+        _updateRateBadge();
+      }
+      callback(reply);
+    }
+    _gsr(
+      "proxyAIAgent",
+      [
+        callerUser,
+        sessionTok,
+        {
+          mode: "chat",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+        },
+      ],
+      {
+        label: "AI.proxyAIAgent.prompt",
+        rawResponse: true,
+        onSuccess: handleResult,
+        onError: function (result) {
+          if (result && result.data) return handleResult(result);
+          callback(" تعذّر الاتصال");
+        },
+      },
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  TOOL CALL DETECTION — يكتشف إذا الـ LLM يريد تنفيذ أداة
+  // ════════════════════════════════════════════════════════════════════════════
+  function _detectToolCall(reply) {
+    // Pattern: [[TOOL:tool_name|params_json]]
+    var match = reply.match(/\[\[TOOL:([a-z_]+)\|(.*?)\]\]/s);
+    if (!match) return null;
+    var toolName = match[1],
+      paramsStr = match[2] || "{}";
+    var toolDef = AI_TOOL_DEFS[toolName];
+    if (!toolDef) return null;
+    var params = {};
+    try {
+      params = JSON.parse(paramsStr);
+    } catch (e) {}
+    return {
+      name: toolName,
+      params: params,
+      label: toolDef.label,
+      cat: toolDef.cat,
+      permission: toolDef.permission,
+    };
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  TOOL CALL HANDLER — Confirmation Flow للعمليات الكتابية
+  // ════════════════════════════════════════════════════════════════════════════
+  function _handleToolCall(toolCall, originalReply) {
+    // إزالة tag الـ Tool من الرد
+    var cleanReply = originalReply.replace(/\[\[TOOL:[^\]]*\]\]/g, "").trim();
+
+    if (toolCall.cat === "write") {
+      // يحتاج تأكيد المستخدم
+      _aiOnResult({
+        success: true,
+        reply: cleanReply || "أريد تنفيذ العملية التالية، هل توافق؟",
+      });
+      AI_CHAT.pendingTool = toolCall;
+      _showConfirmBox(toolCall);
+    } else {
+      // Read tools — تنفيذ مباشر
+      if (cleanReply) {
+        AI_CHAT.history.push({
+          role: "assistant",
+          content: cleanReply,
+          time: _nowTime(),
+        });
+        _saveAIHistory();
+        _refreshMessages();
+      }
+      AI_CHAT.loading = true;
+      _appendLoadingBubble();
+      _setStatus("يجلب البيانات...", true);
+      _executeTool(toolCall.name, toolCall.params, function (result) {
+        var systemP = _buildERPSystemPrompt();
+        var prompt =
+          "نتيجة الأداة '" +
+          toolCall.label +
+          "':\n" +
+          JSON.stringify(result, null, 2).substring(0, 3000) +
+          "\n\nلخّص وحلّل هذه البيانات بالعربي بشكل واضح ومنظم.";
+        _callGroqWithPrompt(systemP, prompt, function (reply) {
+          _aiOnResult({ success: true, reply: reply });
+        });
+      });
+    }
+  }
+
+  // ── صندوق التأكيد ────────────────────────────────────────────────────────
+  function _showConfirmBox(toolCall) {
+    var box = document.getElementById("ai-confirm-box");
+    if (!box) return;
+    var paramsStr = "";
+    try {
+      var p = toolCall.params || {};
+      paramsStr = Object.keys(p)
+        .filter(function (k) {
+          return p[k] !== undefined && p[k] !== "";
+        })
+        .map(function (k) {
+          return "• " + k + ": " + p[k];
+        })
+        .join("\n");
+    } catch (e) {}
+    box.innerHTML =
+      '<div class="ai-confirm-inner">' +
+      '<div class="ai-confirm-title"><i class="ti ti-alert-triangle"></i> تأكيد التنفيذ</div>' +
+      '<div class="ai-confirm-op">' +
+      toolCall.label +
+      "</div>" +
+      (paramsStr
+        ? '<div class="ai-confirm-params">' + esc(paramsStr) + "</div>"
+        : "") +
+      '<div class="ai-confirm-btns">' +
+      '<button class="ai-confirm-yes" onclick="aiConfirmTool()"><i class="ti ti-check"></i> نعم، نفّذ</button>' +
+      '<button class="ai-confirm-no" onclick="aiCancelTool()"><i class="ti ti-x"></i> إلغاء</button>' +
+      "</div></div>";
+    box.style.display = "block";
+    var quick = document.getElementById("ai-float-quick");
+    if (quick) quick.style.display = "none";
+  }
+
+  function aiConfirmTool() {
+    var box = document.getElementById("ai-confirm-box");
+    if (box) box.style.display = "none";
+    if (!AI_CHAT.pendingTool) {
+      NotificationEngine.warning("لا توجد عملية معلقة");
+      return;
+    }
+    var toolCall = AI_CHAT.pendingTool;
+    AI_CHAT.pendingTool = null;
+    AI_CHAT.history.push({
+      role: "user",
+      content: " نعم، نفّذ: " + toolCall.label,
+      time: _nowTime(),
+    });
+    _saveAIHistory();
+    _refreshMessages();
+    AI_CHAT.loading = true;
+    _appendLoadingBubble();
+    _setStatus("ينفّذ العملية...", true);
+    _executeTool(toolCall.name, toolCall.params, function (result) {
+      var systemP = _buildERPSystemPrompt();
+      var status = result.success ? " نجحت" : " فشلت";
+      var prompt =
+        "نتيجة تنفيذ '" +
+        toolCall.label +
+        "': " +
+        status +
+        "\n" +
+        JSON.stringify(result).substring(0, 1000) +
+        "\n\nأخبر المستخدم بالنتيجة بوضوح بالعربي.";
+      _callGroqWithPrompt(systemP, prompt, function (reply) {
+        _aiOnResult({ success: true, reply: reply });
+      });
+    });
+  }
+
+  function aiCancelTool() {
+    var box = document.getElementById("ai-confirm-box");
+    if (box) box.style.display = "none";
+    AI_CHAT.pendingTool = null;
+    AI_CHAT.history.push({
+      role: "assistant",
+      content: "تم إلغاء العملية.",
+      time: _nowTime(),
+    });
+    _saveAIHistory();
+    _refreshMessages();
+  }
+
+  // ── Execute Tool (Backend Call) ────────────────────────────────────────────
+  function _executeTool(toolName, params, callback) {
+    var callerUser = APP && APP.currentUser ? APP.currentUser.username : "";
+    var sessionTok =
+      typeof SESSION !== "undefined" && SESSION ? SESSION.token : "";
+    function handleResult(result) {
+      var data = result && result.data;
+      if (data && data.rate_remaining !== undefined) {
+        AI_CHAT.rateRemaining = data.rate_remaining;
+        _updateRateBadge();
+      }
+      callback(
+        data && data.result
+          ? data.result
+          : data || { success: false, message: "فشل التنفيذ" },
+      );
+    }
+    _gsr(
+      "proxyAIAgent",
+      [
+        callerUser,
+        sessionTok,
+        {
+          mode: "execute_tool",
+          tool_name: toolName,
+          tool_params: params,
+        },
+      ],
+      {
+        label: "AI.executeTool",
+        rawResponse: true,
+        onSuccess: handleResult,
+        onError: function (result) {
+          if (result && result.data) return handleResult(result);
+          callback({
+            success: false,
+            message: result && result.message
+              ? "خطأ: " + result.message
+              : "فشل الاتصال",
+          });
+        },
+      },
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  RESULT HANDLERS
+  // ════════════════════════════════════════════════════════════════════════════
+  function _aiOnResult(result) {
+    AI_CHAT.loading = false;
+    var sendBtn = document.getElementById("ai-float-send");
+    if (sendBtn) sendBtn.disabled = false;
+    _removeLoadingBubble();
+    _setStatus("متصل · جاهز للمساعدة", false);
+    var reply =
+      !result || !result.success
+        ? " حدث خطأ: " + ((result && result.reply) || "خطأ غير معروف")
+        : result.reply;
+    AI_CHAT.history.push({
+      role: "assistant",
+      content: reply,
+      time: _nowTime(),
+    });
+    _saveAIHistory();
+    _refreshMessages();
+    if (AI_CHAT.ttsEnabled) _speakText(reply);
+    if (!AI_CHAT.open) {
+      var badge = document.getElementById("ai-fab-badge");
+      if (badge) badge.style.display = "flex";
+    }
+  }
+
+  function _aiOnFail(err) {
+    AI_CHAT.loading = false;
+    var sendBtn = document.getElementById("ai-float-send");
+    if (sendBtn) sendBtn.disabled = false;
+    _removeLoadingBubble();
+    _setStatus("خطأ في الاتصال", false);
+    AI_CHAT.history.push({
+      role: "assistant",
+      content:
+        " تعذّر الاتصال. تحقق من الإنترنت." +
+        (err && err.message ? "\n(" + err.message + ")" : ""),
+      time: _nowTime(),
+    });
+    _saveAIHistory();
+    _refreshMessages();
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  SYSTEM PROMPT — خفيف + Permission-Aware + Extended Data
+  // ════════════════════════════════════════════════════════════════════════════
+  function _buildERPSystemPrompt() {
+    var d = APP && APP.data ? APP.data : {};
+    var now = fmtDateTime(new Date());
+    var currentPage = _getCurrentPageName(),
+      currentModule = _getCurrentModule();
+    var companyName =
+      (APP && APP.companySettings && APP.companySettings.companyName) ||
+      "MOO.ERP";
+    var userRole = _aiGetUserRole();
+    var username = APP && APP.currentUser ? APP.currentUser.username : "";
+
+    // ── مخزون مختصر ──
+    var stockMap = {};
+    (d.stock || []).forEach(function (s) {
+      var id = String(s.item_id || "").trim();
+      stockMap[id] = (stockMap[id] || 0) + Number(s.quantity || 0);
+    });
+    (d.openingStock || []).forEach(function (o) {
+      var id = String(o.item_id || "").trim();
+      stockMap[id] = (stockMap[id] || 0) + Number(o.quantity || 0);
+    });
+    var alertItems = [];
+    var itemsSummary = (d.items || [])
+      .slice(0, 80)
+      .map(function (it) {
+        var qty = stockMap[String(it.id)] || 0;
+        var min = Number(it.min_quantity || it.minQuantity || 0);
+        var alert = min > 0 && qty <= min ? " " : "";
+        if (alert) alertItems.push(it.name + "(" + qty + "/" + min + ")");
+        return (
+          (it.code ? "[" + it.code + "] " : "") +
+          it.name +
+          " " +
+          qty +
+          (it.unit || "") +
+          alert
+        );
+      })
+      .join(", ");
+
+    var whSummary = (d.warehouses || [])
+      .map(function (w) {
+        var t = (d.stock || [])
+          .filter(function (s) {
+            return String(s.warehouse || s.warehouse_id || "") == String(w.id);
+          })
+          .reduce(function (s, x) {
+            return s + Number(x.quantity || 0);
+          }, 0);
+        return w.name + ":" + t;
+      })
+      .join(" | ");
+
+    // ── مالي مختصر ──
+    var cashTotal = (d.cashBoxes || []).reduce(function (s, c) {
+      return s + Number(c.balance || c.opening_balance || 0);
+    }, 0);
+    var bankTotal = (d.bankAccounts || []).reduce(function (s, b) {
+      return s + Number(b.balance || b.opening_balance || 0);
+    }, 0);
+    var receiptTotal = (d.receiptVouchers || []).reduce(function (s, v) {
+      return s + Number(v.amount || 0);
+    }, 0);
+    var paymentTotal = (d.paymentVouchers || []).reduce(function (s, v) {
+      return s + Number(v.amount || 0);
+    }, 0);
+
+    // ── HR مختصر ──
+    var empCount = (d.employees || []).length;
+    var pendingLeaves = (d.leaveRequests || []).filter(function (l) {
+      return l.status === "معلق" || l.status === "pending";
+    }).length;
+
+    // ── الأصناف المتاحة للـ LLM ──
+    var availableTools = Object.keys(AI_TOOL_DEFS).filter(function (k) {
+      return _aiHasPerm(AI_TOOL_DEFS[k].permission);
+    });
+    var writeTools = availableTools.filter(function (k) {
+      return AI_TOOL_DEFS[k].cat === "write";
+    });
+
+    return [
+      "أنت مساعد ذكي متكامل لنظام " +
+        companyName +
+        " (MOO.ERP v" +
+        AI_AGENT_V +
+        ").",
+      "المستخدم: " + username + " | الدور: " + userRole + " | الوقت: " + now,
+      "الصفحة الحالية: " + currentPage + " (" + currentModule + ")",
+      "",
+      "══ المخزون (ملخص) ══",
+      "أصناف: " +
+        (d.items || []).length +
+        " | مخازن: " +
+        (d.warehouses || []).length,
+      "تنبيهات نقص: " +
+        alertItems.length +
+        (alertItems.length ? " → " + alertItems.slice(0, 5).join(", ") : ""),
+      "توزيع المخازن: " + (whSummary || "—"),
+      "أبرز الأصناف: " + itemsSummary.substring(0, 500),
+      "",
+      "══ المالية ══",
+      "إجمالي الصناديق: " + cashTotal + " | البنوك: " + bankTotal,
+      "سندات قبض: " + receiptTotal + " | سندات صرف: " + paymentTotal,
+      (d.cashBoxes || []).length
+        ? "الصناديق: " +
+          (d.cashBoxes || [])
+            .slice(0, 5)
+            .map(function (c) {
+              return c.name + ":" + Number(c.balance || c.opening_balance || 0);
+            })
+            .join(", ")
+        : "",
+      "",
+      "══ الموارد البشرية ══",
+      "موظفون: " + empCount + " | إجازات معلقة: " + pendingLeaves,
+      "",
+      "══ الإنتاج ══",
+      "أوامر مفتوحة: " +
+        (d.productionOrders || []).filter(function (o) {
+          return o.status !== "منتهي" && o.status !== "ملغي";
+        }).length,
+      "",
+      "══ العملاء والموردون ══",
+      "عملاء: " +
+        (d.customers || []).length +
+        " | موردون: " +
+        (d.suppliers || []).length,
+      "",
+      "══ أدوات التنفيذ المتاحة (صلاحيات المستخدم) ══",
+      "أدوات القراءة: " +
+        availableTools
+          .filter(function (k) {
+            return AI_TOOL_DEFS[k].cat === "read";
+          })
+          .map(function (k) {
+            return AI_TOOL_DEFS[k].label;
+          })
+          .join(", "),
+      writeTools.length
+        ? "أدوات الكتابة: " +
+          writeTools
+            .map(function (k) {
+              return AI_TOOL_DEFS[k].label + "(" + k + ")";
+            })
+            .join(", ")
+        : "لا صلاحيات كتابة",
+      "",
+      "══ قواعد الرد ══",
+      "• الرد بالعربية فقط. الأرقام بالأرقام العادية.",
+      "• عند طلب تنفيذ عملية متاحة، استخدم الصيغة: [[TOOL:tool_name|{params_json}]]",
+      '  مثال إنشاء عميل: [[TOOL:create_customer|{"name":"محمد علي","phone":"01012345678"}]]',
+      "  مثال تقرير مخزون: [[TOOL:get_stock_report|{}]]",
+      "• قبل أي Tool Call اكتشف وتحقق من البيانات المطلوبة وإذا ناقص شيء اسأل المستخدم.",
+      "• لا تنفذ عمليات الحذف أبداً.",
+      "• إذا سُئلت عن شيء غير متاح في بياناتك، أخبر المستخدم بوضوح.",
+      "• تكيّف مع الصفحة الحالية: " + currentPage,
+    ].join("\n");
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  TOOLS PANEL — عرض الأدوات المتاحة
+  // ════════════════════════════════════════════════════════════════════════════
+  function _aiShowTools() {
+    var readTools = [],
+      writeTools = [];
+    Object.keys(AI_TOOL_DEFS).forEach(function (k) {
+      var def = AI_TOOL_DEFS[k];
+      var has = _aiHasPerm(def.permission);
+      var item = { name: k, label: def.label, has: has };
+      if (def.cat === "read") readTools.push(item);
+      else writeTools.push(item);
+    });
+    var html =
+      '<div style="padding:12px;">' +
+      '<strong style="font-size:13px;"><i class="ti ti-tool"></i> الأدوات المتاحة</strong><br><br>' +
+      '<div style="font-size:12px;color:var(--text-secondary,#555);margin-bottom:8px;">أدوات القراءة:</div>' +
+      readTools
+        .map(function (t) {
+          return (
+            '<span style="display:inline-block;margin:3px;padding:3px 8px;border-radius:12px;font-size:12px;background:' +
+            (t.has ? "#d1fae5" : "#fee2e2") +
+            ";color:" +
+            (t.has ? "#065f46" : "#991b1b") +
+            '">' +
+            (t.has ? '<i class="ti ti-circle-check"></i>' : '<i class="ti ti-ban"></i>') +
+            " " +
+            t.label +
+            "</span>"
+          );
+        })
+        .join("") +
+      '<div style="font-size:12px;color:var(--text-secondary,#555);margin:8px 0;">أدوات التنفيذ:</div>' +
+      writeTools
+        .map(function (t) {
+          return (
+            '<span style="display:inline-block;margin:3px;padding:3px 8px;border-radius:12px;font-size:12px;background:' +
+            (t.has ? "#dbeafe" : "#fee2e2") +
+            ";color:" +
+            (t.has ? "#1e40af" : "#991b1b") +
+            '">' +
+            (t.has ? '<i class="ti ti-circle-check"></i>' : '<i class="ti ti-ban"></i>') +
+            " " +
+            t.label +
+            "</span>"
+          );
+        })
+        .join("") +
+      '<br><br><small style="color:var(--text-muted,#9ca3af)"><i class="ti ti-circle-check"></i> متاح لك | <i class="ti ti-ban"></i> يحتاج صلاحية أعلى</small>' +
+      "</div>";
+    // عرض في صندوق التأكيد مؤقتاً
+    var box = document.getElementById("ai-confirm-box");
+    if (!box) return;
+    box.innerHTML =
+      '<div class="ai-confirm-inner">' +
+      html +
+      "<br><button class=\"ai-confirm-no\" onclick=\"document.getElementById('ai-confirm-box').style.display='none'\">إغلاق</button></div>";
+    box.style.display = "block";
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  UI HELPERS
+  // ════════════════════════════════════════════════════════════════════════════
+  function _refreshMessages() {
+    var box = document.getElementById("ai-float-messages");
+    if (!box) return;
+    box.innerHTML =
+      AI_CHAT.history.length === 0
+        ? _buildMessagesHTML()
+        : AI_CHAT.history.map(_renderFloatMsg).join("");
+    var quick = document.getElementById("ai-float-quick");
+    if (quick && AI_CHAT.history.length > 0) quick.style.display = "none";
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function _renderFloatMsg(msg) {
+    var isUser = msg.role === "user";
+    var content = isUser
+      ? "<p>" + esc(msg.content) + "</p>"
+      : _formatAIReply(msg.content);
+    var time = msg.time
+      ? '<span class="ai-msg-time">' + msg.time + "</span>"
+      : "";
+    var copyBtn = !isUser
+      ? '<button class="ai-copy-btn" onclick="_copyAIMsg(this)" title="نسخ"><i class="ti ti-copy"></i></button>'
+      : "";
+    var ttsBtn = !isUser
+      ? '<button class="ai-copy-btn" onclick="_speakMsg(this)" title="استمع"><i class="ti ti-volume"></i></button>'
+      : "";
+    return (
+      '<div class="ai-msg ' +
+      (isUser ? "ai-msg-user" : "ai-msg-bot") +
+      '">' +
+      '<div class="ai-avatar">' +
+      (isUser ? '<i class="ti ti-user"></i>' : '<i class="ti ti-robot-face"></i>') +
+      "</div>" +
+      '<div class="ai-bubble-wrap"><div class="ai-bubble">' +
+      content +
+      "</div>" +
+      '<div class="ai-msg-meta">' +
+      time +
+      copyBtn +
+      ttsBtn +
+      "</div></div></div>"
+    );
+  }
+
+  function _appendLoadingBubble() {
+    var box = document.getElementById("ai-float-messages");
+    if (!box) return;
+    var el = document.createElement("div");
+    el.className = "ai-msg ai-msg-bot";
+    el.id = "ai-loading-bubble";
+    el.innerHTML =
+      '<div class="ai-avatar"><i class="ti ti-robot-face"></i></div><div class="ai-bubble-wrap"><div class="ai-bubble ai-typing"><span></span><span></span><span></span></div></div>';
+    box.appendChild(el);
+    box.scrollTop = box.scrollHeight;
+  }
+  function _removeLoadingBubble() {
+    var b = document.getElementById("ai-loading-bubble");
+    if (b) b.remove();
+  }
+  function _setStatus(txt, loading) {
+    var el = document.getElementById("ai-status-txt");
+    if (!el) return;
+    el.textContent = txt;
+    el.style.color = loading
+      ? "var(--warning,#d97706)"
+      : "var(--success,#059669)";
+  }
+
+  function setAIQuickCat(idx) {
+    _aiActiveQuickCat = idx;
+    document.querySelectorAll(".ai-float-cat").forEach(function (t, i) {
+      t.classList.toggle("active", i === idx);
+    });
+    var wrap = document.getElementById("ai-float-quick-btns");
+    if (wrap) wrap.innerHTML = _buildQuickBtns(idx);
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  SMART SUGGESTIONS
+  // ════════════════════════════════════════════════════════════════════════════
+  function _showSuggestions(val) {
+    var sugg = document.getElementById("ai-float-sugg");
+    if (!sugg) return;
+    if (!val || val.length < 1) {
+      _hideSuggestions();
+      return;
+    }
+    var q = val.trim().toLowerCase(),
+      d = APP && APP.data ? APP.data : {},
+      matches = [];
+    AI_QUICK_CATEGORIES.forEach(function (cat) {
+      cat.questions.forEach(function (question) {
+        if (question.includes(q) || q.includes(question.substring(0, 3)))
+          matches.push(question);
+      });
+    });
+    // أسماء الأصناف
+    (d.items || []).slice(0, 200).forEach(function (it) {
+      var name = String(it.name || "");
+      if (name.includes(q)) matches.push("ما رصيد " + name + "؟");
+    });
+    // أسماء العملاء
+    (d.customers || []).slice(0, 100).forEach(function (c) {
+      var name = String(c.name || "");
+      if (name.includes(q)) matches.push("كشف حساب عميل " + name);
+    });
+    // أسماء الموردين
+    (d.suppliers || []).slice(0, 100).forEach(function (s) {
+      var name = String(s.name || "");
+      if (name.includes(q)) matches.push("كشف حساب مورد " + name);
+    });
+    // اقتراحات Tool Calls
+    if (
+      q.includes("أنش") ||
+      q.includes("إنش") ||
+      q.includes("سجل") ||
+      q.includes("أضف")
+    ) {
+      if (_aiHasPerm("addCustomer")) matches.push("أنشئ عميل جديد");
+      if (_aiHasPerm("addItem")) matches.push("أنشئ صنف جديد");
+      if (_aiHasPerm("addTransaction")) matches.push("سجل إذن إضافة");
+    }
+    matches = matches.slice(0, 6);
+    if (!matches.length) {
+      _hideSuggestions();
+      return;
+    }
+    sugg.innerHTML = matches
+      .map(function (m) {
+        return (
+          '<div class="ai-sugg-item" onmousedown="_pickSuggestion(\'' +
+          m.replace(/'/g, "\\'") +
+          "')\">" +
+          esc(m) +
+          "</div>"
+        );
+      })
+      .join("");
+    sugg.style.display = "block";
+  }
+  function _hideSuggestions() {
+    var sugg = document.getElementById("ai-float-sugg");
+    if (sugg) sugg.style.display = "none";
+  }
+  function _pickSuggestion(text) {
+    var inp = document.getElementById("ai-float-input");
+    if (inp) {
+      inp.value = text;
+      inp.focus();
+    }
+    _hideSuggestions();
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  TTS (محتفظ بالكامل من النسخة السابقة)
+  // ════════════════════════════════════════════════════════════════════════════
+  var _ttsAudio = null,
+    _ttsSpeaking = false;
+  function _initTTS() {}
+  function _updateTTSBtn() {
+    var btn = document.getElementById("ai-tts-btn");
+    if (!btn) return;
+    if (_ttsSpeaking) {
+      btn.innerHTML = "⏹";
+      btn.title = "إيقاف الكلام";
+      btn.style.cssText =
+        "animation:ttsPulse 0.8s ease-in-out infinite;color:#ef4444;";
+    } else if (AI_CHAT.ttsEnabled) {
+      btn.innerHTML = '<i class="ti ti-volume"></i>';
+      btn.title = "إيقاف الصوت";
+      btn.style.cssText = "animation:none;color:'';";
+      btn.classList.add("active");
+    } else {
+      btn.innerHTML = '<i class="ti ti-volume-off"></i>';
+      btn.title = "تفعيل الصوت";
+      btn.style.cssText = "animation:none;color:#6b7280;";
+      btn.classList.remove("active");
+    }
+  }
+  function _toggleTTS() {
+    if (_ttsSpeaking) {
+      if (_ttsAudio) {
+        _ttsAudio.pause();
+        _ttsAudio.src = "";
+        _ttsAudio = null;
+      }
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+      _ttsSpeaking = false;
+      _updateTTSBtn();
+      NotificationEngine.info("⏹ تم إيقاف الكلام");
+      return;
+    }
+    AI_CHAT.ttsEnabled = !AI_CHAT.ttsEnabled;
+    _updateTTSBtn();
+    NotificationEngine.info(AI_CHAT.ttsEnabled ? "الرد بالصوت مفعّل" : "الرد بالصوت متوقف");
+  }
+  function _speakText(text) {
+    if (!AI_CHAT.ttsEnabled) return;
+    var clean = _sanitizeForTTS(text);
+    if (!clean || !/[\u0600-\u06FF]/.test(clean)) return;
+    clean = clean.substring(0, 800);
+    if (_ttsAudio) {
+      _ttsAudio.pause();
+      _ttsAudio.src = "";
+      _ttsAudio = null;
+    }
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    _ttsSpeaking = true;
+    _updateTTSBtn();
+    _speakGemini(clean, function () {
+      _speakElevenLabsViaProxy(clean, function () {
+        _speakWebSpeech(clean);
+      });
+    });
+  }
+  var _EN_TO_AR = {
+    kg: "كيلو",
+    kgs: "كيلو",
+    gram: "جرام",
+    meter: "متر",
+    meters: "متر",
+    cm: "سنتيمتر",
+    mm: "مليمتر",
+    liter: "لتر",
+    piece: "قطعة",
+    pieces: "قطع",
+    box: "كرتونة",
+    boxes: "كراتين",
+    roll: "رول",
+    rolls: "رولات",
+    in: "وارد",
+    out: "صادر",
+    transfer: "تحويل",
+    stock: "رصيد",
+    total: "الإجمالي",
+    balance: "الرصيد",
+    qty: "كمية",
+    quantity: "كمية",
+    price: "سعر",
+    cost: "تكلفة",
+    note: "ملاحظة",
+    notes: "ملاحظات",
+    status: "الحالة",
+    active: "نشط",
+    inactive: "موقوف",
+    yes: "نعم",
+    no: "لا",
+    ok: "تمام",
+    error: "خطأ",
+    invoice: "فاتورة",
+    voucher: "سند",
+    receipt: "قبض",
+    payment: "صرف",
+    employee: "موظف",
+    salary: "راتب",
+    red: "أحمر",
+    blue: "أزرق",
+    green: "أخضر",
+    black: "أسود",
+    white: "أبيض",
+    yellow: "أصفر",
+    orange: "برتقالي",
+    brown: "بني",
+    grey: "رمادي",
+    gray: "رمادي",
+    pink: "وردي",
+    purple: "بنفسجي",
+    gold: "ذهبي",
+    navy: "كحلي",
+  };
+  var _LETTER_TO_AR = {
+    A: "إيه",
+    B: "بي",
+    C: "سي",
+    D: "دي",
+    E: "إي",
+    F: "إف",
+    G: "جي",
+    H: "إيتش",
+    I: "آي",
+    J: "جيه",
+    K: "كيه",
+    L: "إل",
+    M: "إم",
+    N: "إن",
+    O: "أو",
+    P: "بي",
+    Q: "كيو",
+    R: "آر",
+    S: "إس",
+    T: "تي",
+    U: "يو",
+    V: "في",
+    W: "دبليو",
+    X: "إكس",
+    Y: "واي",
+    Z: "زد",
+  };
+  function _numToAr(n) {
+    n = Math.round(Number(n));
+    if (isNaN(n)) return "";
+    if (n === 0) return "صفر";
+    if (n < 0) return "ناقص " + _numToAr(-n);
+    var ones = [
+      "",
+      "واحد",
+      "اثنان",
+      "ثلاثة",
+      "أربعة",
+      "خمسة",
+      "ستة",
+      "سبعة",
+      "ثمانية",
+      "تسعة",
+      "عشرة",
+      "أحد عشر",
+      "اثنا عشر",
+      "ثلاثة عشر",
+      "أربعة عشر",
+      "خمسة عشر",
+      "ستة عشر",
+      "سبعة عشر",
+      "ثمانية عشر",
+      "تسعة عشر",
+    ];
+    var tens = [
+      "",
+      "",
+      "عشرون",
+      "ثلاثون",
+      "أربعون",
+      "خمسون",
+      "ستون",
+      "سبعون",
+      "ثمانون",
+      "تسعون",
+    ];
+    var hundreds = [
+      "",
+      "مئة",
+      "مئتان",
+      "ثلاثمئة",
+      "أربعمئة",
+      "خمسمئة",
+      "ستمئة",
+      "سبعمئة",
+      "ثمانمئة",
+      "تسعمئة",
+    ];
+    function b1000(x) {
+      if (x === 0) return "";
+      var h = Math.floor(x / 100),
+        rest = x % 100,
+        r = "";
+      if (h > 0) r += hundreds[h];
+      if (rest === 0) return r;
+      if (r) r += " و";
+      if (rest < 20) {
+        r += ones[rest];
+      } else {
+        var t = Math.floor(rest / 10),
+          o = rest % 10;
+        r += o === 0 ? tens[t] : ones[o] + " و" + tens[t];
+      }
+      return r;
+    }
+    var result = "";
+    var billions = Math.floor(n / 1e9);
+    n %= 1e9;
+    var millions = Math.floor(n / 1e6);
+    n %= 1e6;
+    var thousands = Math.floor(n / 1000);
+    n %= 1000;
+    if (billions) result += b1000(billions) + " مليار ";
+    if (millions) result += b1000(millions) + " مليون ";
+    if (thousands === 1) result += "ألف ";
+    else if (thousands === 2) result += "ألفان ";
+    else if (thousands <= 10 && thousands > 0)
+      result += b1000(thousands) + " آلاف ";
+    else if (thousands > 0) result += b1000(thousands) + " ألف ";
+    if (n > 0) {
+      if (result) result += "و";
+      result += b1000(n);
+    }
+    return result.trim();
+  }
+  function _spellOutCode(code) {
+    var parts = code.match(/[A-Za-z]+|\d+/g) || [code];
+    return parts
+      .map(function (p) {
+        if (/^\d+$/.test(p)) return _numToAr(parseInt(p, 10));
+        return p
+          .toUpperCase()
+          .split("")
+          .map(function (c) {
+            return _LETTER_TO_AR[c] || c;
+          })
+          .join(" ");
+      })
+      .join(" ");
+  }
+  function _sanitizeForTTS(text) {
+    text = text
+      .replace(/https?:\/\/\S+/g, "")
+      .replace(/[#*`_~>|\\]/g, "")
+      .replace(/\[[^\]]*\]/g, "")
+      .replace(/[(){}[\]<>]/g, "");
+    text = text.replace(/\b([A-Za-z]{1,10})(\d+)\b/g, function (_, l, n) {
+      return _spellOutCode(l) + " " + _numToAr(parseInt(n, 10));
+    });
+    text = text.replace(/\b([A-Za-z]+)\b/g, function (word) {
+      var lower = word.toLowerCase();
+      if (_EN_TO_AR[lower]) return _EN_TO_AR[lower];
+      if (word.length <= 6 || word === word.toUpperCase())
+        return _spellOutCode(word);
+      return "";
+    });
+    text = text.replace(/(\d+)\.(\d+)/g, function (_, i, d) {
+      return _numToAr(parseInt(i, 10)) + " فاصل " + _numToAr(parseInt(d, 10));
+    });
+    text = text.replace(/\d+/g, function (num) {
+      return _numToAr(parseInt(num, 10));
+    });
+    return text
+      .replace(/\s{2,}/g, " ")
+      .replace(/\n+/g, "، ")
+      .trim();
+  }
+  function _pcmToWav(pcmBase64) {
+    var pcmBytes = atob(pcmBase64),
+      pcmLen = pcmBytes.length;
+    var sampleRate = 24000,
+      numChannels = 1,
+      bitsPerSample = 16;
+    var byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
+    var blockAlign = (numChannels * bitsPerSample) / 8;
+    var wavLen = 44 + pcmLen,
+      buf = new ArrayBuffer(wavLen),
+      view = new DataView(buf);
+    function ws(off, s) {
+      for (var i = 0; i < s.length; i++)
+        view.setUint8(off + i, s.charCodeAt(i));
+    }
+    ws(0, "RIFF");
+    view.setUint32(4, wavLen - 8, true);
+    ws(8, "WAVE");
+    ws(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitsPerSample, true);
+    ws(36, "data");
+    view.setUint32(40, pcmLen, true);
+    for (var i = 0; i < pcmLen; i++)
+      view.setUint8(44 + i, pcmBytes.charCodeAt(i));
+    return new Blob([buf], { type: "audio/wav" });
+  }
+  function _speakElevenLabsViaProxy(clean, onFail) {
+    if (
+      !APP ||
+      !APP.scriptUrl ||
+      !SESSION ||
+      !SESSION.token ||
+      !APP.currentUser
+    ) {
+      if (onFail) onFail();
+      return;
+    }
+    fetch(APP.scriptUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fn: "proxyElevenLabsTTS",
+        args: [APP.currentUser, SESSION.token, clean, ELEVENLABS_VOICE],
+      }),
+    })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (data) {
+        var res = data.result || data;
+        if (!res.success || !res.audioBase64)
+          throw new Error(res.message || "فشل");
+        var bytes = atob(res.audioBase64),
+          arr = new Uint8Array(bytes.length);
+        for (var i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+        var blob = new Blob([arr], { type: res.mimeType || "audio/mpeg" });
+        var url = URL.createObjectURL(blob);
+        _ttsAudio = new Audio(url);
+        _ttsAudio.play();
+        _ttsAudio.onended = function () {
+          URL.revokeObjectURL(url);
+          _ttsSpeaking = false;
+          _ttsAudio = null;
+          _updateTTSBtn();
+        };
+        _ttsAudio.onerror = function () {
+          _ttsSpeaking = false;
+          _ttsAudio = null;
+          _updateTTSBtn();
+          if (onFail) onFail();
+        };
+      })
+      .catch(function (err) {
+        console.warn("ElevenLabs فشل:", err);
+        _ttsSpeaking = false;
+        _updateTTSBtn();
+        if (onFail) onFail();
+      });
+  }
+  function _speakGemini(clean, onFail) {
+    if (
+      !APP ||
+      !APP.scriptUrl ||
+      !SESSION ||
+      !SESSION.token ||
+      !APP.currentUser
+    ) {
+      if (onFail) onFail();
+      return;
+    }
+    fetch(APP.scriptUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fn: "proxyGeminiTTS",
+        args: [
+          APP.currentUser,
+          SESSION.token,
+          clean,
+          AI_CHAT.geminiVoice || "Kore",
+        ],
+      }),
+    })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (data) {
+        var res = data.result || data;
+        if (!res.success || !res.audioBase64)
+          throw new Error(res.message || "فشل");
+        var mimeType = res.mimeType || "";
+        var blob;
+        if (
+          mimeType.indexOf("L16") !== -1 ||
+          mimeType.indexOf("pcm") !== -1 ||
+          mimeType === ""
+        ) {
+          blob = _pcmToWav(res.audioBase64);
+        } else {
+          var bytes = atob(res.audioBase64),
+            arr = new Uint8Array(bytes.length);
+          for (var i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+          blob = new Blob([arr], { type: mimeType });
+        }
+        var objUrl = URL.createObjectURL(blob);
+        _ttsAudio = new Audio(objUrl);
+        _ttsAudio.play();
+        _ttsAudio.onended = function () {
+          URL.revokeObjectURL(objUrl);
+          _ttsSpeaking = false;
+          _ttsAudio = null;
+          _updateTTSBtn();
+        };
+        _ttsAudio.onerror = function () {
+          _ttsSpeaking = false;
+          _ttsAudio = null;
+          _updateTTSBtn();
+          if (onFail) onFail();
+        };
+      })
+      .catch(function (err) {
+        console.warn("Gemini TTS فشل:", err);
+        _ttsSpeaking = false;
+        _updateTTSBtn();
+        if (onFail) onFail();
+      });
+  }
+  // [TTS-VOICES-FIX] المتصفحات (خصوصًا Chrome) بتحمّل قائمة الأصوات
+  // بشكل غير متزامن — أول استدعاء لـ getVoices() ممكن يرجع مصفوفة فاضية
+  // حتى لو الجهاز فعلاً بيدعم العربي، فقبل كده كنا بنحكم "الجهاز مش
+  // بيدعم النطق العربي" غلط بناءً على قائمة لسه ما اتحمّلتش. الحل: لو
+  // القائمة فاضية، نستنى حدث voiceschanged (أو نعمل polling قصير كـ
+  // fallback للمتصفحات اللي مبتطلقش الحدث ده) قبل ما نحكم فعليًا.
+  function _pickArabicVoice(voices) {
+    return (
+      voices.find(function (v) {
+        return v.lang === "ar-SA";
+      }) ||
+      voices.find(function (v) {
+        return v.lang === "ar-EG";
+      }) ||
+      voices.find(function (v) {
+        return v.lang.startsWith("ar");
+      }) ||
+      null
+    );
+  }
+  function _getArabicVoiceAsync(cb) {
+    var voices = window.speechSynthesis.getVoices();
+    if (voices && voices.length) {
+      cb(_pickArabicVoice(voices));
+      return;
+    }
+    // القائمة لسه فاضية — نستنى تحميلها بدل ما نحكم فورًا
+    var done = false;
+    function finish() {
+      if (done) return;
+      done = true;
+      window.speechSynthesis.onvoiceschanged = null;
+      clearTimeout(pollTimer);
+      cb(_pickArabicVoice(window.speechSynthesis.getVoices()));
+    }
+    window.speechSynthesis.onvoiceschanged = finish;
+    // fallback: بعض المتصفحات (Safari القديم مثلاً) مبتطلقش voiceschanged
+    // أبدًا، فنعمل محاولة تانية بعد نص ثانية على أي حال.
+    var pollTimer = setTimeout(finish, 500);
+  }
+  function _speakWebSpeech(clean) {
+    if (!window.speechSynthesis) {
+      _ttsSpeaking = false;
+      _updateTTSBtn();
+      return;
+    }
+    window.speechSynthesis.cancel();
+    _getArabicVoiceAsync(function (arVoice) {
+      if (!arVoice) {
+        _ttsSpeaking = false;
+        _updateTTSBtn();
+        NotificationEngine.warning("جهازك لا يدعم النطق العربي");
+        return;
+      }
+      var chunks = clean.match(/[^،؟!\n]{1,120}[،؟!\n]?/g) || [clean];
+      chunks = chunks
+        .map(function (c) {
+          return c.trim();
+        })
+        .filter(function (c) {
+          return c.length > 1;
+        });
+      function next(i) {
+        if (i >= chunks.length) {
+          _ttsSpeaking = false;
+          _updateTTSBtn();
+          return;
+        }
+        var utt = new SpeechSynthesisUtterance(chunks[i]);
+        utt.lang = "ar-SA";
+        utt.voice = arVoice;
+        utt.rate = 0.85;
+        utt.onend = function () {
+          next(i + 1);
+        };
+        utt.onerror = function () {
+          next(i + 1);
+        };
+        window.speechSynthesis.speak(utt);
+      }
+      setTimeout(function () {
+        next(0);
+      }, 120);
+    });
+  }
+  function _speakMsg(btn) {
+    var bubble = btn.closest(".ai-bubble-wrap").querySelector(".ai-bubble");
+    if (!bubble) return;
+    var text = bubble.innerText || bubble.textContent;
+    var wasEnabled = AI_CHAT.ttsEnabled;
+    AI_CHAT.ttsEnabled = true;
+    _speakText(text);
+    setTimeout(function () {
+      AI_CHAT.ttsEnabled = wasEnabled;
+    }, 200);
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  COPY
+  // ════════════════════════════════════════════════════════════════════════════
+  function _copyAIMsg(btn) {
+    var bubble = btn.closest(".ai-bubble-wrap").querySelector(".ai-bubble");
+    if (!bubble) return;
+    navigator.clipboard
+      .writeText(bubble.innerText || bubble.textContent)
+      .then(function () {
+        btn.innerHTML = '<i class="ti ti-check"></i>';
+        setTimeout(function () {
+          btn.innerHTML = '<i class="ti ti-copy"></i>';
+        }, 1500);
+      });
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  HISTORY
+  // ════════════════════════════════════════════════════════════════════════════
+  function _saveAIHistory() {
+    try {
+      var toSave = AI_CHAT.history.slice(-50);
+      localStorage.setItem("moo_ai_history", JSON.stringify(toSave));
+    } catch (e) {}
+  }
+  function _clearAIHistory() {
+    showConfirm({
+      icon: "ti-trash",
+      iconColor: "#dc2626",
+      title: "مسح المحادثة",
+      message: "هل تريد مسح سجل المحادثة كاملاً؟",
+      confirmText: "مسح",
+      confirmClass: "btn-danger",
+      freezeMessage: "⏳ جاري المسح...",
+      onConfirm: function (unfreeze) {
+        AI_CHAT.history = [];
+        AI_CHAT.loading = false;
+        AI_CHAT.pendingTool = null;
+        _aiActiveQuickCat = 0;
+        localStorage.removeItem("moo_ai_history");
+        localStorage.removeItem("wms_ai_history");
+        _refreshMessages();
+        var box = document.getElementById("ai-confirm-box");
+        if (box) box.style.display = "none";
+        var quick = document.getElementById("ai-float-quick");
+        if (quick) quick.style.display = "";
+        if (unfreeze) unfreeze();
+      },
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  EXPORT PDF / EXCEL
+  // ════════════════════════════════════════════════════════════════════════════
+  function _aiExportPDF() {
+    if (!AI_CHAT.history.length) {
+      NotificationEngine.warning("لا توجد محادثة للتصدير");
+      return;
+    }
+    var companyName =
+      (APP && APP.companySettings && APP.companySettings.companyName) ||
+      "MOO.ERP";
+    var html =
+      '<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>محادثة المساعد الذكي</title><style>body{font-family:Arial,sans-serif;direction:rtl;padding:30px;color:#111;max-width:800px;margin:0 auto}h1{color:#2563eb;border-bottom:2px solid #2563eb;padding-bottom:10px}.msg{margin:14px 0;padding:12px 16px;border-radius:10px}.user{background:#eff4ff;border-right:4px solid #2563eb}.bot{background:#f9fafb;border-right:4px solid #10b981}.role{font-weight:700;font-size:12px;margin-bottom:6px;color:#6b7280}.time{font-size:11px;color:#9ca3af;margin-top:6px}pre{white-space:pre-wrap;font-family:Arial;margin:0}@media print{body{padding:10px}}</style></head><body><h1> محادثة المساعد الذكي v' +
+      AI_AGENT_V +
+      " — " +
+      companyName +
+      '</h1><p style="color:#6b7280;font-size:13px">تاريخ التصدير: ' +
+      fmtDateTime(new Date()) +
+      "</p>";
+    AI_CHAT.history.forEach(function (m) {
+      var isUser = m.role === "user";
+      html +=
+        '<div class="msg ' +
+        (isUser ? "user" : "bot") +
+        '"><div class="role">' +
+        (isUser ? " أنت" : " المساعد") +
+        "</div><pre>" +
+        (m.content || "").replace(/</g, "&lt;").replace(/>/g, "&gt;") +
+        "</pre>" +
+        (m.time ? '<div class="time">' + m.time + "</div>" : "") +
+        "</div>";
+    });
+    html += "</body></html>";
+    var win = window.open("", "_blank");
+    if (!win) {
+      NotificationEngine.error("السماح بالـ popup مطلوب");
+      return;
+    }
+    win.document.write(html);
+    win.document.close();
+    setTimeout(function () {
+      win.print();
+    }, 500);
+  }
+  function _aiExportExcel() {
+    if (!AI_CHAT.history.length) {
+      NotificationEngine.warning("لا توجد محادثة للتصدير");
+      return;
+    }
+    if (typeof XLSX === "undefined") {
+      NotificationEngine.error("مكتبة Excel غير محملة");
+      return;
+    }
+    var rows = [["الدور", "المحتوى", "الوقت"]];
+    AI_CHAT.history.forEach(function (m) {
+      rows.push([
+        m.role === "user" ? "أنت" : "المساعد",
+        m.content || "",
+        m.time || "",
+      ]);
+    });
+    var ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = [{ wch: 12 }, { wch: 80 }, { wch: 10 }];
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "المحادثة");
+    XLSX.writeFile(
+      wb,
+      "AI_Chat_" + new Date().toISOString().slice(0, 10) + ".xlsx",
+    );
+    NotificationEngine.success("تم تصدير المحادثة بنجاح");
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  FORMAT REPLY
+  // ════════════════════════════════════════════════════════════════════════════
+  function _formatAIReply(text) {
+    // إخفاء Tool Call Tags من الرد قبل العرض
+    text = (text || "").replace(/\[\[TOOL:[^\]]*\]\]/g, "").trim();
+    var html = esc(text);
+    html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    html = html.replace(
+      /^#{1,3} (.+)$/gm,
+      '<h4 class="ai-reply-heading">$1</h4>',
+    );
+    html = html.replace(/^(\|.+\|)$/gm, function (line) {
+      if (line.replace(/[\|\s\-]/g, "") === "") return "";
+      var cells = line.split("|").filter(function (c) {
+        return c.trim() !== "";
+      });
+      return (
+        '<div class="ai-table-row">' +
+        cells
+          .map(function (c) {
+            return '<span class="ai-table-cell">' + c.trim() + "</span>";
+          })
+          .join("") +
+        "</div>"
+      );
+    });
+    html = html.replace(/^[-•] (.+)$/gm, "<li>$1</li>");
+    html = html.replace(/(<li>[\s\S]*?<\/li>)(\s*(?!<li>))/g, function (m) {
+      return m.indexOf("<ul>") !== -1 ? m : "<ul>" + m + "</ul>";
+    });
+    html = html.replace(/\n{2,}/g, "</p><p>").replace(/\n/g, "<br>");
+    return '<div class="ai-reply-content">' + html + "</div>";
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  //  UTILS
+  // ════════════════════════════════════════════════════════════════════════════
+  function _nowTime() {
+    var d = new Date();
+    return (
+      d.getHours().toString().padStart(2, "0") +
+      ":" +
+      d.getMinutes().toString().padStart(2, "0")
+    );
+  }
+  function bindAIAssistant() {}
+  function clearAIChat() {
+    _clearAIHistory();
+  }
+
+  // ── ترحيل الكاش القديم ────────────────────────────────────────────────────
+  (function _migrateOldCache() {
+    try {
+      var old = localStorage.getItem("wms_ai_history");
+      var newKey = localStorage.getItem("moo_ai_history");
+      if (old && !newKey) {
+        localStorage.setItem("moo_ai_history", old);
+        localStorage.removeItem("wms_ai_history");
+      }
+    } catch (e) {}
+  })();
+
+  // ─────────────────────────────────────────────────────────────────────────────
+</script>

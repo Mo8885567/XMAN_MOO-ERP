@@ -1,0 +1,2126 @@
+<script>
+  // ══════════════════════════════════════════════════════════════════════════
+  // 00_JS_DataLayer.html — طبقة البيانات الموحدة لـ MOO.ERP
+  // ──────────────────────────────────────────────────────────────────────────
+  //
+  // الهدف: توحيد 100% من استدعاءات الـ Backend عبر نقطة دخول واحدة بدل
+  //        الاستدعاء المباشر لـ google.script.run في كل ملف على حدة.
+  //
+  // المحتوى:
+  //   §DL-1  _gsr()  — Google Script Run Wrapper (نقطة الدخول الوحيدة)
+  //   §DL-2  عقد الـ Response الموحد (DL_Result)
+  //   §DL-3  DataModule — مدير حالة التحميل لكل شاشة
+  //   §DL-4  Repository API — دوال مُختصَرة لكل موديول
+  //   §DL-5  قواعد المطوّر (Developer Rules) — ممنوع كسرها
+  //
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+  // §DL-0  SHARED SYSTEM CONSTANTS — ثوابت موحّدة على مستوى النظام كله
+  //
+  // [SYSTEM-UNIFY] أي شاشة في أي موديول (HR / محاسبة / مخازن / فواتير) تحتاج
+  // "طرق الدفع" أو "أسلوب استحقاق الراتب" يجب أن تستخدم هذه الثوابت بدل ما
+  // تكتب القيم يدوياً (zero-duplication). القيم متوافقة مع القيم المستخدمة
+  // فعلياً في سندات القبض/الصرف بالمحاسبة (CASH / BANK) لمنع التعارض.
+  // ─────────────────────────────────────────────────────────────
+
+  /** طرق الدفع الموحّدة — تُستخدم في: الموظفين، السندات، المصروفات، الرواتب */
+  var PAYMENT_METHODS = [
+    { value: "CASH", label: "نقدي", icon: "ti-cash" },
+    { value: "BANK", label: "تحويل بنكي", icon: "ti-building-bank" },
+    { value: "VISA", label: "فيزا", icon: "ti-credit-card" },
+    { value: "WALLET", label: "محفظة إلكترونية", icon: "ti-wallet" },
+  ];
+
+  // ─────────────────────────────────────────────────────────────
+  // §DL-0b  [إصلاح P2] formatMoney — دالة تنسيق مبالغ موحّدة على مستوى النظام
+  //
+  // قبل هذا التعديل: كل موديول كان له نسخته الخاصة (_fmtMoney في
+  // 23_JS_PostingConfig_FixedAssets.html، توليك.toLocaleString() مباشر في
+  // 02_JS_UI_Shell.html وغيرها...) — وكلها كانت تتجاهل تفضيل "currency"
+  // المخزَّن فعليًا في شاشة التفضيلات (Dead Setting رغم وجوده في الواجهة).
+  //
+  // القاعدة الجديدة: أي مبلغ يُعرض للمستخدم في أي شاشة يمر عبر formatMoney()
+  // بدل توليد كود تنسيق محلي جديد لكل شاشة (zero-duplication، نفس فلسفة
+  // PAYMENT_METHODS أعلاه بالضبط).
+  // ─────────────────────────────────────────────────────────────
+
+  /** رموز العملات المدعومة — يُضاف عليها عند دعم عملة جديدة فقط هنا */
+  var CURRENCY_SYMBOLS = {
+    EGP: "ج.م",
+    USD: "$",
+    EUR: "€",
+    SAR: "ر.س",
+    AED: "د.إ",
+  };
+
+  /**
+   * formatMoney(amount, opts)
+   * opts.withSymbol  : افتراضي true — يضيف رمز العملة الحالية
+   * opts.decimals    : افتراضي 2
+   * opts.currencyOverride : لتجاوز عملة المستخدم الافتراضية عند الحاجة
+   *                         (مثال: فاتورة مسجَّلة أصلاً بعملة مختلفة)
+   */
+  function formatMoney(amount, opts) {
+    opts = opts || {};
+    var decimals = opts.decimals !== undefined ? opts.decimals : 2;
+    var n = Number(amount || 0);
+    var formatted = n.toLocaleString("en-US", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+    if (opts.withSymbol === false) return formatted;
+    var currency =
+      opts.currencyOverride ||
+      (typeof PreferenceService !== "undefined"
+        ? PreferenceService.get("currency", "EGP")
+        : "EGP");
+    var symbol = CURRENCY_SYMBOLS[currency] || currency;
+    return formatted + " " + symbol;
+  }
+
+  /** يبني <option> tags لقائمة طرق الدفع — استخدمها بدل تكرار <option> يدوياً */
+  function buildPaymentMethodOptions(selectedValue) {
+    return PAYMENT_METHODS.map(function (m) {
+      return (
+        '<option value="' +
+        m.value +
+        '"' +
+        (selectedValue === m.value ? " selected" : "") +
+        ">" +
+        m.label +
+        "</option>"
+      );
+    }).join("");
+  }
+
+  /** يرجع التسمية العربية لقيمة طريقة دفع معيّنة (للعرض في الجداول/البطاقات) */
+  function paymentMethodLabel(value) {
+    var m = PAYMENT_METHODS.find(function (x) {
+      return x.value === value;
+    });
+    return m ? m.label : value || "—";
+  }
+
+  /** أسلوب استحقاق/حساب راتب الموظف — مرن وقابل للتوسع مستقبلاً */
+  var PAYROLL_BASIS_TYPES = [
+    { value: "MONTHLY", label: "شهري ثابت" },
+    { value: "PRODUCTION", label: "إنتاج (بالقطعة)" },
+    { value: "DAILY", label: "يومي" },
+    { value: "HOURLY", label: "بالساعة" },
+  ];
+
+  function buildPayrollBasisOptions(selectedValue) {
+    return PAYROLL_BASIS_TYPES.map(function (b) {
+      return (
+        '<option value="' +
+        b.value +
+        '"' +
+        (selectedValue === b.value ? " selected" : "") +
+        ">" +
+        b.label +
+        "</option>"
+      );
+    }).join("");
+  }
+
+  function payrollBasisLabel(value) {
+    var b = PAYROLL_BASIS_TYPES.find(function (x) {
+      return x.value === value;
+    });
+    return b ? b.label : value || "—";
+  }
+
+  /** [HR-TABS-P2] نوع التوظيف — Tab: Employment Information */
+  var EMPLOYMENT_TYPES = [
+    { value: "PERMANENT", label: "دائم" },
+    { value: "PROBATION", label: "تحت التجربة" },
+    { value: "TEMPORARY", label: "مؤقت" },
+    { value: "CONTRACTOR", label: "متعاقد" },
+    { value: "PART_TIME", label: "جزئي" },
+  ];
+
+  function buildEmploymentTypeOptions(selectedValue) {
+    return EMPLOYMENT_TYPES.map(function (t) {
+      return (
+        '<option value="' +
+        t.value +
+        '"' +
+        (selectedValue === t.value ? " selected" : "") +
+        ">" +
+        t.label +
+        "</option>"
+      );
+    }).join("");
+  }
+
+  function employmentTypeLabel(value) {
+    var t = EMPLOYMENT_TYPES.find(function (x) {
+      return x.value === value;
+    });
+    return t ? t.label : value || "—";
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §DL-1  _gsr() — Google Script Run Wrapper
+  //
+  // بيُغلّف كل نداء لـ google.script.run في:
+  //   - عقد موحّد للـ response (DL_Result)
+  //   - logging آلي للأخطاء
+  //   - حماية من null response
+  //   - timeout اختياري
+  //
+  // الاستخدام:
+  //   _gsr("getFunctionName", params, {
+  //     onSuccess: function(result) { /* result هو DL_Result */ },
+  //     onError:   function(result) { /* result.message = سبب الخطأ */ },
+  //     timeout:   15000,             // اختياري — بالميلي ثانية
+  //     label:     "وصف للـ logging" // اختياري
+  //   });
+  //
+  // ملاحظة: لمّا الـ backend يرجع { success: false, message: "..." }
+  //   → يُعامَل كـ error ويُوجَّه لـ onError تلقائياً
+  //   → هذا يمنع الحالة الشائعة: successHandler يشتغل لكن res.success=false
+  //     ومعناه الشاشة تفضل في حالة loading للأبد
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * @typedef {Object} DL_Result
+   * @property {boolean} success  - هل العملية نجحت؟
+   * @property {*}       data     - البيانات (لو success=true)
+   * @property {string}  message  - رسالة (نجاح أو فشل)
+   * @property {string}  [source] - اسم الدالة المستدعاة (للـ debugging)
+   * @property {boolean} [fromCache] - هل جت من الكاش؟
+   */
+
+  /**
+   * _gsr — الغلاف الموحد لكل استدعاءات الـ backend
+   *
+   * @param {string}   fnName    اسم الدالة في Code.js
+   * @param {*}        [params]  المعاملات (أي عدد — تُمرَّر كـ spread arguments)
+   * @param {Object}   opts
+   * @param {Function} opts.onSuccess  callback(DL_Result) عند النجاح
+   * @param {Function} [opts.onError]  callback(DL_Result) عند الفشل
+   * @param {number}   [opts.timeout]  مهلة بالميلي ثانية (default: 25000)
+   * @param {string}   [opts.label]    وصف للـ logging
+   * @returns {void}
+   */
+  // ─────────────────────────────────────────────────────────────
+  // [CALL-DEDUPE-P1 / المرحلة 6] تجميع نداءات google.script.run المكررة
+  // ─────────────────────────────────────────────────────────────
+  // المشكلة: بعض الشاشات بتنادي نفس دالة الـ backend بنفس الـ params أكتر
+  // من مرة في نفس اللحظة (تاب بيتفتح مرتين بسرعة، مكونين مختلفين كل واحد
+  // بينادي getCustomers() مستقل...). ده معناه نداءين فعليين لـ
+  // google.script.run (وبالتالي قراءتين من Sheets) لما نداء واحد كافي.
+  //
+  // الحل: لو نداء لنفس (fnName + JSON(params)) لسه "جارٍ تنفيذه"، أي نداء
+  // تاني بنفس التوقيع بينضم كمستمع على نفس الرد القادم بدل ما يفتح نداء
+  // جديد للسيرفر.
+  //
+  // ⚠️ الأمان: مفعّل بس على دوال قراءة (get*/list*/fetch*/search*/load*)
+  // أو لو opts.dedupe === true صراحةً. دوال الكتابة (save/delete/update...)
+  // لا تُجمَّع أبداً افتراضياً. أي نداء يقدر يلغي هذا صراحة بـ dedupe:false.
+  var _GSR_DEDUPE_PREFIXES = ["get", "list", "fetch", "search", "load"];
+  var _gsrInflight = {}; // key -> [{onSuccess, onError}]
+
+  function _gsrShouldDedupe(fnName, opts) {
+    if (opts && opts.dedupe === false) return false;
+    if (opts && opts.dedupe === true) return true;
+    for (var i = 0; i < _GSR_DEDUPE_PREFIXES.length; i++) {
+      if (fnName.indexOf(_GSR_DEDUPE_PREFIXES[i]) === 0) return true;
+    }
+    return false;
+  }
+
+  function _gsr(fnName, params, opts) {
+    opts = opts || {};
+
+    // [PERF-HARNESS] عدّاد اختياري لعدد نداءات السيرفر الفعلية — لا يعمل
+    // ولا يؤثر على أي شيء إلا لو ?perf=1 مفعّلة (راجع 56_JS_PerfHarness.html)
+    if (typeof PerfHarness !== "undefined" && PerfHarness.trackCall) {
+      PerfHarness.trackCall();
+    }
+
+    if (_gsrShouldDedupe(fnName, opts)) {
+      var _dedupeKey = null;
+      try {
+        _dedupeKey =
+          fnName + "::" + JSON.stringify(params === undefined ? null : params);
+      } catch (eKey) {
+        _dedupeKey = null; // params غير قابلة للتسلسل — تجاهل الدمج لهذا النداء فقط
+      }
+      if (_dedupeKey) {
+        var _defSuccess = opts.onSuccess || function () {};
+        var _defError =
+          opts.onError ||
+          function (r) {
+            console.error("[DL] " + fnName + " failed:", r.message);
+          };
+        if (_gsrInflight[_dedupeKey]) {
+          // نداء مطابق جارٍ بالفعل — انضم كمستمع بدل ما تفتح نداء جديد
+          _gsrInflight[_dedupeKey].push({ onSuccess: _defSuccess, onError: _defError });
+          return;
+        }
+        _gsrInflight[_dedupeKey] = [{ onSuccess: _defSuccess, onError: _defError }];
+        opts = {
+          timeout: opts.timeout,
+          label: opts.label,
+          rawResponse: opts.rawResponse,
+          onSuccess: function (result) {
+            var listeners = _gsrInflight[_dedupeKey] || [];
+            delete _gsrInflight[_dedupeKey];
+            for (var li = 0; li < listeners.length; li++) listeners[li].onSuccess(result);
+          },
+          onError: function (result) {
+            var listeners = _gsrInflight[_dedupeKey] || [];
+            delete _gsrInflight[_dedupeKey];
+            for (var lj = 0; lj < listeners.length; lj++) listeners[lj].onError(result);
+          },
+        };
+      }
+    }
+    // [SESSION-LIFECYCLE-P1] لو بدأ إنهاء الجلسة المنظّم بالفعل (بعد
+    // Timeout/انتهاء صلاحية/خروج يدوي)، امنع بدء أي طلب سيرفر جديد —
+    // ما عدا نداء تسجيل الخروج نفسه (logout) اللي محرك الإنهاء بينفّذه.
+    if (
+      typeof APP !== "undefined" &&
+      APP._sessionEnding &&
+      fnName !== "logout"
+    ) {
+      var _endErr = _dlResult(
+        false,
+        null,
+        "جارٍ إنهاء الجلسة — تم إلغاء العملية",
+        fnName,
+      );
+      if (opts.onError) opts.onError(_endErr);
+      return;
+    }
+    var onSuccess = opts.onSuccess || function () {};
+    // [FIX-SILENT-FAIL-2026-07] قبل كده، أي شاشة بتنادي _gsr من غير
+    // opts.onError كانت بتاخد fallback بيسجّل في console بس — يعني لو
+    // العملية فشلت (اتصال/timeout/خطأ سيرفر)، المستخدم مش بيشوف أي حاجة
+    // خالص: لا رسالة خطأ، ولا حتى إشارة إن اللي كان بيستناه (تحميل بيانات،
+    // حذف، حفظ...) اتوقف. دلوقتي الـ fallback الافتراضي بيسجّل للمطور
+    // زي الأول *و* كمان بيعرض توست خطأ للمستخدم عبر showToast (لو متاحة)،
+    // عشان "لا توجد رسالة توصل للمستخدم فقط عبر console" مهما كانت الشاشة
+    // ناسية تحدد onError خاص بيها. الشاشات اللي بتحدد onError مخصص بتاعها
+    // فضل زي ما هي — الافتراضي ده بيتفعّل بس لو محدش وفّر بديل.
+    var onError =
+      opts.onError ||
+      function (r) {
+        console.error("[DL] " + fnName + " failed:", r.message);
+        if (typeof showToast === "function") {
+          showToast(
+            (r && r.message) || "حدث خطأ أثناء تنفيذ العملية",
+            "error",
+          );
+        }
+      };
+    var timeoutMs = opts.timeout != null ? opts.timeout : 25000;
+    var label = opts.label || fnName;
+
+    // تحقق من توفر google.script.run (development guard)
+    if (typeof google === "undefined" || !google.script || !google.script.run) {
+      var devErr = _dlResult(false, null, "google.script.run غير متاح", fnName);
+      console.warn("[DL] " + label + ": " + devErr.message);
+      onError(devErr);
+      return;
+    }
+
+    var _timer = null;
+    var _done = false; // منع double-callback
+
+    function _finish(result) {
+      if (_done) {
+        // ✅ [DIAG] الـ timeout watchdog كان اشتغل قبل كده وقفل الطلب،
+        // ورد فعلي (نجاح أو فشل حقيقي من السيرفر) وصل بعد كده. الشاشة
+        // خلاص عرضت رسالة "انتهت المهلة" للمستخدم، فمانقدرش نرجع نغيّرها
+        // دلوقتي بأمان، لكن على الأقل نسجّل الحالة دي في الكونسول بدل ما
+        // تختفي بصمت تام — مفيد لتشخيص هل الـ timeout كان سبب حقيقي (تأخر
+        // شبكة/تنفيذ) أو مجرد رقم صغير جدًا للمهلة.
+        console.info(
+          "[DL] " + (opts.label || fnName) + ": رد متأخر وصل بعد انتهاء المهلة",
+          result,
+        );
+        return;
+      }
+      _done = true;
+      if (_timer) {
+        clearTimeout(_timer);
+        _timer = null;
+      }
+      if (result.success) {
+        onSuccess(result);
+      } else {
+        console.warn("[DL] " + label + " →", result.message);
+        onError(result);
+      }
+    }
+
+    // Timeout watchdog
+    if (timeoutMs > 0) {
+      _timer = setTimeout(function () {
+        _finish(
+          _dlResult(
+            false,
+            null,
+            "انتهت المهلة (" + timeoutMs / 1000 + " ثانية) — " + label,
+            fnName,
+          ),
+        );
+      }, timeoutMs);
+    }
+
+    var runner = google.script.run
+      .withSuccessHandler(function (raw) {
+        // normalize الـ response
+        var result;
+        if (raw === null || raw === undefined) {
+          // [EMPTY-RESPONSE-RETRY-2026-08] هذا الرد الفاضي مش معناه إن
+          // الدالة في Code.js رجّعت null فعليًا — كل دوال الـ backend هنا
+          // بترجع كائن حقيقي دايمًا (errResponse/okResponse أو بيانات) —
+          // ده عطل نقل عابر بين إطار google.script.run الداخلي والصفحة
+          // (يحصل غالبًا حوالين لحظة اللوجين نفسها، أو لو فيه إضافة
+          // متصفح بتتدخّل في قنوات الـ postMessage). كان كل نداء بيحل
+          // المشكلة دي بمنطق retry منفصل خاص بيه (زي getAllDataLight
+          // قبل كده) — دلوقتي المنطق موحّد هنا في _gsr نفسها: أي نداء
+          // قراءة (get*/list*/fetch*/search*/load*) بيتعاد تلقائيًا
+          // *مرة واحدة بس* لو استقبل رد فاضٍ، قبل ما نعرض أي خطأ
+          // للمستخدم أو نسجّل تحذير في الكونسول. دوال الكتابة (save/
+          // delete/update...) لا تُعاد تلقائيًا أبداً (نفس مبدأ أمان
+          // الـ dedupe فوق) عشان مفيش خطر ازدواج حفظ/حذف.
+          if (
+            _gsrShouldDedupe(fnName, opts) &&
+            !opts._emptyRetryDone
+          ) {
+            // لازم نقفل الـ timeout watchdog بتاع المحاولة الأولى قبل ما
+            // نبدأ التانية، وإلا ممكن يشتغل متأخر بعد ما المحاولة التانية
+            // تكون نجحت فعلاً ويظهر خطأ "انتهت المهلة" وهمي فوق نتيجة صحيحة.
+            _done = true;
+            if (_timer) {
+              clearTimeout(_timer);
+              _timer = null;
+            }
+            // [DEDUPE-CLEANUP] لو النداء ده كان مسجَّل في طابور الـ dedupe
+            // (_gsrInflight)، لازم نمسح مدخله دلوقتي — إحنا رجعنا (return)
+            // قبل ما نستدعي _finish، يعني الـ listeners المجمَّعة جوه
+            // _gsrInflight[_dedupeKey] مش هتتنادى أبداً من هنا. لو سبناها
+            // زي ما هي، أي نداء تاني بنفس (fnName+params) هينضم لطابور
+            // ميت ومش هيتحل أبداً. بدل كده، بنمرّر نفس الـ callbacks
+            // (اللي أصلاً بتمثّل كل من كان منتظر الرد ده، حتى لو كانوا
+            // أكتر من طالب واحد اتجمّعوا عبر dedupe) لمحاولة جديدة نظيفة
+            // بـ dedupe:false، عشان تتنفذ فورًا بدون أي التباس مع الطابور
+            // القديم.
+            if (_dedupeKey && _gsrInflight[_dedupeKey]) {
+              delete _gsrInflight[_dedupeKey];
+            }
+            var _retryOpts = {
+              onSuccess: opts.onSuccess,
+              onError: opts.onError,
+              timeout: opts.timeout,
+              label: (opts.label || fnName) + ".emptyRetry",
+              rawResponse: opts.rawResponse,
+              dedupe: false,
+              _emptyRetryDone: true,
+            };
+            _gsr(fnName, params, _retryOpts);
+            return;
+          }
+          result = _dlResult(
+            false,
+            null,
+            "الـ backend أرجع قيمة فارغة",
+            fnName,
+          );
+        } else if (opts.rawResponse) {
+          // [RAW-RESPONSE] بعض الدوال (مثل login) بترجع كائن فيه حقول عمل
+          // اسمها "data" هي نفسها (مش metadata عامة) — هنا منقلش raw.data
+          // زي العادة، نُبقي الكائن كله في result.data زي ما هو
+          result = _dlResult(
+            typeof raw === "object" && "success" in raw
+              ? raw.success === true
+              : true,
+            raw,
+            (raw && raw.message) || "تمت العملية بنجاح",
+            fnName,
+          );
+        } else if (typeof raw === "object" && "success" in raw) {
+          // الـ backend يرجع { success, data?, message?, ... }
+          result = _dlResult(
+            raw.success === true,
+            raw.success ? (raw.data !== undefined ? raw.data : raw) : null,
+            raw.message || (raw.success ? "تمت العملية بنجاح" : "فشلت العملية"),
+            fnName,
+          );
+          if (raw._from_cache) result.fromCache = true;
+        } else {
+          // الـ backend يرجع raw data مباشرة (مثل getAllData الذي يرجع object كبير)
+          result = _dlResult(true, raw, "تمت العملية بنجاح", fnName);
+        }
+
+        // [SESSION-FIX] أي رفض بسبب جلسة غير صالحة/منتهية يُعامَل مركزياً هنا
+        // بدل ما يترك الأمر لكل شاشة تعرضه كـ toast عادي بلا أي إجراء تالٍ.
+        // استثناء دوال الجلسة العامة نفسها لمنع أي احتمال لحلقة تسجيل خروج
+        // متكررة أثناء محاولة تسجيل الدخول أو التحقق من الجلسة.
+        var _SESSION_FLOW_FNS = [
+          "login",
+          "loginWithData",
+          "loginLite",
+          "logout",
+          "validateSession",
+          "refreshSession",
+        ];
+        if (
+          !result.success &&
+          _SESSION_FLOW_FNS.indexOf(fnName) === -1 &&
+          typeof _isSessionErrorResponse === "function" &&
+          _isSessionErrorResponse(raw) &&
+          typeof _handleSessionExpired === "function"
+        ) {
+          _finish(result); // نسجّل النتيجة الحقيقية أولاً لأغراض الـ Logger/Diagnostics
+          _confirmSessionExpiredThenLogout(fnName);
+          return;
+        }
+
+        _finish(result);
+      })
+      .withFailureHandler(function (err) {
+        var msg =
+          err && err.message ? err.message : String(err || "خطأ غير معروف");
+        _finish(
+          _dlResult(false, null, "خطأ في الاتصال بالخادم: " + msg, fnName),
+        );
+      });
+
+    // استدعاء الدالة بالمعاملات (params يمكن أن يكون array أو قيمة واحدة أو undefined)
+    try {
+      if (params === undefined || params === null) {
+        runner[fnName]();
+      } else if (Array.isArray(params)) {
+        runner[fnName].apply(runner, params);
+      } else {
+        runner[fnName](params);
+      }
+    } catch (e) {
+      _finish(
+        _dlResult(
+          false,
+          null,
+          "خطأ في استدعاء " + fnName + ": " + e.message,
+          fnName,
+        ),
+      );
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // [SESSION-FIX-3] تأكيد قبل تسجيل الخروج التلقائي
+  //
+  // المشكلة: أي استجابة واحدة من أي دالة تحتوي "جلسة غير صالحة" كانت
+  // تُسجّل خروج المستخدم فورًا، حتى لو كان السبب مؤقتًا (ازدحام على
+  // الباك إند، تنافس على LockService، أو استجابة بطيئة تسبقها — زي ما
+  // ظهر في الـ console: طلب استغرق 25 ثانية ثم فشل، وبعده مباشرة طلب
+  // تاني رجّع "جلسة غير صالحة" رغم إن المستخدم لسه شغّال فعليًا). ده
+  // كان بيظهر للمستخدم كـ"خروج تلقائي من النظام" بلا سبب واضح.
+  //
+  // الحل: قبل القفل النهائي، نتأكد فعليًا عبر refreshSession (نفس الدالة
+  // المستخدمة في "تمديد الجلسة"). لو رجعت valid:true فالجلسة سليمة
+  // وكانت الاستجابة الأصلية عرضًا مؤقتًا — نتجاهله ونعرض تنبيه بسيط بدل
+  // ما نخرّج المستخدم. نستخدم debounce بمعرّف واحد لمنع تكرار التأكيد لو
+  // فشلت عدة طلبات متوازية بنفس اللحظة.
+  // ─────────────────────────────────────────────────────────────
+  var _sessionConfirmInFlight = false;
+
+  function _confirmSessionExpiredThenLogout(fnName) {
+    if (_sessionConfirmInFlight) return; // تأكيد واحد يكفي لكل دفعة فشل متزامنة
+    var token =
+      (typeof SESSION !== "undefined" && SESSION && SESSION.token) || null;
+    if (!token || typeof google === "undefined" || !google.script) {
+      _handleSessionExpired("invalid");
+      return;
+    }
+    _sessionConfirmInFlight = true;
+    google.script.run
+      .withSuccessHandler(function (raw) {
+        _sessionConfirmInFlight = false;
+        var stillValid =
+          raw && typeof raw === "object" && (raw.valid === true || raw.success === true && raw.data && raw.data.valid === true);
+        if (stillValid) {
+          // الجلسة سليمة فعلاً — كانت استجابة عابرة، نتجاهلها من غير تسجيل خروج
+          if (typeof showToast === "function") {
+            showToast(
+              "تعذّر تنفيذ العملية (" + fnName + ") — حاول مرة أخرى",
+              "warning",
+            );
+          }
+        } else {
+          _handleSessionExpired("invalid");
+        }
+      })
+      .withFailureHandler(function () {
+        _sessionConfirmInFlight = false;
+        _handleSessionExpired("invalid");
+      })
+      .refreshSession(token);
+  }
+
+  /**
+   * _dlResult — بناء DL_Result موحد
+   * @private
+   */
+  function _dlResult(success, data, message, source) {
+    return {
+      success: Boolean(success),
+      data: data !== undefined ? data : null,
+      message: message || "",
+      source: source || "",
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §DL-2  DataModule — مدير حالة التحميل لكل شاشة
+  //
+  // يُوفّر نمطًا موحدًا لإدارة حالات:
+  //   idle → loading → success | empty | error
+  //   وأيضاً: refreshing (تحديث خلفي بدون مسح الشاشة)
+  //
+  // الاستخدام:
+  //   var mod = DataModule.create({
+  //     containerId: "my-container",    // العنصر الذي تُعرض فيه الحالات
+  //     emptyText: "لا توجد بيانات",   // اختياري
+  //     onRender: function(data) { ... } // يُستدعى عند النجاح
+  //   });
+  //   mod.startLoading();
+  //   _gsr("getFn", null, {
+  //     onSuccess: function(r) { mod.applyResult(r); },
+  //     onError:   function(r) { mod.applyError(r.message); }
+  //   });
+  // ─────────────────────────────────────────────────────────────
+  var DataModule = (function () {
+    function create(opts) {
+      opts = opts || {};
+      var _containerId = opts.containerId || "";
+      var _emptyText = opts.emptyText || "لا توجد بيانات";
+      var _onRender = opts.onRender || function () {};
+      var _loading = false;
+
+      function _getEl() {
+        return _containerId ? document.getElementById(_containerId) : null;
+      }
+
+      function startLoading(label) {
+        if (_loading) return;
+        _loading = true;
+        var el = _getEl();
+        if (el) el.innerHTML = _loadingBlock(label);
+      }
+
+      function stopLoading() {
+        _loading = false;
+      }
+
+      function isLoading() {
+        return _loading;
+      }
+
+      function applyResult(dlResult) {
+        _loading = false;
+        if (!dlResult.success) {
+          applyError(dlResult.message);
+          return;
+        }
+        var data = dlResult.data;
+        // Empty check — يدعم arrays وobjects
+        var isEmpty = false;
+        if (Array.isArray(data)) {
+          isEmpty = data.length === 0;
+        } else if (data === null || data === undefined) {
+          isEmpty = true;
+        }
+        if (isEmpty) {
+          applyEmpty();
+          return;
+        }
+        try {
+          _onRender(data);
+        } catch (e) {
+          console.error("[DataModule] onRender error:", e);
+          applyError("خطأ في عرض البيانات: " + e.message);
+        }
+      }
+
+      function applyEmpty(msg) {
+        _loading = false;
+        var el = _getEl();
+        if (el) {
+          el.innerHTML =
+            '<div class="dl-empty-state" style="display:flex;flex-direction:column;align-items:center;' +
+            'justify-content:center;padding:40px;gap:10px;color:var(--text3);text-align:center;">' +
+            '<i class="ti ti-inbox" style="font-size:28px;opacity:0.4"></i>' +
+            '<span style="font-size:13px">' +
+            (msg || _emptyText) +
+            "</span>" +
+            "</div>";
+        }
+      }
+
+      function applyError(msg, onRetry) {
+        _loading = false;
+        var el = _getEl();
+        if (el) {
+          var retryId = "dl-retry-" + Date.now();
+          el.innerHTML =
+            '<div class="dl-error-state" style="display:flex;flex-direction:column;align-items:center;' +
+            'justify-content:center;padding:32px;gap:10px;color:var(--danger,#e11d48);text-align:center;">' +
+            '<i class="ti ti-alert-circle" style="font-size:24px"></i>' +
+            '<span style="font-size:13px;color:var(--text2)">' +
+            (msg || "حدث خطأ غير متوقع") +
+            "</span>" +
+            (onRetry
+              ? '<button id="' +
+                retryId +
+                '" class="btn btn-sm" style="margin-top:6px">إعادة المحاولة</button>'
+              : "") +
+            "</div>";
+          if (onRetry) {
+            var btn = document.getElementById(retryId);
+            if (btn) btn.onclick = onRetry;
+          }
+        }
+      }
+
+      return {
+        startLoading: startLoading,
+        stopLoading: stopLoading,
+        isLoading: isLoading,
+        applyResult: applyResult,
+        applyEmpty: applyEmpty,
+        applyError: applyError,
+      };
+    }
+
+    return { create: create };
+  })();
+
+  // ─────────────────────────────────────────────────────────────
+  // §DL-3  Repository API — اختصارات للموديولات
+  //
+  // كل Repository عبارة عن namespace يجمع كل استدعاءات backend
+  // الخاصة بموديول معيّن في مكان واحد واضح.
+  //
+  // الفائدة:
+  //   - بدل: google.script.run.withSuccessHandler(...).getFn(params)
+  //   - نكتب: DL.Accounting.getJournalEntries({}, opts)
+  //   - ← اسم الدالة مركزي — لو اتغيّر في Backend، نعدّله هنا فقط
+  // ─────────────────────────────────────────────────────────────
+  var DL = {};
+
+  // ─── Core Data ───────────────────────────────────────────────
+  DL.Core = {
+    /** البيانات الأساسية (items, stock, transactions...) */
+    // [FIX-TIMEOUT-2026-07] كانت من غير timeout مخصص → بتاخد الافتراضي
+    // 25 ثانية في _gsr. getAllData() هي أتقل نداء في النظام كله (بتقرأ
+    // ~15-20 شيت مختلف من الصفر لما كاش السيرفر يكون فاضي/متمسوح بعد أي
+    // عملية كتابة)، وأتقل حتى من getAllDataExtended/getAllDataExtendedLazy
+    // اللي أصلاً بتاخدوا 30 ثانية هنا. رفعناها لـ 45 ثانية لتقليل التايم
+    // أوت الوهمي (رد بيوصل فعلاً بس متأخر عن الـ watchdog القديم) اللي
+    // كان بيظهر مع Auth.silentRefresh في الكونسول.
+    getAllData: function (opts) {
+      _gsr(
+        "getAllData",
+        [
+          APP.currentUser ? APP.currentUser.username : null,
+          SESSION ? SESSION.token : null,
+        ],
+        Object.assign({ label: "Core.getAllData", timeout: 45000 }, opts),
+      );
+    },
+    /** نسخة خفيفة من getAllData — تُستخدم في الـ prefetch وقت شاشة اللوجين */
+    getAllDataLight: function (opts) {
+      _gsr(
+        "getAllDataLight",
+        [
+          APP.currentUser ? APP.currentUser.username : null,
+          SESSION ? SESSION.token : null,
+        ],
+        Object.assign({ label: "Core.getAllDataLight" }, opts),
+      );
+    },
+    /** نسخة "طازة" بدون أي كاش سيرفر — تُستخدم بعد عمليات تحتاج تحديث كامل مضمون */
+    getAllDataFresh: function (opts) {
+      _gsr(
+        "getAllDataFresh",
+        [
+          APP.currentUser ? APP.currentUser.username : null,
+          SESSION ? SESSION.token : null,
+        ],
+        Object.assign({ label: "Core.getAllDataFresh", timeout: 30000 }, opts),
+      );
+    },
+    /** [P3-WIRING] تحميل تدريجي حسب المستوى (1..4) بدل انتظار getAllData
+     * الكاملة دفعة واحدة. تستدعي getAllDataByLevel في Code_53_DataRegistryEngine.js
+     * (كانت معرَّفة في الـ backend ولم تكن مستخدَمة من أي شاشة). تُستخدم في
+     * الـ prefetch بعد اللوجين لجلب Background/Reference بدون حجب الواجهة،
+     * بدل استدعاء getAllData الثقيل (45 ثانية) فوراً. */
+    getAllDataByLevel: function (levels, opts) {
+      // [FIX-AUTH-CTX-2026-08] APP.user/APP.sessionToken مش موجودين في أي
+      // مكان تاني في الكود كله (اتفحصوا صفر مرة اتعملهم assign) — القيم
+      // الحقيقية مخزّنة في APP.currentUser.username و SESSION.token. يعني
+      // النداء ده كان دايمًا بيبعت (null, null) كـ auth context، وبالتالي
+      // أي حقل في DATA_REGISTRY معلّم requiresAuth:true (بيانات محاسبة/HR
+      // حساسة في المستوى BACKGROUND) كان بيتستبعد بصمت من كل تحميل خلفي
+      // بعد اللوجين (fail-closed مقصود في الـ backend، لكن هنا كان بيتفعّل
+      // دايمًا بالغلط بدل الحالات الاستثنائية فقط).
+      // [FIX-SESSION-RACE-2026-08-07] كانت SESSION.token بدون حراسة (على
+      // عكس باقي دوال DL.Core فوق اللي كلها بتستخدم "SESSION ? SESSION.token
+      // : null"). getAllDataByLevel بتتنادى من _prefetchOnDemandEager/
+      // _prefetchReferenceIdle/_prefetchBackgroundIdle في 01_JS_Core_Auth.html
+      // فور نجاح تسجيل الدخول مباشرة — وهو وقت مبكر جدًا ممكن لسه فيه
+      // 02_JS_UI_Shell.html (اللي بيعرّف "var SESSION" أصلاً) ما خلصش
+      // تحميله (lazy load). في اللحظة دي "SESSION" مش موجودة كمتغيّر خالص،
+      // فـ "SESSION.token" كان بيرمي ReferenceError *قبل* ما ينفذ _gsr
+      // خالص — يعني النداء ما كانش بيوصل للسيرفر أصلاً (بيفسّر غياب
+      // getAllDataByLevel تمامًا من سجل Executions في Apps Script رغم إن
+      // getAllData/getAllDataLight كانوا بيظهروا طبيعي)، وبيانات المستوى
+      // ON_DEMAND (أصناف/مخزون/مجموعات...) كانت بتفضل غير موجودة للأبد —
+      // بالظبط سبب شاشة "الأصناف" اللي بتفضل فاضية بلا أي خطأ ظاهر.
+      var _sessionTokenSafe =
+        (typeof SESSION !== "undefined" && SESSION && SESSION.token) || null;
+      _gsr(
+        "getAllDataByLevel",
+        [
+          levels,
+          APP.currentUser ? APP.currentUser.username : null,
+          _sessionTokenSafe,
+        ],
+        Object.assign(
+          { label: "Core.getAllDataByLevel(" + levels + ")", timeout: 30000 },
+          opts,
+        ),
+      );
+    },
+    /** تسجيل الدخول — rawResponse:true لأن الرد فيه res.user/res.data(=كل بيانات
+     * الشركة)/res.extendedData/res.locked كحقول مستقلة، مش payload واحد تحت data.
+     * ملاحظة: success:false هنا حالة عمل عادية (كلمة مرور خطأ/حساب مقفول)
+     * مش خطأ اتصال، فـ onSuccess بيستقبلها برضه (يتم تمييزها داخلياً) */
+    loginWithData: function (username, password, opts) {
+      _gsr(
+        "loginWithData",
+        [username, password],
+        Object.assign(
+          { label: "Core.loginWithData", timeout: 20000, rawResponse: true },
+          opts,
+        ),
+      );
+    },
+    /** تسجيل دخول خفيف — يتأكد من بيانات المستخدم فقط ويرجّع الصلاحيات
+     * بدون تحميل أي بيانات عمل (data:null دايمًا). الفرونت يفتح لوحة
+     * التحكم فورًا، وبيانات العمل تتحمّل بعدين في الخلفية عبر
+     * _preloadAllAfterLogin(). rawResponse:true لنفس سبب loginWithData. */
+    loginLite: function (username, password, opts) {
+      _gsr(
+        "loginLite",
+        [username, password],
+        Object.assign(
+          { label: "Core.loginLite", timeout: 20000, rawResponse: true },
+          opts,
+        ),
+      );
+    },
+    /** البيانات الموسعة (محاسبة + HR) — [LEGACY-COMPAT] لم تعد تُستخدم من
+     * _fetchExtendedDataFromServer (بقت بتنادي Core/Lazy بالتوازي مباشرة)،
+     * مُبقاة لأي كود قديم لسه بينادي الاسم ده مباشرة. */
+    getAllDataExtended: function (username, token, opts) {
+      _gsr(
+        "getAllDataExtended",
+        [username, token],
+        Object.assign(
+          { label: "Core.getAllDataExtended", timeout: 30000 },
+          opts,
+        ),
+      );
+    },
+    /** ✅ [PERF-SPLIT] الجزء السريع من البيانات الموسعة (قوائم أساسية صغيرة) */
+    getAllDataExtendedCore: function (username, token, opts) {
+      _gsr(
+        "getAllDataExtendedCore",
+        [username, token],
+        Object.assign(
+          { label: "Core.getAllDataExtendedCore", timeout: 20000 },
+          opts,
+        ),
+      );
+    },
+    /** ⚠️ [LEGACY-COMPAT] wrapper قديم فوق acc+hr بالتتابع — استخدم
+     * getAccountingExtendedLazy/getHRExtendedLazy مباشرة من كود جديد. */
+    getAllDataExtendedLazy: function (username, token, opts) {
+      _gsr(
+        "getAllDataExtendedLazy",
+        [username, token],
+        Object.assign(
+          { label: "Core.getAllDataExtendedLazy", timeout: 30000 },
+          opts,
+        ),
+      );
+    },
+    /** ✅ [PERF-SPLIT-2026-07-28] دومين المحاسبة فقط من الحزمة التفصيلية
+     * (نصف عدد الأقسام تقريبًا مقارنة بـ getAllDataExtendedLazy القديمة) */
+    getAccountingExtendedLazy: function (username, token, opts) {
+      _gsr(
+        "getAccountingExtendedLazy",
+        [username, token],
+        Object.assign(
+          { label: "Core.getAccountingExtendedLazy", timeout: 30000 },
+          opts,
+        ),
+      );
+    },
+    /** ✅ [PERF-SPLIT-2026-07-28] دومين HR/الإنتاج فقط من الحزمة التفصيلية */
+    getHRExtendedLazy: function (username, token, opts) {
+      _gsr(
+        "getHRExtendedLazy",
+        [username, token],
+        Object.assign(
+          { label: "Core.getHRExtendedLazy", timeout: 30000 },
+          opts,
+        ),
+      );
+    },
+    /** ✅ [PERF-FINANCE-LIGHT-2026-08-08] ملخّص خفيف لفواتير البيع/الشراء
+     * (بدون lines_json) مخصوص لكروت الداشبورد — راجع الشرح في
+     * Code_12e_Dashboard_Reports.js فوق تعريف getFinanceSummaryLight. */
+    getFinanceSummaryLight: function (username, token, opts) {
+      _gsr(
+        "getFinanceSummaryLight",
+        [username, token],
+        Object.assign(
+          { label: "Core.getFinanceSummaryLight", timeout: 20000 },
+          opts,
+        ),
+      );
+    },
+    // ── [FORGOT-PW-1] استعادة كلمة المرور الذاتية (Code_32_ForgotPassword.gs) ──
+    /** الخطوة 1: طلب كود تحقق يُرسَل بالبريد المسجّل */
+    requestPasswordReset: function (username, opts) {
+      _gsr(
+        "requestPasswordReset",
+        [username],
+        Object.assign(
+          { label: "Core.requestPasswordReset", timeout: 20000 },
+          opts,
+        ),
+      );
+    },
+    /** الخطوة 2: التحقق من الكود — ترجع resetToken عند النجاح */
+    verifyPasswordResetOtp: function (username, otp, opts) {
+      _gsr(
+        "verifyPasswordResetOtp",
+        [username, otp],
+        Object.assign(
+          { label: "Core.verifyPasswordResetOtp", timeout: 15000 },
+          opts,
+        ),
+      );
+    },
+    /** الخطوة 3: حفظ كلمة المرور الجديدة باستخدام resetToken */
+    resetPasswordWithToken: function (
+      username,
+      resetToken,
+      newPassword,
+      confirmPassword,
+      opts,
+    ) {
+      _gsr(
+        "resetPasswordWithToken",
+        [username, resetToken, newPassword, confirmPassword],
+        Object.assign(
+          { label: "Core.resetPasswordWithToken", timeout: 15000 },
+          opts,
+        ),
+      );
+    },
+  };
+
+  // ─── Accounting ──────────────────────────────────────────────
+  DL.Accounting = {
+    getChartAccounts: function (all, opts) {
+      _gsr(
+        "getChartAccounts",
+        [all],
+        Object.assign({ label: "Accounting.getChartAccounts" }, opts),
+      );
+    },
+    saveChartAccount: function (data, opts) {
+      _gsr(
+        "saveChartAccount",
+        data,
+        Object.assign({ label: "Accounting.saveChartAccount" }, opts),
+      );
+    },
+    deleteChartAccount: function (id, opts) {
+      _gsr(
+        "deleteChartAccount",
+        id,
+        Object.assign({ label: "Accounting.deleteChartAccount" }, opts),
+      );
+    },
+
+    getCashBoxes: function (opts) {
+      _gsr(
+        "getCashBoxes",
+        null,
+        Object.assign({ label: "Accounting.getCashBoxes" }, opts),
+      );
+    },
+    saveCashBox: function (data, opts) {
+      _gsr(
+        "saveCashBox",
+        data,
+        Object.assign({ label: "Accounting.saveCashBox" }, opts),
+      );
+    },
+    deleteCashBox: function (id, opts) {
+      _gsr(
+        "deleteCashBox",
+        id,
+        Object.assign({ label: "Accounting.deleteCashBox" }, opts),
+      );
+    },
+
+    getBankAccounts: function (opts) {
+      _gsr(
+        "getBankAccounts",
+        [APP.currentUser ? APP.currentUser.username : null], // [RBAC-FIX]
+        Object.assign({ label: "Accounting.getBankAccounts" }, opts),
+      );
+    },
+    saveBankAccount: function (data, opts) {
+      _gsr(
+        "saveBankAccount",
+        data,
+        Object.assign({ label: "Accounting.saveBankAccount" }, opts),
+      );
+    },
+    deleteBankAccount: function (id, opts) {
+      _gsr(
+        "deleteBankAccount",
+        id,
+        Object.assign({ label: "Accounting.deleteBankAccount" }, opts),
+      );
+    },
+
+    getJournalEntries: function (filters, opts) {
+      _gsr(
+        "getJournalEntries",
+        filters,
+        Object.assign({ label: "Accounting.getJournalEntries" }, opts),
+      );
+    },
+    saveJournalEntry: function (data, opts) {
+      _gsr(
+        "saveJournalEntry",
+        data,
+        Object.assign({ label: "Accounting.saveJournalEntry" }, opts),
+      );
+    },
+    deleteJournalEntry: function (id, opts) {
+      _gsr(
+        "deleteJournalEntry",
+        id,
+        Object.assign({ label: "Accounting.deleteJournalEntry" }, opts),
+      );
+    },
+    postJournalEntry: function (id, opts) {
+      _gsr(
+        "postJournalEntry",
+        id,
+        Object.assign({ label: "Accounting.postJournalEntry" }, opts),
+      );
+    },
+
+    getReceiptVouchers: function (filters, opts) {
+      _gsr(
+        "getReceiptVouchers",
+        filters,
+        Object.assign({ label: "Accounting.getReceiptVouchers" }, opts),
+      );
+    },
+    saveReceiptVoucher: function (data, opts) {
+      _gsr(
+        "saveReceiptVoucher",
+        data,
+        Object.assign({ label: "Accounting.saveReceiptVoucher" }, opts),
+      );
+    },
+    deleteReceiptVoucher: function (id, opts) {
+      _gsr(
+        "deleteReceiptVoucher",
+        id,
+        Object.assign({ label: "Accounting.deleteReceiptVoucher" }, opts),
+      );
+    },
+
+    getPaymentVouchers: function (filters, opts) {
+      _gsr(
+        "getPaymentVouchers",
+        filters,
+        Object.assign({ label: "Accounting.getPaymentVouchers" }, opts),
+      );
+    },
+    savePaymentVoucher: function (data, opts) {
+      _gsr(
+        "savePaymentVoucher",
+        data,
+        Object.assign({ label: "Accounting.savePaymentVoucher" }, opts),
+      );
+    },
+    deletePaymentVoucher: function (id, opts) {
+      _gsr(
+        "deletePaymentVoucher",
+        id,
+        Object.assign({ label: "Accounting.deletePaymentVoucher" }, opts),
+      );
+    },
+
+    getExpenses: function (filters, opts) {
+      _gsr(
+        "getExpenses",
+        filters,
+        Object.assign({ label: "Accounting.getExpenses" }, opts),
+      );
+    },
+    saveExpense: function (data, opts) {
+      _gsr(
+        "saveExpense",
+        data,
+        Object.assign({ label: "Accounting.saveExpense" }, opts),
+      );
+    },
+    deleteExpense: function (id, opts) {
+      _gsr(
+        "deleteExpense",
+        id,
+        Object.assign({ label: "Accounting.deleteExpense" }, opts),
+      );
+    },
+
+    getTransferVouchers: function (filters, opts) {
+      _gsr(
+        "getTransferVouchers",
+        Object.assign({}, filters, {
+          callerUser: APP.currentUser ? APP.currentUser.username : null, // [RBAC-FIX]
+        }),
+        Object.assign({ label: "Accounting.getTransferVouchers" }, opts),
+      );
+    },
+    saveTransferVoucher: function (data, opts) {
+      _gsr(
+        "saveTransferVoucher",
+        data,
+        Object.assign({ label: "Accounting.saveTransferVoucher" }, opts),
+      );
+    },
+    deleteTransferVoucher: function (id, opts) {
+      _gsr(
+        "deleteTransferVoucher",
+        id,
+        Object.assign({ label: "Accounting.deleteTransferVoucher" }, opts),
+      );
+    },
+
+    /** [DATA-UNIFY] مُستخدَمة في 11_JS_Accounting.html و18_JS_Reports.html —
+     * موحّدة هنا بدل تكرار _gsr("getBankReconciliations", ...) في الملفين */
+    getBankReconciliations: function (filters, opts) {
+      _gsr(
+        "getBankReconciliations",
+        Object.assign({}, filters, {
+          callerUser: APP.currentUser ? APP.currentUser.username : null, // [RBAC-FIX]
+        }),
+        Object.assign({ label: "Accounting.getBankReconciliations" }, opts),
+      );
+    },
+  };
+
+  // ─── HR ──────────────────────────────────────────────────────
+  DL.HR = {
+    getDashboardStats: function (opts) {
+      _gsr(
+        "getHRDashboardStats",
+        null,
+        Object.assign({ label: "HR.getDashboardStats" }, opts),
+      );
+    },
+    getDepartments: function (opts) {
+      _gsr(
+        "getDepartments",
+        null,
+        Object.assign({ label: "HR.getDepartments" }, opts),
+      );
+    },
+    saveDepartment: function (data, opts) {
+      _gsr(
+        "saveDepartment",
+        data,
+        Object.assign({ label: "HR.saveDepartment" }, opts),
+      );
+    },
+    deleteDepartment: function (id, opts) {
+      _gsr(
+        "deleteDepartment",
+        id,
+        Object.assign({ label: "HR.deleteDepartment" }, opts),
+      );
+    },
+
+    getJobTitles: function (opts) {
+      _gsr(
+        "getJobTitles",
+        null,
+        Object.assign({ label: "HR.getJobTitles" }, opts),
+      );
+    },
+    saveJobTitle: function (data, opts) {
+      _gsr(
+        "saveJobTitle",
+        data,
+        Object.assign({ label: "HR.saveJobTitle" }, opts),
+      );
+    },
+    deleteJobTitle: function (id, opts) {
+      _gsr(
+        "deleteJobTitle",
+        id,
+        Object.assign({ label: "HR.deleteJobTitle" }, opts),
+      );
+    },
+
+    getEmployees: function (filters, opts) {
+      _gsr(
+        "getEmployees",
+        filters,
+        Object.assign({ label: "HR.getEmployees" }, opts),
+      );
+    },
+    saveEmployee: function (data, opts) {
+      _gsr(
+        "saveEmployee",
+        data,
+        Object.assign({ label: "HR.saveEmployee" }, opts),
+      );
+    },
+    deleteEmployee: function (id, opts) {
+      _gsr(
+        "deleteEmployee",
+        id,
+        Object.assign({ label: "HR.deleteEmployee" }, opts),
+      );
+    },
+
+    getAttendance: function (filters, opts) {
+      _gsr(
+        "getAttendance",
+        filters,
+        Object.assign({ label: "HR.getAttendance" }, opts),
+      );
+    },
+    saveAttendance: function (data, opts) {
+      _gsr(
+        "saveAttendance",
+        data,
+        Object.assign({ label: "HR.saveAttendance" }, opts),
+      );
+    },
+    deleteAttendance: function (id, opts) {
+      _gsr(
+        "deleteAttendance",
+        id,
+        Object.assign({ label: "HR.deleteAttendance" }, opts),
+      );
+    },
+
+    getLeaveTypes: function (opts) {
+      _gsr(
+        "getLeaveTypes",
+        null,
+        Object.assign({ label: "HR.getLeaveTypes" }, opts),
+      );
+    },
+    getLeaveRequests: function (filters, opts) {
+      _gsr(
+        "getLeaveRequests",
+        filters,
+        Object.assign({ label: "HR.getLeaveRequests" }, opts),
+      );
+    },
+    saveLeaveRequest: function (data, opts) {
+      _gsr(
+        "saveLeaveRequest",
+        data,
+        Object.assign({ label: "HR.saveLeaveRequest" }, opts),
+      );
+    },
+    approveLeaveRequest: function (id, opts) {
+      _gsr(
+        "approveLeaveRequest",
+        id,
+        Object.assign({ label: "HR.approveLeaveRequest" }, opts),
+      );
+    },
+    rejectLeaveRequest: function (id, opts) {
+      _gsr(
+        "rejectLeaveRequest",
+        id,
+        Object.assign({ label: "HR.rejectLeaveRequest" }, opts),
+      );
+    },
+
+    getLoanRequests: function (filters, opts) {
+      _gsr(
+        "getLoanRequests",
+        filters,
+        Object.assign({ label: "HR.getLoanRequests" }, opts),
+      );
+    },
+    saveLoanRequest: function (data, opts) {
+      _gsr(
+        "saveLoanRequest",
+        data,
+        Object.assign({ label: "HR.saveLoanRequest" }, opts),
+      );
+    },
+    approveLoanRequest: function (id, opts) {
+      _gsr(
+        "approveLoanRequest",
+        id,
+        Object.assign({ label: "HR.approveLoanRequest" }, opts),
+      );
+    },
+
+    getPayrollPeriods: function (opts) {
+      _gsr(
+        "getPayrollPeriods",
+        null,
+        Object.assign({ label: "HR.getPayrollPeriods" }, opts),
+      );
+    },
+    savePayrollPeriod: function (data, opts) {
+      _gsr(
+        "savePayrollPeriod",
+        data,
+        Object.assign({ label: "HR.savePayrollPeriod" }, opts),
+      );
+    },
+    approvePayrollPeriod: function (id, opts) {
+      _gsr(
+        "approvePayrollPeriod",
+        id,
+        Object.assign({ label: "HR.approvePayrollPeriod" }, opts),
+      );
+    },
+    getPayslip: function (empId, periodId, opts) {
+      _gsr(
+        "getPayslip",
+        [empId, periodId],
+        Object.assign({ label: "HR.getPayslip" }, opts),
+      );
+    },
+
+    getProductionStages: function (opts) {
+      _gsr(
+        "getProductionStages",
+        null,
+        Object.assign({ label: "HR.getProductionStages" }, opts),
+      );
+    },
+    saveProductionStage: function (data, opts) {
+      _gsr(
+        "saveProductionStage",
+        data,
+        Object.assign({ label: "HR.saveProductionStage" }, opts),
+      );
+    },
+    deleteProductionStage: function (id, opts) {
+      _gsr(
+        "deleteProductionStage",
+        id,
+        Object.assign({ label: "HR.deleteProductionStage" }, opts),
+      );
+    },
+  };
+
+  // ─── Purchase Orders (أوامر الشراء) ─────────────────────────
+  DL.PurchaseOrders = {
+    getPurchaseOrders: function (filters, opts) {
+      _gsr(
+        "getPurchaseOrders",
+        filters,
+        Object.assign({ label: "PurchaseOrders.getPurchaseOrders" }, opts),
+      );
+    },
+    savePurchaseOrder: function (data, opts) {
+      _gsr(
+        "savePurchaseOrder",
+        [data, SESSION.token],
+        Object.assign({ label: "PurchaseOrders.savePurchaseOrder" }, opts),
+      );
+    },
+    updatePurchaseOrder: function (data, opts) {
+      _gsr(
+        "updatePurchaseOrder",
+        data,
+        Object.assign({ label: "PurchaseOrders.updatePurchaseOrder" }, opts),
+      );
+    },
+    deletePurchaseOrder: function (id, opts) {
+      _gsr(
+        "deletePurchaseOrder",
+        id,
+        Object.assign({ label: "PurchaseOrders.deletePurchaseOrder" }, opts),
+      );
+    },
+    approvePurchaseOrder: function (id, opts) {
+      _gsr(
+        "approvePurchaseOrder",
+        id,
+        Object.assign({ label: "PurchaseOrders.approvePurchaseOrder" }, opts),
+      );
+    },
+    cancelPurchaseOrder: function (id, opts) {
+      _gsr(
+        "cancelPurchaseOrder",
+        id,
+        Object.assign({ label: "PurchaseOrders.cancelPurchaseOrder" }, opts),
+      );
+    },
+    receivePurchaseOrder: function (data, opts) {
+      _gsr(
+        "receivePurchaseOrder",
+        data,
+        Object.assign({ label: "PurchaseOrders.receivePurchaseOrder" }, opts),
+      );
+    },
+  };
+
+  // ─── Purchase Requests (طلبات الشراء الداخلية) ─────────────
+  DL.PurchaseRequests = {
+    getPurchaseRequests: function (filters, opts) {
+      _gsr(
+        "getPurchaseRequests",
+        filters,
+        Object.assign({ label: "PurchaseRequests.getPurchaseRequests" }, opts),
+      );
+    },
+    savePurchaseRequest: function (data, opts) {
+      _gsr(
+        "savePurchaseRequest",
+        data,
+        Object.assign({ label: "PurchaseRequests.savePurchaseRequest" }, opts),
+      );
+    },
+    updatePurchaseRequest: function (data, opts) {
+      _gsr(
+        "updatePurchaseRequest",
+        data,
+        Object.assign({ label: "PurchaseRequests.updatePurchaseRequest" }, opts),
+      );
+    },
+    approvePurchaseRequest: function (id, opts) {
+      _gsr(
+        "approvePurchaseRequest",
+        id,
+        Object.assign({ label: "PurchaseRequests.approvePurchaseRequest" }, opts),
+      );
+    },
+    rejectPurchaseRequest: function (data, opts) {
+      _gsr(
+        "rejectPurchaseRequest",
+        data,
+        Object.assign({ label: "PurchaseRequests.rejectPurchaseRequest" }, opts),
+      );
+    },
+    cancelPurchaseRequest: function (id, opts) {
+      _gsr(
+        "cancelPurchaseRequest",
+        id,
+        Object.assign({ label: "PurchaseRequests.cancelPurchaseRequest" }, opts),
+      );
+    },
+    deletePurchaseRequest: function (id, opts) {
+      _gsr(
+        "deletePurchaseRequest",
+        id,
+        Object.assign({ label: "PurchaseRequests.deletePurchaseRequest" }, opts),
+      );
+    },
+    convertPurchaseRequestToPO: function (data, opts) {
+      _gsr(
+        "convertPurchaseRequestToPO",
+        data,
+        Object.assign(
+          { label: "PurchaseRequests.convertPurchaseRequestToPO" },
+          opts,
+        ),
+      );
+    },
+  };
+
+  // ─── Invoices ────────────────────────────────────────────────
+  // [FIX-DL-INVOICES-2026-08] كانت الـ Repository دي معرَّفة من الأول لكن
+  // من غير أي شاشة بتستخدمها (صفر استدعاءات لـ DL.Invoices.* في كامل
+  // الكود)، وكانت كمان غير متوافقة مع الـ backend الفعلي:
+  //   - getSaleInvoices/getPurchaseInvoices في Code_20c_Invoices.js بتاخد
+  //     (callerUser, sessionToken) أو من غير بارامترز خالص، مش filters.
+  //   - الحفظ الفعلي بيتم عبر addSaleInvoice/addPurchaseInvoice (المستخدَمة
+  //     فعلياً من SaveEngine في 15_JS_Invoices.html)، مش saveSaleInvoice/
+  //     savePurchaseInvoice (دول تعريف مختلف تمامًا في Code_12_Core.js).
+  //   - deleteSaleInvoice/deletePurchaseInvoice بتاخد (id, sessionToken)
+  //     وكانت الـ Repository بتبعت id لوحده من غير token — يعني أي شاشة
+  //     كانت هتستخدمها كانت هتفشل. ده سبب إن 15_JS_Invoices.html كان
+  //     بيتخطى الـ Repository ده بالكامل وينادي _gsr مباشرة.
+  // التصحيح: نفس أسماء الـ backend الحقيقية + sessionToken في كل نداء.
+  DL.Invoices = {
+    /** ملاحظة: القراءة الفعلية في الشاشات بتتم من كاش APP.data المحمّل
+     * عبر Core.getAllData وقت اللوجين، مش نداء منفصل لكل شاشة. الدالتين
+     * دول متاحين لو احتجت تحميل/تحديث الفواتير بمعزل عن الكاش الكامل. */
+    getSaleInvoices: function (opts) {
+      _gsr(
+        "getSaleInvoices",
+        [APP.user || null, SESSION.token],
+        Object.assign({ label: "Invoices.getSaleInvoices" }, opts),
+      );
+    },
+    getPurchaseInvoices: function (opts) {
+      _gsr(
+        "getPurchaseInvoices",
+        null,
+        Object.assign({ label: "Invoices.getPurchaseInvoices" }, opts),
+      );
+    },
+    addSaleInvoice: function (data, opts) {
+      _gsr(
+        "addSaleInvoice",
+        [data, SESSION.token],
+        Object.assign({ label: "Invoices.addSaleInvoice" }, opts),
+      );
+    },
+    addPurchaseInvoice: function (data, opts) {
+      _gsr(
+        "addPurchaseInvoice",
+        [data, SESSION.token],
+        Object.assign({ label: "Invoices.addPurchaseInvoice" }, opts),
+      );
+    },
+    deleteSaleInvoice: function (id, opts, reason) {
+      _gsr(
+        "deleteSaleInvoice",
+        [id, SESSION.token, reason || ""],
+        Object.assign({ label: "Invoices.deleteSaleInvoice" }, opts),
+      );
+    },
+    deletePurchaseInvoice: function (id, opts, reason) {
+      _gsr(
+        "deletePurchaseInvoice",
+        [id, SESSION.token, reason || ""],
+        Object.assign({ label: "Invoices.deletePurchaseInvoice" }, opts),
+      );
+    },
+  };
+
+  // ─── Parties (Customers & Suppliers) ─────────────────────────
+  DL.Parties = {
+    getCustomers: function (filters, opts) {
+      _gsr(
+        "getCustomers",
+        filters,
+        Object.assign({ label: "Parties.getCustomers" }, opts),
+      );
+    },
+    saveCustomer: function (data, opts) {
+      _gsr(
+        "saveCustomer",
+        data,
+        Object.assign({ label: "Parties.saveCustomer" }, opts),
+      );
+    },
+    deleteCustomer: function (id, opts) {
+      _gsr(
+        "deleteCustomer",
+        id,
+        Object.assign({ label: "Parties.deleteCustomer" }, opts),
+      );
+    },
+
+    getSuppliers: function (filters, opts) {
+      _gsr(
+        "getSuppliers",
+        filters,
+        Object.assign({ label: "Parties.getSuppliers" }, opts),
+      );
+    },
+    saveSupplier: function (data, opts) {
+      _gsr(
+        "saveSupplier",
+        data,
+        Object.assign({ label: "Parties.saveSupplier" }, opts),
+      );
+    },
+    deleteSupplier: function (id, opts) {
+      _gsr(
+        "deleteSupplier",
+        id,
+        Object.assign({ label: "Parties.deleteSupplier" }, opts),
+      );
+    },
+
+    getPartyLedger: function (params, opts) {
+      _gsr(
+        "getPartyLedger",
+        params,
+        Object.assign({ label: "Parties.getPartyLedger" }, opts),
+      );
+    },
+  };
+
+  // ─── Inventory / Items ───────────────────────────────────────
+  DL.Inventory = {
+    saveItem: function (data, opts) {
+      _gsr(
+        "saveItem",
+        data,
+        Object.assign({ label: "Inventory.saveItem" }, opts),
+      );
+    },
+    deleteItem: function (id, opts) {
+      _gsr(
+        "deleteItem",
+        id,
+        Object.assign({ label: "Inventory.deleteItem" }, opts),
+      );
+    },
+    saveTransaction: function (data, opts) {
+      _gsr(
+        "saveTransaction",
+        data,
+        Object.assign({ label: "Inventory.saveTransaction" }, opts),
+      );
+    },
+    deleteTransaction: function (id, opts) {
+      _gsr(
+        "deleteTransaction",
+        id,
+        Object.assign({ label: "Inventory.deleteTransaction" }, opts),
+      );
+    },
+    getItemStatement: function (params, opts) {
+      _gsr(
+        "getItemStatement",
+        params,
+        Object.assign({ label: "Inventory.getItemStatement" }, opts),
+      );
+    },
+    getAggregatedReport: function (params, opts) {
+      _gsr(
+        "getAggregatedReport",
+        params,
+        Object.assign({ label: "Inventory.getAggregatedReport" }, opts),
+      );
+    },
+  };
+
+  // ─── VodafoneCash ────────────────────────────────────────────
+  DL.VodafoneCash = {
+    getAllData: function (params, opts) {
+      _gsr(
+        "getVodafoneCashAllData",
+        params,
+        Object.assign(
+          { label: "VodafoneCash.getAllData", timeout: 20000 },
+          opts,
+        ),
+      );
+    },
+    getLines: function (filters, opts) {
+      _gsr(
+        "getVodafoneCashLines",
+        filters,
+        Object.assign({ label: "VodafoneCash.getLines" }, opts),
+      );
+    },
+    getLineDetail: function (lineId, opts) {
+      _gsr(
+        "getVodafoneCashLineDetail",
+        lineId,
+        Object.assign({ label: "VodafoneCash.getLineDetail" }, opts),
+      );
+    },
+    getTransactions: function (filters, opts) {
+      _gsr(
+        "getVodafoneCashTransactions",
+        filters,
+        Object.assign({ label: "VodafoneCash.getTransactions" }, opts),
+      );
+    },
+    getDashboardStats: function (provider, opts) {
+      _gsr(
+        "getVodafoneCashDashboardStats",
+        provider,
+        Object.assign({ label: "VodafoneCash.getDashboardStats" }, opts),
+      );
+    },
+    getInsights: function (provider, opts) {
+      _gsr(
+        "getVodafoneCashInsights",
+        provider,
+        Object.assign({ label: "VodafoneCash.getInsights" }, opts),
+      );
+    },
+    getAlerts: function (provider, opts) {
+      _gsr(
+        "getVodafoneCashAlerts",
+        provider,
+        Object.assign({ label: "VodafoneCash.getAlerts" }, opts),
+      );
+    },
+  };
+
+  // ─── Backup (النسخ الاحتياطي) ────────────────────────────────
+  DL.Backup = {
+    getStatus: function (opts) {
+      _gsr(
+        "getBackupStatus",
+        null,
+        Object.assign({ label: "Backup.getStatus" }, opts),
+      );
+    },
+    setUserFolder: function (folderId, username, token, opts) {
+      _gsr(
+        "setBackupUserFolder",
+        [folderId, username, token],
+        Object.assign({ label: "Backup.setUserFolder" }, opts),
+      );
+    },
+    create: function (username, token, opts) {
+      _gsr(
+        "createBackup",
+        [username, token],
+        Object.assign({ label: "Backup.create", timeout: 60000 }, opts),
+      );
+    },
+    listFiles: function (opts) {
+      _gsr(
+        "listBackupFiles",
+        null,
+        Object.assign({ label: "Backup.listFiles" }, opts),
+      );
+    },
+    restore: function (fileId, userName, opts) {
+      _gsr(
+        "restoreFromBackup",
+        [fileId, userName],
+        Object.assign({ label: "Backup.restore", timeout: 60000 }, opts),
+      );
+    },
+    setupTrigger: function (schedule, opts) {
+      _gsr(
+        "setupBackupTrigger",
+        schedule,
+        Object.assign({ label: "Backup.setupTrigger" }, opts),
+      );
+    },
+  };
+
+  // ─── Users / Auth ────────────────────────────────────────────
+  DL.Users = {
+    getUsers: function (opts) {
+      _gsr("getUsers", null, Object.assign({ label: "Users.getUsers" }, opts));
+    },
+    saveUser: function (data, opts) {
+      _gsr("saveUser", data, Object.assign({ label: "Users.saveUser" }, opts));
+    },
+    renameUser: function (data, opts) {
+      _gsr(
+        "renameUser",
+        data,
+        Object.assign({ label: "Users.renameUser" }, opts),
+      );
+    },
+    deleteUser: function (username, opts) {
+      _gsr(
+        "deleteUser",
+        username,
+        Object.assign({ label: "Users.deleteUser" }, opts),
+      );
+    },
+    refreshSession: function (token, opts) {
+      _gsr(
+        "refreshSession",
+        token,
+        Object.assign({ label: "Users.refreshSession" }, opts),
+      );
+    },
+    logout: function (token, username, opts) {
+      _gsr(
+        "logout",
+        [token, username],
+        Object.assign({ label: "Users.logout", timeout: 5000 }, opts),
+      );
+    },
+    getRoles: function (opts) {
+      _gsr("getRoles", null, Object.assign({ label: "Users.getRoles" }, opts));
+    },
+    saveRole: function (data, opts) {
+      _gsr("saveRole", data, Object.assign({ label: "Users.saveRole" }, opts));
+    },
+    deleteRole: function (id, opts) {
+      _gsr(
+        "deleteRole",
+        id,
+        Object.assign({ label: "Users.deleteRole" }, opts),
+      );
+    },
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // §DL-4  DL.call() — Generic call (للحالات غير المغطاة بـ Repository)
+  //
+  // الاستخدام:
+  //   DL.call("anyBackendFunction", params, opts);
+  //
+  // ملاحظة: استخدمه فقط لو مفيش Repository method مناسبة.
+  //   الأفضل دائماً إضافة method جديدة في Repository المناسب.
+  // ─────────────────────────────────────────────────────────────
+  DL.call = function (fnName, params, opts) {
+    _gsr(fnName, params, opts);
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // §DL-5  توافق مع الكود القديم
+  //
+  // الدوال دي بتسمح للكود الموجود يشتغل بدون تعديل فوري
+  // لكن المفروض تتحول لـ DL.Repository.method() تدريجياً
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * _gsrCall — اسم مختصر بديل لـ _gsr لمن يفضل الاختصار
+   * (alias فقط — يؤدي نفس الوظيفة)
+   */
+  var _gsrCall = _gsr;
+
+  // ── Debug helper (يُستخدم في الـ development فقط) ──
+  DL._debug = {
+    /** طباعة كل الـ repositories المتاحة */
+    list: function () {
+      console.log(
+        "[DL] Repositories:",
+        Object.keys(DL).filter(function (k) {
+          return k !== "call" && k !== "_debug";
+        }),
+      );
+    },
+    /** اختبار اتصال بالـ backend */
+    ping: function () {
+      _gsr("ping", null, {
+        label: "DL.debug.ping",
+        timeout: 5000,
+        onSuccess: function () {
+          console.log("[DL] ping: OK");
+        },
+        onError: function (r) {
+          console.warn("[DL] ping failed:", r.message);
+        },
+      });
+    },
+  };
+
+  // ══════════════════════════════════════════════════════════════
+  // 🗂️ ExportUtil — أداة التصدير المركزية (CSV / Excel / Print)
+  // ══════════════════════════════════════════════════════════════
+  window.ExportUtil = {
+    /** تصدير CSV */
+    toCSV: function (data, headers, filename) {
+      var bom = "\uFEFF";
+      var rows = [headers.join(",")];
+      data.forEach(function (row) {
+        rows.push(
+          row
+            .map(function (cell) {
+              var v = cell === null || cell === undefined ? "" : String(cell);
+              if (
+                v.indexOf(",") > -1 ||
+                v.indexOf('"') > -1 ||
+                v.indexOf("\n") > -1
+              ) {
+                v = '"' + v.replace(/"/g, '\"\"') + '"';
+              }
+              return v;
+            })
+            .join(","),
+        );
+      });
+      var blob = new Blob([bom + rows.join("\n")], {
+        type: "text/csv;charset=utf-8;",
+      });
+      ExportUtil._download(blob, (filename || "export") + ".csv");
+      typeof showToast === "function" && showToast("تم تصدير CSV ✓", "success");
+    },
+
+    /** تصدير Excel (XLSX) */
+    toExcel: function (data, headers, filename, sheetName) {
+      if (!window.XLSX) {
+        typeof showToast === "function" &&
+          showToast("مكتبة Excel غير محملة", "error");
+        return;
+      }
+      var ws = XLSX.utils.aoa_to_sheet([headers].concat(data));
+      var colWidths = headers.map(function (h, i) {
+        var max = h.length;
+        data.forEach(function (row) {
+          var cell =
+            row[i] !== null && row[i] !== undefined ? String(row[i]) : "";
+          if (cell.length > max) max = cell.length;
+        });
+        return { wch: Math.min(max + 2, 40) };
+      });
+      ws["!cols"] = colWidths;
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, sheetName || "بيانات");
+      XLSX.writeFile(wb, (filename || "export") + ".xlsx");
+      typeof showToast === "function" &&
+        showToast("تم تصدير Excel ✓", "success");
+    },
+
+    /** طباعة / PDF */
+    toPrint: function (data, headers, title, subtitle) {
+      // [SEC-FIX] دالة escape محلية للنافذة المنبثقة — تحمي من XSS في document.write
+      function _esc(v) {
+        return String(v == null ? "" : v)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+      var rows = data
+        .map(function (row) {
+          return (
+            "<tr>" +
+            row
+              .map(function (cell) {
+                return "<td>" + _esc(cell) + "</td>";
+              })
+              .join("") +
+            "</tr>"
+          );
+        })
+        .join("");
+      var heads = headers
+        .map(function (h) {
+          return "<th>" + _esc(h) + "</th>";
+        })
+        .join("");
+      var safeTitle = _esc(title || "تقرير");
+      var safeSubtitle = subtitle ? _esc(subtitle) : "";
+      var html = [
+        "<!DOCTYPE html><html dir='rtl' lang='ar'>",
+        "<head><meta charset='UTF-8'>",
+        "<title>" + safeTitle + "</title>",
+        "<style>",
+        "  body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:12px;margin:20px;color:#1e293b;direction:rtl}",
+        "  h1{font-size:18px;margin:0 0 4px;color:#0f172a}",
+        "  p.sub{color:#64748b;font-size:11px;margin:0 0 16px}",
+        "  table{width:100%;border-collapse:collapse;margin-top:8px}",
+        "  th{background:#1e40af;color:#fff;padding:8px 10px;text-align:right;font-size:11px}",
+        "  td{padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:11px}",
+        "  tr:nth-child(even) td{background:#f8fafc}",
+        "  .footer{margin-top:16px;font-size:10px;color:#94a3b8;text-align:center}",
+        "  @media print{button{display:none!important}}",
+        "</style></head><body>",
+        "<h1>" + safeTitle + "</h1>",
+        safeSubtitle ? "<p class='sub'>" + safeSubtitle + "</p>" : "",
+        "<table><thead><tr>" +
+          heads +
+          "</tr></thead><tbody>" +
+          rows +
+          "</tbody></table>",
+        "<div class='footer'>تاريخ الطباعة: " +
+          new Date().toLocaleString("en-US") +
+          " — MOO.ERP</div>",
+        "<button onclick='window.print()' style='margin-top:14px;padding:8px 20px;background:#1e40af;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px'>🖨️ طباعة</button>",
+        "</body></html>",
+      ].join("");
+      var w = window.open("", "_blank");
+      if (!w) {
+        typeof showToast === "function" &&
+          showToast("فعّل النوافذ المنبثقة", "warning");
+        return;
+      }
+      w.document.write(html);
+      w.document.close();
+      w.focus();
+      // [AUDIO-EXPAND] لا يوجد showToast نجاح لعملية الطباعة، فنشغّل الصوت مباشرة
+      if (typeof AS !== "undefined") {
+        try {
+          AS.print();
+        } catch (e) {}
+      }
+      setTimeout(function () {
+        w.print();
+      }, 600);
+    },
+
+    _download: function (blob, filename) {
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () {
+        URL.revokeObjectURL(url);
+      }, 1000);
+    },
+
+    /**
+     * ينشئ زر تصدير Dropdown (Excel / CSV / طباعة)
+     * @param {Object} opts
+     *   opts.getData    — function() ترجع { headers:[], rows:[[]] }
+     *   opts.filename   — اسم الملف بدون امتداد
+     *   opts.title      — عنوان طباعة
+     *   opts.subtitle   — تفاصيل طباعة
+     *   opts.label      — نص الزر (default: "تصدير")
+     *   opts.btnClass   — CSS classes إضافية للزر
+     */
+    createDropdown: function (opts) {
+      var uid = "xdd" + Math.random().toString(36).slice(2, 7);
+      var label = opts.label || "تصدير";
+      var wrapper = document.createElement("div");
+      wrapper.style.cssText = "position:relative;display:inline-block";
+      wrapper.innerHTML =
+        '<button id="' +
+        uid +
+        '" class="btn btn-outline btn-sm ' +
+        (opts.btnClass || "") +
+        '" ' +
+        'style="display:flex;align-items:center;gap:6px">' +
+        '  <i class="ti ti-download" style="font-size:14px"></i>' +
+        label +
+        '  <i class="ti ti-chevron-down" style="font-size:11px;margin-right:2px"></i>' +
+        "</button>" +
+        '<div id="' +
+        uid +
+        '-menu" style="display:none;position:absolute;top:calc(100% + 4px);' +
+        "left:0;min-width:168px;background:var(--surface);border:1px solid var(--border);" +
+        'border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.15);z-index:9999;overflow:hidden;padding:4px 0">' +
+        '  <button data-fmt="excel" class="_xdd-item">' +
+        '    <i class="ti ti-file-spreadsheet" style="color:#10b981"></i> Excel (.xlsx)</button>' +
+        '  <button data-fmt="csv" class="_xdd-item">' +
+        '    <i class="ti ti-file-text" style="color:#3b82f6"></i> CSV (.csv)</button>' +
+        '  <div style="height:1px;background:var(--border);margin:3px 10px"></div>' +
+        '  <button data-fmt="print" class="_xdd-item">' +
+        '    <i class="ti ti-printer" style="color:#8b5cf6"></i> طباعة / PDF</button>' +
+        "</div>";
+
+      var itemStyle =
+        "width:100%;text-align:right;padding:9px 14px;background:none;border:none;" +
+        "cursor:pointer;font-size:13px;color:var(--text1);display:flex;align-items:center;gap:8px;";
+      wrapper.querySelectorAll("._xdd-item").forEach(function (b) {
+        b.style.cssText = itemStyle;
+        b.addEventListener("mouseenter", function () {
+          b.style.background = "var(--surface2)";
+        });
+        b.addEventListener("mouseleave", function () {
+          b.style.background = "none";
+        });
+      });
+
+      var btn = wrapper.querySelector("#" + uid);
+      var menu = wrapper.querySelector("#" + uid + "-menu");
+
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var isOpen = menu.style.display === "block";
+        document.querySelectorAll("[data-xdd-open]").forEach(function (m) {
+          m.style.display = "none";
+          m.removeAttribute("data-xdd-open");
+        });
+        if (!isOpen) {
+          menu.style.display = "block";
+          menu.setAttribute("data-xdd-open", "1");
+        }
+      });
+
+      menu.addEventListener("click", function (e) {
+        var b = e.target.closest("[data-fmt]");
+        if (!b) return;
+        menu.style.display = "none";
+        menu.removeAttribute("data-xdd-open");
+        var fmt = b.dataset.fmt;
+        try {
+          var d = opts.getData();
+          if (!d || !d.rows || !d.rows.length) {
+            typeof showToast === "function" &&
+              showToast("لا توجد بيانات للتصدير", "warning");
+            return;
+          }
+          if (fmt === "excel")
+            ExportUtil.toExcel(
+              d.rows,
+              d.headers,
+              opts.filename,
+              opts.sheetName,
+            );
+          else if (fmt === "csv")
+            ExportUtil.toCSV(d.rows, d.headers, opts.filename);
+          else if (fmt === "print")
+            ExportUtil.toPrint(d.rows, d.headers, opts.title, opts.subtitle);
+        } catch (err) {
+          typeof showToast === "function" &&
+            showToast("خطأ في التصدير: " + err.message, "error");
+        }
+      });
+
+      document.addEventListener("click", function () {
+        if (menu.style.display === "block") {
+          menu.style.display = "none";
+          menu.removeAttribute("data-xdd-open");
+        }
+      });
+
+      return wrapper;
+    },
+  };
+</script>
+
+<!--
+══════════════════════════════════════════════════════════════
+ 📋  DEVELOPER RULES — قواعد المطوّر (لا يجوز كسرها)
+══════════════════════════════════════════════════════════════
+
+RULE 1 — ممنوع استدعاء google.script.run مباشرة من أي شاشة
+   ✅ صح:  _gsr("getFn", params, { onSuccess:..., onError:... })
+   ✅ صح:  DL.Accounting.getJournalEntries({}, { onSuccess:..., onError:... })
+   ❌ غلط: google.script.run.withSuccessHandler(...).getFn(params)
+
+RULE 2 — كل استدعاء backend لازم يكون فيه onError
+   ✅ صح:  _gsr("fn", p, { onSuccess: fn, onError: fn })
+   ❌ غلط: _gsr("fn", p, { onSuccess: fn })  ← بيطلع console.warn تلقائي
+                                                لكن الـ UI ممكن يفضل loading
+
+RULE 3 — ممنوع parsing أو mapping داخل الـ UI/Template
+   ✅ صح:  الـ parsing في onSuccess callback (في ملف الموديول)
+   ❌ غلط: innerHTML داخل withSuccessHandler مباشرة مع منطق معقد
+
+RULE 4 — كل شاشة بيانات لازم تعرض loading / error / empty
+   ✅ استخدم DataModule.create({ containerId, onRender })
+   أو اعمل حالات واضحة يدوياً (startLoading / stopLoading / showError)
+
+RULE 5 — أي endpoint جديد يُضاف في Repository المناسب أولاً
+   ثم يُستدعى من الشاشة عبر DL.ModuleName.method()
+
+RULE 6 — ممنوع res.success=false يُترك بدون UI feedback
+   لازم: showToast(msg, "error")  أو  applyError(msg)
+
+══════════════════════════════════════════════════════════════
+-->

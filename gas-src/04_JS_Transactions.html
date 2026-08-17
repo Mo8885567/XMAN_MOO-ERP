@@ -1,0 +1,4185 @@
+<script>
+  // ───────────────────────────────────────────────────────────────
+  // JS_Transactions.html — جزء 4/10 من JavaScript.html الأصلي
+  // النطاق الأصلي: سطر 7663–11608 | الحركات (وارد/صادر/تحويل) + Multi-item helpers + Party autocomplete
+  // ───────────────────────────────────────────────────────────────
+
+  // الحركات — Transactions
+  // ─────────────────────────────────────────────────────────────
+
+  // ── أدوات مشتركة للحركات ──────────────────────────────────
+  function _txWarehouseOpts() {
+    return APP.data.warehouses
+      .map(function (wh) {
+        var label = wh.code
+          ? esc(wh.name || wh.id) + " (" + esc(wh.code) + ")"
+          : esc(wh.name || wh.id);
+        return (
+          '<option value="' + esc(wh.name || wh.id) + '">' + label + "</option>"
+        );
+      })
+      .join("");
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // [FIX-SelectionEngine] كان Custom Picker مستقل بمنطقه الخاص (نظام
+  // موازٍ لـ AppSelect) — تحوّل لـ delegator رفيع فوق AppSelect.upgrade
+  // بنفس الاسم والتوقيع، فمفيش أي نقطة استدعاء (in-to/out-from/tr-from/
+  // tr-to/disp-wh/fr-wh) احتاجت تعديل.
+  // ─────────────────────────────────────────────────────────────
+  function _upgradeWhSelect(selectId) {
+    var sel = document.getElementById(selectId);
+    if (!sel || sel._whUpgraded) return;
+    sel._whUpgraded = true;
+    if (window.AppSelect) {
+      AppSelect.upgrade(selectId, {
+        icon: "ti-building-warehouse",
+        searchable: true,
+        placeholder: "— اختر المخزن —",
+      });
+    }
+  }
+
+  function _submitTx(tx, page, btnEl) {
+    if (!tx.item_id) return NotificationEngine.error("اختر الصنف");
+    if (!tx.quantity || tx.quantity <= 0)
+      return NotificationEngine.error("أدخل كمية صحيحة");
+    btnEl.disabled = true;
+    // [SE-ROLLOUT] عبر SaveEngine.run بدل google.script.run/_gsr المباشر
+    SaveEngine.run({
+      screen: "Transactions",
+      entity: "transaction",
+      fn: "addTransaction",
+      data: tx,
+      params: function (data) {
+        return [data];
+      },
+      savingLabel: "جاري حفظ الحركة...",
+      onSuccess: function () {
+        btnEl.disabled = false;
+        reloadAfterMutation(function () {
+          renderPage(page);
+        });
+      },
+      onError: function () {
+        btnEl.disabled = false;
+      },
+    });
+  }
+  function _autoSelectWarehouse(itemId, selectId, badgeId) {
+    var wh = getWarehouseForItem(itemId);
+    var sel = document.getElementById(selectId);
+    var badge = badgeId ? document.getElementById(badgeId) : null;
+    if (!sel) return;
+
+    if (wh) {
+      // حاول تطابق بالاسم أو الـ ID
+      var matched = false;
+      for (var i = 0; i < sel.options.length; i++) {
+        var v = sel.options[i].value;
+        if (v === wh || v.toLowerCase() === wh.toLowerCase()) {
+          sel.selectedIndex = i;
+          matched = true;
+          break;
+        }
+      }
+      // أظهر badge التحديث التلقائي
+      if (badge) {
+        badge.textContent = matched ? " تم التحديد تلقائياً" : "";
+        badge.style.display = matched ? "inline" : "none";
+      }
+    } else {
+      sel.selectedIndex = 0;
+      if (badge) badge.style.display = "none";
+    }
+  }
+
+  // ── نموذج التسجيل العام (Legacy) ────────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // TRANSFER (تسجيل حركة)
+  // ─────────────────────────────────────────────────────────────
+
+  // تحديث ظهور حقول المستودع حسب نوع الحركة
+  function onTxTypeChange() {
+    var type = document.getElementById("tx-type").value;
+    var fromWrap = document.getElementById("tx-from-wrap");
+    var toWrap = document.getElementById("tx-to-wrap");
+
+    if (type === "IN") {
+      // وارد: إلى مستودع فقط
+      fromWrap.style.display = "none";
+      toWrap.style.display = "";
+      document.getElementById("tx-from").value = "";
+    } else if (type === "OUT") {
+      // صادر: من مستودع فقط
+      fromWrap.style.display = "";
+      toWrap.style.display = "none";
+      document.getElementById("tx-to").value = "";
+    } else {
+      // تحويل: الاثنين معاً
+      fromWrap.style.display = "";
+      toWrap.style.display = "";
+    }
+
+    // إعادة ملء المستودعات تلقائياً بعد تغيير النوع
+    autoFillWarehouse();
+  }
+  // ملء المستودعات تلقائيًا بناءً على نوع الحركة والصنف
+  function autoFillWarehouse() {
+    var itemId = document.getElementById("tx-item").value;
+    var type = document.getElementById("tx-type").value;
+
+    if (!itemId) return;
+
+    var warehouse = getWarehouseForItem(itemId);
+
+    if (!warehouse) warehouse = "الرئيسي";
+
+    if (type === "OUT") {
+      document.getElementById("tx-from").value = warehouse;
+    } else if (type === "IN") {
+      document.getElementById("tx-to").value = warehouse;
+    } else if (type === "TRANSFER") {
+      document.getElementById("tx-from").value = warehouse;
+      document.getElementById("tx-to").value = "";
+    }
+  }
+
+  function toggleTransferFields() {
+    var type = document.getElementById("tx-type").value;
+    var fromWrap = document.getElementById("tx-from-wrap");
+    var toLbl = document.getElementById("tx-to-label");
+    if (fromWrap) fromWrap.style.display = type === "TRANSFER" ? "" : "none";
+    if (toLbl)
+      toLbl.textContent =
+        type === "IN"
+          ? "إلى مستودع *"
+          : type === "OUT"
+            ? "من مستودع *"
+            : "إلى مستودع *";
+  }
+
+  function bindTransfer() {
+    // تطبيق حالة الحقول حسب النوع الافتراضي عند فتح الشاشة
+    onTxTypeChange();
+    // تهيئة CCD اللون بحالة placeholder ابتداءً
+    _rebuildColorSelect("tx-color", "tx-item", "tx-to");
+
+    var btn = document.getElementById("btn-save-tx");
+    if (!btn) return;
+
+    // ربط تغيير الصنف لتحديث اللون
+    var txItemSel = document.getElementById("tx-item");
+    if (txItemSel) {
+      txItemSel.addEventListener("change", function () {
+        _rebuildColorSelect("tx-color", "tx-item", "tx-to");
+      });
+    }
+
+    btn.addEventListener("click", function () {
+      var type = document.getElementById("tx-type").value;
+      var fromEl = document.getElementById("tx-from");
+      var toEl = document.getElementById("tx-to");
+      var colorEl = document.getElementById("tx-color");
+
+      var tx = {
+        type: type,
+        item_id: document.getElementById("tx-item").value,
+        quantity: Number(document.getElementById("tx-qty").value),
+        from_warehouse:
+          fromEl &&
+          document.getElementById("tx-from-wrap").style.display !== "none"
+            ? fromEl.value.trim()
+            : "",
+        to_warehouse:
+          toEl && document.getElementById("tx-to-wrap").style.display !== "none"
+            ? toEl.value.trim()
+            : "",
+        color: colorEl ? colorEl.value : "",
+        notes: document.getElementById("tx-notes").value.trim(),
+        user: APP.currentUser.username || "", // BUG-6 FIX: username لـ _checkPermission,
+      };
+
+      if (!tx.item_id) return NotificationEngine.error("اختر الصنف");
+      if (!tx.quantity || tx.quantity <= 0)
+        return NotificationEngine.error("أدخل كمية صحيحة");
+      if (type === "IN" && !tx.to_warehouse)
+        return NotificationEngine.error("أدخل المستودع المستلم");
+      if (type === "OUT" && !tx.from_warehouse)
+        return NotificationEngine.error("أدخل المستودع المُصدر منه");
+      if (type === "TRANSFER" && (!tx.from_warehouse || !tx.to_warehouse))
+        return NotificationEngine.error("أدخل المستودعين (من / إلى)");
+
+      btn.disabled = true;
+      // [SE-ROLLOUT] عبر SaveEngine.run بدل google.script.run/_gsr المباشر
+      SaveEngine.run({
+        screen: "Transactions",
+        entity: "transaction",
+        fn: "addTransaction",
+        data: tx,
+        params: function (data) {
+          return [data];
+        },
+        savingLabel: "جاري حفظ الحركة...",
+        onSuccess: function () {
+          btn.disabled = false;
+          reloadAfterMutation(function () {
+            renderPage("transfer");
+          });
+        },
+        onError: function () {
+          btn.disabled = false;
+        },
+      });
+    });
+  }
+
+  // ── وارد ─────────────────────────────────────────────────────
+  // ---- وارد ----
+
+  // ── رفع مرفق إذن الوارد/الصادر ──────────────────────────────
+
+  var _txFiles = { in: null, out: null, tr: null }; // يخزن الملف المختار لكل نوع
+
+  function handleTxFileSelect(input, prefix) {
+    var file = input.files[0];
+    if (!file) return;
+    _txFiles[prefix] = file;
+
+    var previewEl = document.getElementById(prefix + "-attach-preview");
+    var areaEl = document.getElementById(prefix + "-attach-area");
+    var statusEl = document.getElementById(prefix + "-upload-status");
+
+    // زرار مسح مشترك
+    var clearBtn =
+      '<button type="button" onclick="clearTxFile(\'' +
+      prefix +
+      "')\" " +
+      'style="margin-top:8px;background:none;border:1px solid var(--danger);color:var(--danger);' +
+      'border-radius:6px;padding:3px 12px;cursor:pointer;font-size:12px"> إزالة الملف</button>';
+
+    if (file.type.startsWith("image/")) {
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        previewEl.innerHTML =
+          '<img src="' +
+          e.target.result +
+          '" style="max-height:120px;max-width:100%;border-radius:8px;object-fit:cover">' +
+          '<div style="font-size:12px;color:var(--success);margin-top:6px;font-weight:600"> ' +
+          esc(file.name) +
+          "</div>" +
+          clearBtn;
+      };
+      reader.readAsDataURL(file);
+    } else {
+      previewEl.innerHTML =
+        '<div style="font-size:32px"></div>' +
+        '<div style="font-size:12px;color:var(--success);margin-top:6px;font-weight:600"> ' +
+        esc(file.name) +
+        "</div>" +
+        clearBtn;
+    }
+
+    areaEl.style.borderColor = "var(--success)";
+    areaEl.style.background = "var(--success-soft)";
+    // أخفِ شريط الحالة القديم عند اختيار ملف جديد
+    if (statusEl) {
+      statusEl.style.display = "none";
+      statusEl.innerHTML = "";
+    }
+  }
+
+  function clearTxFile(prefix) {
+    _txFiles[prefix] = null;
+    // أعد ضبط الـ input
+    var fileInput = document.getElementById(prefix + "-file");
+    if (fileInput) fileInput.value = "";
+    // أعد الـ preview للحالة الابتدائية
+    var previewEl = document.getElementById(prefix + "-attach-preview");
+    if (previewEl)
+      previewEl.innerHTML =
+        '<div style="font-size:28px"></div>' +
+        '<div style="font-size:13px;color:var(--text3);margin-top:4px">اضغط لاختيار صورة أو PDF من التلفون أو الجهاز</div>';
+    // أعد لون منطقة الرفع
+    var areaEl = document.getElementById(prefix + "-attach-area");
+    if (areaEl) {
+      areaEl.style.borderColor = "var(--border)";
+      areaEl.style.background = "var(--surface2)";
+    }
+    // أخفِ شريط الحالة
+    var statusEl = document.getElementById(prefix + "-upload-status");
+    if (statusEl) {
+      statusEl.style.display = "none";
+      statusEl.innerHTML = "";
+    }
+  }
+
+  // رفع الملف وبعدين تسجيل الإذن
+  function _uploadThenSubmit(tx, page, btn) {
+    var prefix = tx.type === "IN" ? "in" : "out";
+    var file = _txFiles[prefix];
+
+    // لو مفيش ملف — سجّل مباشرةً
+    if (!file) {
+      _doSubmitTx(tx, page, btn);
+      return;
+    }
+
+    // فيه ملف — ارفعه الأول
+    var statusEl = document.getElementById(prefix + "-upload-status");
+    if (statusEl) {
+      statusEl.style.display = "flex";
+      statusEl.innerHTML =
+        '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div> جاري رفع المرفق...';
+    }
+    btn.disabled = true;
+    btn.textContent = " جاري رفع الملف...";
+    NotificationEngine.loading("جاري رفع المرفق...");
+
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      var base64 = e.target.result.split(",")[1];
+      _gsr(
+        "uploadFile",
+        [
+          base64,
+          file.name,
+          file.type,
+          {
+            userName: APP.currentUser
+              ? APP.currentUser.full_name ||
+                APP.currentUser.username ||
+                "مستخدم"
+              : "مستخدم",
+            moduleName: tx.type === "IN" ? "إذن وارد" : "إذن صادر",
+          },
+        ],
+        {
+          label: "uploadFile",
+          rawResponse: true,
+          onSuccess: function (r) {
+            var res = r && r.data;
+            var result;
+            try {
+              result = JSON.parse(res);
+            } catch (ex) {
+              result = { success: false, error: ex.message };
+            }
+
+            if (result.success) {
+              if (statusEl) statusEl.innerHTML = " تم رفع المرفق بنجاح";
+              tx.attachment_url = result.viewUrl;
+              _txFiles[prefix] = null; // نظّف بعد الرفع
+              dismissLoadingToast(); // هيبدأ لودينج تاني في _doSubmitTx
+              _doSubmitTx(tx, page, btn);
+            } else {
+              if (statusEl)
+                statusEl.innerHTML =
+                  " فشل رفع الملف: " + esc(result.error || "");
+              btn.disabled = false;
+              btn.textContent =
+                tx.type === "IN" ? " تسجيل الوارد" : " تسجيل الصادر";
+              finishLoadingToast(
+                " فشل رفع الملف — " + (result.error || ""),
+                "error",
+              );
+            }
+          },
+          onError: function (r) {
+            if (statusEl) statusEl.innerHTML = " خطأ في الرفع";
+            btn.disabled = false;
+            btn.textContent =
+              tx.type === "IN" ? " تسجيل الوارد" : " تسجيل الصادر";
+            finishLoadingToast(" خطأ: " + (r.message || r), "error");
+          },
+        },
+      );
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // تسجيل الحركة الفعلي (بعد الرفع أو بدونه)
+  function _doSubmitTx(tx, page, btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ جاري التسجيل...";
+    // [SE-ROLLOUT] عبر SaveEngine.run بدل google.script.run/_gsr المباشر
+    SaveEngine.run({
+      screen: "Transactions",
+      entity: "transaction",
+      fn: "addTransaction",
+      data: tx,
+      params: function (data) {
+        return [data];
+      },
+      savingLabel: "جاري تسجيل الحركة...",
+      onSuccess: function () {
+        btn.disabled = false;
+        btn.textContent =
+          tx.type === "IN" ? " تسجيل الوارد" : " تسجيل الصادر";
+        _txFiles[tx.type === "IN" ? "in" : "out"] = null;
+        reloadAfterMutation(function () {
+          renderPage(page);
+        });
+      },
+      onError: function () {
+        btn.disabled = false;
+        btn.textContent =
+          tx.type === "IN" ? " تسجيل الوارد" : " تسجيل الصادر";
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Multi-Item TX Helpers
+  // ─────────────────────────────────────────────────────────────
+
+  // مصفوفة الأصناف المضافة للإذن (IN أو OUT)
+  var _txItemsStore = { IN: [], OUT: [] };
+
+  // تصفير الأصناف عند فتح الصفحة
+  function _resetTxItems(type) {
+    _txItemsStore[type] = [];
+    var prefix = type === "IN" ? "in" : "out";
+    var tbody = document.getElementById(prefix + "-items-tbody");
+    var colspan = type === "IN" ? "6" : "6";
+    var emptyMsg =
+      type === "IN"
+        ? '<div style="font-size:36px;margin-bottom:10px"></div>لم تُضَف أصناف بعد — استخدم الأداة أعلاه لإضافة أصناف'
+        : " لم تُضَف أصناف بعد";
+    var emptyClass =
+      type === "IN"
+        ? ' class="tx-in-empty-state"'
+        : ' style="text-align:center;color:var(--text3);padding:20px;font-size:13px"';
+    if (tbody)
+      tbody.innerHTML =
+        '<tr id="' +
+        prefix +
+        '-empty-row"><td colspan="' +
+        colspan +
+        '"' +
+        emptyClass +
+        ">" +
+        emptyMsg +
+        "</td></tr>";
+    _updateTxSummary(type);
+  }
+
+  // إضافة صف صنف جديد من حقول الـ tfoot
+  function _addTxItemRow(type) {
+    var prefix = type === "IN" ? "in" : "out";
+    var whKey = type === "IN" ? "in-to" : "out-from";
+    var itemSel = document.getElementById(prefix + "-item");
+    var whSel = document.getElementById(whKey);
+    var colorSel = document.getElementById(prefix + "-color");
+    var qtyEl = document.getElementById(prefix + "-qty");
+    var notesEl = document.getElementById(prefix + "-row-notes");
+    // [TRACKING-FIELDS-2026-08-08]
+    var batchNoEl = document.getElementById(prefix + "-batch-no");
+    var expiryEl = document.getElementById(prefix + "-expiry-date");
+    var serialNoEl = document.getElementById(prefix + "-serial-no");
+
+    var itemId = itemSel ? itemSel.value.trim() : "";
+    var wh = whSel ? whSel.value.trim() : "";
+    var color = colorSel ? colorSel.value.trim() : "";
+    var qty = Number(qtyEl ? qtyEl.value : 0);
+    var notes = notesEl ? notesEl.value.trim() : "";
+    var batchNo = batchNoEl ? batchNoEl.value.trim() : "";
+    var expiryDate = expiryEl ? expiryEl.value.trim() : "";
+    var serialNo = serialNoEl ? serialNoEl.value.trim() : "";
+
+    if (!itemId) return NotificationEngine.error("اختر الصنف أولاً");
+    if (!wh)
+      return NotificationEngine.error(type === "IN" ? "اختر مخزن الاستلام" : "اختر مخزن الصرف");
+    if (qty <= 0) return NotificationEngine.error("أدخل كمية أكبر من صفر");
+
+    // [TRACKING-FIELDS-2026-08-08] تنبيه فوري للمستخدم — الفحص الملزم الحقيقي
+    // في addTransaction/addBatchTransaction (Backend)، هنا بس لتحسين التجربة.
+    var _selItemForCheck = (APP.data.items || []).find(function (it) {
+      return it.id === itemId;
+    });
+    var _trackingTypeCheck = _selItemForCheck ? _selItemForCheck.tracking_type || "normal" : "normal";
+    if (_trackingTypeCheck === "batch" && !batchNo)
+      return NotificationEngine.error(" هذا الصنف يتطلب رقم دفعة (Batch)");
+    if (_trackingTypeCheck === "serial") {
+      if (!serialNo) return NotificationEngine.error(" هذا الصنف يتطلب رقم تسلسلي (Serial)");
+      if (qty !== 1) return NotificationEngine.error(" الأصناف ذات الرقم التسلسلي يجب أن تكون كميتها 1 بالضبط");
+    }
+
+    // [FIX-STAGE2] اللون مطلوب عند الصرف (OUT) إذا كان الصنف له ألوان معرفة —
+    // هذا الفحص كان موجودًا في نسخة قديمة معطّلة (Templates_02.html) وفُقد أثناء
+    // إعادة الكتابة هنا. الباك اند (addBatchTransaction) يرفض العملية أصلاً في
+    // هذه الحالة لو نوعها OUT/TRANSFER — هذا الفحص هنا فقط لإخبار المستخدم فورًا
+    // بدل انتظار رفض السيرفر بعد إرسال الإذن كاملاً.
+    if (type === "OUT") {
+      var itemColorsCheck = getItemColors(itemId);
+      if (itemColorsCheck.length && !color)
+        return NotificationEngine.error(" يجب اختيار اللون — هذا الصنف له ألوان معرفة");
+    }
+
+    // اسم الصنف للعرض
+    var itemObj = (APP.data.items || []).find(function (it) {
+      return it.id === itemId;
+    });
+    var itemName = itemObj ? itemObj.name || itemId : itemId;
+
+    // إضافة للمصفوفة
+    var rowData = {
+      item_id: itemId,
+      item_name: itemName,
+      warehouse: wh,
+      color: color,
+      quantity: qty,
+      notes: notes,
+      batch_no: batchNo,
+      serial_no: serialNo,
+      expiry_date: expiryDate,
+    };
+    _txItemsStore[type].push(rowData);
+
+    // إضافة صف في الـ tbody
+    var tbody = document.getElementById(prefix + "-items-tbody");
+    var emptyRow = document.getElementById(prefix + "-empty-row");
+    if (emptyRow) emptyRow.remove();
+
+    var idx = _txItemsStore[type].length - 1;
+    var colorBadge = color
+      ? '<span style="background:var(--accent-soft);color:var(--accent);padding:2px 10px;border-radius:20px;font-size:12px">' +
+        esc(color) +
+        "</span>"
+      : '<span style="color:var(--text3);font-size:11px">—</span>';
+    // [TRACKING-FIELDS-2026-08-08] badge صغير لرقم الدفعة/الصلاحية أو السيريال — إضافي بجانب الكود، من غير ما نضيف عمود جديد للجدول
+    var trackingBadge = "";
+    if (batchNo)
+      trackingBadge +=
+        ' <span style="font-size:10px;background:var(--palette-amber-100,#fef3c7);color:var(--palette-amber-800,#92400e);padding:1px 6px;border-radius:5px">دفعة: ' +
+        esc(batchNo) +
+        (expiryDate ? " | صلاحية: " + esc(expiryDate) : "") +
+        "</span>";
+    if (serialNo)
+      trackingBadge +=
+        ' <span style="font-size:10px;background:var(--palette-blue-100,#dbeafe);color:var(--palette-blue-800,#1e40af);padding:1px 6px;border-radius:5px">SN: ' +
+        esc(serialNo) +
+        "</span>";
+
+    var tr = document.createElement("tr");
+    tr.id = prefix + "-row-" + idx;
+
+    // استخدام الكلاسات الجديدة للـ IN، وإبقاء الـ OUT كما هو
+    if (type === "IN") {
+      var hue = function (s) {
+        var h = 0;
+        for (var i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
+        return Math.abs(h) % 360;
+      };
+      var cDotHex =
+        typeof colorNameToHex === "function"
+          ? colorNameToHex(color)
+          : "hsl(" + hue(color) + ",55%,58%)";
+      var cHtml = color
+        ? '<span class="tx-in-color-pill"><span class="tx-in-color-dot" style="background:' +
+          cDotHex +
+          '"></span>' +
+          esc(color) +
+          "</span>"
+        : '<span style="color:var(--text3)">—</span>';
+
+      // اسم الوحدة من بيانات الصنف
+      var unitName = itemObj ? itemObj.unit || "قطعة" : "قطعة";
+
+      tr.innerHTML =
+        '<td style="text-align:center"><span class="tx-in-row-num">' +
+        (idx + 1) +
+        "</span></td>" +
+        '<td><b style="margin-left:6px">' +
+        esc(itemName) +
+        '</b><span class="mono" style="font-size:11px;color:var(--accent);font-weight:700;background:var(--accent-soft);padding:1px 6px;border-radius:5px">' +
+        esc(itemObj ? itemObj.code || itemId : itemId) +
+        "</span>" +
+        trackingBadge +
+        "</td>" +
+        "<td>" +
+        cHtml +
+        "</td>" +
+        '<td style="text-align:center"><span class="tx-in-qty-badge">' +
+        qty +
+        "</span></td>" +
+        '<td style="text-align:center"><span class="tx-in-unit-pill">' +
+        esc(unitName) +
+        "</span></td>" +
+        '<td style="text-align:center;display:flex;gap:4px;justify-content:center;align-items:center">' +
+        '<button class="tx-in-btn-edit" onclick="_editTxItemRow(\'' +
+        type +
+        "'," +
+        idx +
+        ')" title="تعديل"><i class="ti ti-pencil"></i></button>' +
+        '<button class="tx-in-btn-delete" onclick="_removeTxItemRow(\'' +
+        type +
+        "'," +
+        idx +
+        ')" title="حذف"></button>' +
+        "</td>";
+    } else {
+      // OUT — نفس بنية IN بكلاسات tx-out-*
+      var hue2 = function (s) {
+        var h = 0;
+        for (var i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
+        return Math.abs(h) % 360;
+      };
+      var cDot2Hex =
+        typeof colorNameToHex === "function"
+          ? colorNameToHex(color)
+          : "hsl(" + hue2(color) + ",55%,58%)";
+      var cHtml2 = color
+        ? '<span class="tx-out-color-pill"><span class="tx-out-color-dot" style="background:' +
+          cDot2Hex +
+          '"></span>' +
+          esc(color) +
+          "</span>"
+        : '<span style="color:var(--text3)">—</span>';
+
+      var unitName2 = itemObj ? itemObj.unit || "قطعة" : "قطعة";
+
+      tr.innerHTML =
+        '<td style="text-align:center"><span class="tx-out-row-num">' +
+        (idx + 1) +
+        "</span></td>" +
+        '<td><b style="margin-left:6px">' +
+        esc(itemName) +
+        '</b><span class="mono" style="font-size:11px;color:var(--accent);font-weight:700;background:var(--accent-soft);padding:1px 6px;border-radius:5px">' +
+        esc(itemObj ? itemObj.code || itemId : itemId) +
+        "</span>" +
+        trackingBadge +
+        "</td>" +
+        "<td>" +
+        cHtml2 +
+        "</td>" +
+        '<td style="text-align:center"><span class="tx-out-qty-badge">' +
+        qty +
+        "</span></td>" +
+        '<td style="text-align:center"><span class="tx-out-unit-pill">' +
+        esc(unitName2) +
+        "</span></td>" +
+        '<td style="text-align:center;display:flex;gap:4px;justify-content:center;align-items:center">' +
+        '<button class="tx-out-btn-edit" onclick="_editTxItemRow(\'' +
+        type +
+        "'," +
+        idx +
+        ')" title="تعديل"><i class="ti ti-pencil"></i></button>' +
+        '<button class="tx-out-btn-delete" onclick="_removeTxItemRow(\'' +
+        type +
+        "'," +
+        idx +
+        ')" title="حذف"></button>' +
+        "</td>";
+    }
+    tbody.appendChild(tr);
+
+    // تصفير حقول الإضافة
+    if (qtyEl) qtyEl.value = "";
+    if (notesEl) notesEl.value = "";
+    if (colorSel) _resetCCD(prefix + "-color");
+    if (batchNoEl) batchNoEl.value = "";
+    if (expiryEl) expiryEl.value = "";
+    if (serialNoEl) serialNoEl.value = "";
+
+    _updateTxSummary(type);
+  }
+
+  // تعديل صف — يرجع البيانات لحقول الإضافة ويحذف الصف
+  function _editTxItemRow(type, idx) {
+    var row = _txItemsStore[type][idx];
+    if (!row) return;
+    var prefix = type === "IN" ? "in" : "out";
+    var whKey = type === "IN" ? "in-to" : "out-from";
+
+    // ملء حقل الصنف
+    var itemSel = document.getElementById(prefix + "-item");
+    if (itemSel) {
+      itemSel.value = row.item_id;
+      // trigger change لتحميل الألوان
+      itemSel.dispatchEvent(new Event("change"));
+    }
+
+    // ملء المخزن
+    var whSel = document.getElementById(whKey);
+    if (whSel) whSel.value = row.warehouse;
+
+    // ملء الكمية
+    var qtyEl = document.getElementById(prefix + "-qty");
+    if (qtyEl) qtyEl.value = row.quantity;
+
+    // ملء اللون بعد تأخير بسيط (ريثما تُحمَّل قائمة الألوان)
+    setTimeout(function () {
+      var colorSel = document.getElementById(prefix + "-color");
+      if (colorSel && row.color) colorSel.value = row.color;
+    }, 150);
+
+    // ملء الملاحظات
+    var notesEl = document.getElementById(prefix + "-row-notes");
+    if (notesEl) notesEl.value = row.notes || "";
+
+    // [TRACKING-FIELDS-2026-08-08] ملء رقم الدفعة/الصلاحية/السيريال بعد تأخير بسيط
+    // (ريثما يظهر الـ handler الحقول المناسبة حسب نوع الصنف)
+    setTimeout(function () {
+      var batchNoEl = document.getElementById(prefix + "-batch-no");
+      var expiryEl = document.getElementById(prefix + "-expiry-date");
+      var serialNoEl = document.getElementById(prefix + "-serial-no");
+      if (batchNoEl) batchNoEl.value = row.batch_no || "";
+      if (expiryEl) expiryEl.value = row.expiry_date || "";
+      if (serialNoEl) serialNoEl.value = row.serial_no || "";
+    }, 150);
+
+    // حذف الصف من الـ store والجدول
+    _removeTxItemRow(type, idx);
+
+    // تمرير للأعلى نحو حقول الإضافة
+    var inputZone =
+      document.getElementById(prefix + "-input-zone") ||
+      document.getElementById(prefix + "-item");
+    if (inputZone)
+      inputZone.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  // حذف صف من الجدول
+  function _removeTxItemRow(type, idx) {
+    var prefix = type === "IN" ? "in" : "out";
+    _txItemsStore[type][idx] = null; // إبقاء الـ index ثابت
+    var row = document.getElementById(prefix + "-row-" + idx);
+    if (row) row.remove();
+    // لو مفيش أصناف باقية أضف رسالة فاضي
+    var remaining = _txItemsStore[type].filter(Boolean);
+    if (!remaining.length) {
+      var tbody = document.getElementById(prefix + "-items-tbody");
+      var colspan = type === "IN" ? "6" : "6";
+      var emptyMsg =
+        type === "IN"
+          ? '<div style="font-size:36px;margin-bottom:10px"></div>لم تُضَف أصناف بعد — استخدم الأداة أعلاه لإضافة أصناف'
+          : '<div style="font-size:36px;margin-bottom:10px"></div>لم تُضَف أصناف بعد — استخدم الأداة أعلاه لإضافة أصناف';
+      var emptyClass =
+        type === "IN"
+          ? ' class="tx-in-empty-state"'
+          : ' class="tx-out-empty-state"';
+      if (tbody)
+        tbody.innerHTML =
+          '<tr id="' +
+          prefix +
+          '-empty-row"><td colspan="' +
+          colspan +
+          '"' +
+          emptyClass +
+          ">" +
+          emptyMsg +
+          "</td></tr>";
+    }
+    _updateTxSummary(type);
+  }
+
+  // تحديث ملخص الأصناف والكميات
+  function _updateTxSummary(type) {
+    var prefix = type === "IN" ? "in" : "out";
+    var items = (_txItemsStore[type] || []).filter(Boolean);
+    var totalQty = items.reduce(function (s, it) {
+      return s + (it.quantity || 0);
+    }, 0);
+    var count = items.length;
+
+    var summaryEl = document.getElementById(prefix + "-summary");
+    var summaryMini = document.getElementById(prefix + "-summary-mini");
+    var countBadge = document.getElementById(prefix + "-items-count");
+
+    var txt = count
+      ? count + " نوع — إجمالي الكميات: " + totalQty + " وحدة"
+      : "لا توجد أصناف مضافة بعد";
+
+    if (summaryMini) summaryMini.textContent = count + " صنف";
+    if (countBadge) {
+      countBadge.textContent = count + " صنف";
+      countBadge.style.display = count ? "inline-flex" : "none";
+    }
+    // تحديث خاص للـ IN: summary bar الجديدة
+    if (type === "IN") {
+      if (summaryEl) {
+        summaryEl.style.display = count ? "flex" : "none";
+        var totalEl = document.getElementById("summary-total");
+        if (totalEl)
+          totalEl.textContent = count + " صنف — " + totalQty + " وحدة إجمالية";
+      }
+      var step2 = document.getElementById("step2");
+      var step3 = document.getElementById("step3");
+      if (step2)
+        step2.className = count ? "tx-in-step tx-in-step-active" : "tx-in-step";
+      if (step3)
+        step3.className = count ? "tx-in-step tx-in-step-active" : "tx-in-step";
+    } else {
+      // OUT — نفس منطق IN
+      if (summaryEl) {
+        summaryEl.style.display = count ? "flex" : "none";
+        var outTotalEl = document.getElementById("out-summary-total");
+        if (outTotalEl)
+          outTotalEl.textContent =
+            count + " صنف — " + totalQty + " وحدة إجمالية";
+      }
+      var outStep2 = document.getElementById("out-step2");
+      var outStep3 = document.getElementById("out-step3");
+      if (outStep2)
+        outStep2.className = count
+          ? "tx-out-step tx-out-step-active"
+          : "tx-out-step";
+      if (outStep3)
+        outStep3.className = count
+          ? "tx-out-step tx-out-step-active"
+          : "tx-out-step";
+    }
+  }
+
+  // تسجيل الإذن كاملاً (Batch)
+  function _submitMultiTx(type, btn) {
+    var prefix = type === "IN" ? "in" : "out";
+    var items = (_txItemsStore[type] || []).filter(Boolean);
+
+    if (!items.length) return NotificationEngine.error("أضف صنفاً واحداً على الأقل");
+
+    // ── [VF] التحقق الموحّد على حقول الإذن ────────────────────────────
+    if (typeof VF !== "undefined") {
+      var _txVfCfg =
+        prefix === "out"
+          ? [
+              {
+                fieldId: "out-from",
+                rules: VF.RULES.requiredText("المخزن المُصدر"),
+              },
+            ]
+          : [
+              {
+                fieldId: "in-to",
+                rules: VF.RULES.requiredSelect("المخزن المستلم"),
+              },
+            ];
+      if (!VF.quickSave(_txVfCfg)) return;
+    }
+    // ────────────────────────────────────────────────────────────────────
+
+    // بناء الـ batch object
+    var refEl = document.getElementById(prefix + "-ref");
+    var partyEl = document.getElementById(prefix + "-party");
+    var notesEl = document.getElementById(prefix + "-notes");
+
+    var batchItems = items.map(function (it) {
+      return {
+        item_id: it.item_id,
+        quantity: it.quantity,
+        from_warehouse: type === "OUT" ? it.warehouse : "",
+        to_warehouse: type === "IN" ? it.warehouse : "",
+        color: it.color || "",
+        notes: it.notes || "",
+      };
+    });
+
+    var permitEl = document.getElementById(prefix + "-permit-id");
+    var permitId = permitEl
+      ? (permitEl.value != null
+          ? String(permitEl.value)
+          : String(permitEl.textContent || "")
+        ).trim()
+      : "";
+
+    var batch = {
+      type: type,
+      items: batchItems,
+      permit_id: permitId,
+      ref: refEl && refEl.value != null ? String(refEl.value).trim() : "",
+      party: (function () {
+        var hiddenEl = document.getElementById(prefix + "-party-id");
+        var hiddenVal = hiddenEl ? String(hiddenEl.value || "").trim() : "";
+        // لو الـ hidden فاضي (بيانات قديمة أو كتب يدوي) — ارجع للـ input value
+        if (hiddenVal) return hiddenVal;
+        return partyEl && partyEl.value != null
+          ? String(partyEl.value).trim()
+          : "";
+      })(),
+      notes:
+        notesEl && notesEl.value != null ? String(notesEl.value).trim() : "",
+      user: APP.currentUser ? APP.currentUser.username || "" : "",
+      // ── v4.2: بيانات الشحن ──
+      needs_shipping: (function () {
+        if (type !== "OUT") return false;
+        var chk = document.getElementById("out-needs-shipping");
+        return chk ? chk.checked : false;
+      })(),
+      shipping_driver: (function () {
+        var el = document.getElementById("out-shipping-driver");
+        return el ? el.value.trim() : "";
+      })(),
+      shipping_company: (function () {
+        var el = document.getElementById("out-shipping-company");
+        return el ? el.value.trim() : "";
+      })(),
+      shipping_expected_date: (function () {
+        var el = document.getElementById("out-shipping-expected-date");
+        return el ? el.value : "";
+      })(),
+    };
+
+    // لو فيه ملف مرفق — ارفعه الأول ثم سجّل
+    var file = _txFiles[prefix];
+    if (file) {
+      var statusEl = document.getElementById(prefix + "-upload-status");
+      if (statusEl) {
+        statusEl.style.display = "flex";
+        statusEl.innerHTML =
+          '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div> جاري رفع المرفق...';
+      }
+      btn.disabled = true;
+      btn.textContent = " جاري رفع الملف...";
+      NotificationEngine.loading("جاري رفع المرفق...");
+
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        var base64 = e.target.result.split(",")[1];
+        _gsr(
+          "uploadFile",
+          [
+            base64,
+            file.name,
+            file.type,
+            {
+              userName: APP.currentUser
+                ? APP.currentUser.full_name ||
+                  APP.currentUser.username ||
+                  "مستخدم"
+                : "مستخدم",
+              moduleName: type === "IN" ? "إذن وارد" : "إذن صادر",
+            },
+          ],
+          {
+            label: "uploadFile:batch",
+            rawResponse: true,
+            onSuccess: function (r) {
+              var res = r && r.data;
+              var result;
+              try {
+                result = JSON.parse(res);
+              } catch (ex) {
+                result = { success: false, error: ex.message };
+              }
+              if (result.success) {
+                if (statusEl) statusEl.innerHTML = " تم رفع المرفق";
+                batch.attachment_url = result.viewUrl;
+                _txFiles[prefix] = null;
+                dismissLoadingToast(); // هيبدأ لودينج تاني في _doSubmitBatch
+                _doSubmitBatch(batch, type, btn);
+              } else {
+                if (statusEl) statusEl.innerHTML = " فشل رفع الملف";
+                btn.disabled = false;
+                btn.textContent =
+                  type === "IN" ? " تسجيل إذن الوارد" : " تسجيل إذن الصادر";
+                finishLoadingToast(
+                  " فشل رفع الملف — " + (result.error || ""),
+                  "error",
+                );
+              }
+            },
+            onError: function (r) {
+              if (statusEl) statusEl.innerHTML = " خطأ في الرفع";
+              btn.disabled = false;
+              btn.textContent =
+                type === "IN" ? " تسجيل إذن الوارد" : " تسجيل إذن الصادر";
+              finishLoadingToast(" خطأ: " + (r.message || r), "error");
+            },
+          },
+        );
+      };
+      reader.readAsDataURL(file);
+    } else {
+      _doSubmitBatch(batch, type, btn);
+    }
+  }
+
+  // الاستدعاء الفعلي للـ backend بعد الرفع أو بدونه
+  function _doSubmitBatch(batch, type, btn) {
+    var prefix = type === "IN" ? "in" : "out";
+    btn.disabled = true;
+    btn.textContent = "⏳ جاري التسجيل...";
+
+    // [SE-ROLLOUT] عبر SaveEngine.run بدل google.script.run/_gsr المباشر
+    SaveEngine.run({
+      screen: "Transactions",
+      entity: "transaction_batch",
+      fn: "addBatchTransaction",
+      data: batch,
+      params: function (data) {
+        return [data];
+      },
+      savingLabel: "جاري تسجيل الإذن...",
+      onSuccess: function (r) {
+        btn.disabled = false;
+        btn.textContent =
+          type === "IN" ? " تسجيل إذن الوارد" : " تسجيل إذن الصادر";
+        {
+          var permitId =
+            r.data && r.data.permitId ? r.data.permitId : batch.permit_id || "";
+          var countTxt =
+            r.data && r.data.count
+              ? r.data.count + (r.data.count === 1 ? " صنف" : " أصناف")
+              : "";
+          // v4.2: رسالة إضافية لو needs_shipping (النجاح نفسه بيبقى معروض
+          // بالفعل عبر LoadingService داخل SaveEngine)
+          if (batch.needs_shipping) {
+            NotificationEngine.info(" تم إنشاء طلب شحن تلقائياً — راجع شاشة الشحن", {
+              duration: 5000
+            });
+          }
+          _txFiles[prefix] = null;
+          _txItemsStore[type] = [];
+
+          var currentPage = type === "IN" ? "tx_in" : "tx_out";
+
+          // Optimistic: أضف الحركات الجديدة محلياً فوراً
+          var now = new Date().toISOString();
+          var optimisticTxs = batch.items.map(function (it, idx) {
+            return {
+              id: permitId + "_" + idx,
+              permit_id: permitId,
+              type: type,
+              item_id: it.item_id,
+              quantity: it.quantity,
+              from_warehouse: it.from_warehouse || "",
+              to_warehouse: it.to_warehouse || "",
+              color: it.color || "",
+              notes: it.notes || batch.notes || "",
+              user: batch.user || "",
+              date: now,
+              ref: batch.ref || "",
+              party: batch.party || "",
+              needs_shipping: batch.needs_shipping ? "TRUE" : "", // v4.2
+            };
+          });
+
+          if (_cache.data) {
+            _cache.data.transactions = (_cache.data.transactions || []).concat(
+              optimisticTxs,
+            );
+            APP.data.transactions = _cache.data.transactions;
+            _cache.dynamic_ts = Date.now();
+            // FIX: حدّث sessionStorage عشان reloadAfterMutation يشوف الحركات الجديدة
+            try {
+              var dynamicPart = {
+                transactions: _cache.data.transactions,
+                stock: _cache.data.stock,
+                productionOrders: _cache.data.productionOrders,
+                openingStock: _cache.data.openingStock,
+                shipments: _cache.data.shipments,
+                ts: _cache.dynamic_ts,
+              };
+              sessionStorage.setItem(
+                "wms_cache_dynamic",
+                JSON.stringify(dynamicPart),
+              );
+            } catch (e) {
+              /* sessionStorage ممتلئ — مش مشكلة */
+            }
+          } else {
+            // لو _cache.data مش موجود — ابني الـ data من الـ optimistic فقط
+            APP.data.transactions = (APP.data.transactions || []).concat(
+              optimisticTxs,
+            );
+          }
+
+          // FIX: لما يفتح سجل الحركات يظهر السند الجديد مباشرةً
+          APP._pendingTxFilter = permitId;
+          window._txNeedsRefresh = true;
+
+          // تحديث الـ pagination لو صفحة الحركات مفتوحة أو لما تُفتح
+          if (
+            APP.currentPage === "transactions" &&
+            typeof window._applyTxFilter === "function"
+          ) {
+            window._applyTxFilter();
+          }
+
+          reloadAfterMutation(
+            function () {
+              renderPage(currentPage);
+            },
+            null,
+            { title: "جاري التحديث...", emoji: "", successMsg: "" }, // لا رسالة ثانية — الـ toast فوق كافي
+            null, // لا optimisticPatch إضافي لأننا عملناه يدوياً فوق
+          );
+        }
+      },
+      onError: function () {
+        btn.disabled = false;
+        btn.textContent =
+          type === "IN" ? " تسجيل إذن الوارد" : " تسجيل إذن الصادر";
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Party Autocomplete — ربط حقل المورد/العميل بالبيانات
+  // inputId   : id الـ input (مثلاً "in-party")
+  // dataKey   : "suppliers" | "customers"
+  // ─────────────────────────────────────────────────────────────
+  function _bindPartyAutocomplete(inputId, dataKey) {
+    var inp = document.getElementById(inputId);
+    if (!inp) return;
+
+    // عنصر القائمة المنسدلة
+    var listId = inputId + "-ac-list";
+    // تأكد مش موجود من قبل
+    var existing = document.getElementById(listId);
+    if (existing) existing.remove();
+
+    var list = document.createElement("div");
+    list.id = listId;
+    list.className = "party-ac-list";
+    list.style.cssText =
+      "position:absolute;z-index:9999;background:var(--surface);" +
+      "border:1px solid var(--border);border-radius:var(--radius-sm);" +
+      "box-shadow:0 4px 16px rgba(0,0,0,0.12);max-height:200px;overflow-y:auto;" +
+      "min-width:220px;width:100%;" +
+      "visibility:hidden;opacity:0;transform:translateY(-4px);pointer-events:none;" +
+      "transition:opacity 0.13s ease,transform 0.13s ease,visibility 0s linear 0.13s;";
+
+    // ضع القائمة كـ sibling بعد الـ input مباشرةً
+    inp.parentNode.style.position = "relative";
+    inp.parentNode.insertBefore(list, inp.nextSibling);
+
+    var _acTimer = null;
+    var _acMouseDown = false;
+    var _acJustSelected = false;
+
+    function getRecords() {
+      return (APP.data[dataKey] || []).filter(function (r) {
+        return !r.deleted_at && String(r.name || "").trim();
+      });
+    }
+
+    function buildList(q) {
+      q = (q || "").trim().toLowerCase();
+      var records = getRecords();
+      var filtered = q
+        ? records.filter(function (r) {
+            return (
+              String(r.name || "")
+                .toLowerCase()
+                .indexOf(q) !== -1 ||
+              String(r.phone || "")
+                .toLowerCase()
+                .indexOf(q) !== -1
+            );
+          })
+        : records.slice(0, 12);
+
+      if (!filtered.length) {
+        list.innerHTML =
+          '<div style="padding:10px 14px;color:var(--text3);font-size:13px">لا توجد نتائج</div>';
+      } else {
+        list.innerHTML = filtered
+          .slice(0, 20)
+          .map(function (r) {
+            var phone = r.phone
+              ? '<span style="font-size:11px;color:var(--text3);margin-right:8px">' +
+                esc(r.phone) +
+                "</span>"
+              : "";
+            return (
+              '<div class="party-ac-item" data-name="' +
+              esc(r.name) +
+              '" data-id="' +
+              esc(r.id) +
+              '" style="padding:9px 14px;cursor:pointer;display:flex;align-items:center;' +
+              'justify-content:space-between;gap:8px;font-size:13px;border-bottom:1px solid var(--border-light, rgba(0,0,0,0.06))">' +
+              '<span style="font-weight:600;color:var(--text1)">' +
+              esc(r.name) +
+              "</span>" +
+              phone +
+              "</div>"
+            );
+          })
+          .join("");
+      }
+      showList();
+    }
+
+    function showList() {
+      list.style.visibility = "visible";
+      list.style.opacity = "1";
+      list.style.transform = "translateY(0)";
+      list.style.pointerEvents = "auto";
+      list.style.transition = "opacity 0.13s ease,transform 0.13s ease";
+    }
+
+    function hideList() {
+      list.style.visibility = "hidden";
+      list.style.opacity = "0";
+      list.style.transform = "translateY(-4px)";
+      list.style.pointerEvents = "none";
+      list.style.transition =
+        "opacity 0.13s ease,transform 0.13s ease,visibility 0s linear 0.13s";
+    }
+
+    // حفظ الـ ID في الـ hidden field المقابل
+    function _setPartyId(id) {
+      var hiddenId = inputId + "-id";
+      var hiddenEl = document.getElementById(hiddenId);
+      if (hiddenEl) hiddenEl.value = id || "";
+    }
+
+    // أحداث الـ input
+    inp.addEventListener("input", function () {
+      // لو المستخدم بيكتب يدوياً — امسح الـ ID المحفوظ
+      _setPartyId("");
+      clearTimeout(_acTimer);
+      _acTimer = setTimeout(function () {
+        buildList(inp.value);
+      }, 120);
+    });
+
+    inp.addEventListener("focus", function () {
+      if (_acJustSelected) {
+        _acJustSelected = false;
+        return;
+      }
+      if (getRecords().length) buildList(inp.value);
+    });
+
+    inp.addEventListener("blur", function () {
+      if (_acMouseDown) return;
+      hideList();
+
+      // [FIX-PARTY-LOCK] التحقق عند مغادرة الحقل
+      // لو المستخدم كتب نص لكن ما اختارش من القائمة → امسح الحقل
+      if (!_acJustSelected) {
+        var hiddenEl = document.getElementById(inputId + "-id");
+        var hasValidId = hiddenEl && String(hiddenEl.value || "").trim();
+        var hasText = String(inp.value || "").trim();
+
+        if (hasText && !hasValidId) {
+          // حاول تطابق تلقائي بالاسم (لو في سجل بنفس الاسم بالظبط)
+          var records = getRecords();
+          var exact = records.find(function (r) {
+            return (
+              String(r.name || "")
+                .trim()
+                .toLowerCase() ===
+              String(inp.value || "")
+                .trim()
+                .toLowerCase()
+            );
+          });
+
+          if (exact) {
+            // مطابقة تامة — اقبلها وحفظ الـ ID
+            inp.value = exact.name;
+            _setPartyId(exact.id);
+          } else {
+            // لا توجد مطابقة — امسح الحقل وأظهر تحذير
+            inp.value = "";
+            _setPartyId("");
+            inp.classList.add("input-error");
+            inp.placeholder = " اختر من القائمة فقط";
+            setTimeout(function () {
+              inp.classList.remove("input-error");
+              inp.placeholder = inp.getAttribute("data-placeholder") || "";
+            }, 2500);
+          }
+        }
+      }
+      _acJustSelected = false;
+    });
+
+    inp.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        hideList();
+        inp.blur();
+      }
+      if (e.key === "ArrowDown") {
+        var items = list.querySelectorAll(".party-ac-item");
+        if (items.length) {
+          e.preventDefault();
+          items[0].focus();
+        }
+      }
+    });
+
+    // أحداث الـ list (keyboard navigation)
+    list.addEventListener("keydown", function (e) {
+      var items = Array.from(list.querySelectorAll(".party-ac-item"));
+      var idx = items.indexOf(document.activeElement);
+      if (e.key === "ArrowDown" && idx < items.length - 1) {
+        e.preventDefault();
+        items[idx + 1].focus();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (idx > 0) items[idx - 1].focus();
+        else inp.focus();
+      } else if (e.key === "Enter" && idx !== -1) {
+        e.preventDefault();
+        _acJustSelected = true;
+        inp.value = items[idx].dataset.name;
+        _setPartyId(items[idx].dataset.id);
+        hideList();
+        inp.focus();
+      } else if (e.key === "Escape") {
+        hideList();
+        inp.focus();
+      }
+    });
+
+    // click على عنصر
+    list.addEventListener("mousedown", function () {
+      _acMouseDown = true;
+    });
+    list.addEventListener("mouseup", function () {
+      _acMouseDown = false;
+    });
+    list.addEventListener("click", function (e) {
+      var item = e.target.closest(".party-ac-item");
+      if (item) {
+        _acJustSelected = true;
+        inp.value = item.dataset.name;
+        _setPartyId(item.dataset.id);
+        hideList();
+        inp.blur();
+      }
+    });
+
+    // hover highlight
+    list.addEventListener("mouseover", function (e) {
+      var item = e.target.closest(".party-ac-item");
+      if (item) item.style.background = "var(--accent-soft, #EFF6FF)";
+    });
+    list.addEventListener("mouseout", function (e) {
+      var item = e.target.closest(".party-ac-item");
+      if (item) item.style.background = "";
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Search Dropdown للأصناف — مساعد مشترك
+  // ─────────────────────────────────────────────────────────────
+  function _bindItemSearch(prefix, onSelect) {
+    var searchEl = document.getElementById(prefix + "-search");
+    var hiddenSel = document.getElementById(prefix);
+    var listEl = document.getElementById(prefix + "-list");
+    var groupFilterEl = document.getElementById(prefix + "-group-filter");
+    if (!searchEl || !hiddenSel || !listEl) return;
+
+    if (window.SplitSelect && groupFilterEl) {
+      SplitSelect.init(prefix + "-group-filter", {
+        label: "المجموعة",
+        icon: "ti-folder",
+        searchable: true,
+      });
+    }
+
+    // ── بناء قائمة الـ Dropdown ──────────────────────────────
+    function buildList(q) {
+      q = (q || "").trim().toLowerCase();
+      var selectedGroup = groupFilterEl ? groupFilterEl.value : "";
+
+      // استخراج group من item بناءً على option value
+      var allItems = APP.data.items || [];
+
+      var opts = Array.from(hiddenSel.options).filter(function (o) {
+        return o.value;
+      });
+
+      // فلترة حسب المجموعة
+      if (selectedGroup) {
+        opts = opts.filter(function (o) {
+          var item = allItems.find(function (it) {
+            return String(it.id) === String(o.value);
+          });
+          return (
+            item &&
+            (String(item.group || "") === selectedGroup ||
+              String(item.group_id || "") === selectedGroup)
+          );
+        });
+      }
+
+      // فلترة حسب البحث النصي
+      var filtered = q
+        ? opts.filter(function (o) {
+            return o.text.toLowerCase().indexOf(q) !== -1;
+          })
+        : opts;
+
+      if (!filtered.length) {
+        listEl.innerHTML =
+          '<div class="item-srch-empty"> لا توجد نتائج مطابقة</div>';
+      } else {
+        listEl.innerHTML = filtered
+          .slice()
+          .reverse()
+          .slice(0, 80)
+          .map(function (o) {
+            var parts = o.text.split(" — ");
+            // الصيغة الجديدة: اسم — كود
+            var name = esc(parts[0] || o.text);
+            var code = esc(parts.slice(1).join(" — ") || "");
+            // الاسم على اليمين، الكود على الشمال
+            return (
+              '<div class="item-srch-item" data-val="' +
+              esc(o.value) +
+              '" data-label="' +
+              esc(o.text) +
+              '">' +
+              '<span class="isrch-name">' +
+              name +
+              "</span>" +
+              '<span class="isrch-code">' +
+              code +
+              "</span>" +
+              "</div>"
+            );
+          })
+          .join("");
+      }
+      listEl.classList.add("item-srch-open");
+    }
+
+    function _hideItemList() {
+      listEl.classList.remove("item-srch-open");
+    }
+
+    // ── أحداث فلتر المجموعة ──────────────────────────────────
+    if (groupFilterEl) {
+      groupFilterEl.addEventListener("change", function () {
+        // مسح الصنف المختار عند تغيير المجموعة
+        hiddenSel.value = "";
+        searchEl.value = "";
+        hiddenSel.dispatchEvent(new Event("change"));
+        buildList("");
+      });
+    }
+
+    // ── أحداث حقل البحث ──────────────────────────────────────
+    searchEl.addEventListener("input", function () {
+      buildList(this.value);
+    });
+
+    searchEl.addEventListener("focus", function () {
+      buildList(this.value);
+    });
+
+    searchEl.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        _hideItemList();
+      }
+    });
+
+    // ── اختيار عنصر من القائمة ──────────────────────────────
+    listEl.addEventListener("mousedown", function (e) {
+      var item = e.target.closest(".item-srch-item");
+      if (!item || !item.dataset.val) return;
+      e.preventDefault(); // يمنع blur قبل الاختيار
+
+      hiddenSel.value = item.dataset.val;
+      searchEl.value = item.dataset.label || item.textContent.trim();
+      _hideItemList();
+
+      // أطلق change event على الـ hidden select
+      hiddenSel.dispatchEvent(new Event("change"));
+
+      if (typeof onSelect === "function") onSelect(item.dataset.val);
+    });
+
+    // ── إخفاء القائمة عند الضغط خارجها ─────────────────────
+    document.addEventListener("click", function (e) {
+      if (!searchEl.contains(e.target) && !listEl.contains(e.target)) {
+        _hideItemList();
+      }
+    });
+
+    // ── دالة مساعدة: تحديث نص الـ search من الخارج ─────────
+    searchEl._syncFromSelect = function () {
+      var val = hiddenSel.value;
+      if (!val) {
+        searchEl.value = "";
+        return;
+      }
+      var opt = Array.from(hiddenSel.options).find(function (o) {
+        return o.value === val;
+      });
+      if (opt) searchEl.value = opt.text;
+    };
+  }
+  // ─────────────────────────────────────────────────────────────
+  // §TX-DASH  لوحة تحكم الحركات
+  // ─────────────────────────────────────────────────────────────
+  function bindTransactionsDashboard() {
+    var _set = function (id, val) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = val;
+    };
+    var txAll = APP.data.transactions || [];
+    var today = (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().slice(0, 10));
+    var todayTx = txAll.filter(function (t) {
+      return (t.date || "").slice(0, 10) === today;
+    });
+    _set(
+      "txd-stat-in",
+      todayTx.filter(function (t) {
+        return t.type === "IN";
+      }).length,
+    );
+    _set(
+      "txd-stat-out",
+      todayTx.filter(function (t) {
+        return t.type === "OUT";
+      }).length,
+    );
+    _set(
+      "txd-stat-transfer",
+      todayTx.filter(function (t) {
+        return t.type === "TRANSFER";
+      }).length,
+    );
+    _set("txd-stat-total", txAll.length);
+    _set(
+      "txd-stat-shipping",
+      (APP.data.shipments || []).filter(function (s) {
+        return s.status !== "DELIVERED";
+      }).length,
+    );
+    _set(
+      "txd-stat-stocktake",
+      todayTx.filter(function (t) {
+        return t.type === "STOCKTAKE";
+      }).length,
+    );
+
+    // Recent transactions table
+    var tbody = document.getElementById("txd-recent-tx");
+    if (tbody) {
+      var recent = txAll.slice(-10).reverse();
+      var typeLabels = {
+        IN: { l: "وارد", c: "#10b981" },
+        OUT: { l: "صادر", c: "#ef4444" },
+        TRANSFER: { l: "تحويل", c: "#6366f1" },
+        STOCKTAKE: { l: "جرد", c: "#f59e0b" },
+      };
+      tbody.innerHTML = !recent.length
+        ? '<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--text3)">لا توجد حركات</td></tr>'
+        : recent
+            .map(function (t) {
+              var tl = typeLabels[t.type] || { l: t.type, c: "#6b7280" };
+              return (
+                "<tr><td><span style='color:" +
+                tl.c +
+                ";font-weight:600'>" +
+                tl.l +
+                "</span></td>" +
+                "<td>" +
+                esc(t.item_name || t.item || "") +
+                "</td>" +
+                "<td>" +
+                esc(t.warehouse_name || t.warehouse || "") +
+                "</td>" +
+                "<td style='text-align:center;font-weight:700'>" +
+                parseFloat(t.qty || 0).toLocaleString() +
+                "</td>" +
+                "<td style='color:var(--text3);font-size:12px'>" +
+                (t.date || "").slice(0, 10) +
+                "</td></tr>"
+              );
+            })
+            .join("");
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // bindTxIn
+  // ─────────────────────────────────────────────────────────────
+  function bindTxIn() {
+    _resetTxItems("IN");
+    _prefillEditTx();
+    // تهيئة CCD اللون بحالة placeholder ابتداءً
+    _rebuildColorSelect("in-color", "in-item", "in-to");
+
+    var itemSel = document.getElementById("in-item");
+    var toSel = document.getElementById("in-to");
+    var addBtn = document.getElementById("btn-add-in-item");
+    var btn = document.getElementById("btn-in");
+    if (!btn) return;
+
+    // ربط السيرش+دروب ليست للصنف
+    _bindItemSearch("in-item");
+    _upgradeWhSelect("in-to");
+    // ربط حقل المورد بالموردين المعرّفين
+    _bindPartyAutocomplete("in-party", "suppliers");
+
+    // checkbox مرتجع من عميل → تغيير label + placeholder + autocomplete
+    (function () {
+      var chk = document.getElementById("in-is-return");
+      var wrapper = document.getElementById("in-return-wrapper");
+      var partyInput = document.getElementById("in-party");
+      var labelText = document.getElementById("in-party-label-text");
+      var icon = document.getElementById("in-party-icon");
+      if (!chk || !partyInput) return;
+
+      function applyReturnMode(isReturn) {
+        if (isReturn) {
+          if (labelText) labelText.textContent = "اسم العميل";
+          if (icon) {
+            icon.className = "ti ti-user";
+          }
+          partyInput.placeholder = "اسم العميل";
+          // تغيير الـ autocomplete لقائمة العملاء
+          _bindPartyAutocomplete("in-party", "customers");
+          partyInput.value = "";
+          var _inPartyIdEl = document.getElementById("in-party-id");
+          if (_inPartyIdEl) _inPartyIdEl.value = "";
+          if (wrapper) wrapper.style.background = "#ecfdf5";
+          if (wrapper) wrapper.style.borderColor = "#6ee7b7";
+          if (chk) chk.style.accentColor = "#059669";
+          var lbl = wrapper ? wrapper.querySelector("label") : null;
+          if (lbl) lbl.style.color = "#065f46";
+        } else {
+          if (labelText) labelText.textContent = "اسم المورد / الجهة";
+          if (icon) {
+            icon.className = "ti ti-building-factory-2";
+          }
+          partyInput.placeholder = "اسم الشركة أو المورد";
+          _bindPartyAutocomplete("in-party", "suppliers");
+          partyInput.value = "";
+          var _inPartyIdEl2 = document.getElementById("in-party-id");
+          if (_inPartyIdEl2) _inPartyIdEl2.value = "";
+          if (wrapper) wrapper.style.background = "var(--warning-soft,#fffbeb)";
+          if (wrapper) wrapper.style.borderColor = "#fde68a";
+          if (chk) chk.style.accentColor = "#d97706";
+          var lbl = wrapper ? wrapper.querySelector("label") : null;
+          if (lbl) lbl.style.color = "#92400e";
+        }
+      }
+
+      chk.addEventListener("change", function () {
+        applyReturnMode(this.checked);
+      });
+      // كمان الـ wrapper كله clickable
+      wrapper.addEventListener("click", function (e) {
+        if (e.target !== chk) {
+          chk.checked = !chk.checked;
+          applyReturnMode(chk.checked);
+        }
+      });
+    })();
+
+    // عند اختيار المخزن → تفعيل حقل الصنف + فلترة الأصناف
+    if (toSel)
+      toSel.addEventListener("change", function () {
+        var searchEl = document.getElementById("in-item-search");
+        if (this.value) {
+          if (searchEl) {
+            searchEl.disabled = false;
+            searchEl.placeholder = "\u{1F50D} ابحث بالاسم أو الكود...";
+            searchEl.value = "";
+          }
+        } else {
+          if (searchEl) {
+            searchEl.disabled = true;
+            searchEl.placeholder = "اختر المخزن أولاً...";
+            searchEl.value = "";
+          }
+          if (itemSel) {
+            itemSel.value = "";
+            itemSel.dispatchEvent(new Event("change"));
+          }
+        }
+        _filterItemsByWarehouse("in-item", this.value, "IN");
+        _rebuildColorSelect("in-color", "in-item", "in-to");
+        _updateInStockInfo(itemSel ? itemSel.value : "", this.value);
+      });
+
+    // عند تغيير الصنف (سواء من السيرش أو برمجياً)
+    if (itemSel)
+      itemSel.addEventListener("change", function () {
+        // مزامنة نص حقل البحث مع القيمة المختارة
+        var searchEl = document.getElementById("in-item-search");
+        if (searchEl && typeof searchEl._syncFromSelect === "function")
+          searchEl._syncFromSelect();
+
+        _rebuildColorSelect("in-color", "in-item", "in-to");
+        _updateInStockInfo(this.value);
+
+        // ملء حقل الوحدة
+        var unitEl = document.getElementById("in-unit");
+        var selItem = (APP.data.items || []).find(function (it) {
+          return it.id === itemSel.value;
+        });
+        if (unitEl) unitEl.value = selItem ? selItem.unit || "" : "";
+
+        // [TRACKING-FIELDS-2026-08-08] إظهار/إخفاء حقول الدفعة/الصلاحية/السيريال
+        var trackingType = selItem ? selItem.tracking_type || "normal" : "normal";
+        var batchWrap = document.getElementById("in-batch-wrap");
+        var expiryWrap = document.getElementById("in-expiry-wrap");
+        var serialWrap = document.getElementById("in-serial-wrap");
+        if (batchWrap) batchWrap.style.display = trackingType === "batch" ? "" : "none";
+        if (expiryWrap) expiryWrap.style.display = trackingType === "batch" ? "" : "none";
+        if (serialWrap) serialWrap.style.display = trackingType === "serial" ? "" : "none";
+        var batchNoEl = document.getElementById("in-batch-no");
+        var expiryEl = document.getElementById("in-expiry-date");
+        var serialNoEl = document.getElementById("in-serial-no");
+        if (trackingType !== "batch") {
+          if (batchNoEl) batchNoEl.value = "";
+          if (expiryEl) expiryEl.value = "";
+        }
+        if (trackingType !== "serial" && serialNoEl) serialNoEl.value = "";
+      });
+
+    if (addBtn)
+      addBtn.addEventListener("click", function () {
+        _addTxItemRow("IN");
+        // بعد الإضافة: صفّر حقل البحث
+        var searchEl = document.getElementById("in-item-search");
+        if (searchEl) searchEl.value = "";
+        if (itemSel) {
+          itemSel.value = "";
+          itemSel.dispatchEvent(new Event("change"));
+        }
+      });
+
+    btn.addEventListener("click", function () {
+      _submitMultiTx("IN", btn);
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // bindTxOut
+  // ─────────────────────────────────────────────────────────────
+  function bindTxOut() {
+    _resetTxItems("OUT");
+    _prefillEditTx();
+    // تهيئة CCD اللون بحالة placeholder ابتداءً
+    _rebuildColorSelect("out-color", "out-item", "out-from");
+
+    var itemSel = document.getElementById("out-item");
+    var fromSel = document.getElementById("out-from");
+    var addBtn = document.getElementById("btn-add-out-item");
+    var btn = document.getElementById("btn-out");
+    if (!btn) return;
+
+    // ربط السيرش+دروب ليست للصنف
+    _bindItemSearch("out-item");
+    _upgradeWhSelect("out-from");
+    // ربط حقل العميل بالعملاء المعرّفين
+    _bindPartyAutocomplete("out-party", "customers");
+
+    // checkbox مرتجع مورد → تغيير label + placeholder + autocomplete
+    (function () {
+      var chk = document.getElementById("out-is-return");
+      var wrapper = document.getElementById("out-return-wrapper");
+      var partyInput = document.getElementById("out-party");
+      var labelText = document.getElementById("out-party-label-text");
+      var icon = document.getElementById("out-party-icon");
+      if (!chk || !partyInput) return;
+
+      function applyReturnMode(isReturn) {
+        if (isReturn) {
+          if (labelText) labelText.textContent = "اسم المورد / الجهة";
+          if (icon) icon.className = "ti ti-building-factory-2";
+          partyInput.placeholder = "اسم الشركة أو المورد";
+          _bindPartyAutocomplete("out-party", "suppliers");
+          partyInput.value = "";
+          if (wrapper) wrapper.style.background = "#ecfdf5";
+          if (wrapper) wrapper.style.borderColor = "#6ee7b7";
+          if (chk) chk.style.accentColor = "#059669";
+          var lbl = wrapper ? wrapper.querySelector("label") : null;
+          if (lbl) lbl.style.color = "#065f46";
+        } else {
+          if (labelText) labelText.textContent = "العميل / الجهة المستلِمة";
+          if (icon) icon.className = "ti ti-user";
+          partyInput.placeholder = "اسم العميل أو القسم";
+          _bindPartyAutocomplete("out-party", "customers");
+          partyInput.value = "";
+          if (wrapper) wrapper.style.background = "var(--warning-soft,#fffbeb)";
+          if (wrapper) wrapper.style.borderColor = "#fde68a";
+          if (chk) chk.style.accentColor = "#d97706";
+          var lbl = wrapper ? wrapper.querySelector("label") : null;
+          if (lbl) lbl.style.color = "#92400e";
+        }
+      }
+
+      chk.addEventListener("change", function () {
+        applyReturnMode(this.checked);
+      });
+      wrapper.addEventListener("click", function (e) {
+        if (e.target !== chk) {
+          chk.checked = !chk.checked;
+          applyReturnMode(chk.checked);
+        }
+      });
+    })();
+
+    // عند اختيار المخزن → تفعيل حقل الصنف + فلترة الأصناف
+    if (fromSel)
+      fromSel.addEventListener("change", function () {
+        var searchEl = document.getElementById("out-item-search");
+        if (this.value) {
+          if (searchEl) {
+            searchEl.disabled = false;
+            searchEl.placeholder = "\u{1F50D} ابحث بالاسم أو الكود...";
+            searchEl.value = "";
+          }
+        } else {
+          if (searchEl) {
+            searchEl.disabled = true;
+            searchEl.placeholder = "اختر المخزن أولاً...";
+            searchEl.value = "";
+          }
+          if (itemSel) {
+            itemSel.value = "";
+            itemSel.dispatchEvent(new Event("change"));
+          }
+        }
+        _filterItemsByWarehouse("out-item", this.value, "OUT");
+        _rebuildColorSelect("out-color", "out-item", "out-from");
+        _updateOutStockInfo(itemSel ? itemSel.value : "", this.value);
+      });
+
+    // عند تغيير الصنف (سواء من السيرش أو برمجياً)
+    if (itemSel)
+      itemSel.addEventListener("change", function () {
+        // مزامنة نص حقل البحث مع القيمة المختارة
+        var searchEl = document.getElementById("out-item-search");
+        if (searchEl && typeof searchEl._syncFromSelect === "function")
+          searchEl._syncFromSelect();
+
+        _rebuildColorSelect("out-color", "out-item", "out-from");
+        _updateOutStockInfo(this.value);
+
+        // ملء حقل الوحدة
+        var unitEl = document.getElementById("out-unit");
+        var selItem = (APP.data.items || []).find(function (it) {
+          return it.id === itemSel.value;
+        });
+        if (unitEl) unitEl.value = selItem ? selItem.unit || "" : "";
+
+        // [TRACKING-FIELDS-2026-08-08] إظهار/إخفاء حقول الدفعة/السيريال
+        var trackingType = selItem ? selItem.tracking_type || "normal" : "normal";
+        var batchWrap = document.getElementById("out-batch-wrap");
+        var serialWrap = document.getElementById("out-serial-wrap");
+        if (batchWrap) batchWrap.style.display = trackingType === "batch" ? "" : "none";
+        if (serialWrap) serialWrap.style.display = trackingType === "serial" ? "" : "none";
+        var batchNoEl = document.getElementById("out-batch-no");
+        var serialNoEl = document.getElementById("out-serial-no");
+        if (trackingType !== "batch" && batchNoEl) batchNoEl.value = "";
+        if (trackingType !== "serial" && serialNoEl) serialNoEl.value = "";
+      });
+
+    if (addBtn)
+      addBtn.addEventListener("click", function () {
+        _addTxItemRow("OUT");
+        // بعد الإضافة: صفّر حقل البحث
+        var searchEl = document.getElementById("out-item-search");
+        if (searchEl) searchEl.value = "";
+        if (itemSel) {
+          itemSel.value = "";
+          itemSel.dispatchEvent(new Event("change"));
+        }
+      });
+
+    // ── v4.2: Toggle "يتطلب شحن" ──────────────────────────────
+    (function () {
+      var shippingChk = document.getElementById("out-needs-shipping");
+      var driverFields = document.getElementById("out-driver-fields");
+      var shippingWrap = document.getElementById("out-shipping-wrap");
+      var returnChk = document.getElementById("out-is-return");
+      if (!shippingChk || !driverFields) return;
+
+      function applyShippingMode(on) {
+        driverFields.style.display = on ? "block" : "none";
+        if (shippingWrap) {
+          shippingWrap.classList.toggle("needs-shipping-active", on);
+        }
+      }
+
+      // لو "مرتجع مورد" شغّال — أخفي الشحن تلقائياً
+      function syncWithReturnMode() {
+        var isReturn = returnChk && returnChk.checked;
+        if (isReturn) {
+          if (shippingChk) shippingChk.checked = false;
+          applyShippingMode(false);
+          if (shippingWrap) shippingWrap.style.opacity = "0.4";
+          if (shippingWrap) shippingWrap.style.pointerEvents = "none";
+        } else {
+          if (shippingWrap) shippingWrap.style.opacity = "1";
+          if (shippingWrap) shippingWrap.style.pointerEvents = "";
+        }
+      }
+
+      shippingChk.addEventListener("change", function () {
+        applyShippingMode(this.checked);
+      });
+
+      // اربطه مع toggle row كلها
+      var toggleRow = document.getElementById("out-shipping-toggle-row");
+      if (toggleRow) {
+        toggleRow.addEventListener("click", function (e) {
+          if (e.target === shippingChk) return;
+          if (shippingWrap && shippingWrap.style.pointerEvents === "none")
+            return;
+          shippingChk.checked = !shippingChk.checked;
+          applyShippingMode(shippingChk.checked);
+        });
+      }
+
+      if (returnChk) {
+        returnChk.addEventListener("change", syncWithReturnMode);
+      }
+
+      // تهيئة أولية
+      applyShippingMode(false);
+    })();
+    // ── نهاية v4.2 ────────────────────────────────────────────
+
+    btn.addEventListener("click", function () {
+      _submitMultiTx("OUT", btn);
+    });
+  }
+  // ── تحويل بين المخازن ───────────────────────────────────────
+
+  // ─── State Store للتحويل ─────────────────────────────────────
+  var _trItemsStore = [];
+
+  function _resetTxItemsTr() {
+    _trItemsStore = [];
+    var tbody = document.getElementById("tr-items-tbody");
+    if (tbody)
+      tbody.innerHTML =
+        '<tr id="tr-empty-row"><td colspan="6" class="tx-tr-empty-state">' +
+        '<div style="font-size:36px;margin-bottom:10px"></div>' +
+        "لم تُضَف أصناف بعد — اختر المستودعين أولاً ثم أضف الأصناف" +
+        "</td></tr>";
+    _updateTrSummary();
+  }
+
+  function _updateTrSummary() {
+    var items = _trItemsStore.filter(Boolean);
+    var count = items.length;
+    var totalQty = items.reduce(function (s, it) {
+      return s + (it.quantity || 0);
+    }, 0);
+    var miniEl = document.getElementById("tr-summary-mini");
+    var badgeEl = document.getElementById("tr-items-count");
+    var barEl = document.getElementById("tr-summary");
+    var totalEl = document.getElementById("tr-summary-total");
+    if (miniEl) miniEl.textContent = count + " صنف";
+    if (badgeEl) {
+      badgeEl.textContent = count + " صنف";
+      badgeEl.style.display = count ? "inline-flex" : "none";
+    }
+    if (barEl) barEl.style.display = count ? "flex" : "none";
+    if (totalEl)
+      totalEl.textContent = count + " صنف — " + totalQty + " وحدة إجمالية";
+    var step2 = document.getElementById("tr-step2");
+    var step3 = document.getElementById("tr-step3");
+    if (step2)
+      step2.className = count ? "tx-tr-step tx-tr-step-active" : "tx-tr-step";
+    if (step3)
+      step3.className = count ? "tx-tr-step tx-tr-step-active" : "tx-tr-step";
+  }
+
+  function _addTxItemRowTr() {
+    var fromSel = document.getElementById("tr-from");
+    var toSel = document.getElementById("tr-to");
+    var itemSel = document.getElementById("tr-item-sel");
+    var colorSel = document.getElementById("tr-color");
+    var qtyEl = document.getElementById("tr-qty-row");
+    var fromWh = fromSel ? fromSel.value.trim() : "";
+    var toWh = toSel ? toSel.value.trim() : "";
+    var itemId = itemSel ? itemSel.value.trim() : "";
+    var color = colorSel ? colorSel.value.trim() : "";
+    var qty = Number(qtyEl ? qtyEl.value : 0);
+    if (!fromWh || !toWh)
+      return NotificationEngine.error("حدد المستودعين (من / إلى) أولاً");
+    if (fromWh === toWh)
+      return NotificationEngine.error("المستودع المُرسِل والمستلم متطابقان!");
+    if (!itemId) return NotificationEngine.error("اختر الصنف أولاً");
+    if (qty <= 0) return NotificationEngine.error("أدخل كمية أكبر من صفر");
+    var itemColors = getItemColors(itemId);
+    if (itemColors.length && !color)
+      return NotificationEngine.error(" يجب اختيار اللون — هذا الصنف له ألوان معرفة");
+    var itemObj = (APP.data.items || []).find(function (it) {
+      return it.id === itemId;
+    });
+    var itemName = itemObj ? itemObj.name || itemId : itemId;
+    var unitName = itemObj ? itemObj.unit || "قطعة" : "قطعة";
+    _trItemsStore.push({
+      item_id: itemId,
+      item_name: itemName,
+      color: color,
+      quantity: qty,
+      from_warehouse: fromWh,
+      to_warehouse: toWh,
+      unit: unitName,
+    });
+    var tbody = document.getElementById("tr-items-tbody");
+    var emptyRow = document.getElementById("tr-empty-row");
+    if (emptyRow) emptyRow.remove();
+    var idx = _trItemsStore.length - 1;
+    var cDotHex =
+      typeof colorNameToHex === "function" ? colorNameToHex(color) : "#8b5cf6";
+    var cHtml = color
+      ? '<span class="tx-tr-color-pill"><span class="tx-tr-color-dot" style="background:' +
+        cDotHex +
+        '"></span>' +
+        esc(color) +
+        "</span>"
+      : '<span style="color:var(--text3)">—</span>';
+    var tr = document.createElement("tr");
+    tr.id = "tr-row-" + idx;
+    tr.innerHTML =
+      '<td style="text-align:center"><span class="tx-tr-row-num">' +
+      (idx + 1) +
+      "</span></td>" +
+      '<td><b style="margin-left:6px">' +
+      esc(itemName) +
+      '</b><span class="mono" style="font-size:11px;color:#7c3aed;font-weight:700;background:#ede9fe;padding:1px 6px;border-radius:5px">' +
+      esc(itemObj ? itemObj.code || itemId : itemId) +
+      "</span></td>" +
+      "<td>" +
+      cHtml +
+      "</td>" +
+      '<td style="text-align:center"><span class="tx-tr-qty-badge">' +
+      qty +
+      "</span></td>" +
+      '<td style="text-align:center"><span class="tx-tr-unit-pill">' +
+      esc(unitName) +
+      "</span></td>" +
+      '<td style="text-align:center"><button class="tx-tr-btn-delete" onclick="_removeTrItemRow(' +
+      idx +
+      ')" title="حذف"><i class="ti ti-trash" style="font-size:14px"></i></button></td>';
+    if (tbody) tbody.appendChild(tr);
+    if (qtyEl) qtyEl.value = "";
+    _updateTrSummary();
+  }
+
+  function _removeTrItemRow(idx) {
+    _trItemsStore[idx] = null;
+    var tr = document.getElementById("tr-row-" + idx);
+    if (tr) tr.remove();
+    var remaining = _trItemsStore.filter(Boolean);
+    if (!remaining.length) _resetTxItemsTr();
+    else _updateTrSummary();
+  }
+
+  function _doSubmitBatchTr(batch, btn) {
+    btn.disabled = true;
+    btn.innerHTML =
+      '<span style="display:inline-flex;align-items:center;gap:5px"><div class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block"></div> جاري التسجيل...</span>';
+    // [SE-ROLLOUT] عبر SaveEngine.run بدل google.script.run/_gsr المباشر
+    SaveEngine.run({
+      screen: "Transactions",
+      entity: "transaction_batch",
+      fn: "addBatchTransaction",
+      data: batch,
+      params: function (data) {
+        return [data];
+      },
+      savingLabel: "جاري تسجيل أمر التحويل...",
+      onSuccess: function () {
+        btn.disabled = false;
+        btn.innerHTML =
+          '<span style="display:inline-flex;align-items:center;gap:5px"><i class="ti ti-circle-check" style="font-size:15px"></i> تسجيل أمر التحويل</span>';
+        _txFiles["tr"] = null;
+        reloadAfterMutation(function () {
+          renderPage("tx_transfer");
+        });
+      },
+      onError: function () {
+        btn.disabled = false;
+        btn.innerHTML =
+          '<span style="display:inline-flex;align-items:center;gap:5px"><i class="ti ti-circle-check" style="font-size:15px"></i> تسجيل أمر التحويل</span>';
+      },
+    });
+  }
+
+  function _submitMultiTxTransfer(btn) {
+    var items = _trItemsStore.filter(Boolean);
+    if (!items.length) return NotificationEngine.error("أضف صنفاً واحداً على الأقل");
+    var fromSel = document.getElementById("tr-from");
+    var toSel = document.getElementById("tr-to");
+    var fromWh = fromSel ? fromSel.value.trim() : "";
+    var toWh = toSel ? toSel.value.trim() : "";
+    if (!fromWh || !toWh)
+      return NotificationEngine.error("حدد المستودعين (من / إلى)");
+    if (fromWh === toWh)
+      return NotificationEngine.error("المستودع المُرسِل والمستلم متطابقان!");
+    var permitEl = document.getElementById("tr-permit-id");
+    var permitId = permitEl
+      ? (permitEl.value != null
+          ? String(permitEl.value)
+          : String(permitEl.textContent || "")
+        ).trim()
+      : "";
+    var refEl = document.getElementById("tr-ref");
+    var notesEl = document.getElementById("tr-notes");
+    var batchItems = items.map(function (it) {
+      return {
+        item_id: it.item_id,
+        quantity: it.quantity,
+        from_warehouse: it.from_warehouse || fromWh,
+        to_warehouse: it.to_warehouse || toWh,
+        color: it.color || "",
+        notes: "",
+      };
+    });
+    var batch = {
+      type: "TRANSFER",
+      items: batchItems,
+      permit_id: permitId,
+      ref: refEl ? String(refEl.value || "").trim() : "",
+      notes: notesEl ? String(notesEl.value || "").trim() : "",
+      user: APP.currentUser ? APP.currentUser.username || "" : "",
+      from_warehouse: fromWh,
+      to_warehouse: toWh,
+    };
+    var file = _txFiles["tr"];
+    if (file) {
+      var statusEl = document.getElementById("tr-upload-status");
+      if (statusEl) {
+        statusEl.style.display = "flex";
+        statusEl.innerHTML =
+          '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div> جاري رفع المرفق...';
+      }
+      btn.disabled = true;
+      btn.textContent = " جاري رفع الملف...";
+      NotificationEngine.loading("جاري رفع المرفق...");
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        var base64 = e.target.result.split(",")[1];
+        _gsr(
+          "uploadFile",
+          [
+            base64,
+            file.name,
+            file.type,
+            {
+              userName: APP.currentUser
+                ? APP.currentUser.full_name ||
+                  APP.currentUser.username ||
+                  "مستخدم"
+                : "مستخدم",
+              moduleName: "أمر تحويل",
+            },
+          ],
+          {
+            label: "uploadFile:transfer",
+            rawResponse: true,
+            onSuccess: function (r) {
+              var res = r && r.data;
+              var result;
+              try {
+                result = JSON.parse(res);
+              } catch (ex) {
+                result = { success: false, error: ex.message };
+              }
+              if (result.success) {
+                if (statusEl) statusEl.innerHTML = " تم رفع المرفق";
+                batch.attachment_url = result.viewUrl;
+                _txFiles["tr"] = null;
+                dismissLoadingToast(); // هيبدأ لودينج تاني في _doSubmitBatchTr
+                _doSubmitBatchTr(batch, btn);
+              } else {
+                if (statusEl) statusEl.innerHTML = " فشل رفع الملف";
+                btn.disabled = false;
+                btn.innerHTML =
+                  '<span style="display:inline-flex;align-items:center;gap:5px"><i class="ti ti-circle-check" style="font-size:15px"></i> تسجيل أمر التحويل</span>';
+                finishLoadingToast(
+                  " فشل رفع الملف — " + (result.error || ""),
+                  "error",
+                );
+              }
+            },
+            onError: function (r) {
+              if (statusEl) statusEl.innerHTML = " خطأ في الرفع";
+              btn.disabled = false;
+              btn.innerHTML =
+                '<span style="display:inline-flex;align-items:center;gap:5px"><i class="ti ti-circle-check" style="font-size:15px"></i> تسجيل أمر التحويل</span>';
+              finishLoadingToast(" خطأ: " + (r.message || r), "error");
+            },
+          },
+        );
+      };
+      reader.readAsDataURL(file);
+    } else {
+      _doSubmitBatchTr(batch, btn);
+    }
+  }
+
+  function bindTxTransfer() {
+    _resetTxItemsTr();
+    _prefillEditTx();
+
+    var fromSel = document.getElementById("tr-from");
+    var toSel = document.getElementById("tr-to");
+    var itemSel = document.getElementById("tr-item-sel");
+    var addBtn = document.getElementById("btn-add-tr-item");
+    var btn = document.getElementById("btn-tr");
+    if (!btn) return;
+
+    _upgradeWhSelect("tr-from");
+    _upgradeWhSelect("tr-to");
+    _bindItemSearch("tr-item");
+
+    if (fromSel)
+      fromSel.addEventListener("change", function () {
+        var fromVal = fromSel.value;
+        var searchEl = document.getElementById("tr-item-search");
+        if (fromVal) {
+          if (searchEl) {
+            searchEl.disabled = false;
+            searchEl.placeholder = " ابحث بالاسم أو الكود...";
+            searchEl.value = "";
+          }
+          _filterItemsByWarehouse("tr-item-sel", fromVal, "OUT");
+        } else {
+          if (searchEl) {
+            searchEl.disabled = true;
+            searchEl.placeholder = "اختر المستودع أولاً...";
+            searchEl.value = "";
+          }
+          if (itemSel) {
+            itemSel.value = "";
+            itemSel.dispatchEvent(new Event("change"));
+          }
+        }
+        _rebuildColorSelect("tr-color", "tr-item-sel", "tr-from");
+      });
+
+    if (toSel)
+      toSel.addEventListener("change", function () {
+        if (
+          fromSel &&
+          toSel.value &&
+          fromSel.value &&
+          fromSel.value === toSel.value
+        ) {
+          NotificationEngine.error("المستودع المُرسِل والمستلم متطابقان!");
+          toSel.value = "";
+        }
+      });
+
+    if (itemSel)
+      itemSel.addEventListener("change", function () {
+        var searchEl = document.getElementById("tr-item-search");
+        if (searchEl && typeof searchEl._syncFromSelect === "function")
+          searchEl._syncFromSelect();
+        _rebuildColorSelect("tr-color", "tr-item-sel", "tr-from");
+        var unitEl = document.getElementById("tr-unit");
+        if (unitEl) {
+          var selItem = (APP.data.items || []).find(function (it) {
+            return it.id === itemSel.value;
+          });
+          unitEl.value = selItem ? selItem.unit || "" : "";
+        }
+      });
+
+    if (addBtn)
+      addBtn.addEventListener("click", function () {
+        _addTxItemRowTr();
+        var searchEl = document.getElementById("tr-item-search");
+        if (searchEl) searchEl.value = "";
+        if (itemSel) {
+          itemSel.value = "";
+          itemSel.dispatchEvent(new Event("change"));
+        }
+      });
+
+    btn.addEventListener("click", function () {
+      _submitMultiTxTransfer(btn);
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // TRANSACTIONS
+  // ─────────────────────────────────────────────────────────────
+
+  // ── نفس منطق _getPermitId في السيرفر (client-side) ──────────
+  // DISPATCH-260610-8047-1 → DISPATCH-260610-8047
+  function _clientGetPermitId(rawId) {
+    if (!rawId) return rawId;
+    var str = String(rawId).trim();
+    // شيل الـ suffix الرقمي من الآخر لو كان 1-99
+    // DISPATCH-10-366-00-2 → DISPATCH-10-366-00
+    // DISPATCH-260610-8047-1 → DISPATCH-260610-8047
+    var match = str.match(/^(.+)-(\d{1,2})$/);
+    if (match) return match[1];
+    return str;
+  }
+
+  function _buildTxRows(txs) {
+    var typeMap = {
+      IN: "وارد",
+      OUT: "صادر",
+      TRANSFER: "تحويل",
+      DISPATCH: "صرف مصنع",
+      FG_IN: "استلام تام",
+      FACTORY_RETURN: "مرتجع مصنع",
+      WASTE: "هالك", // [WASTE-FEATURE-2026-08-07]
+    };
+    var typeIconMap = {
+      IN: "ti-arrow-bar-down",
+      OUT: "ti-arrow-bar-up",
+      TRANSFER: "ti-arrows-exchange",
+      DISPATCH: "ti-building-factory-2",
+      FG_IN: "ti-circle-check",
+      FACTORY_RETURN: "ti-rotate-clockwise-2",
+      WASTE: "ti-trash", // [WASTE-FEATURE-2026-08-07]
+    };
+    var typeColorMap = {
+      IN: "success",
+      OUT: "danger",
+      TRANSFER: "purple",
+      DISPATCH: "warning",
+      FG_IN: "teal",
+      FACTORY_RETURN: "orange",
+      WASTE: "dark", // [WASTE-FEATURE-2026-08-07]
+    };
+
+    // ── Step 1: جمع الحركات في مجموعات بالـ permit_id ──────────
+    // الحركات بدون permit_id كل واحدة مجموعة لوحدها (مفتاحها id)
+
+    var groups = [];
+    var permitMap = {}; // permit_id → index in groups
+
+    txs.forEach(function (tx) {
+      var raw =
+        tx.permit_id && tx.permit_id.trim() ? tx.permit_id.trim() : null;
+      var key = raw ? _clientGetPermitId(raw) : null;
+      if (key) {
+        if (permitMap.hasOwnProperty(key)) {
+          groups[permitMap[key]].items.push(tx);
+        } else {
+          permitMap[key] = groups.length;
+          groups.push({ key: key, isPermit: true, items: [tx] });
+        }
+      } else {
+        // حركة فردية (بدون سند)
+        groups.push({ key: tx.id, isPermit: false, items: [tx] });
+      }
+    });
+
+    // ── Step 2: بناء HTML لكل مجموعة ───────────────────────────
+    return groups
+      .map(function (grp) {
+        var firstTx = grp.items[0];
+        var isMulti = grp.items.length > 1;
+
+        // التاريخ والوقت من أول حركة
+        var dateObj = firstTx.date ? new Date(firstTx.date) : null;
+        var dateStr = dateObj ? fmtDate(dateObj) : "—";
+        var timeStr = dateObj ? fmtTime(dateObj) : "—";
+
+        // النوع
+        var typeLabel = typeMap[firstTx.type] || firstTx.type;
+        var typeColor = typeColorMap[firstTx.type] || "primary";
+        var typeIcon = typeIconMap[firstTx.type] || "ti-activity";
+
+        // المخزن
+        var warehouse =
+          firstTx.type === "IN" ||
+          firstTx.type === "FG_IN" ||
+          firstTx.type === "FACTORY_RETURN"
+            ? firstTx.to_warehouse || "—"
+            : firstTx.type === "OUT" || firstTx.type === "DISPATCH" || firstTx.type === "WASTE"
+              ? firstTx.from_warehouse || "—"
+              : (firstTx.from_warehouse || "—") +
+                (firstTx.to_warehouse ? " ← " + firstTx.to_warehouse : "");
+
+        // المستخدم
+        var userObj = (APP.data.users || []).find(function (u) {
+          return u.username === firstTx.user;
+        });
+        var displayName = userObj
+          ? userObj.full_name || firstTx.user
+          : firstTx.user || "—";
+
+        // إجمالي الكمية
+        var totalQty = grp.items.reduce(function (s, t) {
+          return s + Number(t.quantity || 0);
+        }, 0);
+
+        // ── helper: جلب كود الصنف ─────────────────────────────────
+        function getItemCode(item_id) {
+          var obj = (APP.data.items || []).find(function (i) {
+            return i.id === item_id;
+          });
+          return obj ? obj.code || obj.id : item_id || "—";
+        }
+        function getItemDisplayName(item_id) {
+          var obj = (APP.data.items || []).find(function (i) {
+            return i.id === item_id;
+          });
+          return obj ? obj.name || "" : "";
+        }
+
+        // ── عمود "الأصناف": أكواد مميزة مدمجة بدون تكرار ──────────
+        var _uniqueCodes = [];
+        var _seenCodes = {};
+        grp.items.forEach(function (t) {
+          var c = getItemCode(t.item_id);
+          if (!_seenCodes[c]) {
+            _seenCodes[c] = true;
+            _uniqueCodes.push(c);
+          }
+        });
+        var itemsPreview =
+          "<div style='display:flex;flex-wrap:wrap;gap:4px;align-items:center'>" +
+          _uniqueCodes
+            .map(function (c) {
+              return (
+                "<span style='" +
+                "display:inline-block;" +
+                "background:#EFF6FF;" +
+                "color:#1D4ED8;" +
+                "border:1px solid #BFDBFE;" +
+                "border-radius:5px;" +
+                "padding:2px 8px;" +
+                "font-size:12px;" +
+                "font-weight:700;" +
+                "font-family:var(--font-mono);" +
+                "white-space:nowrap;" +
+                "letter-spacing:0.3px'>" +
+                esc(c) +
+                "</span>"
+              );
+            })
+            .join("") +
+          "</div>";
+
+        // ── رقم السند ─────────────────────────────────────────────
+        var permitCell;
+        if (grp.isPermit) {
+          permitCell =
+            "<div style='display:flex;flex-direction:column;gap:4px'>" +
+            "<span class='mono' style='color:var(--success);font-weight:700;font-size:13px'>" +
+            esc(grp.key) +
+            "</span>" +
+            (isMulti
+              ? "<button id='expand-btn-" +
+                esc(grp.key).replace(/[^a-zA-Z0-9]/g, "_") +
+                "' onclick=\"_toggleTxExpand('" +
+                esc(grp.key) +
+                "')\" title='عرض الأصناف'" +
+                " style='" +
+                "display:inline-flex;align-items:center;gap:5px;" +
+                "background:linear-gradient(135deg,#EFF6FF,#DBEAFE);" +
+                "color:#1D4ED8;" +
+                "border:1px solid #BFDBFE;" +
+                "border-radius:20px;" +
+                "padding:2px 8px 2px 6px;" +
+                "font-size:11px;font-weight:700;" +
+                "cursor:pointer;" +
+                "transition:all .15s ease;" +
+                "box-shadow:0 1px 3px rgba(37,99,235,.12);" +
+                "white-space:nowrap'>" +
+                "<span style='background:#2563EB;color:#fff;border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;flex-shrink:0'>" +
+                grp.items.length +
+                "</span>" +
+                "<span>صنف</span>" +
+                "<i class='ti ti-chevron-down' style='font-size:10px;transition:transform .2s'></i>" +
+                "</button>"
+              : "") +
+            "</div>";
+        } else {
+          permitCell =
+            "<span class='mono' style='color:var(--text3);font-size:11px'>" +
+            esc(firstTx.id || "—") +
+            "</span>";
+        }
+
+        // ── زرار expand انتقل لعمود الأصناف (itemsPreview) ─────────
+
+        // ── السطر الرئيسي ─────────────────────────────────────────
+        var mainRow =
+          "<tr data-permit='" +
+          esc(grp.key) +
+          "' data-txid='" +
+          esc(firstTx.id || "") +
+          "' " +
+          "" +
+          ">" +
+          "<td>" +
+          permitCell +
+          "</td>" +
+          "<td style='font-size:13px;font-weight:600;color:var(--text1)'>" +
+          dateStr +
+          "</td>" +
+          '<td><span class="tx-badge tx-badge-' +
+          typeColor +
+          '" style="display:inline-flex;align-items:center;gap:4px">' +
+          '<i class="ti ' +
+          typeIcon +
+          '" style="font-size:12px"></i>' +
+          esc(typeLabel || "—") +
+          "</span></td>" +
+          "<td>" +
+          itemsPreview +
+          "</td>" +
+          "<td style='text-align:center'>" +
+          "<span style='font-weight:800;font-size:15px;color:var(--text1);background:var(--surface2);border-radius:8px;padding:2px 10px;display:inline-block;font-family:var(--font-mono)'>" +
+          totalQty +
+          "</span></td>" +
+          "<td>" +
+          "<span style='font-size:12px;color:var(--text2);display:flex;align-items:center;gap:4px'>" +
+          "<i class='ti ti-building-warehouse' style='font-size:12px;color:var(--text3)'></i>" +
+          esc(warehouse) +
+          "</span></td>" +
+          "<td>" +
+          (firstTx.party
+            ? (function () {
+                var _pid = firstTx.party;
+                var _allParties = (APP.data.customers || []).concat(
+                  APP.data.suppliers || [],
+                );
+                var _found = _allParties.find(function (p) {
+                  return p.id === _pid || p.name === _pid;
+                });
+                var _name = _found ? _found.name : _pid;
+                var _isSupplier =
+                  _found &&
+                  (APP.data.suppliers || []).some(function (s) {
+                    return s.id === _found.id;
+                  });
+                return (
+                  "<span style='font-size:12px;color:var(--text2);display:flex;align-items:center;gap:4px'>" +
+                  "<i class='ti " +
+                  (_isSupplier ? "ti-building-factory-2" : "ti-user-circle") +
+                  "' style='font-size:12px;color:var(--text3)'></i>" +
+                  esc(_name) +
+                  "</span>"
+                );
+              })()
+            : "<span style='color:var(--text3);font-size:12px'>—</span>") +
+          "</td>" +
+          "<td>" +
+          esc(displayName) +
+          "</td>" +
+          "</tr>";
+
+        // ── الصف التوسعي (expand row) لكل الأصناف ────────────────
+        var expandRow = "";
+        if (isMulti) {
+          var expandId =
+            "tx-expand-" + esc(grp.key).replace(/[^a-zA-Z0-9]/g, "_");
+          var itemsTableRows = grp.items
+            .map(function (t) {
+              var itemObj = (APP.data.items || []).find(function (i) {
+                return i.id === t.item_id;
+              });
+              var itemCode = itemObj
+                ? itemObj.code || itemObj.id
+                : t.item_id || "—";
+              var itemName = itemObj ? itemObj.name || "" : "";
+              return (
+                "<tr style='border-bottom:1px solid var(--border);transition:background .15s' onmouseover=\"this.style.background='var(--surface3)'\" onmouseout=\"this.style.background=''\">" +
+                "<td style='padding:9px 12px'><span style='font-size:11px;font-weight:600;color:var(--accent);font-family:var(--font-mono,monospace);background:var(--accent-soft);padding:2px 8px;border-radius:6px'>" +
+                esc(t.id || "") +
+                "</span></td>" +
+                "<td style='padding:9px 12px'>" +
+                "<div style='display:flex;flex-direction:column;gap:2px'>" +
+                "<span style='font-weight:700;font-size:13px;color:var(--text1);font-family:var(--font-mono,monospace)'>" +
+                esc(itemCode) +
+                "</span>" +
+                (itemName
+                  ? "<span style='font-size:11px;color:var(--text3)'>" +
+                    esc(itemName) +
+                    "</span>"
+                  : "") +
+                "</div></td>" +
+                "<td style='padding:8px 12px'>" +
+                (t.color
+                  ? (function () {
+                      var _hex =
+                        (typeof colorNameToHex === "function"
+                          ? colorNameToHex(t.color)
+                          : null) ||
+                        (typeof CSS_COLOR_MAP !== "undefined"
+                          ? CSS_COLOR_MAP[t.color] ||
+                            CSS_COLOR_MAP[(t.color || "").toLowerCase()]
+                          : null) ||
+                        "#e2e8f0";
+                      var _isDark = (function (h) {
+                        var r = parseInt(h.slice(1, 3), 16),
+                          g = parseInt(h.slice(3, 5), 16),
+                          b = parseInt(h.slice(5, 7), 16);
+                        return (r * 299 + g * 587 + b * 114) / 1000 < 140;
+                      })(_hex.length === 7 ? _hex : "#e2e8f0");
+                      return (
+                        "<span style='display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text2)'>" +
+                        "<span style='" +
+                        "width:14px;height:14px;" +
+                        "border-radius:50%;" +
+                        "background:" +
+                        _hex +
+                        ";" +
+                        "border:1.5px solid " +
+                        (_isDark
+                          ? "rgba(255,255,255,0.25)"
+                          : "rgba(0,0,0,0.15)") +
+                        ";" +
+                        "flex-shrink:0;" +
+                        "box-shadow:0 1px 3px rgba(0,0,0,0.2)" +
+                        "'></span>" +
+                        esc(t.color) +
+                        "</span>"
+                      );
+                    })()
+                  : "<span style='color:var(--text3)'>—</span>") +
+                "</td>" +
+                "<td style='padding:9px 12px;text-align:center'>" +
+                "<span style='font-weight:800;font-size:14px;color:var(--text1);background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:2px 12px;display:inline-block;font-family:var(--font-mono,monospace)'>" +
+                Number(t.quantity || 0) +
+                "</span></td>" +
+                "</tr>"
+              );
+            })
+            .join("");
+
+          expandRow =
+            "<tr id='" +
+            expandId +
+            "' style='display:none'>" +
+            "<td colspan='9' style='padding:4px 12px 12px 12px;background:var(--surface2)'>" +
+            "<div style='border:1.5px solid var(--border);border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.06)'>" +
+            "<table style='width:100%;border-collapse:collapse;font-family:var(--font-main)'>" +
+            "<thead><tr style='background:var(--surface3);border-bottom:2px solid var(--border)'>" +
+            "<th style='padding:8px 12px;font-size:11px;font-weight:700;color:var(--text3);text-align:right;width:200px'>رقم الحركة</th>" +
+            "<th style='padding:8px 12px;font-size:11px;font-weight:700;color:var(--text3);text-align:right'>الصنف</th>" +
+            "<th style='padding:8px 12px;font-size:11px;font-weight:700;color:var(--text3);text-align:right;width:140px'>اللون</th>" +
+            "<th style='padding:8px 12px;font-size:11px;font-weight:700;color:var(--text3);text-align:center;width:90px'>الكمية</th>" +
+            "</tr></thead>" +
+            "<tbody>" +
+            itemsTableRows +
+            "</tbody>" +
+            "</table></div></td></tr>";
+        }
+
+        return mainRow + expandRow;
+      })
+      .join("");
+  }
+
+  // دالة toggle للصف التوسعي
+  function _toggleTxExpand(permitKey) {
+    var expandId = "tx-expand-" + permitKey.replace(/[^a-zA-Z0-9]/g, "_");
+    var btnId = "expand-btn-" + permitKey.replace(/[^a-zA-Z0-9]/g, "_");
+    var row = document.getElementById(expandId);
+    if (!row) return;
+    var isHidden = row.style.display === "none";
+    row.style.display = isHidden ? "" : "none";
+    // تدوير السهم
+    var expandBtnEl = document.getElementById(btnId);
+    if (expandBtnEl) {
+      var icon = expandBtnEl.querySelector("i");
+      if (icon) {
+        icon.style.transform = isHidden ? "rotate(180deg)" : "rotate(0deg)";
+        icon.style.transition = "transform .2s ease";
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // TRANSACTIONS bindTransactions — v4.2 مع Pagination
+  // ─────────────────────────────────────────────────────────────
+
+  // حالة Pagination للحركات
+  // [إصلاح P2] كانت pageSize ثابتة يدويًا (50) بدون أي علاقة بتفضيل
+  // items_per_page المخزَّن فعليًا — رغم وجوده كإعداد في شاشة التفضيلات.
+  // الآن نقرأه من PreferenceService عند التوفر، ونشترك في تغييره لاحقًا.
+  var _txPagination = {
+    page: 1,
+    pageSize:
+      typeof PreferenceService !== "undefined"
+        ? PreferenceService.get("items_per_page", 50)
+        : 50,
+    filtered: [],
+  };
+
+  // إذا غيّر المستخدم "عدد الصفوف الافتراضي" من شاشة التفضيلات وشاشة
+  // الحركات مفتوحة بالفعل، نطبّق القيمة الجديدة فورًا بدون Refresh
+  if (typeof PreferenceService !== "undefined") {
+    PreferenceService.subscribe("items_per_page", function (newVal) {
+      var n = Number(newVal);
+      if (!n || n < 1) return;
+      _txPagination.pageSize = n;
+      if (document.getElementById("tx-tbody")) _renderTxPage(1);
+    });
+  }
+
+  /** يعرض صفحة معينة من الحركات المفلترة */
+  function _renderTxPage(page) {
+    _txPagination.page = page;
+    var tbody = document.getElementById("tx-tbody");
+    if (!tbody) return;
+
+    var total = _txPagination.filtered.length;
+    var pages = Math.ceil(total / _txPagination.pageSize) || 1;
+    page = Math.max(1, Math.min(page, pages));
+    _txPagination.page = page;
+
+    var start = (page - 1) * _txPagination.pageSize;
+    var slice = _txPagination.filtered.slice(
+      start,
+      start + _txPagination.pageSize,
+    );
+
+    tbody.innerHTML = slice.length
+      ? _buildTxRows(slice)
+      : '<tr><td colspan="9" class="empty-state">لا توجد حركات مطابقة</td></tr>';
+
+    // تحديث شريط الـ pagination
+    _renderTxPaginationBar(page, pages, total);
+  }
+
+  /** يرسم شريط الصفحات */
+  function _renderTxPaginationBar(page, pages, total) {
+    var bar = document.getElementById("tx-pagination-bar");
+    if (!bar) return;
+    if (pages <= 1) {
+      bar.innerHTML = "";
+      return;
+    }
+
+    var start = (page - 1) * _txPagination.pageSize + 1;
+    var end = Math.min(page * _txPagination.pageSize, total);
+
+    var btns = "";
+    // زرار السابق
+    btns +=
+      '<button class="btn btn-xs" ' +
+      (page <= 1 ? "disabled" : 'onclick="_renderTxPage(' + (page - 1) + ')"') +
+      ' style="min-width:32px">‹</button>';
+
+    // أرقام الصفحات (نعرض ±2 من الصفحة الحالية)
+    var from = Math.max(1, page - 2);
+    var to = Math.min(pages, page + 2);
+    if (from > 1)
+      btns +=
+        '<button class="btn btn-xs" onclick="_renderTxPage(1)">1</button>';
+    if (from > 2)
+      btns += '<span style="padding:0 4px;color:var(--text3)">…</span>';
+    for (var p = from; p <= to; p++) {
+      btns +=
+        '<button class="btn btn-xs' +
+        (p === page ? " btn-primary" : "") +
+        '" onclick="_renderTxPage(' +
+        p +
+        ')">' +
+        p +
+        "</button>";
+    }
+    if (to < pages - 1)
+      btns += '<span style="padding:0 4px;color:var(--text3)">…</span>';
+    if (to < pages)
+      btns +=
+        '<button class="btn btn-xs" onclick="_renderTxPage(' +
+        pages +
+        ')">' +
+        pages +
+        "</button>";
+
+    // زرار التالي
+    btns +=
+      '<button class="btn btn-xs" ' +
+      (page >= pages
+        ? "disabled"
+        : 'onclick="_renderTxPage(' + (page + 1) + ')"') +
+      ' style="min-width:32px">›</button>';
+
+    bar.innerHTML =
+      '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">' +
+      '<span style="font-size:11px;color:var(--text3);margin-left:8px">' +
+      start +
+      "–" +
+      end +
+      " من " +
+      total +
+      " سند" +
+      "</span>" +
+      btns +
+      "</div>";
+  }
+
+  function bindTransactions() {
+    // جلب المستخدمين لو مش محملين عشان يتعرض الاسم الكامل
+    if (!APP.data.users || APP.data.users.length === 0) {
+      _gsr("getUsers", [APP.currentUser.username, SESSION.token], {
+        label: "getUsers:transactions",
+        onSuccess: function (r) {
+          APP.data.users = r.data && r.data.users;
+          // أعد تطبيق الفلتر بعد تحميل المستخدمين
+          _applyTxFilter();
+        },
+        onError: function (r) {
+          console.warn("تعذّر تحميل قائمة المستخدمين:", r && r.message);
+        },
+      });
+    }
+
+    // لو فيه فلتر معلّق بعد إضافة إذن — طبّقه فوراً
+    if (APP._pendingTxFilter) {
+      var filterVal = APP._pendingTxFilter;
+      APP._pendingTxFilter = null;
+      var searchInput = document.getElementById("tx-search");
+      if (searchInput) {
+        searchInput.value = filterVal;
+        searchInput.style.borderColor = "var(--accent)";
+        searchInput.style.boxShadow = "0 0 0 3px var(--accent-soft)";
+        setTimeout(function () {
+          searchInput.style.borderColor = "";
+          searchInput.style.boxShadow = "";
+        }, 2000);
+      }
+    }
+
+    var TYPE_AR = {
+      IN: "وارد",
+      OUT: "صادر",
+      TRANSFER: "تحويل",
+      DISPATCH: "صرف للمصنع",
+      FG_IN: "استلام تام",
+      FACTORY_RETURN: "مرتجع من المصنع",
+    };
+
+    // v4.2: دالة الفلترة تبني _txPagination.filtered ثم ترسم أول صفحة
+    function _applyTxFilter() {
+      var q = (document.getElementById("tx-search").value || "")
+        .toLowerCase()
+        .trim();
+      var type = document.getElementById("tx-filter-type").value;
+      var txs = (APP.data.transactions || []).slice().reverse();
+
+      // نبني groups أولاً (نفس منطق _buildTxRows) عشان نفلتر على مستوى السند
+      var groups = [];
+      var permitMap = {};
+      txs.forEach(function (tx) {
+        var _raw =
+          tx.permit_id && tx.permit_id.trim() ? tx.permit_id.trim() : null;
+        var key = _raw ? _clientGetPermitId(_raw) : null;
+        if (key) {
+          if (permitMap.hasOwnProperty(key)) {
+            groups[permitMap[key]].items.push(tx);
+          } else {
+            permitMap[key] = groups.length;
+            groups.push({ key: key, isPermit: true, items: [tx] });
+          }
+        } else {
+          groups.push({ key: tx.id, isPermit: false, items: [tx] });
+        }
+      });
+
+      // فلترة بالبحث والنوع
+      var filtered = groups.filter(function (grp) {
+        var firstTx = grp.items[0];
+        var typeLabel = TYPE_AR[firstTx.type] || firstTx.type || "";
+        if (type && firstTx.type !== type) return false;
+        if (!q) return true;
+        // بحث في permit_id, ids, item_ids, notes, user
+        var searchStr = [
+          grp.key,
+          grp.items
+            .map(function (t) {
+              return t.id || "";
+            })
+            .join(" "),
+          grp.items
+            .map(function (t) {
+              return t.item_id || "";
+            })
+            .join(" "),
+          firstTx.user || "",
+          firstTx.notes || "",
+          typeLabel,
+          firstTx.from_warehouse || "",
+          firstTx.to_warehouse || "",
+        ]
+          .join(" ")
+          .toLowerCase();
+        return searchStr.indexOf(q) !== -1;
+      });
+
+      // نحوّل groups مرة تانية لـ flat tx array للـ _buildTxRows
+      // (كل group هو object { key, isPermit, items } والـ _buildTxRows بيشتغل على txs عادية)
+      // الحل: نمرر الـ groups مباشرة — نعدّل _buildTxRows لاستقبال groups OR نبني من txs
+      // هنا نبني من txs المفلترة (أبسط وأأمن)
+      var filteredTxIds = {};
+      filtered.forEach(function (grp) {
+        grp.items.forEach(function (t) {
+          filteredTxIds[t.id] = true;
+        });
+      });
+      var filteredTxs = txs.filter(function (t) {
+        return filteredTxIds[t.id];
+      });
+
+      _txPagination.filtered = filteredTxs;
+      _txPagination.page = 1;
+
+      // تحديث العداد
+      var badge = document.getElementById("tx-count-badge");
+      if (badge) badge.textContent = filtered.length + " سند";
+
+      // رسم الصفحة الأولى
+      _renderTxPage(1);
+    }
+
+    // اجعل _applyTxFilter متاحة خارج bindTransactions
+    window._applyTxFilter = _applyTxFilter;
+
+    var s = document.getElementById("tx-search");
+    if (s) s.addEventListener("input", debounce(_applyTxFilter, 250));
+    var f = document.getElementById("tx-filter-type");
+    if (f) f.addEventListener("change", _applyTxFilter);
+
+    // ── أزرار الفلتر الجديدة (tx-type-filter-btn) ─────────────
+    document.querySelectorAll(".tx-type-filter-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll(".tx-type-filter-btn").forEach(function (b) {
+          b.style.background = "transparent";
+          b.style.color = "var(--text2)";
+        });
+        btn.style.background = "var(--accent)";
+        btn.style.color = "#fff";
+        var fSel = document.getElementById("tx-filter-type");
+        if (fSel) {
+          fSel.value = btn.getAttribute("data-type") || "";
+          fSel.dispatchEvent(new Event("change"));
+        }
+      });
+    });
+
+    // ── كروت الإحصاء السريع ────────────────────────────────────
+    function _updateTxStats() {
+      var txs = APP.data.transactions || [];
+      var stats = {
+        IN: 0,
+        OUT: 0,
+        TRANSFER: 0,
+        DISPATCH: 0,
+        FG_IN: 0,
+        FACTORY_RETURN: 0,
+      };
+      txs.forEach(function (t) {
+        if (stats[t.type] !== undefined) stats[t.type]++;
+      });
+      var inEl = document.getElementById("tx-stat-in");
+      var outEl = document.getElementById("tx-stat-out");
+      var trEl = document.getElementById("tx-stat-transfer");
+      var faEl = document.getElementById("tx-stat-factory");
+      if (inEl) inEl.textContent = stats.IN;
+      if (outEl) outEl.textContent = stats.OUT;
+      if (trEl) trEl.textContent = stats.TRANSFER;
+      if (faEl)
+        faEl.textContent = stats.DISPATCH + stats.FG_IN + stats.FACTORY_RETURN;
+    }
+    _updateTxStats();
+
+    // تطبيق الفلتر الأول
+    _applyTxFilter();
+
+    // إضافة حاوية الـ pagination إن لم تكن موجودة
+    var tableWrap = document.getElementById("tx-tbody");
+    if (tableWrap) {
+      var existingBar = document.getElementById("tx-pagination-bar");
+      if (!existingBar) {
+        var bar = document.createElement("tr");
+        bar.id = "tx-pagination-bar-row";
+        bar.innerHTML =
+          '<td colspan="9" id="tx-pagination-bar" style="padding:10px 14px;background:var(--surface2);border-top:1px solid var(--border)"></td>';
+        tableWrap.parentNode.appendChild(bar);
+      }
+    }
+
+    // تصدير متعدد الصيغ — ExportUtil
+    var exportBtn = document.getElementById("tx-export-btn");
+    if (exportBtn && window.ExportUtil) {
+      var _getTxData = function () {
+        var txs = (APP.data.transactions || []).slice().reverse();
+        var typeAr = {
+          IN: "وارد",
+          OUT: "صادر",
+          TRANSFER: "تحويل",
+          DISPATCH: "صرف للمصنع",
+          FG_IN: "استلام تام",
+          FACTORY_RETURN: "مرتجع من المصنع",
+        };
+        var headers = [
+          "رقم الحركة",
+          "التاريخ",
+          "الوقت",
+          "النوع",
+          "الصنف",
+          "الكمية",
+          "من مخزن",
+          "إلى مخزن",
+          "المستخدم",
+          "ملاحظات",
+        ];
+        var rows = txs.map(function (tx) {
+          var d = tx.date ? new Date(tx.date) : null;
+          var userObj = (APP.data.users || []).find(function (u) {
+            return u.username === tx.user;
+          });
+          return [
+            tx.id || "",
+            d ? fmtDate(d) : "",
+            d ? fmtTime(d) : "",
+            typeAr[tx.type] || tx.type || "",
+            tx.item_id || "",
+            tx.quantity || 0,
+            tx.from_warehouse || "",
+            tx.to_warehouse || "",
+            userObj ? userObj.full_name || tx.user : tx.user || "",
+            tx.notes || "",
+          ];
+        });
+        return { headers: headers, rows: rows };
+      };
+      var dd = ExportUtil.createDropdown({
+        getData: _getTxData,
+        filename: "سجل_الحركات",
+        title: "سجل حركات المخازن",
+        subtitle: "تاريخ التقرير: " + fmtDate(new Date()),
+        sheetName: "الحركات",
+      });
+      exportBtn.parentNode.replaceChild(dd, exportBtn);
+    }
+  }
+
+  // ── كشف صنف ─────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // STATEMENT (كشف صنف)
+  // ─────────────────────────────────────────────────────────────
+
+  function bindStatement() {
+    // ── ربط item search dropdown (يتضمن فلتر المجموعة تلقائياً) ──
+    _bindItemSearch("stmt-item");
+
+    // ── زر العرض ─────────────────────────────────────────────
+    var btn = document.getElementById("btn-stmt");
+    if (!btn) return;
+
+    btn.addEventListener("click", function () {
+      var id = (document.getElementById("stmt-item") || {}).value;
+      if (!id) {
+        NotificationEngine.error("اختر صنفاً أولاً");
+        return;
+      }
+      _renderStatementResult(id);
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // [COLUMN-ENGINE] TX_META على مستوى الملف (بدل داخل الدالة) لأن
+  // column.format في _stmtRegisterColumns يحتاج الوصول لها، والتسجيل
+  // يحدث مرة واحدة فقط بينما _renderStatementResult تُستدعى مرارًا.
+  // ─────────────────────────────────────────────────────────────
+  var TX_META = {
+    IN: {
+      label: "وارد",
+      cls: "badge-success",
+      icon: "ti-arrow-bar-down",
+      color: "#10b981",
+    },
+    OUT: {
+      label: "صادر",
+      cls: "badge-danger",
+      icon: "ti-arrow-bar-up",
+      color: "#ef4444",
+    },
+    TRANSFER: {
+      label: "تحويل",
+      cls: "badge-purple",
+      icon: "ti-arrows-exchange",
+      color: "#8b5cf6",
+    },
+    DISPATCH: {
+      label: "صرف مصنع",
+      cls: "badge-warning",
+      icon: "ti-building-factory-2",
+      color: "#f59e0b",
+    },
+    FG_IN: {
+      label: "استلام تام",
+      cls: "badge-success",
+      icon: "ti-circle-check",
+      color: "#10b981",
+    },
+    FACTORY_RETURN: {
+      label: "مرتجع مصنع",
+      cls: "badge-warning",
+      icon: "ti-corner-up-left",
+      color: "#f59e0b",
+    },
+    WASTE: {
+      label: "هالك",
+      cls: "badge-dark",
+      icon: "ti-trash",
+      color: "#374151",
+    }, // [WASTE-FEATURE-2026-08-07]
+  };
+
+  var _itemStmtColumnsRegistered = false;
+
+  function _itemStmtRegisterColumns() {
+    if (_itemStmtColumnsRegistered) return;
+    _itemStmtColumnsRegistered = true;
+    ColumnEngine.register(
+      "item_statement",
+      [
+        {
+          key: "date",
+          label: "التاريخ",
+          type: "date",
+          width: 110,
+          frozen: "right",
+          format: function (v) {
+            return (
+              '<span style="font-size:12px;color:var(--text2)">' +
+              esc(fmtDate(v)) +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "type",
+          label: "النوع",
+          type: "text",
+          width: 120,
+          format: function (v) {
+            var meta = TX_META[v] || {
+              label: v,
+              cls: "badge-purple",
+              icon: "ti-activity",
+            };
+            return (
+              '<span class="badge ' +
+              meta.cls +
+              '" style="display:inline-flex;align-items:center;gap:4px">' +
+              '<i class="ti ' +
+              meta.icon +
+              '" style="font-size:11px" aria-hidden="true"></i>' +
+              esc(meta.label) +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "quantity",
+          label: "الكمية",
+          type: "number",
+          width: 90,
+          align: "center",
+          format: function (v) {
+            return '<b style="font-size:14px">' + String(v) + "</b>";
+          },
+        },
+        {
+          key: "from_warehouse",
+          label: "من مستودع",
+          type: "text",
+          width: 140,
+          format: function (v) {
+            return v
+              ? '<span style="display:inline-flex;align-items:center;gap:3px;font-size:12px"><i class="ti ti-building-warehouse" style="font-size:11px;color:var(--text3)"></i>' +
+                  esc(v) +
+                  "</span>"
+              : '<span style="color:var(--text3)">—</span>';
+          },
+        },
+        {
+          key: "to_warehouse",
+          label: "إلى مستودع",
+          type: "text",
+          width: 140,
+          format: function (v) {
+            return v
+              ? '<span style="display:inline-flex;align-items:center;gap:3px;font-size:12px"><i class="ti ti-building-warehouse" style="font-size:11px;color:var(--text3)"></i>' +
+                  esc(v) +
+                  "</span>"
+              : '<span style="color:var(--text3)">—</span>';
+          },
+        },
+        {
+          key: "running",
+          label: "الرصيد الجاري",
+          type: "number",
+          width: 120,
+          align: "center",
+          format: function (v) {
+            var runColor =
+              v < 0
+                ? "var(--danger)"
+                : v === 0
+                  ? "var(--text3)"
+                  : "var(--success-dark)";
+            return (
+              '<span style="font-weight:800;font-size:15px;color:' +
+              runColor +
+              '">' +
+              String(v) +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "notes",
+          label: "ملاحظات",
+          type: "text",
+          width: 200,
+          format: function (v) {
+            return (
+              '<span style="color:var(--text3);font-size:12px">' +
+              esc(v || "") +
+              "</span>"
+            );
+          },
+        },
+        // [COLUMN-ENGINE-FULL-FIELDS] حقول موجودة فعليًا في صف الحركة
+        // (شيت Transactions — Code_12_Core.gs) لكنها لم تكن معروضة كأعمدة
+        // اختيارية في كشف حركة الصنف.
+        {
+          key: "ref",
+          label: "المرجع",
+          type: "text",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "party",
+          label: "الطرف (عميل/مورد)",
+          type: "text",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "color",
+          label: "اللون",
+          type: "text",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "user",
+          label: "أُنشئت بواسطة",
+          type: "text",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "attachment_url",
+          label: "مرفق",
+          type: "text",
+          category: "حقول إضافية",
+          defaultVisible: false,
+          format: function (v) {
+            return v
+              ? '<a href="' + esc(v) + '" target="_blank" style="color:var(--accent)"><i class="ti ti-paperclip"></i> مرفق</a>'
+              : "—";
+          },
+        },
+      ],
+      {
+        title: "حركة الصنف",
+        rowKey: "id",
+      },
+    );
+  }
+
+  function _renderStatementResult(id) {
+    var item = (APP.data.items || []).find(function (i) {
+      return i.id === id;
+    });
+    var openingQty = getOpeningQty(id);
+
+    // حركات الصنف مرتبة تصاعدياً
+    var txs = (APP.data.transactions || [])
+      .filter(function (t) {
+        return t.item_id === id;
+      })
+      .slice()
+      .sort(function (a, b) {
+        return new Date(a.date) - new Date(b.date);
+      });
+
+    var stock = (APP.data.stock || []).filter(function (s) {
+      return s.item_id === id;
+    });
+    var totalQty = stock.reduce(function (a, s) {
+      return a + Number(s.quantity || 0);
+    }, 0);
+    var totalInQty = txs
+      .filter(function (t) {
+        return t.type === "IN";
+      })
+      .reduce(function (a, t) {
+        return a + Number(t.quantity || 0);
+      }, 0);
+    var totalOutQty = txs
+      .filter(function (t) {
+        return t.type === "OUT";
+      })
+      .reduce(function (a, t) {
+        return a + Number(t.quantity || 0);
+      }, 0);
+
+    // إحصاء لكل مستودع
+    var whMap = {};
+    stock.forEach(function (s) {
+      if (!s.warehouse) return;
+      whMap[s.warehouse] = (whMap[s.warehouse] || 0) + Number(s.quantity || 0);
+    });
+    var whChips = Object.keys(whMap)
+      .map(function (wh) {
+        return (
+          '<span style="display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:4px 12px;font-size:12px;font-weight:600">' +
+          '<i class="ti ti-building-warehouse" style="font-size:12px;color:#2563eb"></i>' +
+          esc(wh) +
+          '<b style="color:var(--text1)">' +
+          whMap[wh] +
+          "</b>" +
+          "</span>"
+        );
+      })
+      .join("");
+
+    // بناء صفوف الجدول مع رصيد جاري
+    var running = openingQty;
+
+    var rows = txs.map(function (t) {
+      var qty = Number(t.quantity || 0);
+      if (t.type === "IN" || t.type === "FG_IN") running += qty;
+      else if (
+        t.type === "OUT" ||
+        t.type === "DISPATCH" ||
+        t.type === "WASTE" ||
+        t.type === "FACTORY_RETURN"
+      )
+        running -= qty;
+      return {
+        id: t.id,
+        date: t.date,
+        type: t.type,
+        quantity: qty,
+        from_warehouse: t.from_warehouse || "",
+        to_warehouse: t.to_warehouse || "",
+        running: running,
+        notes: t.notes || "",
+      };
+    });
+
+    var resultEl = document.getElementById("stmt-result");
+    if (!resultEl) return;
+
+    resultEl.innerHTML =
+      // ── بطاقات الإحصاء ──────────────────────────────────────
+      '<div class="stat-grid" style="margin-bottom:16px">' +
+      // اسم الصنف
+      '<div class="stat-card" style="display:flex;align-items:center;gap:14px;padding:16px 20px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;background:#EFF6FF;border-radius:10px;padding:10px;flex-shrink:0">' +
+      '<i class="ti ti-package" style="font-size:22px;color:#2563eb" aria-hidden="true"></i>' +
+      "</span>" +
+      '<div style="min-width:0">' +
+      '<div style="font-size:11px;color:var(--text3);font-weight:600;margin-bottom:2px">الصنف</div>' +
+      '<div style="font-size:15px;font-weight:800;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
+      esc(item ? item.name : id) +
+      "</div>" +
+      (item && item.code
+        ? '<div style="font-size:11px;color:var(--text3)">' +
+          esc(item.code) +
+          "</div>"
+        : "") +
+      "</div>" +
+      "</div>" +
+      // رصيد أول المدة
+      '<div class="stat-card" style="display:flex;align-items:center;gap:14px;padding:16px 20px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;background:#FFF7ED;border-radius:10px;padding:10px;flex-shrink:0">' +
+      '<i class="ti ti-calendar-stats" style="font-size:22px;color:#f97316" aria-hidden="true"></i>' +
+      "</span>" +
+      "<div>" +
+      '<div style="font-size:11px;color:var(--text3);font-weight:600;margin-bottom:2px">رصيد أول المدة</div>' +
+      '<div style="font-size:22px;font-weight:900;color:var(--text1)">' +
+      openingQty +
+      ' <span style="font-size:12px;font-weight:500;color:var(--text3)">' +
+      esc((item || {}).unit || "وحدة") +
+      "</span></div>" +
+      "</div>" +
+      "</div>" +
+      // إجمالي وارد
+      '<div class="stat-card" style="display:flex;align-items:center;gap:14px;padding:16px 20px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;background:#F0FDF4;border-radius:10px;padding:10px;flex-shrink:0">' +
+      '<i class="ti ti-arrow-bar-down" style="font-size:22px;color:#10b981" aria-hidden="true"></i>' +
+      "</span>" +
+      "<div>" +
+      '<div style="font-size:11px;color:var(--text3);font-weight:600;margin-bottom:2px">إجمالي الوارد</div>' +
+      '<div style="font-size:22px;font-weight:900;color:#10b981">+' +
+      totalInQty +
+      ' <span style="font-size:12px;font-weight:500;color:var(--text3)">' +
+      esc((item || {}).unit || "وحدة") +
+      "</span></div>" +
+      "</div>" +
+      "</div>" +
+      // إجمالي صادر
+      '<div class="stat-card" style="display:flex;align-items:center;gap:14px;padding:16px 20px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;background:#FFF1F2;border-radius:10px;padding:10px;flex-shrink:0">' +
+      '<i class="ti ti-arrow-bar-up" style="font-size:22px;color:#ef4444" aria-hidden="true"></i>' +
+      "</span>" +
+      "<div>" +
+      '<div style="font-size:11px;color:var(--text3);font-weight:600;margin-bottom:2px">إجمالي الصادر</div>' +
+      '<div style="font-size:22px;font-weight:900;color:#ef4444">-' +
+      totalOutQty +
+      ' <span style="font-size:12px;font-weight:500;color:var(--text3)">' +
+      esc((item || {}).unit || "وحدة") +
+      "</span></div>" +
+      "</div>" +
+      "</div>" +
+      // الرصيد الحالي
+      '<div class="stat-card" style="display:flex;align-items:center;gap:14px;padding:16px 20px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;background:#EFF6FF;border-radius:10px;padding:10px;flex-shrink:0">' +
+      '<i class="ti ti-clipboard-list" style="font-size:22px;color:#2563eb" aria-hidden="true"></i>' +
+      "</span>" +
+      "<div>" +
+      '<div style="font-size:11px;color:var(--text3);font-weight:600;margin-bottom:2px">الرصيد الحالي</div>' +
+      '<div style="font-size:22px;font-weight:900;color:' +
+      (totalQty > 0 ? "var(--success-dark)" : "var(--danger)") +
+      '">' +
+      totalQty +
+      ' <span style="font-size:12px;font-weight:500;color:var(--text3)">' +
+      esc((item || {}).unit || "وحدة") +
+      "</span></div>" +
+      "</div>" +
+      "</div>" +
+      // عدد الحركات
+      '<div class="stat-card" style="display:flex;align-items:center;gap:14px;padding:16px 20px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;background:#F5F3FF;border-radius:10px;padding:10px;flex-shrink:0">' +
+      '<i class="ti ti-history" style="font-size:22px;color:#8b5cf6" aria-hidden="true"></i>' +
+      "</span>" +
+      "<div>" +
+      '<div style="font-size:11px;color:var(--text3);font-weight:600;margin-bottom:2px">عدد الحركات</div>' +
+      '<div style="font-size:22px;font-weight:900;color:var(--text1)">' +
+      txs.length +
+      ' <span style="font-size:12px;font-weight:500;color:var(--text3)">حركة</span></div>' +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // ── توزيع المستودعات ─────────────────────────────────────
+      (Object.keys(whMap).length > 0
+        ? '<div class="card" style="margin-bottom:16px;padding:14px 20px">' +
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">' +
+          '<span style="display:inline-flex;align-items:center;justify-content:center;background:#EFF6FF;border-radius:7px;padding:5px;flex-shrink:0">' +
+          '<i class="ti ti-building-warehouse" style="font-size:14px;color:#2563eb" aria-hidden="true"></i>' +
+          "</span>" +
+          '<span style="font-weight:700;font-size:13px;color:var(--text1)">توزيع الرصيد على المستودعات</span>' +
+          "</div>" +
+          '<div style="display:flex;flex-wrap:wrap;gap:8px">' +
+          whChips +
+          "</div>" +
+          "</div>"
+        : "") +
+      // ── رصيد أول المدة strip ─────────────────────────────────
+      (openingQty > 0
+        ? '<div class="card" style="margin-bottom:12px;border-right:4px solid var(--warning);padding:12px 20px;display:flex;align-items:center;gap:10px">' +
+          '<i class="ti ti-calendar-stats" style="font-size:18px;color:var(--warning)" aria-hidden="true"></i>' +
+          '<span style="font-weight:700;color:var(--warning)">رصيد أول المدة: </span>' +
+          '<span style="font-size:18px;font-weight:900">' +
+          openingQty +
+          "</span>" +
+          '<span style="color:var(--text3);font-size:13px">' +
+          esc((item || {}).unit || "وحدة") +
+          "</span>" +
+          "</div>"
+        : "") +
+      // ── جدول الحركات — عبر ColumnEngine (Dynamic Columns) ─────
+      '<div class="card"><div class="table-wrap">' +
+      (rows.length
+        ? '<div id="stmt-ce-container"></div>'
+        : '<div class="empty-state">' +
+          '<div class="empty-icon">' +
+          '<span style="display:inline-flex;background:#EFF6FF;border-radius:14px;padding:12px">' +
+          '<i class="ti ti-clipboard-off" style="font-size:36px;color:#2563eb" aria-hidden="true"></i>' +
+          "</span>" +
+          "</div>" +
+          "<p>لا توجد حركات لهذا الصنف</p>" +
+          "</div>") +
+      "</div></div>";
+
+    if (rows.length) {
+      _itemStmtRegisterColumns();
+      var stmtContainer = document.getElementById("stmt-ce-container");
+      if (stmtContainer)
+        ColumnEngine.renderTable("item_statement", stmtContainer, rows, {});
+    }
+  }
+
+  // ── تعديل وحذف الحركات ──────────────────────────────────────
+  // تعديل حركة — يفتح نفس شاشة السند ويملأ البيانات القديمة
+  function editTransaction(id) {
+    var tx = (APP.data.transactions || []).find(function (t) {
+      return t.id === id;
+    });
+    if (!tx) {
+      NotificationEngine.error("الحركة غير موجودة");
+      return;
+    }
+
+    var pageMap = {
+      IN: "tx_in",
+      OUT: "tx_out",
+      TRANSFER: "tx_transfer",
+      DISPATCH: "tx_out",
+      FG_IN: "tx_in",
+      FACTORY_RETURN: "factory_return",
+      WASTE: "tx_out", // [WASTE-FEATURE-2026-08-07] بتستخدم نفس شاشة الصرف
+    };
+    var targetPage = pageMap[tx.type] || "tx_in";
+
+    // ── فتح Drawer جانبي بشاشة الإذن ─────────────────────────
+    _openEditDrawer(tx, targetPage);
+  }
+
+  function _openEditDrawer(tx, targetPage) {
+    var TYPE_LABELS = {
+      IN: "إذن وارد",
+      OUT: "إذن صادر",
+      TRANSFER: "تحويل بين المخازن",
+      DISPATCH: "صرف للمصنع",
+      FG_IN: "استلام منتج تام",
+      FACTORY_RETURN: "مرتجع من المصنع",
+      WASTE: "هالك مخزون", // [WASTE-FEATURE-2026-08-07]
+    };
+    var TYPE_COLORS = {
+      IN: "#10b981",
+      OUT: "#ef4444",
+      TRANSFER: "#7c3aed",
+      DISPATCH: "#f59e0b",
+      FG_IN: "#0d9488",
+      FACTORY_RETURN: "#f97316",
+      WASTE: "#374151", // [WASTE-FEATURE-2026-08-07]
+    };
+    var TYPE_ICONS = {
+      IN: "ti-arrow-bar-down",
+      OUT: "ti-arrow-bar-up",
+      TRANSFER: "ti-arrows-exchange",
+      DISPATCH: "ti-building-factory-2",
+      FG_IN: "ti-circle-check",
+      FACTORY_RETURN: "ti-rotate-clockwise-2",
+    };
+    var txColor = TYPE_COLORS[tx.type] || "var(--accent)";
+    var txIcon = TYPE_ICONS[tx.type] || "ti-edit";
+    var txLabel = TYPE_LABELS[tx.type] || tx.type;
+
+    var subtitle =
+      '<span style="font-family:var(--font-mono)">' +
+      esc(tx.id) +
+      "</span>&nbsp;&nbsp;" +
+      '<span style="background:' +
+      txColor +
+      "1a;color:" +
+      txColor +
+      ";border:1px solid " +
+      txColor +
+      '44;padding:2px 9px;border-radius:20px;font-size:10.5px;font-weight:700;display:inline-flex;align-items:center;gap:3px">' +
+      '<i class="ti ti-edit" style="font-size:10px"></i>وضع التعديل</span>';
+
+    // محتوى الـ drawer بيتملي بعدين بإعادة استخدام renderPage على
+    // عنصر placeholder (نفس تقنية النظام في باقي الموديولات)
+    var html = renderModalBox({
+      title: "تعديل " + txLabel,
+      subtitle: subtitle,
+      icon: txIcon,
+      iconStyle: "background:" + txColor + "22;color:" + txColor,
+      body: '<div id="__edit-tx-content"></div>',
+      closeFn: "_closeEditDrawer()",
+    });
+
+    openStyledDrawer({
+      title: "تعديل " + txLabel,
+      subtitle: subtitle,
+      icon: txIcon,
+      color: "blue",
+      width: 860,
+      body: '<div id="__edit-tx-content"></div>',
+      onReady: function () {
+        var content = document.getElementById("__edit-tx-content");
+        if (!content) return;
+
+        // ── render الصفحة جوّا الـ drawer ─────────────────────────
+        APP._editingTx = tx;
+
+        var realPageContent = document.getElementById("page-content");
+        var savedPage = APP.currentPage;
+
+        if (realPageContent) realPageContent.id = "__page-content-hidden";
+        content.id = "page-content";
+
+        renderPage(targetPage);
+
+        content.id = "__edit-tx-content";
+        if (realPageContent) realPageContent.id = "page-content";
+        APP.currentPage = savedPage;
+
+        // [FIX] إرجاع تلوين السايد بار للصفحة الأصلية
+        document.querySelectorAll(".nav-item").forEach(function (el) {
+          el.classList.toggle("active", el.dataset.page === savedPage);
+        });
+        document.querySelectorAll(".nav-sub-item").forEach(function (el) {
+          var isActive = el.dataset.page === savedPage;
+          el.classList.toggle("active", isActive);
+          if (isActive) {
+            var parentMenu = el.closest("[id$='-menu']");
+            if (parentMenu) {
+              var gId = parentMenu.id.replace("-menu", "");
+              var toggleEl = document.getElementById(gId + "-toggle");
+              var arrowEl = document.getElementById(gId + "-arrow");
+              if (toggleEl) toggleEl.classList.add("open", "has-active");
+              if (arrowEl) arrowEl.style.transform = "rotate(180deg)";
+              parentMenu.style.display = "";
+            }
+          }
+        });
+
+        APP.__editDrawerActive = true;
+      },
+    });
+  }
+
+  function _closeEditDrawer() {
+    APP.__editDrawerActive = false;
+    closeDrawer();
+  }
+  window._closeEditDrawer = _closeEditDrawer;
+
+  /**
+   * تملأ شاشة السند ببيانات الحركة القديمة وتحوّل زر الحفظ لـ updateTransaction
+   * يُستدعى من داخل bindTxIn / bindTxOut / bindTxTransfer
+   */
+  function _prefillEditTx() {
+    var tx = APP._editingTx;
+    if (!tx) return;
+    APP._editingTx = null;
+
+    var type = tx.type;
+
+    // الـ banner اتنقل لـ header الـ drawer — مش محتاجين بانر هنا
+
+    if (type === "IN" || type === "FG_IN" || type === "FACTORY_RETURN") {
+      _prefillIn(tx);
+    } else if (type === "OUT" || type === "DISPATCH" || type === "WASTE") {
+      _prefillOut(tx);
+    } else if (type === "TRANSFER") {
+      _prefillTransfer(tx);
+    }
+  }
+
+  // عرض المرفق الموجود عند التعديل
+  function _prefillAttachment(prefix, url) {
+    if (!url) return;
+    var previewEl = document.getElementById(prefix + "-attach-preview");
+    var areaEl = document.getElementById(prefix + "-attach-area");
+    if (!previewEl) return;
+
+    var isPdf =
+      url.toLowerCase().indexOf(".pdf") !== -1 ||
+      url.toLowerCase().indexOf("pdf") !== -1;
+
+    previewEl.innerHTML = isPdf
+      ? '<div style="display:flex;flex-direction:column;align-items:center;gap:6px">' +
+        '<div style="font-size:28px"></div>' +
+        '<div style="font-size:11px;color:var(--text2);text-align:center">مرفق موجود</div>' +
+        '<a href="' +
+        url +
+        '" target="_blank" onclick="event.stopPropagation()" ' +
+        'style="font-size:11px;color:var(--accent);text-decoration:underline"> عرض المرفق الحالي</a>' +
+        '<div style="font-size:10px;color:var(--text3)">(اضغط للتغيير)</div>' +
+        "</div>"
+      : '<div style="display:flex;flex-direction:column;align-items:center;gap:6px">' +
+        '<img src="' +
+        url +
+        '" style="max-height:120px;max-width:100%;border-radius:8px;object-fit:cover" ' +
+        "onclick=\"event.preventDefault();event.stopPropagation();window.open('" +
+        url +
+        "','_blank')\" " +
+        'style="cursor:pointer">' +
+        '<div style="font-size:11px;color:var(--text2);margin-top:4px;text-align:center">مرفق موجود — اضغط للتكبير</div>' +
+        '<div style="font-size:10px;color:var(--text3)">(اضغط المنطقة للتغيير)</div>' +
+        "</div>";
+
+    if (areaEl) {
+      areaEl.style.borderColor = "var(--accent)";
+      areaEl.style.background = "var(--accent-bg, #eff6ff)";
+    }
+
+    // احتفظ بالـ URL القديم كـ fallback لو المستخدم ما غيّرش المرفق
+    window["_existingAttachment_" + prefix] = url;
+  }
+
+  // ملء شاشة الوارد (IN / FG_IN)
+  function _prefillIn(tx) {
+    // [FIX] استرجاع رقم الإذن الأصلي بدل الـ ID الجديد التلقائي
+    var permitDiv = document.getElementById("in-permit-id");
+    if (permitDiv && tx.permit_id) {
+      permitDiv.textContent = tx.permit_id;
+    }
+    var permitHero = permitDiv ? permitDiv.closest(".tx-in-permit-hero") : null;
+    if (permitHero) {
+      var badge = permitHero.querySelector(".tx-in-hero-badge");
+      if (badge) badge.textContent = " وضع التعديل";
+    }
+
+    var refEl = document.getElementById("in-ref");
+    var partyEl = document.getElementById("in-party");
+    var notesEl = document.getElementById("in-notes");
+    if (refEl) refEl.value = tx.ref || "";
+    if (partyEl) {
+      var _inPartyRecord = (APP.data.suppliers || [])
+        .concat(APP.data.customers || [])
+        .find(function (p) {
+          return p.id === tx.party;
+        });
+      partyEl.value = _inPartyRecord ? _inPartyRecord.name : tx.party || "";
+      var _inPartyHidden = document.getElementById("in-party-id");
+      if (_inPartyHidden) _inPartyHidden.value = tx.party || "";
+    }
+    if (notesEl) notesEl.value = tx.notes || "";
+    _prefillAttachment("in", tx.attachment_url);
+
+    var toSel = document.getElementById("in-to");
+
+    if (toSel) {
+      toSel.value = tx.to_warehouse || "";
+      toSel.dispatchEvent(new Event("change"));
+    }
+
+    // [FIX] دعم تعدد الأصناف — loop على tx.items لو موجودة
+    var itemsList =
+      tx.items && tx.items.length > 0
+        ? tx.items
+        : [{ item_id: tx.item_id, color: tx.color, quantity: tx.quantity }];
+
+    var _addInItemSequential = function (idx) {
+      if (idx >= itemsList.length) {
+        _switchBtnToUpdate("btn-in", tx, tx.type);
+        return;
+      }
+      var it = itemsList[idx];
+      var itemSel = document.getElementById("in-item");
+      var qtyEl = document.getElementById("in-qty");
+      if (itemSel) {
+        itemSel.value = it.item_id || "";
+        itemSel.dispatchEvent(new Event("change"));
+      }
+      setTimeout(function () {
+        if (it.color) _setCCDValue("in-color", it.color);
+        if (qtyEl) qtyEl.value = it.quantity || 1;
+        var addBtn = document.getElementById("btn-add-in-item");
+        if (addBtn) addBtn.click();
+        // انتظر الـ DOM يتحدث ثم كمّل الصنف التالي
+        setTimeout(function () {
+          _addInItemSequential(idx + 1);
+        }, 150);
+      }, 200);
+    };
+    setTimeout(function () {
+      _addInItemSequential(0);
+    }, 100);
+  }
+
+  // ملء شاشة الصادر (OUT / DISPATCH)
+  function _prefillOut(tx) {
+    // [FIX] استرجاع رقم الإذن الأصلي بدل الـ ID الجديد التلقائي
+    var permitDiv = document.getElementById("out-permit-id");
+    if (permitDiv && tx.permit_id) {
+      permitDiv.textContent = tx.permit_id;
+    }
+    var permitHero = permitDiv
+      ? permitDiv.closest(".tx-out-permit-hero")
+      : null;
+    if (permitHero) {
+      var badge = permitHero.querySelector(".tx-out-hero-badge");
+      if (badge) badge.textContent = " وضع التعديل";
+    }
+
+    var refEl = document.getElementById("out-ref");
+    var partyEl = document.getElementById("out-party");
+    var notesEl = document.getElementById("out-notes");
+    if (refEl) refEl.value = tx.ref || "";
+    if (partyEl) {
+      var _outPartyRecord = (APP.data.customers || [])
+        .concat(APP.data.suppliers || [])
+        .find(function (p) {
+          return p.id === tx.party;
+        });
+      partyEl.value = _outPartyRecord ? _outPartyRecord.name : tx.party || "";
+      var _outPartyHidden = document.getElementById("out-party-id");
+      if (_outPartyHidden) _outPartyHidden.value = tx.party || "";
+    }
+    if (notesEl) notesEl.value = tx.notes || "";
+    _prefillAttachment("out", tx.attachment_url);
+
+    var fromSel = document.getElementById("out-from");
+
+    if (fromSel) {
+      fromSel.value = tx.from_warehouse || "";
+      fromSel.dispatchEvent(new Event("change"));
+    }
+
+    // [FIX] دعم تعدد الأصناف — loop على tx.items لو موجودة
+    var outItemsList =
+      tx.items && tx.items.length > 0
+        ? tx.items
+        : [{ item_id: tx.item_id, color: tx.color, quantity: tx.quantity }];
+
+    var _addOutItemSequential = function (idx) {
+      if (idx >= outItemsList.length) {
+        _switchBtnToUpdate("btn-out", tx, tx.type);
+        return;
+      }
+      var it = outItemsList[idx];
+      var itemSel = document.getElementById("out-item");
+      var qtyEl = document.getElementById("out-qty");
+      if (itemSel) {
+        itemSel.value = it.item_id || "";
+        itemSel.dispatchEvent(new Event("change"));
+      }
+      setTimeout(function () {
+        if (it.color) _setCCDValue("out-color", it.color);
+        if (qtyEl) qtyEl.value = it.quantity || 1;
+        var addBtn = document.getElementById("btn-add-out-item");
+        if (addBtn) addBtn.click();
+        setTimeout(function () {
+          _addOutItemSequential(idx + 1);
+        }, 150);
+      }, 200);
+    };
+    setTimeout(function () {
+      _addOutItemSequential(0);
+    }, 100);
+  }
+
+  // ملء شاشة التحويل (TRANSFER)
+  function _prefillTransfer(tx) {
+    var itemSel = document.getElementById("tr-item");
+    var fromSel = document.getElementById("tr-from");
+    var toSel = document.getElementById("tr-to");
+    var colorSel = document.getElementById("tr-color");
+    var qtyEl = document.getElementById("tr-qty");
+    var notesEl = document.getElementById("tr-notes");
+
+    if (itemSel) {
+      itemSel.value = tx.item_id || "";
+      itemSel.dispatchEvent(new Event("change"));
+    }
+    if (notesEl) notesEl.value = tx.notes || "";
+
+    setTimeout(function () {
+      if (fromSel) fromSel.value = tx.from_warehouse || "";
+      if (toSel) toSel.value = tx.to_warehouse || "";
+      // إصلاح: مطابقة اللون عبر CCD
+      if (tx.color) _setCCDValue("tr-color", tx.color);
+      if (qtyEl) qtyEl.value = tx.quantity || 1;
+      _switchBtnToUpdate("btn-tr", tx, "TRANSFER");
+    }, 200);
+  }
+
+  // تحويل زر التسجيل إلى زر حفظ التعديل
+  function _switchBtnToUpdate(btnId, tx, type) {
+    var btn = document.getElementById(btnId);
+    if (!btn) return;
+
+    btn.textContent = " حفظ التعديلات";
+    btn.style.background = "var(--warning, #f59e0b)";
+    btn.style.color = "#fff";
+
+    // استبدل الزر بنسخة جديدة لإزالة الـ listener القديم
+    var newBtn = btn.cloneNode(true);
+    btn.parentNode.replaceChild(newBtn, btn);
+
+    newBtn.addEventListener("click", function () {
+      var updated = {
+        id: tx.id,
+        type: type,
+        user: tx.user || (APP.currentUser ? APP.currentUser.username : ""),
+        permit_id: tx.permit_id || "", // [FIX] احتفظ بـ permit_id الأصلي
+      };
+
+      if (type === "TRANSFER") {
+        updated.item_id =
+          (document.getElementById("tr-item") || {}).value || tx.item_id;
+        updated.quantity = Number(
+          (document.getElementById("tr-qty") || {}).value || tx.quantity,
+        );
+        updated.from_warehouse =
+          (document.getElementById("tr-from") || {}).value || tx.from_warehouse;
+        updated.to_warehouse =
+          (document.getElementById("tr-to") || {}).value || tx.to_warehouse;
+        updated.color =
+          (document.getElementById("tr-color") || {}).value || tx.color || "";
+        updated.notes = (
+          (document.getElementById("tr-notes") || {}).value || ""
+        ).trim();
+      } else {
+        // وارد أو صادر — خد من جدول الأصناف
+        var storeKey =
+          type === "IN" || type === "FG_IN" || type === "FACTORY_RETURN"
+            ? "IN"
+            : "OUT";
+        var items = (_txItemsStore[storeKey] || []).filter(Boolean);
+
+        if (!items.length) {
+          NotificationEngine.error("أضف الصنف في الجدول ثم اضغط حفظ");
+          return;
+        }
+
+        var prefix =
+          type === "IN" || type === "FG_IN" || type === "FACTORY_RETURN"
+            ? "in"
+            : "out";
+        var first = items[0];
+
+        updated.item_id = first.item_id;
+        updated.quantity = first.quantity;
+        updated.from_warehouse =
+          type === "OUT" || type === "DISPATCH" || type === "WASTE"
+            ? first.warehouse
+            : tx.from_warehouse || "";
+        updated.to_warehouse =
+          type === "IN" || type === "FG_IN" || type === "FACTORY_RETURN"
+            ? first.warehouse
+            : tx.to_warehouse || "";
+        updated.color = first.color || "";
+        // [FIX] لو الـ input فاضي — احتفظ بالقيمة القديمة من tx
+        updated.ref =
+          (
+            (document.getElementById(prefix + "-ref") || {}).value || ""
+          ).trim() ||
+          tx.ref ||
+          "";
+        updated.party =
+          (
+            (document.getElementById(prefix + "-party") || {}).value || ""
+          ).trim() ||
+          tx.party ||
+          "";
+        updated.notes = [
+          first.notes || "",
+          (
+            (document.getElementById(prefix + "-notes") || {}).value || ""
+          ).trim(),
+        ]
+          .filter(Boolean)
+          .join(" | ");
+      }
+
+      if (!updated.item_id) {
+        NotificationEngine.error("اختر الصنف");
+        return;
+      }
+      if (!updated.quantity || updated.quantity <= 0) {
+        NotificationEngine.error("الكمية يجب أن تكون أكبر من صفر");
+        return;
+      }
+
+      // [FIX] احتفظ بالـ attachment القديم كـ fallback
+      // لو المستخدم مارفعش صورة جديدة، نبعت الـ URL القديم
+      updated.attachment_url = tx.attachment_url || "";
+
+      // [FIX] لو فيه ملف جديد اتار — ارفعه الأول
+      var _editFilePrefix =
+        type === "IN" || type === "FG_IN" || type === "FACTORY_RETURN"
+          ? "in"
+          : type === "OUT" || type === "DISPATCH" || type === "WASTE"
+            ? "out"
+            : null;
+      var _editNewFile =
+        _editFilePrefix && _txFiles ? _txFiles[_editFilePrefix] : null;
+
+      function _doUpdateTx(finalUpdated) {
+        newBtn.disabled = true;
+        newBtn.textContent = "⏳ جاري الحفظ...";
+        // [SE-ROLLOUT] عبر SaveEngine.run بدل google.script.run/_gsr المباشر
+        SaveEngine.run({
+          screen: "Transactions",
+          entity: "transaction",
+          recordId: finalUpdated && finalUpdated.id,
+          fn: "updateTransaction",
+          data: finalUpdated,
+          params: function (data) {
+            return [data];
+          },
+          savingLabel: "جاري حفظ التعديلات...",
+          onSuccess: function () {
+            newBtn.disabled = false;
+            newBtn.textContent = " حفظ التعديلات";
+            reloadAfterMutation(
+              function () {
+                if (APP.__editDrawerActive) {
+                  _closeEditDrawer();
+                  if (typeof window._applyTxFilter === "function")
+                    window._applyTxFilter();
+                } else {
+                  renderPage("transactions");
+                }
+              },
+              null,
+              { emoji: "", successMsg: "تم حفظ التعديلات " },
+              // [PERF-FIX-7] Optimistic Update للحركة المعدّلة
+              {
+                collection: "transactions",
+                record: Object.assign({}, finalUpdated),
+                op: "update",
+                idField: "id",
+              },
+            );
+          },
+          onError: function () {
+            newBtn.disabled = false;
+            newBtn.textContent = " حفظ التعديلات";
+          },
+        });
+      }
+
+      if (_editNewFile) {
+        // فيه ملف جديد — ارفعه الأول
+        var _editStatusEl = _editFilePrefix
+          ? document.getElementById(_editFilePrefix + "-upload-status")
+          : null;
+        if (_editStatusEl) {
+          _editStatusEl.style.display = "flex";
+          _editStatusEl.innerHTML =
+            '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div> جاري رفع المرفق...';
+        }
+        newBtn.disabled = true;
+        newBtn.textContent = " جاري رفع الملف...";
+        NotificationEngine.loading("جاري رفع المرفق...");
+
+        var _editReader = new FileReader();
+        _editReader.onload = function (ev) {
+          var base64 = ev.target.result.split(",")[1];
+          _gsr(
+            "uploadFile",
+            [
+              base64,
+              _editNewFile.name,
+              _editNewFile.type,
+              {
+                userName: APP.currentUser
+                  ? APP.currentUser.full_name ||
+                    APP.currentUser.username ||
+                    "مستخدم"
+                  : "مستخدم",
+                moduleName: type === "IN" ? "إذن وارد" : "إذن صادر",
+              },
+            ],
+            {
+              label: "uploadFile:editTx",
+              rawResponse: true,
+              onSuccess: function (r) {
+                var res = r && r.data;
+                var result;
+                try {
+                  result = JSON.parse(res);
+                } catch (ex) {
+                  result = { success: false, error: ex.message };
+                }
+                if (result.success) {
+                  if (_editStatusEl)
+                    _editStatusEl.innerHTML = " تم رفع المرفق بنجاح";
+                  updated.attachment_url = result.viewUrl;
+                  if (_txFiles) _txFiles[_editFilePrefix] = null;
+                  dismissLoadingToast(); // هيبدأ لودينج تاني في _doUpdateTx
+                  _doUpdateTx(updated);
+                } else {
+                  if (_editStatusEl)
+                    _editStatusEl.innerHTML =
+                      " فشل رفع الملف: " + esc(result.error || "");
+                  newBtn.disabled = false;
+                  newBtn.textContent = " حفظ التعديلات";
+                  finishLoadingToast(
+                    " فشل رفع الملف — " + (result.error || ""),
+                    "error",
+                  );
+                }
+              },
+              onError: function (r) {
+                if (_editStatusEl) _editStatusEl.innerHTML = " خطأ في الرفع";
+                newBtn.disabled = false;
+                newBtn.textContent = " حفظ التعديلات";
+                finishLoadingToast(" خطأ: " + (r.message || r), "error");
+              },
+            },
+          );
+        };
+        _editReader.readAsDataURL(_editNewFile);
+      } else {
+        // مفيش ملف جديد — حفظ مباشرة مع الـ URL القديم
+        _doUpdateTx(updated);
+      }
+    });
+  }
+
+  // حذف حركة
+  function deleteTransactionConfirm(id) {
+    showConfirm({
+      icon: "ti-trash",
+      iconColor: "#dc2626",
+      title: "حذف الحركة",
+      message: "هل أنت متأكد من حذف هذه الحركة؟\nسيتم تعديل الرصيد تلقائيًا.",
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      onConfirm: function (unfreeze) {
+        // [SE-ROLLOUT] عبر SaveEngine.run بدل google.script.run/_gsr المباشر
+        SaveEngine.run({
+          screen: "Transactions",
+          entity: "transaction",
+          recordId: id,
+          fn: "deleteTransaction",
+          data: { id: id },
+          params: function () {
+            // [FIX-DELTX-2026-08] كان بيبعت [id, username] بس، من غير
+            // sessionToken. الـ backend deleteTransaction(id, user,
+            // sessionToken) بيستدعي _checkPermission اللي fail-closed
+            // من غير sessionToken (بترجع "جلسة غير صالحة" دايمًا)،
+            // يعني حذف أي حركة مخزون كان معطوب 100%.
+            return [
+              id,
+              APP.currentUser ? APP.currentUser.username : null,
+              SESSION.token,
+            ];
+          },
+          savingLabel: "جاري حذف الحركة...",
+          successMessage: "تم حذف الحركة",
+          onSuccess: function () {
+            // حذف الحركة يؤثر على الرصيد (stock) — نحتاج full refresh للرصيد
+            // لكن نحدّث transactions محلياً فوراً
+            reloadAfterMutation(
+              function () {
+                // بعد المزامنة الخلفية، أعد تطبيق الفلتر
+                if (typeof window._applyTxFilter === "function")
+                  window._applyTxFilter();
+              },
+              unfreeze,
+              { emoji: "", successMsg: "تم حذف الحركة " },
+              {
+                collection: "transactions",
+                record: { id: String(id) },
+                op: "remove",
+                idField: "id",
+              },
+            );
+          },
+          onError: function () {
+            unfreeze();
+          },
+        });
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+</script>

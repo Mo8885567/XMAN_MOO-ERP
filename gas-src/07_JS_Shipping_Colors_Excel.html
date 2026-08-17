@@ -1,0 +1,4872 @@
+<script>
+  // ───────────────────────────────────────────────────────────────
+  // JS_Shipping_Colors_Excel.html — جزء 7/10 من JavaScript.html الأصلي
+  // النطاق الأصلي: سطر 18439–21882 | الشحن + الألوان العامة + استيراد إكسيل + إرسال كتالوج
+  // ───────────────────────────────────────────────────────────────
+
+  // ─────────────────────────────────────────────────────────────
+  // §SHIP-DASH  لوحة تحكم الشحن
+  // ─────────────────────────────────────────────────────────────
+  function bindShippingDashboard() {
+    ensureExtendedData(function () {
+      var _set = function (id, val) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = val;
+      };
+      var shipments = APP.data.shipments || [];
+
+      var statusCounts = { pending: 0, delivered: 0, returned: 0 };
+      var totalFees = 0;
+      var zones = {};
+      shipments.forEach(function (s) {
+        var st = (s.status || s.shipping_status || "").toUpperCase();
+        if (st === "PENDING" || st === "معلقة" || st === "قيد التوصيل")
+          statusCounts.pending++;
+        if (st === "DELIVERED" || st === "مُسلَّمة" || st === "مسلمة")
+          statusCounts.delivered++;
+        if (st === "RETURNED" || st === "مُرتجعة" || st === "مرتجعة")
+          statusCounts.returned++;
+        totalFees += parseFloat(s.shipping_fee || s.fee || 0);
+        if (s.zone || s.area || s.city)
+          zones[s.zone || s.area || s.city] = true;
+      });
+
+      _set("shpd-stat-total", shipments.length);
+      _set("shpd-stat-pending", statusCounts.pending);
+      _set("shpd-stat-delivered", statusCounts.delivered);
+      _set("shpd-stat-returned", statusCounts.returned);
+      _set("shpd-stat-zones", Object.keys(zones).length || "—");
+      _set("shpd-stat-fees", formatMoney(totalFees, { decimals: 0 }));
+
+      // Recent shipments
+      var tbody = document.getElementById("shpd-recent");
+      if (tbody) {
+        var recent = shipments.slice(-8).reverse();
+        var stStyle = function (st) {
+          st = (st || "").toUpperCase();
+          if (st === "DELIVERED" || st === "مسلمة")
+            return "color:#10b981;font-weight:600";
+          if (st === "PENDING" || st === "معلقة")
+            return "color:#f59e0b;font-weight:600";
+          if (st === "RETURNED" || st === "مرتجعة")
+            return "color:#ef4444;font-weight:600";
+          return "color:#6b7280";
+        };
+        tbody.innerHTML = !recent.length
+          ? '<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--text3)">لا توجد شحنات</td></tr>'
+          : recent
+              .map(function (s) {
+                return (
+                  "<tr><td style='font-weight:700;color:var(--primary)'>" +
+                  esc(s.ref || s.id || "") +
+                  "</td>" +
+                  "<td>" +
+                  esc(s.customer_name || s.customer || "") +
+                  "</td>" +
+                  "<td>" +
+                  esc(s.zone || s.area || s.city || "—") +
+                  "</td>" +
+                  "<td style='text-align:center'><span style='" +
+                  stStyle(s.status || s.shipping_status) +
+                  "'>" +
+                  esc(s.status || s.shipping_status || "") +
+                  "</span></td>" +
+                  "<td style='color:var(--text3);font-size:12px'>" +
+                  (s.date || s.created_at || "").slice(0, 10) +
+                  "</td></tr>"
+                );
+              })
+              .join("");
+      }
+    });
+  }
+
+  // إدارة المخازن — Warehouses
+  // ─────────────────────────────────────────────────────────────
+
+  // ── جدول المخازن عبر ColumnEngine ───────────────────────────────
+  // [COLUMN-ENGINE] شاشة "المخازن" (سايد بار → المخزون → المخازن،
+  // page:"warehouses"). كانت آخر جدول متبقي بأعمدة Hardcoded داخل
+  // renderWarehouses() في Templates_04.html — نفس نمط شاشتي "الأصناف"
+  // و"المجموعات" تمامًا.
+  var _warehousesColumnsRegistered = false;
+  var _warehousesTypeLabels = {
+    خامات: " خامات",
+    اكسسوار: " اكسسوار",
+    تام: " تام",
+    مختلط: " مختلط",
+  };
+
+  function _warehousesRegisterColumns() {
+    if (_warehousesColumnsRegistered) return;
+    _warehousesColumnsRegistered = true;
+    ColumnEngine.register(
+      "warehouses",
+      [
+        {
+          key: "name",
+          label: "الاسم",
+          type: "text",
+          width: 200,
+          frozen: "right",
+          format: function (v) {
+            return "<b>" + esc(v || "—") + "</b>";
+          },
+        },
+        { key: "code", label: "الكود", type: "text", width: 100 },
+        {
+          key: "type",
+          label: "النوع",
+          type: "text",
+          width: 110,
+          format: function (v) {
+            return _warehousesTypeLabels[v] || esc(v || "—");
+          },
+        },
+        { key: "manager", label: "المسؤول", type: "text", width: 140 },
+        { key: "location", label: "الموقع", type: "text", width: 160 },
+        {
+          key: "status",
+          label: "الحالة",
+          type: "text",
+          width: 100,
+          format: function (v) {
+            var status = (v || "").toString().trim();
+            return status.includes("نشط")
+              ? '<span class="badge badge-success">نشط</span>'
+              : '<span class="badge badge-danger">موقوف</span>';
+          },
+        },
+        {
+          key: "item_count",
+          label: "عدد الأصناف",
+          type: "number",
+          width: 110,
+          align: "center",
+          format: function (v) {
+            var n = Number(v || 0);
+            return n > 0
+              ? '<span style="font-weight:700;color:var(--accent)">' +
+                  n +
+                  "</span>"
+              : '<span style="color:var(--text3)">—</span>';
+          },
+        },
+        {
+          key: "notes",
+          label: "ملاحظات",
+          type: "text",
+          format: function (v) {
+            return esc(v || "—");
+          },
+        },
+      ],
+      {
+        rowKey: "id",
+        title: "قائمة المخازن",
+        contextMenuType: "warehouses",
+      },
+    );
+  }
+
+  /** تجهيز صفوف المخازن (عدد الأصناف المرتبطة بكل مخزن) قبل تمريرها لـ ColumnEngine */
+  function _warehousesPrepareRowsForCE(warehouses) {
+    var groups = APP.data.groups || [];
+    var items = APP.data.items || [];
+
+    // خريطة: warehouse_id → Set(item_ids) — بنفس منطق النسخة القديمة
+    var whItemIds = {};
+    groups.forEach(function (g) {
+      if (!g.warehouse_id) return;
+      var whId = String(g.warehouse_id);
+      if (!whItemIds[whId]) whItemIds[whId] = {};
+      items.forEach(function (it) {
+        if (String(it.group) === String(g.id)) {
+          whItemIds[whId][String(it.id || it.item_id || "")] = true;
+        }
+      });
+    });
+
+    return (warehouses || []).map(function (wh) {
+      var row = Object.assign({}, wh);
+      row.item_count = whItemIds[String(wh.id)]
+        ? Object.keys(whItemIds[String(wh.id)]).length
+        : 0;
+      return row;
+    });
+  }
+
+  function _renderWarehousesTableCE(container, warehouses) {
+    if (!container) return;
+    _warehousesRegisterColumns();
+    // [FIX] الضغط على صف المخزن بقى مايفتحش شاشة التعديل تلقائي —
+    // التعديل بقى حصري عن طريق القائمة السياقية (زر يمين).
+    ColumnEngine.renderTable(
+      "warehouses",
+      container,
+      _warehousesPrepareRowsForCE(warehouses),
+    );
+  }
+
+  function bindWarehouses() {
+    var btnAddWh = document.getElementById("btn-add-wh");
+    if (btnAddWh)
+      btnAddWh.addEventListener("click", () =>
+        requirePermission("addWarehouse", () => openWarehouseModal(null)),
+      );
+
+    _renderWarehousesTableCE(
+      document.getElementById("warehouses-ce-container"),
+      APP.data.warehouses || [],
+    );
+  }
+
+  function editWarehouse(id) {
+    requirePermission("updateWarehouse", () => {
+      var wh = APP.data.warehouses.find((w) => w.id === id);
+      if (wh) openWarehouseModal(wh);
+    });
+  }
+
+  function delWarehouse(id) {
+    if (!requirePermission("deleteWarehouse")) return;
+    showConfirm({
+      icon: "ti-building-warehouse",
+      iconColor: "#0369a1",
+      title: "حذف مخزن",
+      message: "هل أنت متأكد من حذف هذا المخزن؟",
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      onConfirm: (unfreeze) => {
+        _gsr(
+          "deleteWarehouse",
+          [id, APP.currentUser ? APP.currentUser.username : "", SESSION.token],
+          {
+            label: "deleteWarehouse",
+            onSuccess: (r) => {
+              NotificationEngine.success(r.message);
+              reloadAfterMutation(
+                null,
+                unfreeze,
+                { emoji: "", successMsg: "تم حذف المخزن " },
+                {
+                  collection: "warehouses",
+                  record: { id: String(id) },
+                  op: "remove",
+                  idField: "id",
+                },
+              );
+            },
+            onError: (r) => {
+              unfreeze();
+              NotificationEngine.error(r.message || "خطأ في الحذف");
+            },
+          },
+        );
+      },
+    });
+  }
+
+  function openWarehouseModal(wh) {
+    var isEdit = !!wh;
+
+    var typeOptions = ["خامات", "اكسسوار", "تام", "مختلط"]
+      .map(function (t) {
+        return (
+          '<option value="' +
+          t +
+          '"' +
+          (isEdit && wh.type === t
+            ? " selected"
+            : !isEdit && t === "خامات"
+              ? " selected"
+              : "") +
+          ">" +
+          t +
+          "</option>"
+        );
+      })
+      .join("");
+
+    openStyledDrawer({
+      title: isEdit ? "تعديل مخزن" : "مخزن جديد",
+      subtitle: isEdit ? "تعديل بيانات المخزن" : "إضافة مخزن جديد للنظام",
+      icon: isEdit ? "ti-building-store" : "ti-building-warehouse",
+      color: "blue",
+      width: 860,
+      fromLeft: true,
+      body: `<div class="modal-body"><div class="form-grid">
+                <div class="field">
+                  <label>اسم المخزن <span style="color:#ef4444">*</span></label>
+                  <input class="input" id="wh-name" data-testid="wh-name" value="${isEdit ? esc(wh.name) : ""}"
+                         placeholder="مثال: مخزن الخامات الرئيسي">
+                </div>
+
+                <div class="field">
+                  <label>كود المخزن</label>
+                  <input class="input" id="wh-code" data-testid="wh-code" data-allow-alpha="true" value="${isEdit ? esc(wh.code || "") : ""}"
+                         placeholder="مثال: RAW">
+                </div>
+
+                <div class="field">
+                  <label>نوع المخزن <span style="color:#ef4444">*</span></label>
+                  <select class="input" id="wh-type" data-testid="wh-type">${typeOptions}</select>
+                </div>
+
+                <div class="field">
+                  <label>المسؤول عن المخزن</label>
+                  <input class="input" id="wh-manager" data-testid="wh-manager" value="${isEdit ? esc(wh.manager || "") : ""}"
+                         placeholder="اسم المسؤول">
+                </div>
+
+                <div class="field">
+                  <label>الموقع / العنوان</label>
+                  <input class="input" id="wh-location" data-testid="wh-location" value="${isEdit ? esc(wh.location || "") : ""}"
+                         placeholder="مثال: الدور الأول — المبنى A">
+                </div>
+
+                <div class="field">
+                  <label>حالة المخزن</label>
+                  <select class="input" id="wh-status" data-testid="wh-status">
+                    <option value="نشط" ${isEdit && wh.status === "نشط" ? "selected" : !isEdit ? "selected" : ""}> نشط</option>
+                    <option value="موقوف" ${isEdit && wh.status === "موقوف" ? "selected" : ""}> موقوف</option>
+                  </select>
+                </div>
+
+                <div class="field full">
+                  <label>ملاحظات</label>
+                  <textarea class="input" id="wh-notes" rows="3" placeholder="">${isEdit ? esc(wh.notes || "") : ""}</textarea>
+                </div>
+              </div>
+              </div>`,
+      footer: `<button class="btn btn-outline" data-testid="btn-cancel-warehouse" onclick="closeStyledDrawer()">إلغاء</button>
+                <button class="btn btn-primary" id="save-wh-btn" data-testid="btn-save-warehouse">
+                  <i class="ti ${isEdit ? "ti-device-floppy" : "ti-building-warehouse"}"></i>
+                  ${isEdit ? "حفظ التعديلات" : "إضافة المخزن"}
+                </button>`,
+      onReady: function () {
+        if (typeof VF !== "undefined") {
+          VF.bind("wh-name", VF.RULES.requiredText("اسم المخزن"));
+        }
+        // [AUTO-CODE] لمخزن جديد: اجلب معاينة الكود التسلسلي التالي من
+        // السيرفر (بدون استهلاكه — يظل قابلاً للتعديل بالكامل، والتحقق
+        // الملزم من عدم التكرار يتم في addWarehouse وقت الحفظ الفعلي).
+        if (!isEdit) {
+          var whCodeEl = document.getElementById("wh-code");
+          if (whCodeEl && typeof google !== "undefined") {
+            _gsr("getNextWarehouseCode", [], {
+              onSuccess: function (res) {
+                if (whCodeEl && !whCodeEl.value) {
+                  whCodeEl.value = (res && res.data) || "";
+                }
+              },
+              onError: function () {},
+            });
+          }
+        }
+        document
+          .getElementById("save-wh-btn")
+          .addEventListener("click", function () {
+            var data = {
+              id: isEdit ? wh.id : null,
+              name: document.getElementById("wh-name").value.trim(),
+              code: document.getElementById("wh-code").value.trim(),
+              type: document.getElementById("wh-type").value,
+              manager: document.getElementById("wh-manager").value.trim(),
+              status: document.getElementById("wh-status").value,
+              location: document.getElementById("wh-location").value.trim(),
+              notes: document.getElementById("wh-notes").value.trim(),
+              user: APP.currentUser ? APP.currentUser.username : "SYSTEM",
+              sessionToken: SESSION.token,
+            };
+
+            // [SAVE-ENGINE] موحّد عبر 32_JS_SaveEngine.html — لا تعيد كتابة منطق حفظ يدوي هنا
+            SaveEngine.run({
+              screen: "Warehouse",
+              entity: "warehouse",
+              recordId: data.id,
+              rules: [
+                {
+                  test: function () {
+                    return (
+                      typeof VF === "undefined" ||
+                      VF.validateForm([
+                        {
+                          fieldId: "wh-name",
+                          rules: VF.RULES.requiredText("اسم المخزن"),
+                        },
+                      ])
+                    );
+                  },
+                  message: " راجع الحقول المظللة بالأحمر",
+                },
+                {
+                  test: function () {
+                    return !!data.name;
+                  },
+                  message: " اسم المخزن مطلوب",
+                },
+              ],
+              data: data,
+              fn: isEdit ? "updateWarehouse" : "addWarehouse",
+              // [SOFT-SAVE] اقفل الدرج فوراً قبل نداء السيرفر — نفس نمط
+              // شاشات الأصناف/المجموعات — بعدها تظهر فقاعة "⏳ جاري الحفظ..."
+              closeFn: function () {
+                closeStyledDrawer();
+              },
+              successMessage: isEdit
+                ? "تم تعديل المخزن "
+                : "تم إضافة المخزن ",
+              onSuccess: function (res) {
+                // الدرج اتقفل بالفعل قبل نداء السيرفر (closeFn فوق)
+                // Optimistic patch: أضف/حدّث المخزن في الكاش فوراً
+                var patchedRecord = Object.assign({}, data, {
+                  id: isEdit
+                    ? wh.id
+                    : (res.data && res.data.id) ||
+                      data.code ||
+                      "wh_" + Date.now(),
+                });
+                reloadAfterMutation(
+                  function () {
+                    renderPage("warehouses");
+                  },
+                  null,
+                  // [SE-BUBBLE-FIX] false = وضع صامت — SaveEngine.run فوق
+                  // بيدير فقاعة "جار الحفظ → جار التحديث → تم الحفظ" لوحده
+                  // بالفعل (successMessage فوق)، فمفيش داعي reloadAfterMutation
+                  // تفتح فقاعتها الخاصة وتقفلها فجأة — كان ده سبب الفجوة
+                  // الفاضية بين اختفاء "جار الحفظ" وظهور "تم الحفظ".
+                  false,
+                  {
+                    collection: "warehouses",
+                    record: patchedRecord,
+                    op: isEdit ? "update" : "add",
+                    idField: "id",
+                  },
+                );
+              },
+            });
+          });
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // الشحن والتسليم — Shipping
+  // ─────────────────────────────────────────────────────────────
+
+  // ── حالات الشحن ─────────────────────────────────────────────
+  var SHIP_STATUSES = {
+    "بانتظار الشحن": { color: "#0369a1", bg: "#e0f2fe", icon: "" }, // v4.2 — من إذن الصادر
+    معلق: { color: "var(--warning)", bg: "var(--warning-soft)", icon: "⏳" },
+    "جاهز للشحن": {
+      color: "#7c3aed",
+      bg: "#ede9fe",
+      icon: "ti-package",
+      iconColor: "#9333ea",
+    }, // v4.2
+    "في الطريق": {
+      color: "var(--accent2)",
+      bg: "var(--teal-soft)",
+      icon: "ti-truck-off",
+      iconColor: "#dc2626",
+    },
+    "تم التسليم": {
+      color: "var(--success)",
+      bg: "var(--success-soft)",
+      icon: "",
+    },
+    ملغي: { color: "var(--danger)", bg: "var(--danger-soft)", icon: "" },
+  };
+
+  function shipStatusBadge(status) {
+    var s = SHIP_STATUSES[status] || {
+      color: "var(--text3)",
+      bg: "var(--surface2)",
+      icon: "•",
+    };
+    return (
+      '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;background:' +
+      s.bg +
+      ";color:" +
+      s.color +
+      '">' +
+      s.icon +
+      " " +
+      esc(status) +
+      "</span>"
+    );
+  }
+
+  // ── الصفحة الرئيسية ──────────────────────────────────────────
+
+  // ─────────────────────────────────────────────────────────────
+  // §SHIP-COMPANIES  شركات الشحن (المرحلة 1 من موديول الشحن)
+  // ─────────────────────────────────────────────────────────────
+  // [COLUMN-ENGINE] تعريف أعمدة جدول شركات الشحن — العرض/التعديل/الحذف
+  // بقوا حصريًا عبر القائمة السياقية (contextMenuType: "shipping_companies"
+  // — راجع 20_JS_ContextMenu.html) بدل عمود الإجراءات الثابت القديم.
+  var _shippingCompaniesColumnsRegistered = false;
+  function _shippingCompaniesRegisterColumns() {
+    if (_shippingCompaniesColumnsRegistered) return;
+    _shippingCompaniesColumnsRegistered = true;
+    ColumnEngine.register(
+      "shipping_companies",
+      [
+        {
+          key: "code",
+          label: "الكود",
+          type: "text",
+          width: 100,
+          frozen: "right",
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px;color:#9A3412">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "name",
+          label: "اسم الشركة",
+          type: "text",
+          width: 220,
+          format: function (v, row) {
+            return (
+              '<div style="display:flex;align-items:center;gap:8px">' +
+              (row.logo_url
+                ? '<img src="' +
+                  esc(row.logo_url) +
+                  '" style="width:28px;height:28px;border-radius:8px;object-fit:cover;flex-shrink:0">'
+                : iconBadge(
+                    "ti-truck",
+                    "var(--orange-soft)",
+                    "var(--orange)",
+                  )) +
+              "<b>" +
+              esc(v || "—") +
+              "</b></div>"
+            );
+          },
+        },
+        {
+          key: "shipping_type",
+          label: "النوع",
+          type: "badge",
+          width: 100,
+          format: function (v) {
+            var typeMeta =
+              SHIPPING_TYPE_LABELS[v] || SHIPPING_TYPE_LABELS.external;
+            return (
+              '<span class="badge" style="background:' +
+              typeMeta.bg +
+              ";color:" +
+              typeMeta.color +
+              '">' +
+              typeMeta.label +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "phone",
+          label: "الهاتف",
+          type: "text",
+          width: 140,
+          format: function (v) {
+            return v
+              ? '<a href="tel:' +
+                  esc(v) +
+                  '" style="color:var(--accent)">' +
+                  esc(v) +
+                  "</a>"
+              : "—";
+          },
+        },
+        {
+          key: "contact_person",
+          label: "الشخص المسؤول",
+          type: "text",
+          width: 150,
+        },
+        {
+          key: "costing_method",
+          label: "طريقة التسعير",
+          type: "text",
+          width: 140,
+          format: function (v) {
+            return esc(SHIPPING_COSTING_LABELS[v] || "—");
+          },
+        },
+        {
+          key: "active",
+          label: "الحالة",
+          type: "badge",
+          width: 100,
+          format: function (v) {
+            var isActive = v !== false && v !== "false" && v !== "FALSE";
+            return isActive
+              ? '<span class="badge" style="background:var(--success-soft);color:#10B981">نشط</span>'
+              : '<span class="badge" style="background:var(--danger-soft);color:#EF4444">موقوف</span>';
+          },
+        },
+      ],
+      {
+        rowKey: "id",
+        title: "قائمة شركات الشحن",
+        contextMenuType: "shipping_companies",
+      },
+    );
+  }
+
+  function _renderShippingCompaniesTableCE() {
+    var container = document.getElementById("shipping-companies-ce-container");
+    if (!container) return;
+    _shippingCompaniesRegisterColumns();
+    var companies = (APP.data.shippingCompanies || []).slice().reverse();
+    ColumnEngine.renderTable("shipping_companies", container, companies);
+  }
+
+  function bindShippingCompanies() {
+    var btnNew = document.getElementById("btn-new-shipping-company");
+    if (btnNew) {
+      btnNew.addEventListener("click", function () {
+        requirePermission("addShippingCompany", function () {
+          ensureExtendedData(function () {
+            openDrawer(renderShippingCompanyModal(null), 640);
+            setTimeout(function () {
+              initFinancialAccountSearcher("app-drawer");
+              // [AUTO-CODE] معاينة الكود التسلسلي التالي (اقتراح قابل
+              // للتعديل — الكود يفضل اختياريًا وحرًّا كما كان).
+              var shcoCodeEl = document.getElementById("shco-modal-code");
+              if (shcoCodeEl && !shcoCodeEl.value) {
+                _gsr("getNextShippingCompanyCode", [], {
+                  onSuccess: function (res) {
+                    if (shcoCodeEl && !shcoCodeEl.value) {
+                      shcoCodeEl.value = (res && res.data) || "";
+                    }
+                  },
+                  onError: function () {
+                    // [FIX] معاينة الكود اختيارية فقط — الكود يفضل حر
+                    // للمستخدم يكتبه يدويًا، فمفيش داعي لتوست هنا، لكن
+                    // لازم نضمن الحقل يفضل فاضي وقابل للكتابة بدل ما
+                    // يفضل معلّق من غير رد.
+                    if (shcoCodeEl && !shcoCodeEl.value) shcoCodeEl.value = "";
+                  },
+                });
+              }
+              if (typeof VF !== "undefined") {
+                VF.bind(
+                  "shco-modal-name",
+                  VF.RULES.requiredText("اسم شركة الشحن"),
+                );
+                VF.bind("shco-modal-phone", VF.RULES.phone(false));
+                VF.bind("shco-modal-email", VF.RULES.email(false));
+              }
+            }, 100);
+          });
+        });
+      });
+    }
+
+    if (!Array.isArray(APP.data.shippingCompanies)) {
+      _loadShippingCompanies();
+    } else {
+      _renderShippingCompaniesTableCE();
+    }
+  }
+
+  function _loadShippingCompanies() {
+    _gsr("getShippingCompanies", [APP.currentUser.username], {
+      onSuccess: function (res) {
+        if (res && res.success) {
+          APP.data.shippingCompanies = res.data || [];
+          _renderShippingCompaniesTableCE();
+        } else {
+          NotificationEngine.error((res && res.message) || "خطأ في تحميل شركات الشحن");
+        }
+      },
+      onError: function (e) {
+        NotificationEngine.error("خطأ: " + e.message);
+      },
+    });
+  }
+
+  function viewShippingCompany(id) {
+    var c = (APP.data.shippingCompanies || []).find(function (x) {
+      return x.id === id;
+    });
+    if (!c) {
+      NotificationEngine.error("شركة الشحن غير موجودة");
+      return;
+    }
+    openDrawer(renderViewShippingCompanyModal(c), 480);
+  }
+
+  function editShippingCompany(id) {
+    requirePermission("updateShippingCompany", function () {
+      var c = (APP.data.shippingCompanies || []).find(function (x) {
+        return x.id === id;
+      });
+      if (!c) {
+        NotificationEngine.error("شركة الشحن غير موجودة");
+        return;
+      }
+      ensureExtendedData(function () {
+        openDrawer(renderShippingCompanyModal(c), 640);
+        setTimeout(function () {
+          initFinancialAccountSearcher("app-drawer");
+          if (typeof VF !== "undefined") {
+            VF.bind("shco-modal-name", VF.RULES.requiredText("اسم شركة الشحن"));
+            VF.bind("shco-modal-phone", VF.RULES.phone(false));
+            VF.bind("shco-modal-email", VF.RULES.email(false));
+          }
+        }, 100);
+      });
+    });
+  }
+
+  function deleteShippingCompanyConfirm(id) {
+    if (!requirePermission("deleteShippingCompany")) return;
+    var c = (APP.data.shippingCompanies || []).find(function (x) {
+      return x.id === id;
+    });
+    if (!c) return;
+
+    showConfirm({
+      title: "حذف شركة الشحن",
+      message: "هل أنت متأكد من حذف شركة الشحن «<b>" + esc(c.name) + "</b>»؟",
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      icon: "ti-trash",
+      iconColor: "#dc2626",
+      freezeMessage: "⏳ جاري الحذف...",
+      onConfirm: function (unfreezeUI) {
+        _gsr("deleteShippingCompany", [_authPayload({ id: id })], {
+          onSuccess: function (res) {
+            unfreezeUI();
+            if (!res.success) {
+              NotificationEngine.error(res.message);
+              return;
+            }
+            APP.data.shippingCompanies = (
+              APP.data.shippingCompanies || []
+            ).filter(function (x) {
+              return x.id !== id;
+            });
+            NotificationEngine.success(res.message);
+            renderPage("shipping-companies");
+          },
+          onError: function (e) {
+            unfreezeUI();
+            NotificationEngine.error("خطأ: " + e.message);
+          },
+        });
+      },
+    });
+  }
+
+  // ── إظهار/إخفاء حقول طريقة احتساب التكلفة حسب الاختيار ─────────
+  function _toggleShippingCostingFields() {
+    var sel = document.getElementById("shco-modal-costing-method");
+    var wrap = document.getElementById("shco-costing-fields");
+    if (!sel || !wrap) return;
+    wrap.innerHTML = _renderShippingCostingFields({
+      costing_method: sel.value,
+    });
+  }
+
+  function _addShippingTierRow() {
+    var list = document.getElementById("shco-tiers-list");
+    if (!list) return;
+    var idx = list.querySelectorAll(".shco-tier-row").length;
+    list.insertAdjacentHTML("beforeend", _shippingTierRowHtml(idx, "", "", ""));
+  }
+
+  function _removeShippingTierRow(btn) {
+    var row = btn.closest(".shco-tier-row");
+    var list = document.getElementById("shco-tiers-list");
+    if (row && list && list.querySelectorAll(".shco-tier-row").length > 1) {
+      row.remove();
+    } else if (row) {
+      // آخر صف — نفضّيه بدل حذفه
+      row.querySelectorAll("input").forEach(function (i) {
+        i.value = "";
+      });
+    }
+  }
+
+  function _collectShippingTiers() {
+    var rows = document.querySelectorAll("#shco-tiers-list .shco-tier-row");
+    var tiers = [];
+    rows.forEach(function (row) {
+      var from = row.querySelector(".shco-tier-from");
+      var to = row.querySelector(".shco-tier-to");
+      var cost = row.querySelector(".shco-tier-cost");
+      if (!from || !to || !cost) return;
+      if (from.value === "" && to.value === "" && cost.value === "") return;
+      tiers.push({
+        from: parseFloat(from.value || 0),
+        to: parseFloat(to.value || 0),
+        cost: parseFloat(cost.value || 0),
+      });
+    });
+    return tiers;
+  }
+
+  function _collectShippingGovernorates() {
+    var boxes = document.querySelectorAll(".shco-gov-cb:checked");
+    var areas = [];
+    boxes.forEach(function (b) {
+      areas.push(b.value);
+    });
+    return areas;
+  }
+
+  function saveShippingCompanyFromModal() {
+    var byId = function (id) {
+      return document.getElementById(id);
+    };
+    var val = function (id) {
+      var el = byId(id);
+      return el ? el.value : "";
+    };
+
+    var name = val("shco-modal-name").trim();
+    var id = val("shco-modal-id");
+    var costingMethod = val("shco-modal-costing-method") || "fixed";
+
+    var payload = _authPayload({
+      id: id || undefined,
+      code: val("shco-modal-code"),
+      name: name,
+      logo_url: val("shco-modal-logo"),
+      shipping_type: val("shco-modal-type"),
+      active: val("shco-modal-active") === "true",
+      phone: val("shco-modal-phone"),
+      email: val("shco-modal-email"),
+      website: val("shco-modal-website"),
+      contact_person: val("shco-modal-contact"),
+      address: val("shco-modal-address"),
+      supplier_account_id: val("shco-modal-supplier-account"),
+      expense_account_id: val("shco-modal-expense-account"),
+      vat_account_id: val("shco-modal-vat-account"),
+      cost_center: val("shco-modal-cost-center"),
+      expected_delivery_days: val("shco-modal-delivery-days"),
+      max_weight_kg: val("shco-modal-max-weight"),
+      max_volume_m3: val("shco-modal-max-volume"),
+      supported_currencies: val("shco-modal-currencies"),
+      service_areas: _collectShippingGovernorates(),
+      costing_method: costingMethod,
+      fixed_cost: val("shco-modal-fixed-cost"),
+      cost_per_kg: val("shco-modal-cost-per-kg"),
+      cost_per_m3: val("shco-modal-cost-per-m3"),
+      cost_per_km: val("shco-modal-cost-per-km"),
+      cost_percentage: val("shco-modal-cost-pct"),
+      pricing_tiers: costingMethod === "tiers" ? _collectShippingTiers() : [],
+      notes: val("shco-modal-notes"),
+    });
+
+    // [SAVE-ENGINE] موحّد عبر 32_JS_SaveEngine.html — لا تعيد كتابة منطق حفظ يدوي هنا
+    SaveEngine.run({
+      screen: "ShippingCompany",
+      entity: "shipping_company",
+      recordId: id || null,
+      rules: [
+        {
+          // نفس الفاليديشن الأصلي (VF.validateForm) — بيعمل تظليل الحقول بنفسه
+          test: function () {
+            return (
+              typeof VF === "undefined" ||
+              VF.validateForm([
+                {
+                  fieldId: "shco-modal-name",
+                  rules: VF.RULES.requiredText("اسم شركة الشحن"),
+                },
+                { fieldId: "shco-modal-phone", rules: VF.RULES.phone(false) },
+                { fieldId: "shco-modal-email", rules: VF.RULES.email(false) },
+              ])
+            );
+          },
+          message: " راجع الحقول المظللة بالأحمر",
+        },
+        {
+          test: function () {
+            return !!val("shco-modal-name").trim();
+          },
+          message: " اسم شركة الشحن مطلوب",
+        },
+      ],
+      data: payload,
+      fn: id ? "updateShippingCompany" : "addShippingCompany",
+      successMessage: id
+        ? " تم تحديث شركة الشحن بنجاح"
+        : " تم إضافة شركة الشحن بنجاح",
+      onSuccess: function () {
+        closeDrawer();
+        _loadShippingCompanies();
+      },
+    });
+  }
+
+  function bindShipping() {
+    var btn = document.getElementById("btn-new-shipment");
+    if (btn)
+      btn.addEventListener("click", function () {
+        openShipmentModal(null);
+      });
+
+    // بحث وفلترة
+    var search = document.getElementById("ship-search");
+    var filterStatus = document.getElementById("ship-filter-status");
+
+    function applyShipFilter() {
+      var q = (search ? search.value : "").toLowerCase().trim();
+      var st = filterStatus ? filterStatus.value : "";
+      var rows = document.querySelectorAll("#ship-table tbody tr[data-id]");
+      rows.forEach(function (row) {
+        var customer = row.dataset.customer || "";
+        var driver = row.dataset.driver || "";
+        var id = (row.dataset.id || "").toLowerCase();
+        var permit = (row.dataset.permit || "").toLowerCase(); // v4.2
+        var status = row.dataset.status || "";
+        var matchQ =
+          !q ||
+          customer.includes(q) ||
+          driver.includes(q) ||
+          id.includes(q) ||
+          permit.includes(q);
+        var matchSt = !st || status === st;
+        row.style.display = matchQ && matchSt ? "" : "none";
+      });
+    }
+
+    if (search) search.addEventListener("input", applyShipFilter);
+    if (filterStatus) filterStatus.addEventListener("change", applyShipFilter);
+
+    if (window.AppSelect) {
+      AppSelect.upgrade("ship-filter-status", {
+        icon: "ti-truck",
+        placeholder: "كل الحالات",
+      });
+    }
+  }
+
+  // ── مودال الشحنة الجديدة / التعديل ──────────────────────────
+  var _shipItems = []; // قائمة الأصناف في الشحنة الحالية
+
+  function openShipmentModal(shipmentId) {
+    var isEdit = !!shipmentId;
+    // ── فحص الصلاحية قبل فتح النموذج ──────────────────────────
+    if (!isEdit && !canDo("addShipment")) {
+      NotificationEngine.error(" ليس لديك صلاحية لإنشاء شحنات");
+      return;
+    }
+    if (isEdit && !canDo("updateShipment")) {
+      NotificationEngine.error(" ليس لديك صلاحية لتعديل الشحنات");
+      return;
+    }
+    var ship = isEdit
+      ? (APP.data.shipments || []).find(function (s) {
+          return s.id === shipmentId;
+        })
+      : null;
+
+    var shipItemsList = [];
+    if (ship && ship.items_json) {
+      try {
+        shipItemsList = JSON.parse(ship.items_json);
+      } catch (e) {}
+    }
+    _shipItems = shipItemsList.length
+      ? JSON.parse(JSON.stringify(shipItemsList))
+      : [];
+
+    var statusOpts = Object.keys(SHIP_STATUSES)
+      .map(function (k) {
+        return (
+          '<option value="' +
+          k +
+          '"' +
+          (ship && ship.status === k
+            ? " selected"
+            : !ship && k === "معلق"
+              ? " selected"
+              : "") +
+          ">" +
+          SHIP_STATUSES[k].icon +
+          " " +
+          k +
+          "</option>"
+        );
+      })
+      .join("");
+
+    var itemOptsHtml =
+      '<option value="">— اختر الصنف —</option>' +
+      APP.data.items
+        .map(function (i) {
+          return (
+            '<option value="' +
+            esc(i.id) +
+            '" data-name="' +
+            esc(i.name) +
+            '">' +
+            esc(i.code || i.id) +
+            " — " +
+            esc(i.name) +
+            "</option>"
+          );
+        })
+        .join("");
+
+    openDrawer(
+      '<div class="modal-box" style="max-width:700px;width:95vw">' +
+        '<div class="modal-header">' +
+        '<div class="modal-header-left">' +
+        '<div class="modal-icon"><i class="ti ti-truck" style="font-size:20px"></i></div>' +
+        "<div><h2>" +
+        (isEdit ? "تعديل الشحنة" : "شحنة جديدة") +
+        "</h2>" +
+        '<div class="modal-header-sub">تتبع شحنات المبيعات وإيصالات التسليم</div></div>' +
+        "</div>" +
+        '<button class="modal-close" onclick="closeDrawer()"><i class="ti ti-x"></i></button>' +
+        "</div>" +
+        '<div class="modal-body">' +
+        // بيانات الشحنة
+        '<div class="form-grid">' +
+        '<div class="field full"><label> اسم العميل *</label>' +
+        '<input class="input" id="ship-customer" placeholder="مثال: شركة الأمل للتجارة" value="' +
+        (ship ? esc(ship.customer || "") : "") +
+        '"></div>' +
+        '<div class="field"><label> السائق / المندوب</label>' +
+        '<input class="input" id="ship-driver" placeholder="مثال: محمد علي" value="' +
+        (ship ? esc(ship.driver || "") : "") +
+        '"></div>' +
+        '<div class="field"><label> شركة الشحن</label>' +
+        (function () {
+          var cos = APP.data.shippingCompanies || [];
+          var activecos = cos.filter(function (c) {
+            return c.active !== false && c.active !== "FALSE";
+          });
+          if (activecos.length) {
+            var opts =
+              '<option value="">— اختر شركة الشحن —</option>' +
+              activecos
+                .map(function (c) {
+                  var sel =
+                    ship &&
+                    (ship.company_id === c.id ||
+                      (!ship.company_id && ship.company === c.name))
+                      ? " selected"
+                      : "";
+                  return (
+                    '<option value="' +
+                    esc(c.id) +
+                    '"' +
+                    sel +
+                    ">" +
+                    esc(c.name) +
+                    "</option>"
+                  );
+                })
+                .join("");
+            return (
+              '<select class="input" id="ship-company-id">' +
+              opts +
+              "</select></div>" +
+              '<div class="field"><label> رقم التتبع</label>' +
+              '<input class="input" id="ship-tracking" placeholder="اختياري" value="' +
+              (ship ? esc(ship.tracking_number || "") : "") +
+              '">'
+            );
+          } else {
+            return (
+              '<input class="input" id="ship-company" placeholder="مثال: أرامكس" value="' +
+              (ship ? esc(ship.company || "") : "") +
+              '">'
+            );
+          }
+        })() +
+        "</div>" +
+        '<div class="field"><label> تاريخ الشحن</label>' +
+        '<input class="input" type="date" id="ship-date" value="' +
+        (ship && ship.date
+          ? ship.date.split("T")[0]
+          : (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().split("T")[0])) +
+        '"></div>' +
+        '<div class="field"><label> موعد التسليم المتوقع</label>' +
+        '<input class="input" type="date" id="ship-exp-date" value="' +
+        (ship ? esc(ship.expected_date || "") : "") +
+        '"></div>' +
+        '<div class="field"><label> حالة الشحنة</label>' +
+        '<select class="input" id="ship-status">' +
+        statusOpts +
+        "</select></div>" +
+        '<div class="field full"><label> ملاحظات</label>' +
+        '<input class="input" id="ship-notes" placeholder="أي ملاحظات خاصة بالشحنة" value="' +
+        (ship ? esc(ship.notes || "") : "") +
+        '"></div>' +
+        '<div class="field full"><label> رابط إيصال / بوليصة الشحن</label>' +
+        '<input class="input" id="ship-receipt" placeholder="ارفع الصورة على Google Drive وضع الرابط هنا" value="' +
+        (ship ? esc(ship.receipt_url || "") : "") +
+        '">' +
+        '<p style="font-size:11px;color:var(--text3);margin-top:4px"> ارفع الإيصال على Google Drive ← مشاركة ← نسخ الرابط ← الصقه هنا</p>' +
+        "</div>" +
+        // ── رابط التتبع (مرحلة 5) ──
+        '<div class="field"><label> رابط التتبع</label>' +
+        '<input class="input" id="ship-tracking-url" placeholder="https://track.shipping.com/..." value="' +
+        (ship ? esc(ship.tracking_url || "") : "") +
+        '"></div>' +
+        // ── تكلفة الشحن + من يتحملها (مرحلة 4) ──
+        '<div class="field"><label> تكلفة الشحن</label>' +
+        '<input class="input" type="number" min="0" step="0.01" id="ship-cost" placeholder="0" value="' +
+        (ship ? esc(String(ship.shipping_cost || "")) : "") +
+        '"></div>' +
+        '<div class="field"><label> من يتحمل تكلفة الشحن</label>' +
+        '<select class="input" id="ship-cost-on">' +
+        '<option value="company"' +
+        (ship && ship.shipping_cost_on === "company" ? " selected" : "") +
+        ">الشركة</option>" +
+        '<option value="customer"' +
+        (ship && ship.shipping_cost_on === "customer" ? " selected" : "") +
+        ">العميل</option>" +
+        "</select></div>" +
+        // ── ربط بفاتورة (المرحلة 3) ──
+        (function () {
+          // نعرض الحقل دايماً — الخيارات تُحمَّل بعد الفتح
+          var currentInvId = ship ? ship.invoice_id || "" : "";
+          return (
+            '<div class="field full" style="margin-top:4px">' +
+            "<label> ربط بفاتورة مبيعات (اختياري)</label>" +
+            '<select class="input" id="ship-invoice-id" style="font-size:13px">' +
+            '<option value="">— جاري التحميل... —</option>' +
+            (currentInvId
+              ? '<option value="' +
+                esc(currentInvId) +
+                '" selected>' +
+                esc(currentInvId) +
+                "</option>"
+              : "") +
+            "</select>" +
+            '<p style="font-size:11px;color:var(--text3);margin-top:3px"> الفواتير المعروضة هي فواتير مؤكدة بدون شحنة مرتبطة بها</p>' +
+            "</div>"
+          );
+        })() +
+        "</div>" +
+        // قسم الأصناف
+        '<div style="margin:16px 0 8px;font-weight:700;color:var(--text);font-size:14px"> أصناف الشحنة</div>' +
+        '<div style="display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:end;margin-bottom:10px">' +
+        '<select class="input" id="ship-add-item" style="font-size:13px">' +
+        itemOptsHtml +
+        "</select>" +
+        '<input class="input" id="ship-add-qty" type="number" min="1" value="1" style="width:80px" placeholder="الكمية">' +
+        '<input class="input" id="ship-add-unit" placeholder="الوحدة" style="width:90px" value="">' +
+        '<button class="btn btn-outline btn-sm" id="btn-ship-add-item" type="button">+ إضافة</button>' +
+        "</div>" +
+        '<div id="ship-items-list" style="min-height:50px;border:1px dashed var(--border);border-radius:var(--radius-sm);padding:8px;background:var(--surface2);margin-bottom:16px">' +
+        buildShipItemsList() +
+        "</div>" +
+        "</div>" +
+        "</div>" +
+        '<div class="modal-actions">' +
+        '<button class="btn btn-outline" onclick="closeDrawer()">إلغاء</button>' +
+        '<button class="btn btn-primary" id="save-ship-btn">' +
+        '<i class="ti ' +
+        (isEdit ? "ti-device-floppy" : "ti-truck") +
+        '"></i> ' +
+        (isEdit ? "حفظ التعديلات" : "إنشاء الشحنة") +
+        "</button>" +
+        "</div></div>",
+    );
+
+    // bind إضافة صنف
+    // ── تحميل الفواتير في dropdown الربط (المرحلة 3) ──
+    _gsr(
+      "getInvoicesForShipping",
+      [APP.currentUser.username, SESSION.token],
+      {
+        onSuccess: function (res) {
+          var sel = document.getElementById("ship-invoice-id");
+          if (!sel) return;
+          var currentVal = ship ? ship.invoice_id || "" : "";
+          var opts = '<option value="">— بدون ربط بفاتورة —</option>';
+          if (res && res.success && res.data) {
+            res.data.forEach(function (inv) {
+              var selected = currentVal === inv.id ? " selected" : "";
+              opts +=
+                '<option value="' +
+                esc(inv.id) +
+                '"' +
+                selected +
+                ">" +
+                esc(inv.id) +
+                " — " +
+                esc(inv.party) +
+                " — " +
+                esc(formatMoney(inv.net_total || 0, { decimals: 0 })) +
+                (inv.date ? " (" + inv.date.split("T")[0] + ")" : "") +
+                "</option>";
+            });
+            // لو الشحنة لها فاتورة مرتبطة قديمة وهي مش في القايمة — ضيفها
+            if (
+              currentVal &&
+              !res.data.find(function (i) {
+                return i.id === currentVal;
+              })
+            ) {
+              opts +=
+                '<option value="' +
+                esc(currentVal) +
+                '" selected>' +
+                esc(currentVal) +
+                " (مرتبطة)</option>";
+            }
+          }
+          sel.innerHTML = opts;
+        },
+        onError: function () {},
+      },
+    );
+
+    if (window.SplitSelect) {
+      SplitSelect.init("ship-add-item", {
+        label: "الصنف",
+        icon: "ti-box",
+        searchable: true,
+        searchPlaceholder: "ابحث بالاسم أو الكود...",
+      });
+    }
+
+    document
+      .getElementById("btn-ship-add-item")
+      .addEventListener("click", function () {
+        var sel = document.getElementById("ship-add-item");
+        var qty = Number(document.getElementById("ship-add-qty").value);
+        var unit = document.getElementById("ship-add-unit").value.trim();
+        var itemId = sel.value;
+        var itemName = sel.options[sel.selectedIndex]
+          ? sel.options[sel.selectedIndex].dataset.name
+          : itemId;
+
+        if (!itemId) {
+          NotificationEngine.error("اختر الصنف");
+          return;
+        }
+        if (!qty || qty < 1) {
+          NotificationEngine.error("الكمية غير صحيحة");
+          return;
+        }
+
+        // لو الصنف موجود، زود الكمية
+        var existing = _shipItems.find(function (i) {
+          return i.item_id === itemId;
+        });
+        if (existing) {
+          existing.qty += qty;
+        } else {
+          _shipItems.push({
+            item_id: itemId,
+            name: itemName,
+            qty: qty,
+            unit: unit,
+          });
+        }
+        document.getElementById("ship-items-list").innerHTML =
+          buildShipItemsList();
+        sel.value = "";
+        document.getElementById("ship-add-qty").value = "1";
+        document.getElementById("ship-add-unit").value = "";
+      });
+
+    // bind حفظ
+    document
+      .getElementById("save-ship-btn")
+      .addEventListener("click", function () {
+        var customer = document.getElementById("ship-customer").value.trim();
+        if (!customer) {
+          NotificationEngine.error("اسم العميل مطلوب");
+          return;
+        }
+        if (!_shipItems.length) {
+          NotificationEngine.error("أضف صنف واحد على الأقل");
+          return;
+        }
+
+        var data = {
+          id: isEdit ? ship.id : null,
+          customer: customer,
+          driver: document.getElementById("ship-driver").value.trim(),
+          company: (function () {
+            var selEl = document.getElementById("ship-company-id");
+            if (selEl) {
+              var opt = selEl.options[selEl.selectedIndex];
+              return opt && opt.value ? opt.text : "";
+            }
+            var inp = document.getElementById("ship-company");
+            return inp ? inp.value.trim() : "";
+          })(),
+          company_id: (function () {
+            var el = document.getElementById("ship-company-id");
+            return el ? el.value.trim() : "";
+          })(),
+          tracking_number: (function () {
+            var el = document.getElementById("ship-tracking");
+            return el ? el.value.trim() : "";
+          })(),
+          tracking_url: (function () {
+            var el = document.getElementById("ship-tracking-url");
+            return el ? el.value.trim() : "";
+          })(),
+          shipping_cost: (function () {
+            var el = document.getElementById("ship-cost");
+            return el ? Number(el.value) || 0 : 0;
+          })(),
+          shipping_cost_on: (function () {
+            var el = document.getElementById("ship-cost-on");
+            return el ? el.value : "company";
+          })(),
+          expected_date: document.getElementById("ship-exp-date").value,
+          status: document.getElementById("ship-status").value,
+          notes: document.getElementById("ship-notes").value.trim(),
+          receipt_url: document.getElementById("ship-receipt").value.trim(),
+          items: _shipItems,
+          user: APP.currentUser.username || "", // BUG-6 FIX: username لـ _checkPermission
+          // [SESSION-FIX] addShipment/updateShipment تقرأ data.sessionToken
+          // مباشرةً (نفس نمط addUser/updateUser في شاشة المستخدمين) — بدونه
+          // ترفض _checkPermission الحفظ دائمًا برسالة "جلسة غير صالحة" حتى
+          // لو كانت جلسة المستخدم سليمة تمامًا.
+          sessionToken: SESSION ? SESSION.token : null,
+          dispatch_permit_id: isEdit ? ship.dispatch_permit_id || "" : "", // v4.2 — محافظة على الربط عند التعديل
+          invoice_id: (function () {
+            var el = document.getElementById("ship-invoice-id");
+            return el ? el.value.trim() : "";
+          })(),
+        };
+
+        var btn = document.getElementById("save-ship-btn");
+        btn.disabled = true;
+
+        var fn = isEdit ? "updateShipment" : "addShipment";
+        // UX: إغلاق فوري + مؤشر خلفي
+        closeModal();
+        _freezeUI(isEdit ? "⏳ جاري حفظ الشحنة..." : "⏳ جاري إضافة الشحنة...");
+        _gsr(fn, [data], {
+          onSuccess: function (r) {
+            _unfreezeUI();
+            NotificationEngine[r.success ? "success" : "error"](r.message); // [UNIFY-NOTIF]
+            if (r.success) {
+              // ── ربط الشحنة بالفاتورة إن اختار المستخدم فاتورة (المرحلة 3) ──
+              var newShipId = r.data && r.data.id ? r.data.id : data.id;
+              var selInvId = data.invoice_id;
+              if (selInvId && newShipId && !isEdit) {
+                _gsr(
+                  "linkShipmentToInvoice",
+                  [
+                    APP.currentUser.username,
+                    newShipId,
+                    selInvId,
+                    0,
+                    "company",
+                    SESSION.token,
+                  ],
+                  {
+                    onSuccess: function (lr) {
+                      if (lr && lr.success) {
+                        NotificationEngine.success(" تم الربط بالفاتورة " + selInvId);
+                      }
+                    },
+                    onError: function () {},
+                  },
+                );
+              }
+              // ── قيد محاسبي تلقائي عند إنشاء شحنة بتكلفة (مرحلة 4) ──
+              if (!isEdit && data.shipping_cost > 0) {
+                var journalPayload = {
+                  shipmentId: newShipId,
+                  shippingCost: data.shipping_cost,
+                  shippingCostOn: data.shipping_cost_on || "company",
+                  companyId: data.company_id || null,
+                  customerId: data.customer || "",
+                  callerUser: APP.currentUser.username,
+                  date: data.date || (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().split("T")[0]),
+                };
+                _gsr("autoJournalFromShipment", [journalPayload], {
+                  onSuccess: function (jr) {
+                    if (jr && jr.success)
+                      NotificationEngine.info(" تم إنشاء القيد المحاسبي للشحنة");
+                    else if (jr && jr.message)
+                      NotificationEngine.warning(" القيد: " + jr.message);
+                  },
+                  onError: function () {},
+                });
+              }
+              reloadAfterMutation(function () {
+                renderPage("shipping");
+              });
+            }
+          },
+          onError: function (e) {
+            _unfreezeUI();
+            NotificationEngine.error(e.message || "حدث خطأ");
+          },
+        });
+      });
+  }
+
+  function buildShipItemsList() {
+    if (!_shipItems.length) {
+      return '<p style="text-align:center;color:var(--text3);font-size:13px;padding:12px">لم تتم إضافة أصناف بعد</p>';
+    }
+    return _shipItems
+      .map(function (it, idx) {
+        return (
+          '<div style="display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:center;padding:6px 8px;background:var(--surface);border-radius:var(--radius-xs);margin-bottom:6px">' +
+          '<span><b style="color:var(--accent)">' +
+          esc(it.item_id) +
+          "</b> — " +
+          esc(it.name || "") +
+          "</span>" +
+          '<span style="font-weight:700">' +
+          it.qty +
+          "</span>" +
+          '<span style="color:var(--text3);font-size:12px">' +
+          esc(it.unit || "") +
+          "</span>" +
+          '<button class="btn btn-delete btn-xs" onclick="_removeShipItem(' +
+          idx +
+          ')"></button>' +
+          "</div>"
+        );
+      })
+      .join("");
+  }
+
+  function _removeShipItem(idx) {
+    _shipItems.splice(idx, 1);
+    var el = document.getElementById("ship-items-list");
+    if (el) el.innerHTML = buildShipItemsList();
+  }
+
+  // ── عرض تفاصيل الشحنة ────────────────────────────────────────
+  function viewShipment(id) {
+    var ship = (APP.data.shipments || []).find(function (s) {
+      return s.id === id;
+    });
+    if (!ship) {
+      NotificationEngine.error("الشحنة غير موجودة");
+      return;
+    }
+
+    var items = [];
+    try {
+      items =
+        typeof ship.items_json === "string"
+          ? JSON.parse(ship.items_json)
+          : ship.items || [];
+    } catch (e) {}
+
+    var itemsTable = items.length
+      ? '<table style="width:100%;border-collapse:collapse;margin-top:8px">' +
+        '<thead><tr style="background:var(--surface2)">' +
+        '<th style="padding:6px 8px;text-align:right;font-size:12px">الكود</th>' +
+        '<th style="padding:6px 8px;text-align:right;font-size:12px">الاسم</th>' +
+        '<th style="padding:6px 8px;text-align:right;font-size:12px">الكمية</th>' +
+        '<th style="padding:6px 8px;text-align:right;font-size:12px">الوحدة</th>' +
+        "</tr></thead><tbody>" +
+        items
+          .map(function (it) {
+            return (
+              "<tr>" +
+              '<td style="padding:6px 8px;border-bottom:1px solid var(--border)"><span class="mono" style="color:var(--accent)">' +
+              esc(it.item_id || "") +
+              "</span></td>" +
+              '<td style="padding:6px 8px;border-bottom:1px solid var(--border)">' +
+              esc(it.name || "—") +
+              "</td>" +
+              '<td style="padding:6px 8px;border-bottom:1px solid var(--border)"><b>' +
+              (it.qty || 0) +
+              "</b></td>" +
+              '<td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text3)">' +
+              esc(it.unit || "—") +
+              "</td>" +
+              "</tr>"
+            );
+          })
+          .join("") +
+        "</tbody></table>"
+      : '<p style="color:var(--text3)">لا توجد أصناف مسجلة</p>';
+
+    var receiptSection = ship.receipt_url
+      ? '<div style="margin-top:12px"><a href="' +
+        esc(ship.receipt_url) +
+        '" target="_blank" class="btn btn-outline btn-sm"> عرض الإيصال / البوليصة</a></div>'
+      : "";
+
+    var date = ship.date ? fmtDate(ship.date) : "—";
+    var expDate = ship.expected_date ? fmtDate(ship.expected_date) : "—";
+
+    openDrawer(
+      '<div class="modal-box" style="max-width:600px;width:95vw">' +
+        '<div class="modal-header">' +
+        '<div class="modal-header-left">' +
+        '<div class="modal-icon"><i class="ti ti-truck" style="font-size:20px"></i></div>' +
+        '<div><h2>تفاصيل الشحنة</h2><div class="modal-header-sub">بيانات وأصناف الشحنة</div></div>' +
+        "</div>" +
+        '<button class="modal-close" onclick="closeDrawer()"><i class="ti ti-x"></i></button>' +
+        "</div>" +
+        '<div class="modal-body">' +
+        // رأس الشحنة
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:4px 0 16px">' +
+        infoRow(
+          "رقم الشحنة",
+          '<span class="mono" style="color:var(--accent)">' +
+            esc(ship.id) +
+            "</span>",
+        ) +
+        // v4.2: إذن الصادر المرتبط
+        (ship.dispatch_permit_id
+          ? infoRow(
+              "إذن الصادر",
+              '<span class="ship-permit-link" onclick="closeDrawer();APP._pendingTxFilter=\'' +
+                esc(ship.dispatch_permit_id) +
+                "';navigateTo('transactions')\">" +
+                '<i class="ti ti-arrow-bar-up" style="font-size:12px"></i> ' +
+                '<span class="mono">' +
+                esc(ship.dispatch_permit_id) +
+                "</span>" +
+                "</span>",
+            )
+          : "") +
+        infoRow("الحالة", shipStatusBadge(ship.status || "معلق")) +
+        infoRow("العميل", "<b>" + esc(ship.customer || "—") + "</b>") +
+        infoRow("السائق / المندوب", esc(ship.driver || "—")) +
+        infoRow("شركة الشحن", esc(ship.company || "—")) +
+        (ship.shipping_cost
+          ? infoRow(
+              "تكلفة الشحن",
+              "<b>" +
+                formatMoney(ship.shipping_cost, {
+                  decimals: 0,
+                  withSymbol: false,
+                }) +
+                "</b> جنيه" +
+                (ship.shipping_cost_on
+                  ? ' <span style="font-size:11px;padding:2px 7px;border-radius:10px;background:' +
+                    (ship.shipping_cost_on === "customer"
+                      ? "var(--warning-soft);color:var(--warning)"
+                      : "var(--teal-soft);color:#0d9488") +
+                    '">' +
+                    (ship.shipping_cost_on === "customer"
+                      ? "على العميل"
+                      : "على الشركة") +
+                    "</span>"
+                  : ""),
+            )
+          : "") +
+        // ── الفاتورة المرتبطة (المرحلة 3) ──
+        (ship.invoice_id
+          ? infoRow(
+              "الفاتورة المرتبطة",
+              '<span class="mono" style="color:var(--accent);cursor:pointer" onclick="closeDrawer();navigateTo(\'invoices\')" title="فتح الفواتير">' +
+                esc(ship.invoice_id) +
+                ' <i class="ti ti-external-link" style="font-size:10px"></i></span>',
+            )
+          : "") +
+        infoRow("تاريخ الشحن", date) +
+        infoRow("موعد التسليم", expDate) +
+        (ship.actual_delivery_date
+          ? infoRow("تاريخ التسليم الفعلي", fmtDate(ship.actual_delivery_date))
+          : "") +
+        infoRow("بواسطة", esc(ship.user || "—")) +
+        "</div>" +
+        (ship.notes
+          ? '<div style="padding:10px;background:var(--surface2);border-radius:var(--radius-sm);margin-bottom:12px;font-size:13px"><b>ملاحظات:</b> ' +
+            esc(ship.notes) +
+            "</div>"
+          : "") +
+        // tracking number section
+        (ship.tracking_number
+          ? '<div style="margin-bottom:12px;padding:10px;background:var(--surface2);border-radius:var(--radius-sm);display:flex;align-items:center;gap:8px">' +
+            '<i class="ti ti-map-pin" style="color:var(--accent)"></i>' +
+            '<b>رقم التتبع:</b> <span class="mono">' +
+            esc(ship.tracking_number) +
+            "</span>" +
+            (ship.tracking_url
+              ? ' <a href="' +
+                esc(ship.tracking_url) +
+                '" target="_blank" class="btn btn-ghost btn-xs"> تتبع</a>'
+              : "") +
+            "</div>"
+          : "") +
+        '<div style="font-weight:700;margin-bottom:8px"> الأصناف المشحونة</div>' +
+        itemsTable +
+        receiptSection +
+        // Timeline section
+        (function () {
+          var tl = [];
+          try {
+            tl =
+              typeof ship.timeline_json === "string"
+                ? JSON.parse(ship.timeline_json)
+                : ship.timeline || ship.timeline_json || [];
+          } catch (e) {}
+          if (!tl || !tl.length) return "";
+          var tlHtml = tl
+            .slice()
+            .reverse()
+            .map(function (ev) {
+              var st = SHIP_STATUSES[ev.status] || {
+                icon: "•",
+                color: "var(--text3)",
+                bg: "var(--surface2)",
+              };
+              var dt = ev.at ? fmtDateTime(ev.at) : "";
+              return (
+                '<div style="display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;padding:8px 0;border-bottom:1px solid var(--border)">' +
+                '<div style="width:32px;height:32px;border-radius:50%;background:' +
+                st.bg +
+                ";color:" +
+                st.color +
+                ';display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">' +
+                st.icon +
+                "</div>" +
+                "<div>" +
+                '<div style="font-size:12px;font-weight:700;color:' +
+                st.color +
+                '">' +
+                esc(ev.status) +
+                "</div>" +
+                (ev.from
+                  ? '<div style="font-size:11px;color:var(--text3)">من: ' +
+                    esc(ev.from) +
+                    "</div>"
+                  : "") +
+                (ev.note
+                  ? '<div style="font-size:12px;color:var(--text2);margin-top:2px">' +
+                    esc(ev.note) +
+                    "</div>"
+                  : "") +
+                '<div style="font-size:11px;color:var(--text3);margin-top:2px">' +
+                dt +
+                " — " +
+                esc(ev.by || "النظام") +
+                "</div>" +
+                "</div></div>"
+              );
+            })
+            .join("");
+          return (
+            '<div style="margin-top:20px">' +
+            '<div style="font-weight:700;margin-bottom:10px"> سجل الحالات (Timeline)</div>' +
+            '<div style="max-height:220px;overflow-y:auto;padding:4px 0">' +
+            tlHtml +
+            "</div>" +
+            "</div>"
+          );
+        })() +
+        "</div>" +
+        '<div class="modal-actions">' +
+        '<button class="btn btn-outline" onclick="closeDrawer()">إغلاق</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="closeDrawer();sendShipmentNotifManual(' +
+        "'" +
+        esc(ship.id) +
+        "'" +
+        ')"><i class="ti ti-brand-whatsapp" style="color:#25D366"></i> واتساب</button>' +
+        '<button class="btn btn-primary btn-sm" onclick="closeDrawer();openShipStatusModal(' +
+        "'" +
+        esc(ship.id) +
+        "'" +
+        ')"><i class="ti ti-refresh"></i> تحديث الحالة</button>' +
+        "</div></div>",
+    );
+  }
+
+  // ── إرسال إشعار واتساب يدوي ──────────────────────────────────
+  function sendShipmentNotifManual(id) {
+    _freezeUI("⏳ جاري إرسال الإشعار...");
+    _gsr("sendShipmentNotification", [APP.currentUser.username, id], {
+      onSuccess: function (r) {
+        _unfreezeUI();
+        if (!r.success) {
+          NotificationEngine.warning(r.message || "تعذّر تجهيز الإشعار");
+          return;
+        }
+        NotificationEngine.success(" تم تجهيز الرسالة — سيفتح واتساب تلقائياً");
+        if (r.data && r.data.whatsapp_url) {
+          setTimeout(function () {
+            window.open(r.data.whatsapp_url, "_blank");
+          }, 400);
+        }
+      },
+      onError: function (e) {
+        _unfreezeUI();
+        NotificationEngine.error(e.message || "حدث خطأ");
+      },
+    });
+  }
+
+  function infoRow(label, value) {
+    return (
+      '<div><div style="font-size:11px;color:var(--text3);margin-bottom:2px">' +
+      label +
+      '</div><div style="font-size:13px">' +
+      value +
+      "</div></div>"
+    );
+  }
+
+  // ── تحديث الحالة سريع ────────────────────────────────────────
+  function openShipStatusModal(id) {
+    var ship = (APP.data.shipments || []).find(function (s) {
+      return s.id === id;
+    });
+    if (!ship) return;
+
+    var statusOpts = Object.keys(SHIP_STATUSES)
+      .map(function (k) {
+        return (
+          '<option value="' +
+          k +
+          '"' +
+          (ship.status === k ? " selected" : "") +
+          ">" +
+          SHIP_STATUSES[k].icon +
+          " " +
+          k +
+          "</option>"
+        );
+      })
+      .join("");
+
+    openDrawer(
+      '<div class="modal-box" style="max-width:420px">' +
+        '<div class="modal-header">' +
+        '<div class="modal-header-left">' +
+        '<div class="modal-icon icon-warning"><i class="ti ti-refresh" style="font-size:20px"></i></div>' +
+        '<div><h2>تحديث حالة الشحنة</h2><div class="modal-header-sub">تغيير حالة التسليم</div></div>' +
+        "</div>" +
+        '<button class="modal-close" onclick="closeDrawer()"><i class="ti ti-x"></i></button>' +
+        "</div>" +
+        '<div class="modal-body"><div class="form-grid">' +
+        '<div class="field full"><label>رقم الشحنة</label>' +
+        '<input class="input" value="' +
+        esc(ship.id) +
+        '" readonly style="background:var(--surface2)"></div>' +
+        '<div class="field full"><label>العميل</label>' +
+        '<input class="input" value="' +
+        esc(ship.customer || "") +
+        '" readonly style="background:var(--surface2)"></div>' +
+        '<div class="field full"><label>الحالة الجديدة *</label>' +
+        '<select class="input" id="status-update-sel">' +
+        statusOpts +
+        "</select></div>" +
+        '<div class="field full"><label>ملاحظة (اختياري)</label>' +
+        '<input class="input" id="status-update-notes" placeholder="مثال: تم التسليم للعميل الساعة 3م"></div>' +
+        // ── خيارات المرحلة 4+5 ──
+        '<div class="field full" style="background:var(--surface2);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px">' +
+        '<div style="font-weight:600;font-size:12px;color:var(--text2);margin-bottom:2px"><i class="ti ti-settings" style="font-size:11px"></i> خيارات متقدمة</div>' +
+        '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">' +
+        '<input type="checkbox" id="chk-post-journal" checked style="accent-color:var(--primary);width:16px;height:16px"> إنشاء قيد محاسبي تلقائي</label>' +
+        '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">' +
+        '<input type="checkbox" id="chk-send-notif" checked style="accent-color:var(--primary);width:16px;height:16px"> إرسال إشعار واتساب للعميل</label>' +
+        "</div>" +
+        "</div>" +
+        "</div>" +
+        '<div class="modal-actions">' +
+        '<button class="btn btn-outline" onclick="closeDrawer()">إلغاء</button>' +
+        '<button class="btn btn-primary" id="btn-save-status"><i class="ti ti-check"></i> حفظ الحالة</button>' +
+        "</div></div>",
+    );
+
+    document
+      .getElementById("btn-save-status")
+      .addEventListener("click", function () {
+        var newStatus = document.getElementById("status-update-sel").value;
+        var notes = document.getElementById("status-update-notes").value.trim();
+        var doJournal = document.getElementById("chk-post-journal").checked;
+        var doNotif = document.getElementById("chk-send-notif").checked;
+        var btn = document.getElementById("btn-save-status");
+        btn.disabled = true;
+        closeDrawer();
+        _freezeUI("⏳ جاري تحديث حالة الشحنة...");
+        _gsr(
+          "updateShipmentStatusWithAccounting",
+          [
+            APP.currentUser.username,
+            id,
+            newStatus,
+            notes,
+            { postJournal: doJournal, sendNotif: doNotif },
+          ],
+          {
+            onSuccess: function (r) {
+              _unfreezeUI();
+              if (!r.success) {
+                NotificationEngine.error(r.message || "حدث خطأ");
+                return;
+              }
+              NotificationEngine.success(r.message || " تم تحديث الحالة");
+              if (r.data && r.data.journal) {
+                var jr = r.data.journal;
+                if (jr.success) NotificationEngine.info(" تم إنشاء القيد المحاسبي");
+                else if (jr.message)
+                  NotificationEngine.warning(" القيد: " + jr.message);
+              }
+              if (
+                r.data &&
+                r.data.notification &&
+                r.data.notification.success
+              ) {
+                var notif = r.data.notification;
+                NotificationEngine.info(" تم تجهيز إشعار واتساب للعميل");
+                if (notif.data && notif.data.whatsapp_url) {
+                  setTimeout(function () {
+                    window.open(notif.data.whatsapp_url, "_blank");
+                  }, 600);
+                }
+              }
+              // [WF-EXEC-2026] المرحلة 3 — تشغيل Workflows "تم الشحن"/"تم
+              // التسليم". بنعتمد على رقم هاتف العميل الراجع من الباك إند مع
+              // الإشعار (r.data.notification.data.phone) لأنه محلول فعليًا
+              // من شيت Parties — لو checkbox "إرسال إشعار واتساب" متلغي،
+              // مفيش رقم هاتف موثوق متاح فمش هنطلق الـ workflow في الحالة دي.
+              if (
+                typeof WA_WORKFLOW_ENGINE !== "undefined" &&
+                r.data &&
+                r.data.notification &&
+                r.data.notification.success &&
+                r.data.notification.data &&
+                r.data.notification.data.phone
+              ) {
+                var _wfShipTrigger =
+                  newStatus === "في الطريق"
+                    ? "order_shipped"
+                    : newStatus === "تم التسليم"
+                      ? "order_delivered"
+                      : null;
+                if (_wfShipTrigger) {
+                  WA_WORKFLOW_ENGINE.trigger(_wfShipTrigger, {
+                    customer_name: r.data.notification.data.customer || "",
+                    phone: r.data.notification.data.phone,
+                    shipment_id: id,
+                  });
+                }
+              }
+              reloadAfterMutation(function () {
+                renderPage("shipping");
+              });
+            },
+            onError: function (e) {
+              _unfreezeUI();
+              NotificationEngine.error(e.message || "حدث خطأ");
+            },
+          },
+        );
+      });
+  }
+
+  // ── تعديل + حذف ──────────────────────────────────────────────
+  function editShipment(id) {
+    openShipmentModal(id);
+  }
+
+  function deleteShipmentConfirm(id) {
+    var ship = (APP.data.shipments || []).find(function (s) {
+      return s.id === id;
+    });
+    var name = ship ? ship.customer : id;
+    showConfirm({
+      icon: "ti-truck-off",
+      iconColor: "#dc2626",
+      title: "حذف الشحنة",
+      message: "هل أنت متأكد من حذف شحنة العميل «" + name + "»؟",
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      onConfirm: function (unfreeze) {
+        _gsr("deleteShipment", [APP.currentUser.username, id], {
+          onSuccess: function (r) {
+            NotificationEngine[r.success ? "success" : "error"](r.message); // [UNIFY-NOTIF]
+            if (r.success)
+              reloadAfterMutation(function () {
+                renderPage("shipping");
+              }, unfreeze);
+            else unfreeze();
+          },
+          onError: function (e) {
+            unfreeze();
+            NotificationEngine.error(e.message);
+          },
+        });
+      },
+    });
+  }
+
+  function previewFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+    document.getElementById("uploadText").textContent = file.name;
+    if (file.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = document.getElementById("previewImg");
+        img.src = e.target.result;
+        img.style.display = "block";
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  function submitUpload() {
+    const file = document.getElementById("fileInput").files[0];
+    if (!file) {
+      NotificationEngine.error(" اختر ملف أولاً");
+      return;
+    }
+
+    document.getElementById("uploadProgress").style.display = "flex";
+
+    const reader = new FileReader();
+    reader.onload = function (e) {
+      const base64 = e.target.result.split(",")[1];
+
+      // حماية قوية
+      const context = {
+        userName:
+          APP.currentUser &&
+          (APP.currentUser.full_name || APP.currentUser.username)
+            ? APP.currentUser.full_name || APP.currentUser.username
+            : "مستخدم",
+        moduleName: "إيصال شحن",
+      };
+
+      _gsr("uploadFile", [base64, file.name, file.type, context], {
+        onSuccess: (res) => {
+          document.getElementById("uploadProgress").style.display = "none";
+          const result = typeof res === "string" ? JSON.parse(res) : res;
+
+          if (result.success) {
+            NotificationEngine.success(` تم رفع الملف: ${result.fileName}`);
+
+            // ملء حقل الرابط
+            const receiptInput = document.getElementById("ship-receipt");
+            if (receiptInput) receiptInput.value = result.viewUrl;
+
+            closeUploadModal();
+          } else {
+            NotificationEngine.error(" " + (result.error || "فشل الرفع"));
+          }
+        },
+        onError: (err) => {
+          document.getElementById("uploadProgress").style.display = "none";
+          NotificationEngine.error("خطأ في الرفع: " + (err.message || err));
+        },
+      });
+    };
+
+    reader.readAsDataURL(file);
+  }
+
+  function openUploadModal() {
+    const tpl = document.getElementById("tpl-upload-modal");
+    const clone = tpl.content.cloneNode(true);
+    document.body.appendChild(clone);
+  }
+
+  function closeUploadModal() {
+    var _overlay = document.querySelector(".modal-overlay");
+    if (_overlay) _overlay.remove();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // إدارة الألوان العامة — Color Definitions
+  // ─────────────────────────────────────────────────────────────
+
+  // ── جدول الألوان عبر ColumnEngine ───────────────────────────────
+  // [COLUMN-ENGINE] شاشة "تعريف الألوان" (سايد بار → المخزون →
+  // تعريف الألوان، page:"color_definitions"). كان الجدول ثابت
+  // الأعمدة (اسم اللون، الكود، الـ HEX) — نفس نمط باقي جداول
+  // المخزون (الأصناف/المجموعات/المخازن).
+  var _colorsColumnsRegistered = false;
+
+  function _colorsRegisterColumns() {
+    if (_colorsColumnsRegistered) return;
+    _colorsColumnsRegistered = true;
+    ColumnEngine.register(
+      "color_definitions",
+      [
+        {
+          key: "name",
+          label: "اسم اللون",
+          type: "text",
+          width: 240,
+          frozen: "right",
+          format: function (v, row) {
+            var hexColor = row.hex || colorNameToHex(row.name);
+            return (
+              '<div style="display:flex;align-items:center;justify-content:center;gap:10px">' +
+              '<div style="width:28px;height:28px;border-radius:8px;background:' +
+              esc(hexColor) +
+              ';border:2px solid rgba(0,0,0,.15);flex-shrink:0"></div>' +
+              "<div>" +
+              '<div style="font-weight:600;font-size:14px">' +
+              esc(row.name || "—") +
+              "</div>" +
+              (row.notes
+                ? '<div style="font-size:11px;color:var(--text3)">' +
+                  esc(row.notes) +
+                  "</div>"
+                : "") +
+              "</div></div>"
+            );
+          },
+        },
+        {
+          key: "code",
+          label: "الكود",
+          type: "text",
+          width: 120,
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-weight:700;font-size:13px;background:var(--accent-soft);color:var(--accent);padding:3px 10px;border-radius:8px">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "hex",
+          label: "اللون الفعلي (HEX)",
+          type: "text",
+          width: 160,
+          format: function (v) {
+            return v
+              ? '<div style="display:flex;align-items:center;justify-content:center;gap:6px"><div style="width:16px;height:16px;border-radius:4px;background:' +
+                  esc(v) +
+                  ';border:1px solid rgba(0,0,0,.2)"></div><span class="mono" style="font-size:12px">' +
+                  esc(v) +
+                  "</span></div>"
+              : '<span style="color:var(--text3);font-size:12px">—</span>';
+          },
+        },
+      ],
+      {
+        rowKey: "id",
+        title: "قائمة الألوان",
+        contextMenuType: "colors",
+      },
+    );
+  }
+
+  function _renderColorsTableCE(container, colors) {
+    if (!container) return;
+    _colorsRegisterColumns();
+    ColumnEngine.renderTable("color_definitions", container, colors || [], {
+      onRowClick: function (row) {
+        editColorDef(row.id);
+      },
+    });
+  }
+
+  function openColorDefModal(color) {
+    var isEdit = !!color;
+    var hexVal = isEdit ? color.hex || "" : "";
+
+    // ── خريطة كود سريعة محلية (احتياطية قبل رد السيرفر) ──────────────
+    var COLOR_CODE_MAP = {
+      أحمر: "RED", احمر: "RED", red: "RED",
+      أسود: "BLK", اسود: "BLK", black: "BLK",
+      أبيض: "WHT", ابيض: "WHT", white: "WHT",
+      أزرق: "BLU", ازرق: "BLU", blue: "BLU",
+      أخضر: "GRN", اخضر: "GRN", green: "GRN",
+      أصفر: "YEL", اصفر: "YEL", yellow: "YEL",
+      بني: "BRN", بنى: "BRN", brown: "BRN",
+      بيج: "BEI", beige: "BEI",
+      رمادي: "GRY", رمادى: "GRY", grey: "GRY", gray: "GRY",
+      كحلي: "NVY", كحلى: "NVY", navy: "NVY",
+      زيتي: "OLV", زيتى: "OLV", olive: "OLV",
+      بنفسجي: "PRP", بنفسجى: "PRP", purple: "PRP",
+      وردي: "PNK", وردى: "PNK", ورده: "PNK", pink: "PNK",
+      برتقالي: "ORG", برتقالى: "ORG", orange: "ORG",
+      ذهبي: "GLD", ذهبى: "GLD", gold: "GLD",
+      فضي: "SLV", فضى: "SLV", silver: "SLV",
+      تركوازي: "TRQ", تركواز: "TRQ", turquoise: "TRQ",
+      نبيتي: "WNE", نبيذي: "WNE", wine: "WNE",
+      كريمي: "CRM", كريمى: "CRM", cream: "CRM",
+      سلموني: "SAL", salmon: "SAL",
+      تيل: "TEL", teal: "TEL",
+      خمري: "MAR", خمرى: "MAR", maroon: "MAR",
+      نيلي: "IND", نيلى: "IND", indigo: "IND",
+      فيروزي: "CYN", فيروزى: "CYN", cyan: "CYN",
+    };
+
+    // ── تطبيع الحروف العربية (أ/إ/آ → ا) عشان المطابقة تنجح دايمًا ────
+    function normArabic(s) {
+      return (s || "").trim().toLowerCase()
+        .replace(/[أإآ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي");
+    }
+    function lookupQuickCode(nameVal) {
+      var trimmed = (nameVal || "").trim();
+      if (!trimmed) return null;
+      if (COLOR_CODE_MAP[trimmed]) return COLOR_CODE_MAP[trimmed];
+      if (COLOR_CODE_MAP[trimmed.toLowerCase()])
+        return COLOR_CODE_MAP[trimmed.toLowerCase()];
+      var norm = normArabic(trimmed);
+      for (var k in COLOR_CODE_MAP) {
+        if (normArabic(k) === norm) return COLOR_CODE_MAP[k];
+      }
+      return null;
+    }
+
+    openStyledDrawer({
+      title: isEdit ? "تعديل لون" : "إضافة لون جديد",
+      subtitle: "إدارة الألوان المستخدمة في الأصناف",
+      icon: "ti-palette",
+      color: "rose",
+      width: 860,
+      body: `<div class="modal-body"><div class="form-grid">
+                <div class="field">
+                  <label>الكود <span style="color:#ef4444">*</span></label>
+                  <input class="input" id="clr-code" data-testid="color-code" data-allow-alpha="true" value="${isEdit ? esc(color.code) : ""}"
+                         placeholder="مثال: RED" style="font-family:var(--font-mono);text-transform:uppercase">
+                </div>
+
+                <div class="field">
+                  <label>اسم اللون <span style="color:#ef4444">*</span></label>
+                  <div style="position:relative;display:flex;align-items:center">
+                    <input class="input" id="clr-name" data-testid="color-name" value="${isEdit ? esc(color.name) : ""}"
+                           placeholder="مثال: أحمر" style="padding-left:44px" autocomplete="off">
+                    <div id="clr-preview" style="position:absolute;left:10px;width:24px;height:24px;border-radius:6px;background:${hexVal || "#e2e8f0"};border:2px solid rgba(0,0,0,.15);cursor:pointer;flex-shrink:0"
+                         onclick="document.getElementById('clr-picker').click()" title="اختر لوناً"></div>
+                    <input type="color" id="clr-picker" value="${hexVal || "#3b82f6"}"
+                           style="position:absolute;left:0;opacity:0;width:0;height:0">
+                  </div>
+                  <div id="clr-ai-hint" style="font-size:11px;color:var(--text3);margin-top:4px;min-height:14px"></div>
+                </div>
+
+                <div class="field">
+                  <label>ملاحظات <span style="font-size:11px;color:var(--text3)">(اختياري)</span></label>
+                  <input class="input" id="clr-notes" data-testid="color-notes" value="${isEdit ? esc(color.notes || "") : ""}"
+                         placeholder="وصف اختياري">
+                </div>
+
+                <div class="field">
+                  <label>لون HEX <span style="font-size:11px;color:var(--text3)">(اختياري)</span></label>
+                  <input class="input" id="clr-hex" data-testid="color-hex" value="${esc(hexVal)}"
+                         placeholder="#ef4444" style="font-family:var(--font-mono)">
+                </div>
+              </div>
+              ${isEdit ? '<input type="hidden" id="clr-id" value="' + esc(color.id) + '">' : ""}
+              </div>`,
+      footer: `<button class="btn btn-outline" onclick="closeStyledDrawer()">إلغاء</button>
+                <button class="btn btn-primary" id="save-color-def-btn" data-testid="btn-save-color">
+                  <i class="ti ${isEdit ? "ti-device-floppy" : "ti-palette"}"></i>
+                  ${isEdit ? "حفظ التعديلات" : "إضافة اللون"}
+                </button>`,
+
+      // الإصلاح الجوهري: onReady بينفّذ بعد ما الحقول تتحط فعليًا
+      // في الـ DOM (openStyledDrawer بيحط الـ body جوه requestAnimationFrame).
+      // أي كود بيدور على document.getElementById('clr-name') قبل كده هيلاقيه null.
+      onReady: function () {
+        var picker = document.getElementById("clr-picker");
+        var preview = document.getElementById("clr-preview");
+        var hexInput = document.getElementById("clr-hex");
+        var nameInput = document.getElementById("clr-name");
+        var codeInput = document.getElementById("clr-code");
+        var aiHint = document.getElementById("clr-ai-hint");
+
+        // لو لأي سبب الحقول لسه مش موجودة، ما نكملش (حماية إضافية)
+        if (!nameInput || !codeInput || !hexInput) {
+          console.warn("openColorDefModal: عناصر الفورم مش موجودة بعد onReady");
+          return;
+        }
+
+        var hexManuallyEdited = isEdit && !!hexVal;
+        var codeManuallyEdited = isEdit;
+        var aiRequestTimer = null;
+        var aiLastRequestedName = "";
+
+        function setAIHint(text) {
+          if (aiHint) aiHint.textContent = text || "";
+        }
+
+        function applyHexResult(hex) {
+          if (!hex || !/^#[0-9a-fA-F]{6}$/i.test(hex)) return;
+          if (preview) preview.style.background = hex;
+          if (picker) picker.value = hex;
+          if (!hexManuallyEdited) hexInput.value = hex;
+        }
+
+        function applyCodeResult(code) {
+          if (!code) return;
+          if (!codeManuallyEdited) codeInput.value = code.toUpperCase();
+        }
+
+        // ── طلب اقتراح كامل (Hex + كود) من السيرفر: بحث إنترنت حقيقي
+        // للأسماء الإنجليزية أو ذكاء اصطناعي (Groq) للعربي/العامي ─────
+        function requestServerSuggestion(name) {
+          if (!name || name.length < 2) return;
+          aiLastRequestedName = name;
+          setAIHint(" جاري البحث عن اللون تلقائياً...");
+          _gsr("resolveColorsBatch", [[name]], {
+            onSuccess: function (result) {
+              if (nameInput.value.trim() !== aiLastRequestedName) return;
+              var info = result && result[aiLastRequestedName];
+              if (info && info.hex) {
+                applyHexResult(info.hex);
+                applyCodeResult(info.code);
+                var srcLabel =
+                  info.source === "web" ? " تم جلب اللون من الإنترنت" :
+                  info.source === "ai" ? " تم اقتراح اللون بالذكاء الاصطناعي" :
+                  info.source === "map" || info.source === "cache" ? " تم التعرف على اللون" : "";
+                setAIHint(hexManuallyEdited && codeManuallyEdited ? "" : srcLabel);
+              } else {
+                setAIHint("");
+              }
+            },
+            onError: function () {
+              if (nameInput.value.trim() === aiLastRequestedName) setAIHint("");
+            },
+          });
+        }
+
+        if (picker) {
+          picker.addEventListener("input", function () {
+            if (preview) preview.style.background = this.value;
+            hexInput.value = this.value;
+            hexManuallyEdited = true;
+          });
+        }
+
+        hexInput.addEventListener("input", function () {
+          hexManuallyEdited = true;
+          var v = this.value.trim();
+          if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+            if (preview) preview.style.background = v;
+            if (picker) picker.value = v;
+          }
+        });
+
+        nameInput.addEventListener("input", function () {
+          var n = this.value;
+          var nameNow = n.trim();
+
+          // 1) auto-fill فوري ومضمون للكود من الخريطة المحلية (بدون انتظار)
+          if (!codeManuallyEdited) {
+            var quickCode = lookupQuickCode(n);
+            if (quickCode) codeInput.value = quickCode;
+          }
+
+          // 2) auto-fill فوري لمعاينة اللون من دالة colorNameToHex لو موجودة
+          if (typeof colorNameToHex === "function") {
+            var autoHex = colorNameToHex(n);
+            if (autoHex && /^#[0-9a-fA-F]{6}$/i.test(autoHex)) {
+              if (preview) preview.style.background = autoHex;
+              if (!hexManuallyEdited) hexInput.value = autoHex;
+              if (picker) picker.value = autoHex;
+            }
+          }
+
+          // 3) بعد وقفة كتابة قصيرة، اطلب من السيرفر تأكيد/تحسين النتيجة
+          if (aiRequestTimer) clearTimeout(aiRequestTimer);
+          if (nameNow.length < 2) {
+            setAIHint("");
+            return;
+          }
+          aiRequestTimer = setTimeout(function () {
+            requestServerSuggestion(nameNow);
+          }, 500);
+        });
+
+        nameInput.addEventListener("blur", function () {
+          var n = this.value.trim();
+          if (!codeInput.value.trim() && !codeManuallyEdited) {
+            var code = lookupQuickCode(n) || n.replace(/\s+/g, "").substring(0, 3).toUpperCase();
+            codeInput.value = code;
+          }
+          if (!hexInput.value.trim() && !hexManuallyEdited) {
+            var autoHex = typeof colorNameToHex === "function" ? colorNameToHex(n) : null;
+            if (autoHex && /^#[0-9a-fA-F]{6}$/i.test(autoHex)) {
+              hexInput.value = autoHex;
+              if (preview) preview.style.background = autoHex;
+              if (picker) picker.value = autoHex;
+            }
+          }
+        });
+
+        codeInput.addEventListener("input", function () {
+          codeManuallyEdited = true;
+          this.value = this.value.toUpperCase();
+        });
+
+        // إذا كان تعديل لون موجود — حدّث معاينة اللون الأولية
+        if (isEdit && color.name && preview) {
+          var initHex = hexVal ||
+            (typeof colorNameToHex === "function" ? colorNameToHex(color.name) : "#e2e8f0");
+          preview.style.background = initHex;
+        }
+
+        var saveBtn = document.getElementById("save-color-def-btn");
+        if (saveBtn) {
+          if (typeof VF !== "undefined") {
+            VF.bind("clr-name", VF.RULES.requiredText("اسم اللون"));
+            VF.bind("clr-code", VF.RULES.requiredText("كود اللون"));
+          }
+          saveBtn.addEventListener("click", function () {
+            var name = (nameInput.value || "").trim();
+            var code = (codeInput.value || "").trim().toUpperCase();
+            var hex = (hexInput.value || "").trim();
+            var notesEl = document.getElementById("clr-notes");
+            var notes = notesEl ? (notesEl.value || "").trim() : "";
+            var idEl = document.getElementById("clr-id");
+            var id = isEdit ? (idEl ? idEl.value : "") : null;
+
+            // لو HEX فاضي → احسبه أوتوماتيك من الاسم
+            if (!hex && name) {
+              var autoHex = typeof colorNameToHex === "function" ? colorNameToHex(name) : null;
+              if (autoHex && /^#[0-9a-fA-F]{6}$/i.test(autoHex)) {
+                hex = autoHex;
+                hexInput.value = hex;
+                if (preview) preview.style.background = hex;
+                if (picker) picker.value = hex;
+              }
+            }
+
+            var payload = {
+              name: name,
+              code: code,
+              hex: hex,
+              notes: notes,
+              user: APP.currentUser ? APP.currentUser.username : "SYSTEM",
+              sessionToken: SESSION.token,
+            };
+            if (isEdit) payload.id = id;
+
+            var fnName = isEdit ? "updateColor" : "addColor";
+
+            // [SAVE-ENGINE] موحّد عبر 32_JS_SaveEngine.html — لا تعيد كتابة منطق حفظ يدوي هنا
+            SaveEngine.run({
+              screen: "ColorDefinition",
+              entity: "color",
+              recordId: id,
+              buttonId: "save-color-def-btn",
+              rules: [
+                {
+                  test: function () {
+                    return (
+                      typeof VF === "undefined" ||
+                      VF.validateForm([
+                        {
+                          fieldId: "clr-name",
+                          rules: VF.RULES.requiredText("اسم اللون"),
+                        },
+                        {
+                          fieldId: "clr-code",
+                          rules: VF.RULES.requiredText("كود اللون"),
+                        },
+                      ])
+                    );
+                  },
+                  message: " راجع الحقول المظللة بالأحمر",
+                },
+                {
+                  test: function () {
+                    return !!payload.name;
+                  },
+                  message: " اسم اللون مطلوب",
+                },
+                {
+                  test: function () {
+                    return !!payload.code;
+                  },
+                  message: " كود اللون مطلوب",
+                },
+              ],
+              data: payload,
+              fn: fnName,
+              // [SOFT-SAVE] اقفل المودال فوراً قبل نداء السيرفر — نفس نمط
+              // شاشات الأصناف/المجموعات/المخازن.
+              closeFn: function () {
+                closeModal();
+              },
+              successMessage: isEdit
+                ? "تم تعديل اللون "
+                : "تم إضافة اللون ",
+              onSuccess: function (res) {
+                // المودال اتقفل بالفعل قبل نداء السيرفر (closeFn فوق)
+                // [PERF-FIX] نفس مبدأ إصلاح "أرصدة أول المدة": الحفظ خلص
+                // فعلاً في السيرفر، لكن reloadAfterMutation (بدون
+                // optimisticPatch) بترسم الجدول فورًا من APP.data القديم،
+                // وبعدها بـ 300ms بس مزامنة الخلفية بتجيب النسخة الصح —
+                // فكان الصف الجديد بيتأخر شكليًا في الظهور رغم إن الحفظ تم.
+                // هنا بنحدّث APP.data.colors محليًا فورًا (Optimistic Update)
+                // فيظهر الصف على طول، والمزامنة الخلفية تفضل شغالة للتأكيد.
+                var _newId = isEdit ? id : res && res.data && res.data.id;
+                if (_newId && Array.isArray(APP.data.colors)) {
+                  var _colorRow = {
+                    id: _newId,
+                    name: payload.name,
+                    code: payload.code,
+                    hex: payload.hex,
+                    notes: payload.notes,
+                  };
+                  var _cIdx = APP.data.colors.findIndex(function (c) {
+                    return String(c.id) === String(_newId);
+                  });
+                  if (_cIdx > -1) APP.data.colors[_cIdx] = _colorRow;
+                  else APP.data.colors.push(_colorRow);
+                  if (typeof _cache !== "undefined" && _cache.data) {
+                    _cache.data.colors = APP.data.colors;
+                  }
+                }
+                reloadAfterMutation(function () {
+                  renderPage("color_definitions");
+                });
+              },
+            });
+          });
+        }
+      },
+    });
+  }
+
+  function editColorDef(id) {
+    requirePermission("updateColor", function () {
+      var color = (APP.data.colors || []).find(function (c) {
+        return c.id === id;
+      });
+      if (color) openColorDefModal(color);
+      else NotificationEngine.error("اللون غير موجود");
+    });
+  }
+
+  function deleteColorDefConfirm(id, name) {
+    if (!requirePermission("deleteColor")) return;
+    showConfirm({
+      icon: "ti-palette-off",
+      iconColor: "#dc2626",
+      title: "حذف اللون",
+      message: 'هل أنت متأكد من حذف اللون "' + name + '"؟',
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      onConfirm: function (unfreeze) {
+        _gsr(
+          "deleteColor",
+          [id, APP.currentUser ? APP.currentUser.username : "", SESSION.token],
+          {
+            label: "deleteColor",
+            onSuccess: function (r) {
+              NotificationEngine.success(r.message);
+              // [PERF-FIX] نفس مبدأ الإضافة/التعديل أعلاه — نشيل الصف
+              // محليًا فورًا بدل انتظار مزامنة الخلفية.
+              if (Array.isArray(APP.data.colors)) {
+                APP.data.colors = APP.data.colors.filter(function (c) {
+                  return String(c.id) !== String(id);
+                });
+                if (typeof _cache !== "undefined" && _cache.data) {
+                  _cache.data.colors = APP.data.colors;
+                }
+              }
+              reloadAfterMutation(function () {
+                renderPage("color_definitions");
+              }, unfreeze);
+            },
+            onError: function (r) {
+              unfreeze();
+              NotificationEngine.error((r && r.message) || "خطأ في الحذف");
+            },
+          },
+        );
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // إدارة المقاسات — Size Definitions
+  // ─────────────────────────────────────────────────────────────
+
+  // ── جدول المقاسات عبر ColumnEngine ──────────────────────────────
+  // [COLUMN-ENGINE] شاشة "تعريف المقاسات" (سايد بار → المخزون →
+  // تعريف المقاسات، page:"size_definitions"). نفس نمط جدول الألوان
+  // تمامًا أعلاه.
+  var _sizesColumnsRegistered = false;
+
+  function _sizesRegisterColumns() {
+    if (_sizesColumnsRegistered) return;
+    _sizesColumnsRegistered = true;
+    ColumnEngine.register(
+      "size_definitions",
+      [
+        {
+          key: "name",
+          label: "اسم المقاس",
+          type: "text",
+          width: 240,
+          frozen: "right",
+          format: function (v, row) {
+            return (
+              '<div style="font-weight:700;font-size:15px;color:var(--text1)">' +
+              esc(row.name || "—") +
+              "</div>" +
+              (row.notes
+                ? '<div style="font-size:12px;color:var(--text3);margin-top:2px">' +
+                  esc(row.notes) +
+                  "</div>"
+                : "")
+            );
+          },
+        },
+        {
+          key: "code",
+          label: "الكود",
+          type: "text",
+          width: 140,
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-weight:700;font-size:13px;background:var(--accent-soft);color:var(--accent);padding:5px 14px;border-radius:8px;display:inline-block">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+      ],
+      {
+        rowKey: "id",
+        title: "قائمة المقاسات",
+        contextMenuType: "sizes",
+      },
+    );
+  }
+
+  function _renderSizesTableCE(container, sizes) {
+    if (!container) return;
+    _sizesRegisterColumns();
+    ColumnEngine.renderTable("size_definitions", container, sizes || [], {
+      onRowClick: function (row) {
+        editSizeDef(row.id);
+      },
+    });
+  }
+
+  // [COLUMN-ENGINE] شاشة "تعريف الوحدات" (سايد بار → المخزون → تعريف
+  // الوحدات، page:"unit_definitions") — [UNITS-2026-08-06] نفس نمط جدول
+  // المقاسات فوق بالضبط (name/symbol بدل name/code).
+  var _unitsColumnsRegistered = false;
+
+  function _unitsRegisterColumns() {
+    if (_unitsColumnsRegistered) return;
+    _unitsColumnsRegistered = true;
+    ColumnEngine.register(
+      "unit_definitions",
+      [
+        {
+          key: "name",
+          label: "اسم الوحدة",
+          type: "text",
+          width: 240,
+          frozen: "right",
+          format: function (v, row) {
+            return (
+              '<div style="font-weight:700;font-size:15px;color:var(--text1)">' +
+              esc(row.name || "—") +
+              "</div>" +
+              (row.notes
+                ? '<div style="font-size:12px;color:var(--text3);margin-top:2px">' +
+                  esc(row.notes) +
+                  "</div>"
+                : "")
+            );
+          },
+        },
+        {
+          key: "symbol",
+          label: "الرمز المختصر",
+          type: "text",
+          width: 140,
+          format: function (v) {
+            return v
+              ? '<span class="mono" style="font-weight:700;font-size:13px;background:var(--accent-soft);color:var(--accent);padding:5px 14px;border-radius:8px;display:inline-block">' +
+                esc(v) +
+                "</span>"
+              : '<span style="color:var(--text3)">—</span>';
+          },
+        },
+      ],
+      {
+        rowKey: "id",
+        title: "قائمة الوحدات",
+        contextMenuType: "units",
+      },
+    );
+  }
+
+  function _renderUnitsTableCE(container, units) {
+    if (!container) return;
+    _unitsRegisterColumns();
+    ColumnEngine.renderTable("unit_definitions", container, units || [], {
+      onRowClick: function (row) {
+        editUnitDef(row.id);
+      },
+    });
+  }
+
+
+  // ── مجموعات المقاسات (Size Groups) — مبنية على مقاسات مُضافة فعلاً ──
+  function _sizeGroupExistingCodesLabel(ids) {
+    var sizesById = {};
+    (APP.data.sizes || []).forEach(function (s) {
+      sizesById[String(s.id)] = s;
+    });
+    return ids
+      .map(function (id) {
+        var s = sizesById[String(id)];
+        return s ? s.code : null;
+      })
+      .filter(Boolean);
+  }
+
+  function openSizeGroupModal(id) {
+    var isEdit = !!id;
+    var group = null;
+    if (isEdit) {
+      group = (APP.data.sizeGroups || []).find(function (g) {
+        return String(g.id) === String(id);
+      });
+      if (!group) {
+        NotificationEngine.error("لم يتم إيجاد المجموعة");
+        return;
+      }
+    }
+    var selectedIds = group
+      ? String(group.size_ids || "")
+          .split(",")
+          .map(function (s) {
+            return s.trim();
+          })
+          .filter(Boolean)
+      : [];
+
+    var allSizes = APP.data.sizes || [];
+    var itemsHtml = allSizes.length
+      ? allSizes
+          .map(function (s) {
+            var checked = selectedIds.indexOf(String(s.id)) !== -1;
+            return (
+              '<label style="display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;cursor:pointer">' +
+              '<input type="checkbox" class="szg-item" value="' +
+              esc(s.id) +
+              '" ' +
+              (checked ? "checked" : "") +
+              ">" +
+              '<span style="flex:1;font-size:13px;font-weight:600">' +
+              esc(s.name) +
+              "</span>" +
+              '<span class="mono" style="font-size:11.5px;color:var(--text3)">' +
+              esc(s.code) +
+              "</span>" +
+              "</label>"
+            );
+          })
+          .join("")
+      : '<div style="padding:14px;text-align:center;color:var(--text3);font-size:13px;grid-column:1/-1">' +
+        "لا توجد مقاسات مُضافة بعد — أضف مقاسات أولاً من تاب \"المقاسات\"" +
+        "</div>";
+
+    openStyledDrawer({
+      title: isEdit ? "تعديل مجموعة مقاسات" : "إضافة مجموعة مقاسات",
+      subtitle: "مجموعة مبنية من المقاسات المُضافة فعلاً في النظام",
+      icon: "ti-stack-2",
+      color: "green",
+      width: 780,
+      body:
+        '<div class="modal-body"><div class="form-grid">' +
+        '<div class="field" style="grid-column:1/-1">' +
+        '<label>اسم المجموعة <span style="color:#ef4444">*</span></label>' +
+        '<input class="input" id="szg-name" value="' +
+        (isEdit ? esc(group.name) : "") +
+        '" placeholder="مثال: مقاسات رجالي">' +
+        "</div>" +
+        '<div class="field" style="grid-column:1/-1">' +
+        '<label>ملاحظات <span style="font-size:11px;color:var(--text3)">(اختياري)</span></label>' +
+        '<input class="input" id="szg-notes" value="' +
+        (isEdit ? esc(group.notes || "") : "") +
+        '" placeholder="أي ملاحظات إضافية">' +
+        "</div>" +
+        '<div class="field" style="grid-column:1/-1">' +
+        "<label>اختر المقاسات <span style=\"color:#ef4444\">*</span></label>" +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px;margin-top:6px">' +
+        itemsHtml +
+        "</div></div>" +
+        (isEdit ? '<input type="hidden" id="szg-id" value="' + esc(group.id) + '">' : "") +
+        "</div></div>",
+      footer:
+        '<button class="btn btn-outline" onclick="closeStyledDrawer()">إلغاء</button>' +
+        '<button class="btn btn-primary" id="save-size-group-btn">' +
+        '<i class="ti ' +
+        (isEdit ? "ti-device-floppy" : "ti-circle-plus") +
+        '"></i> ' +
+        (isEdit ? "حفظ التعديلات" : "إضافة المجموعة") +
+        "</button>",
+      onReady: function () {
+        if (typeof VF !== "undefined") {
+          VF.bind("szg-name", VF.RULES.requiredText("اسم المجموعة"));
+        }
+        document
+          .getElementById("save-size-group-btn")
+          .addEventListener("click", function () {
+            var name = (document.getElementById("szg-name").value || "").trim();
+            var notes = (document.getElementById("szg-notes").value || "").trim();
+            var sizeIds = Array.prototype.map.call(
+              document.querySelectorAll(".szg-item:checked"),
+              function (cb) {
+                return cb.value;
+              },
+            );
+
+            if (!name) {
+              NotificationEngine.error(" اسم المجموعة مطلوب");
+              return;
+            }
+            if (!sizeIds.length) {
+              NotificationEngine.error(" اختر مقاساً واحداً على الأقل");
+              return;
+            }
+
+            var payload = {
+              name: name,
+              notes: notes,
+              size_ids: sizeIds,
+              user: APP.currentUser ? APP.currentUser.username : "",
+              sessionToken: SESSION ? SESSION.token : null,
+            };
+            if (isEdit) payload.id = document.getElementById("szg-id").value;
+
+            var fnName = isEdit ? "updateSizeGroup" : "addSizeGroup";
+
+            // [SAVE-ENGINE] موحّد عبر 32_JS_SaveEngine.html — نفس نمط
+            // openSizeDefModal فوق، بدل نداء _gsr يدوي هنا.
+            SaveEngine.run({
+              screen: "SizeGroup",
+              entity: "sizeGroup",
+              recordId: payload.id || null,
+              buttonId: "save-size-group-btn",
+              rules: [
+                {
+                  test: function () {
+                    return !!payload.name;
+                  },
+                  message: " اسم المجموعة مطلوب",
+                },
+                {
+                  test: function () {
+                    return payload.size_ids && payload.size_ids.length;
+                  },
+                  message: " اختر مقاساً واحداً على الأقل",
+                },
+              ],
+              data: payload,
+              fn: fnName,
+              // [SOFT-SAVE] اقفل الدرج فوراً قبل نداء السيرفر — نفس نمط
+              // شاشة تعريف المقاسات.
+              closeFn: function () {
+                closeStyledDrawer();
+              },
+              successMessage: isEdit
+                ? "تم تعديل مجموعة المقاسات "
+                : "تم إضافة مجموعة المقاسات ",
+              onSuccess: function (res) {
+                // [PERF-FIX] تحديث محلي فوري لـ APP.data.sizeGroups بدل
+                // انتظار المزامنة الخلفية — نفس إصلاح تعريف المقاسات.
+                var _newId = isEdit
+                  ? payload.id
+                  : res && res.data && res.data.id;
+                if (_newId && Array.isArray(APP.data.sizeGroups)) {
+                  var _groupRow = {
+                    id: _newId,
+                    name: payload.name,
+                    notes: payload.notes,
+                    size_ids: payload.size_ids.join(","),
+                  };
+                  var _gIdx = APP.data.sizeGroups.findIndex(function (g) {
+                    return String(g.id) === String(_newId);
+                  });
+                  if (_gIdx > -1) APP.data.sizeGroups[_gIdx] = _groupRow;
+                  else APP.data.sizeGroups.push(_groupRow);
+                  if (typeof _cache !== "undefined" && _cache.data) {
+                    _cache.data.sizeGroups = APP.data.sizeGroups;
+                  }
+                }
+                reloadAfterMutation(function () {
+                  renderPage("size_definitions");
+                });
+              },
+            });
+          });
+      },
+    });
+  }
+
+  function deleteSizeGroupConfirm(id, name) {
+    showConfirm({
+      icon: "ti-stack-2",
+      iconColor: "#9333ea",
+      title: "حذف مجموعة مقاسات",
+      message: 'هل أنت متأكد من حذف مجموعة "' + esc(name || "") + '"؟',
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      onConfirm: function (unfreeze) {
+        _gsr(
+          "deleteSizeGroup",
+          [id, APP.currentUser ? APP.currentUser.username : "", SESSION ? SESSION.token : null],
+          {
+            onSuccess: function (r) {
+              NotificationEngine.success(r.message);
+              // [PERF-FIX] إزالة محلية فورية — نفس نمط deleteSizeDefConfirm.
+              if (Array.isArray(APP.data.sizeGroups)) {
+                APP.data.sizeGroups = APP.data.sizeGroups.filter(function (g) {
+                  return String(g.id) !== String(id);
+                });
+                if (typeof _cache !== "undefined" && _cache.data) {
+                  _cache.data.sizeGroups = APP.data.sizeGroups;
+                }
+              }
+              reloadAfterMutation(function () {
+                renderPage("size_definitions");
+              }, unfreeze);
+            },
+            onError: function (r) {
+              unfreeze();
+              NotificationEngine.error((r && r.message) || "خطأ في الحذف");
+            },
+          },
+        );
+      },
+    });
+  }
+
+  function openSizeDefModal(size) {
+    var isEdit = !!size;
+
+    openStyledDrawer({
+      title: isEdit ? "تعديل مقاس" : "إضافة مقاس جديد",
+      subtitle: "إدارة المقاسات المستخدمة في الأصناف وأوامر الإنتاج",
+      icon: "ti-ruler",
+      color: "green",
+      width: 860,
+      body: `<div class="modal-body"><div class="form-grid">
+                <div class="field">
+                  <label>الكود <span style="color:#ef4444">*</span></label>
+                  <input class="input" id="sz-code" data-allow-alpha="true" value="${isEdit ? esc(size.code) : ""}"
+                    placeholder="مثال: XL أو 42 أو M" style="font-family:var(--font-mono);text-transform:uppercase">
+                </div>
+                <div class="field">
+                  <label>اسم المقاس <span style="color:#ef4444">*</span></label>
+                  <input class="input" id="sz-name" value="${isEdit ? esc(size.name) : ""}"
+                    placeholder="مثال: إكسترا لارج أو مقاس 42">
+                </div>
+                <div class="field" style="grid-column:1/-1">
+                  <label>ملاحظات <span style="font-size:11px;color:var(--text3)">(اختياري)</span></label>
+                  <input class="input" id="sz-notes" value="${isEdit ? esc(size.notes || "") : ""}"
+                    placeholder="أي ملاحظات إضافية">
+                </div>
+                ${isEdit ? '<input type="hidden" id="sz-id" value="' + esc(size.id) + '">' : ""}
+              </div></div>`,
+      footer: `<button class="btn btn-outline" onclick="closeStyledDrawer()">إلغاء</button>
+                 <button class="btn btn-primary" id="save-size-def-btn">
+                   <i class="ti ${isEdit ? "ti-device-floppy" : "ti-ruler"}"></i>
+                   ${isEdit ? "حفظ التعديلات" : "إضافة المقاس"}
+                 </button>`,
+      onReady: function () {
+        if (typeof VF !== "undefined") {
+          VF.bind("sz-name", VF.RULES.requiredText("اسم المقاس"));
+          VF.bind("sz-code", VF.RULES.requiredText("كود المقاس"));
+        }
+        document
+          .getElementById("save-size-def-btn")
+          .addEventListener("click", function () {
+            var name = (document.getElementById("sz-name").value || "").trim();
+            var code = (document.getElementById("sz-code").value || "")
+              .trim()
+              .toUpperCase();
+            var notes = (
+              document.getElementById("sz-notes").value || ""
+            ).trim();
+
+            var payload = {
+              name: name,
+              code: code,
+              notes: notes,
+              user: APP.currentUser ? APP.currentUser.username : "",
+              sessionToken: SESSION.token,
+            };
+            if (isEdit) payload.id = document.getElementById("sz-id").value;
+
+            var fnName = isEdit ? "updateSize" : "addSize";
+
+            // [SAVE-ENGINE] موحّد عبر 32_JS_SaveEngine.html — لا تعيد كتابة منطق حفظ يدوي هنا
+            SaveEngine.run({
+              screen: "SizeDefinition",
+              entity: "size",
+              recordId: payload.id || null,
+              buttonId: "save-size-def-btn",
+              rules: [
+                {
+                  test: function () {
+                    return (
+                      typeof VF === "undefined" ||
+                      VF.validateForm([
+                        {
+                          fieldId: "sz-name",
+                          rules: VF.RULES.requiredText("اسم المقاس"),
+                        },
+                        {
+                          fieldId: "sz-code",
+                          rules: VF.RULES.requiredText("كود المقاس"),
+                        },
+                      ])
+                    );
+                  },
+                  message: " راجع الحقول المظللة بالأحمر",
+                },
+                {
+                  test: function () {
+                    return !!payload.name;
+                  },
+                  message: " اسم المقاس مطلوب",
+                },
+                {
+                  test: function () {
+                    return !!payload.code;
+                  },
+                  message: " كود المقاس مطلوب",
+                },
+              ],
+              data: payload,
+              fn: fnName,
+              // [SOFT-SAVE] اقفل الدرج فوراً قبل نداء السيرفر — نفس نمط
+              // شاشات الأصناف/المجموعات/المخازن/الألوان.
+              closeFn: function () {
+                closeStyledDrawer();
+              },
+              successMessage: isEdit
+                ? "تم تعديل المقاس "
+                : "تم إضافة المقاس ",
+              onSuccess: function (res) {
+                // الدرج اتقفل بالفعل قبل نداء السيرفر (closeFn فوق)
+                // [PERF-FIX] نفس إصلاح الألوان/أرصدة أول المدة — تحديث
+                // محلي فوري لـ APP.data.sizes بدل انتظار المزامنة الخلفية.
+                var _newId = isEdit
+                  ? payload.id
+                  : res && res.data && res.data.id;
+                if (_newId && Array.isArray(APP.data.sizes)) {
+                  var _sizeRow = {
+                    id: _newId,
+                    name: payload.name,
+                    code: payload.code,
+                    notes: payload.notes,
+                  };
+                  var _sIdx = APP.data.sizes.findIndex(function (s) {
+                    return String(s.id) === String(_newId);
+                  });
+                  if (_sIdx > -1) APP.data.sizes[_sIdx] = _sizeRow;
+                  else APP.data.sizes.push(_sizeRow);
+                  if (typeof _cache !== "undefined" && _cache.data) {
+                    _cache.data.sizes = APP.data.sizes;
+                  }
+                }
+                reloadAfterMutation(function () {
+                  renderPage("size_definitions");
+                });
+              },
+            });
+          });
+      },
+    });
+  }
+
+  function editSizeDef(id) {
+    requirePermission("updateSize", function () {
+      var size = (APP.data.sizes || []).find(function (s) {
+        return String(s.id) === String(id);
+      });
+      if (size) openSizeDefModal(size);
+      else NotificationEngine.error("المقاس غير موجود");
+    });
+  }
+
+  function deleteSizeDefConfirm(id, name) {
+    if (!requirePermission("deleteSize")) return;
+    showConfirm({
+      icon: "ti-ruler-off",
+      iconColor: "#dc2626",
+      title: "حذف المقاس",
+      message: 'هل أنت متأكد من حذف المقاس "' + name + '"؟',
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      onConfirm: function (unfreeze) {
+        _gsr(
+          "deleteSize",
+          [id, APP.currentUser ? APP.currentUser.username : "", SESSION.token],
+          {
+            label: "deleteSize",
+            onSuccess: function (r) {
+              NotificationEngine.success(r.message);
+              if (Array.isArray(APP.data.sizes)) {
+                APP.data.sizes = APP.data.sizes.filter(function (s) {
+                  return String(s.id) !== String(id);
+                });
+                if (typeof _cache !== "undefined" && _cache.data) {
+                  _cache.data.sizes = APP.data.sizes;
+                }
+              }
+              reloadAfterMutation(function () {
+                renderPage("size_definitions");
+              }, unfreeze);
+            },
+            onError: function (r) {
+              unfreeze();
+              NotificationEngine.error((r && r.message) || "خطأ في الحذف");
+            },
+          },
+        );
+      },
+    });
+  }
+
+  // [UNITS-2026-08-06] نفس نمط openSizeDefModal/editSizeDef/
+  // deleteSizeDefConfirm فوق بالحرف، بس name/symbol بدل name/code
+  // (الرمز اختياري مش مطلوب زي كود المقاس).
+  function openUnitDefModal(unit) {
+    var isEdit = !!unit;
+
+    openStyledDrawer({
+      title: isEdit ? "تعديل وحدة" : "إضافة وحدة جديدة",
+      subtitle: "إدارة وحدات القياس المستخدمة في الأصناف",
+      icon: "ti-ruler-2",
+      color: "cyan",
+      width: 860,
+      body: `<div class="modal-body"><div class="form-grid">
+                <div class="field">
+                  <label>اسم الوحدة <span style="color:#ef4444">*</span></label>
+                  <input class="input" id="unt-name" value="${isEdit ? esc(unit.name) : ""}"
+                    placeholder="مثال: قطعة أو كيلو أو متر">
+                </div>
+                <div class="field">
+                  <label>الرمز المختصر <span style="font-size:11px;color:var(--text3)">(اختياري)</span></label>
+                  <input class="input" id="unt-symbol" data-allow-alpha="true" value="${isEdit ? esc(unit.symbol || "") : ""}"
+                    placeholder="مثال: kg أو m" style="font-family:var(--font-mono)">
+                </div>
+                <div class="field" style="grid-column:1/-1">
+                  <label>ملاحظات <span style="font-size:11px;color:var(--text3)">(اختياري)</span></label>
+                  <input class="input" id="unt-notes" value="${isEdit ? esc(unit.notes || "") : ""}"
+                    placeholder="أي ملاحظات إضافية">
+                </div>
+                ${isEdit ? '<input type="hidden" id="unt-id" value="' + esc(unit.id) + '">' : ""}
+              </div></div>`,
+      footer: `<button class="btn btn-outline" onclick="closeStyledDrawer()">إلغاء</button>
+                 <button class="btn btn-primary" id="save-unit-def-btn">
+                   <i class="ti ${isEdit ? "ti-device-floppy" : "ti-ruler-2"}"></i>
+                   ${isEdit ? "حفظ التعديلات" : "إضافة الوحدة"}
+                 </button>`,
+      onReady: function () {
+        if (typeof VF !== "undefined") {
+          VF.bind("unt-name", VF.RULES.requiredText("اسم الوحدة"));
+        }
+        document
+          .getElementById("save-unit-def-btn")
+          .addEventListener("click", function () {
+            var name = (document.getElementById("unt-name").value || "").trim();
+            var symbol = (
+              document.getElementById("unt-symbol").value || ""
+            ).trim();
+            var notes = (
+              document.getElementById("unt-notes").value || ""
+            ).trim();
+
+            var payload = {
+              name: name,
+              symbol: symbol,
+              notes: notes,
+              user: APP.currentUser ? APP.currentUser.username : "",
+              sessionToken: SESSION.token,
+            };
+            if (isEdit) payload.id = document.getElementById("unt-id").value;
+
+            var fnName = isEdit ? "updateUnit" : "addUnit";
+
+            // [SAVE-ENGINE] موحّد عبر 32_JS_SaveEngine.html
+            SaveEngine.run({
+              screen: "UnitDefinition",
+              entity: "unit",
+              recordId: payload.id || null,
+              buttonId: "save-unit-def-btn",
+              rules: [
+                {
+                  test: function () {
+                    return (
+                      typeof VF === "undefined" ||
+                      VF.validateForm([
+                        {
+                          fieldId: "unt-name",
+                          rules: VF.RULES.requiredText("اسم الوحدة"),
+                        },
+                      ])
+                    );
+                  },
+                  message: " راجع الحقول المظللة بالأحمر",
+                },
+                {
+                  test: function () {
+                    return !!payload.name;
+                  },
+                  message: " اسم الوحدة مطلوب",
+                },
+              ],
+              data: payload,
+              fn: fnName,
+              // [SOFT-SAVE] اقفل الدرج فوراً قبل نداء السيرفر
+              closeFn: function () {
+                closeStyledDrawer();
+              },
+              successMessage: isEdit
+                ? "تم تعديل الوحدة "
+                : "تم إضافة الوحدة ",
+              onSuccess: function (res) {
+                // [PERF-FIX] تحديث محلي فوري لـ APP.data.units بدل انتظار
+                // المزامنة الخلفية — نفس نمط المقاسات.
+                var _newId = isEdit
+                  ? payload.id
+                  : res && res.data && res.data.id;
+                if (_newId && Array.isArray(APP.data.units)) {
+                  var _unitRow = {
+                    id: _newId,
+                    name: payload.name,
+                    symbol: payload.symbol,
+                    notes: payload.notes,
+                  };
+                  var _uIdx = APP.data.units.findIndex(function (u) {
+                    return String(u.id) === String(_newId);
+                  });
+                  if (_uIdx > -1) APP.data.units[_uIdx] = _unitRow;
+                  else APP.data.units.push(_unitRow);
+                  if (typeof _cache !== "undefined" && _cache.data) {
+                    _cache.data.units = APP.data.units;
+                  }
+                }
+                reloadAfterMutation(function () {
+                  renderPage("unit_definitions");
+                });
+              },
+            });
+          });
+      },
+    });
+  }
+
+  function editUnitDef(id) {
+    requirePermission("updateUnit", function () {
+      var unit = (APP.data.units || []).find(function (u) {
+        return String(u.id) === String(id);
+      });
+      if (unit) openUnitDefModal(unit);
+      else NotificationEngine.error("الوحدة غير موجودة");
+    });
+  }
+
+  function deleteUnitDefConfirm(id, name) {
+    if (!requirePermission("deleteUnit")) return;
+    showConfirm({
+      icon: "ti-ruler-2",
+      iconColor: "#dc2626",
+      title: "حذف الوحدة",
+      message: 'هل أنت متأكد من حذف الوحدة "' + name + '"؟',
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      onConfirm: function (unfreeze) {
+        _gsr(
+          "deleteUnit",
+          [id, APP.currentUser ? APP.currentUser.username : "", SESSION.token],
+          {
+            label: "deleteUnit",
+            onSuccess: function (r) {
+              NotificationEngine.success(r.message);
+              if (Array.isArray(APP.data.units)) {
+                APP.data.units = APP.data.units.filter(function (u) {
+                  return String(u.id) !== String(id);
+                });
+                if (typeof _cache !== "undefined" && _cache.data) {
+                  _cache.data.units = APP.data.units;
+                }
+              }
+              reloadAfterMutation(function () {
+                renderPage("unit_definitions");
+              }, unfreeze);
+            },
+            onError: function (r) {
+              unfreeze();
+              NotificationEngine.error((r && r.message) || "خطأ في الحذف");
+            },
+          },
+        );
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // منطق استيراد الأصناف من إكسيل — Excel Import Logic
+  // ─────────────────────────────────────────────────────────────
+
+  var _xlsxLoaded = false;
+  var _excelRows = [];
+
+  /* تحميل مكتبة SheetJS — [CONSOLE-FIX] بقت مضمّنة داخلياً ومحمّلة
+     Lazy عبر getLazyAppBundle (SheetJS_Embedded.html) بدل التحميل من
+     CDN خارجي. عادةً بتكون خلصت تحميل قبل ما المستخدم يوصل لشاشة
+     الاستيراد أصلاً (اتحملت في الخلفية من أول فتح الصفحة). لو لسه
+     بتتحمّل لأي سبب (مثلاً المستخدم فتح شاشة الاستيراد بسرعة جداً)،
+     ننتظر _loadLazyAppBundle تخلص (نفس الآلية المستخدمة لباقي
+     الموديولات المؤجلة) بدل ما نحقن <script> تاني من مصدر خارجي. */
+  function _loadSheetJS(cb) {
+    if (_xlsxLoaded || typeof XLSX !== "undefined") {
+      _xlsxLoaded = true;
+      cb();
+      return;
+    }
+    if (typeof _loadLazyAppBundle === "function") {
+      var _tries = 0;
+      var _wait = setInterval(function () {
+        _tries++;
+        if (typeof XLSX !== "undefined") {
+          clearInterval(_wait);
+          _xlsxLoaded = true;
+          cb();
+        } else if (_tries > 100) {
+          // ~10 ثواني — لو لسه مش موجودة، فيه مشكلة فعلية في الحزمة المؤجلة
+          clearInterval(_wait);
+          NotificationEngine.error(" تعذّر تحميل مكتبة قراءة الإكسيل — أعد تحميل الصفحة");
+        }
+      }, 100);
+      _loadLazyAppBundle();
+      return;
+    }
+    NotificationEngine.error(" تعذّر تحميل مكتبة قراءة الإكسيل — أعد تحميل الصفحة");
+  }
+
+  /* تحميل نموذج إكسيل جاهز بالأعمدة الصح */
+  function _downloadExcelTemplate() {
+    _loadSheetJS(function () {
+      var headers = [
+        "الكود",
+        "الاسم",
+        "المجموعة",
+        "الوحدة",
+        "الحد الأدنى",
+        "سعر التكلفة",
+        "سعر البيع",
+        "الألوان",
+        "رابط الصورة",
+        "الوصف",
+      ];
+      var example = [
+        "B1",
+        "بابل أحمر",
+        "قمصان",
+        "قطعة",
+        "10",
+        "50",
+        "100",
+        "أحمر، أسود، أبيض",
+        "https://i.imgur.com/example.jpg",
+        "وصف اختياري",
+      ];
+
+      var ws = XLSX.utils.aoa_to_sheet([headers, example]);
+
+      // عرض الأعمدة
+      ws["!cols"] = headers.map(function (h) {
+        return { wch: h === "رابط الصورة" || h === "الوصف" ? 35 : 16 };
+      });
+
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "الأصناف");
+      XLSX.writeFile(wb, "نموذج_استيراد_الأصناف.xlsx");
+    });
+  }
+
+  /* فتح مودال الاستيراد
+     [IMP-WIZARD-V1] بقى بيفتح معالج الاستيراد الاحترافي
+     (37_JS_ImportWizard.html) بدل الاستيراد المباشر القديم.
+     [FIX-DUP-ENGINE] المودال والدوال القديمة (renderExcelImportModal/
+     _doExcelImport/closeExcelImportModal/_onExcelFileSelected/
+     _normalizeExcelRow في هذا الملف، و importItemsFromExcel في
+     Code_21_Setup.gs) كانت مسيبة كمرجع تاريخي غير مستخدم فعليًا —
+     تم حذفها نهائيًا لتوحيد مسار استيراد الأصناف بالكامل على
+     ImportEngine (validateImportRows) بدون أي مسار مواز. */
+  function openExcelImportModal() {
+    openImportWizard("items");
+  }
+
+  // ── ملاحظة [COLUMN-ENGINE]: _csGetActiveWarehouseName،
+  // getCatalogItemStockFiltered، getColorQtyFiltered،
+  // stockStatusBadgeFiltered، و _csColorPillsFiltered بقوا معرّفين
+  // بشكل أساسي في 06_JS_Catalog_Stock.html (مستخدَمين مباشرة داخل
+  // تعريف أعمدة stock_current/stock_color_detail في ColumnEngine).
+  // كانوا هنا كـ override لدوال _csBuildMergedTable/_csBuildColorDetail
+  // القديمة اللي بقت DEPRECATED ومش في مسار العرض الفعلي، فاتشالت.
+  // _csUpdateStats تحت لسه override حي وشغال (شريط الإحصائيات
+  // العلوي مش جزء من ColumnEngine).
+
+  // ── override: الإحصائيات العلوية ────────────────────────────
+  _csUpdateStats = function (items) {
+    var whName = _csGetActiveWarehouseName();
+
+    // pills شريط
+    var statsBar = document.getElementById("cs-stats-bar");
+    if (statsBar) {
+      if (!whName) {
+        statsBar.innerHTML = buildCatalogStats(items);
+      } else {
+        // أعد بناء pills بالرصيد الفعلي للمخزن المختار
+        var total = items.length,
+          available = 0,
+          low = 0,
+          out = 0;
+        items.forEach(function (it) {
+          var c = stockStatusBadgeFiltered(it, whName).cls;
+          if (c === "available") available++;
+          else if (c === "low") low++;
+          else out++;
+        });
+        // نفس buildCatalogStats لكن بالأرقام المحسوبة
+        function pill(icon, label, val, color) {
+          return (
+            '<div style="display:flex;align-items:center;gap:7px;background:var(--surface);' +
+            'border:1px solid var(--border);border-radius:50px;padding:6px 14px;box-shadow:var(--shadow-xs)">' +
+            '<span style="font-size:15px">' +
+            icon +
+            "</span>" +
+            '<span style="font-size:12px;color:var(--text3)">' +
+            label +
+            "</span>" +
+            '<span style="font-weight:800;font-size:14px;color:' +
+            color +
+            '">' +
+            val +
+            "</span></div>"
+          );
+        }
+        statsBar.innerHTML =
+          '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">' +
+          pill("", "إجمالي", total, "var(--text1)") +
+          pill("", "متاح", available, "var(--success)") +
+          pill("", "منخفض", low, "var(--warning,#f59e0b)") +
+          pill("", "نفد", out, "var(--danger)") +
+          pill("", "المخزن المعروض", esc(whName), "var(--accent)") +
+          "</div>";
+      }
+    }
+
+    // بطاقات كبيرة
+    var cardsEl = document.getElementById("cs-stat-cards");
+    if (!cardsEl) return;
+    var total2 = items.length,
+      avail = 0,
+      low2 = 0,
+      out2 = 0,
+      totalCost = 0;
+    items.forEach(function (it) {
+      var ss = whName
+        ? stockStatusBadgeFiltered(it, whName)
+        : stockStatusBadge(it);
+      if (ss.cls === "available") avail++;
+      else if (ss.cls === "low") low2++;
+      else out2++;
+      totalCost += ss.qty * Number(it.cost_price || 0);
+    });
+    cardsEl.innerHTML =
+      statCard("", "مخزون طبيعي", avail, "صنف", "var(--success-soft)") +
+      statCard(
+        "",
+        "تحت الحد الأدنى",
+        low2 + out2,
+        "صنف",
+        "var(--warning-soft,#fff7e6)",
+      ) +
+      statCard(
+        "",
+        "قيمة المخزون",
+        formatMoney(totalCost, { decimals: 0, withSymbol: false }),
+        "جنيه",
+        "var(--accent-soft)",
+      ) +
+      statCard(
+        "",
+        "إجمالي الأصناف",
+        total2,
+        "صنف",
+        "var(--teal-soft,#e0f7f4)",
+      );
+  };
+  // ── دليل الأكواد — فلتر وبحث ──
+  var _cgActiveFilter = "all";
+  var _cgGUIDEDATA_REF = null;
+
+  function cgDoSearch() {
+    var q = (document.getElementById("cg-search") || {}).value || "";
+    q = q.trim().toLowerCase();
+    document.querySelectorAll(".cg2-item-row").forEach(function (row) {
+      row.style.display =
+        !q || (row.dataset.search || "").includes(q) ? "" : "none";
+    });
+    // إظهار/إخفاء المجموعات الفارغة بعد الفلترة
+    document.querySelectorAll(".cg2-group-block").forEach(function (gb) {
+      var visible = gb.querySelectorAll(
+        '.cg2-item-row:not([style*="display: none"])',
+      ).length;
+      var tbody = gb.querySelector("tbody");
+      if (tbody) {
+        gb.style.display = visible > 0 ? "" : q ? "none" : "";
+      }
+    });
+  }
+
+  function cgFilter(whId) {
+    document.querySelectorAll(".cg2-fbtn").forEach(function (b) {
+      b.classList.remove("cg2-active");
+    });
+    var activeBtn = document.getElementById("cg-btn-" + whId);
+    if (activeBtn) activeBtn.classList.add("cg2-active");
+
+    document.querySelectorAll(".cg2-wh-block").forEach(function (block) {
+      block.style.display =
+        whId === "all" || block.dataset.wh === whId ? "" : "none";
+    });
+  }
+
+  // ── تصدير دليل الأكواد PDF ──────────────────────────────────
+  function cgExportPDF() {
+    var s = APP.companySettings || {};
+    var companyName = s.company_name || s.name || "MOO.ERP";
+    var logoUrl = s.logo_url ? s.logo_url : "";
+    var now = new Date();
+    var dateStr = fmtDate(now);
+
+    // جمع البيانات المرئية حالياً
+    var warehouses = APP.data.warehouses || [];
+    var groups = APP.data.groups || [];
+    var items = APP.data.items || [];
+
+    var blocksHtml = "";
+    warehouses.forEach(function (wh) {
+      var whBlock = document.querySelector(
+        '.cg2-wh-block[data-wh="' + wh.id + '"]',
+      );
+      if (whBlock && whBlock.style.display === "none") return; // مخفي بالفلتر
+
+      var whGroups = groups.filter(function (g) {
+        return g.warehouse_id === wh.id || g.warehouse_id === wh.name;
+      });
+
+      var groupsContent = "";
+      whGroups.forEach(function (g) {
+        var groupItems = items.filter(function (it) {
+          return it.group === g.id || it.group === g.name;
+        });
+
+        var rows = groupItems
+          .map(function (it) {
+            return (
+              "<tr>" +
+              "<td>" +
+              esc(it.code || it.id) +
+              "</td>" +
+              "<td>" +
+              esc(it.name) +
+              "</td>" +
+              "<td>" +
+              esc(it.description || "—") +
+              "</td>" +
+              "<td>" +
+              esc(it.unit || "—") +
+              "</td>" +
+              "</tr>"
+            );
+          })
+          .join("");
+
+        groupsContent +=
+          '<div class="pdf-group">' +
+          '<div class="pdf-group-header">' +
+          '<span class="pdf-group-prefix">' +
+          esc(g.prefix || g.id) +
+          "</span>" +
+          '<span class="pdf-group-name">' +
+          esc(g.name) +
+          "</span>" +
+          '<span class="pdf-group-count">' +
+          groupItems.length +
+          " صنف</span>" +
+          "</div>" +
+          (rows
+            ? '<table class="pdf-table"><thead><tr><th>كود الصنف</th><th>الاسم</th><th>الوصف</th><th>الوحدة</th></tr></thead><tbody>' +
+              rows +
+              "</tbody></table>"
+            : '<p class="pdf-empty">لا توجد أصناف في هذه المجموعة</p>') +
+          "</div>";
+      });
+
+      blocksHtml +=
+        '<div class="pdf-wh-block">' +
+        '<div class="pdf-wh-header">' +
+        '<span class="pdf-wh-code">' +
+        esc(wh.code || wh.id) +
+        "</span>" +
+        '<span class="pdf-wh-name">' +
+        esc(wh.name) +
+        "</span>" +
+        '<span class="pdf-wh-meta">' +
+        whGroups.length +
+        " مجموعة — " +
+        items.filter(function (it) {
+          return whGroups.some(function (g) {
+            return g.id === it.group || g.name === it.group;
+          });
+        }).length +
+        " صنف</span>" +
+        "</div>" +
+        (whGroups.length > 0
+          ? groupsContent
+          : '<p class="pdf-empty">لا توجد مجموعات</p>') +
+        "</div>";
+    });
+
+    var logoHtml = logoUrl
+      ? '<img src="' + logoUrl + '" class="pdf-logo" alt="لوجو">'
+      : "";
+
+    var html =
+      "<!DOCTYPE html><html lang='ar' dir='rtl'><head>" +
+      "<meta charset='UTF-8'>" +
+      "<title>دليل الأكواد — " +
+      companyName +
+      "</title>" +
+      "<link href='https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;600;700;800&display=swap' rel='stylesheet'>" +
+      "<style>" +
+      "* { margin:0; padding:0; box-sizing:border-box; }" +
+      "body { font-family:'IBM Plex Sans Arabic',sans-serif; direction:rtl; color:#1e293b; background:#fff; font-size:12px; }" +
+      ".pdf-header { display:flex; align-items:center; gap:14px; padding:20px 28px 16px; border-bottom:2.5px solid #2563eb; background:#eff6ff; page-break-inside:avoid; }" +
+      ".pdf-logo { width:52px; height:52px; object-fit:contain; border-radius:10px; border:1.5px solid #bfdbfe; background:#fff; padding:3px; }" +
+      ".pdf-header-text h1 { font-size:20px; font-weight:800; color:#1e40af; }" +
+      ".pdf-header-text p { font-size:11px; color:#64748b; margin-top:3px; }" +
+      ".pdf-header-date { margin-right:auto; font-size:11px; color:#64748b; text-align:left; }" +
+      ".pdf-wh-block { margin:20px 28px 0; page-break-inside:avoid; }" +
+      ".pdf-wh-header { display:flex; align-items:center; gap:10px; background:#1e40af; color:#fff; padding:10px 14px; border-radius:8px 8px 0 0; }" +
+      ".pdf-wh-code { background:rgba(255,255,255,.2); border-radius:6px; padding:3px 10px; font-weight:700; font-size:13px; }" +
+      ".pdf-wh-name { font-weight:700; font-size:14px; flex:1; }" +
+      ".pdf-wh-meta { font-size:10px; opacity:.8; }" +
+      ".pdf-group { border:1px solid #e2e8f0; border-top:none; }" +
+      ".pdf-group-header { display:flex; align-items:center; gap:8px; background:#f8fafc; padding:7px 12px; border-bottom:1px solid #e2e8f0; }" +
+      ".pdf-group-prefix { background:#dbeafe; color:#1d4ed8; border-radius:5px; padding:2px 8px; font-weight:700; font-size:11px; }" +
+      ".pdf-group-name { font-weight:700; font-size:12px; flex:1; }" +
+      ".pdf-group-count { font-size:10px; color:#64748b; }" +
+      ".pdf-table { width:100%; border-collapse:collapse; }" +
+      ".pdf-table th { background:#f1f5f9; padding:6px 10px; text-align:right; font-size:11px; font-weight:700; color:#475569; border-bottom:1px solid #e2e8f0; }" +
+      ".pdf-table td { padding:6px 10px; border-bottom:1px solid #f1f5f9; font-size:11px; color:#374151; }" +
+      ".pdf-table tr:last-child td { border-bottom:none; }" +
+      ".pdf-table tr:nth-child(even) td { background:#fafafa; }" +
+      ".pdf-empty { padding:10px 12px; color:#94a3b8; font-size:11px; font-style:italic; }" +
+      ".pdf-footer { margin:24px 28px 0; padding:12px 0; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; font-size:10px; color:#94a3b8; }" +
+      _getPrintPageCSS() +
+      "</style></head><body>" +
+      '<div class="pdf-header">' +
+      logoHtml +
+      '<div class="pdf-header-text"><h1>دليل الأكواد</h1><p>' +
+      companyName +
+      " — مرجع شامل بجميع الأصناف</p></div>" +
+      '<div class="pdf-header-date">تاريخ الطباعة<br><strong>' +
+      dateStr +
+      "</strong></div>" +
+      "</div>" +
+      blocksHtml +
+      '<div class="pdf-footer"><span>' +
+      companyName +
+      "</span><span>دليل الأكواد — " +
+      dateStr +
+      "</span></div>" +
+      "</body></html>";
+
+    var win = window.open("", "_blank", "width=900,height=700");
+    if (!win) {
+      NotificationEngine.warning(" افتح الـ popup ثم حاول تاني");
+      return;
+    }
+    win.document.write(html);
+    win.document.close();
+    win.onload = function () {
+      win.focus();
+      win.print();
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // bind function + logic
+  // ─────────────────────────────────────────────────────────────
+
+  function bindWeeklyReports() {
+    loadWeeklyReportUsers();
+    checkTriggerStatus(true); // true = املأ الـ UI بالإعدادات المحفوظة عند أول تحميل
+  }
+
+  // ── تحميل وعرض المستخدمين ──
+
+  function loadWeeklyReportUsers() {
+    var tableEl = document.getElementById("weekly-report-table");
+    if (!tableEl) return;
+    tableEl.innerHTML =
+      '<div class="loading-overlay" style="padding:30px 0;position:relative"><div class="spinner"></div></div>';
+
+    _gsr(
+      "getWeeklyReportConfigs",
+      [APP.currentUser.username, SESSION.token],
+      {
+        onSuccess: function (res) {
+          if (!res.success) {
+            tableEl.innerHTML =
+              '<div class="empty-state"> ' + esc(res.message) + "</div>";
+            return;
+          }
+          renderReportUsersTable(res.data || []);
+        },
+        onError: function (e) {
+          tableEl.innerHTML =
+            '<div class="empty-state">خطأ: ' + esc(e.message) + "</div>";
+        },
+      },
+    );
+  }
+
+  // ── Modal إضافة/تعديل ──
+
+  function _syncToggle(checked) {
+    var track = document.getElementById("rm-active-track");
+    if (!track) return;
+    var dot = track.querySelector("div");
+    if (checked) {
+      track.style.background = "linear-gradient(135deg,#2b9fd6,#1a73a7)";
+      if (dot) {
+        dot.style.right = "3px";
+        dot.style.left = "auto";
+      }
+    } else {
+      track.style.background = "var(--border)";
+      if (dot) {
+        dot.style.right = "auto";
+        dot.style.left = "3px";
+      }
+    }
+  }
+
+  function openAddReportUser() {
+    document.getElementById("report-modal-title").textContent =
+      "إضافة مستخدم للتقارير";
+    document.getElementById("rm-edit-username").value = "";
+    document.getElementById("rm-fullname").value = "";
+    document.getElementById("rm-phone").value = "";
+    document.getElementById("rm-apikey").value = "";
+    document.getElementById("rm-types").value = "all";
+    var cb = document.getElementById("rm-active");
+    cb.checked = true;
+    _syncToggle(true);
+    cb.onchange = function () {
+      _syncToggle(this.checked);
+    };
+
+    // حشي قائمة المستخدمين
+    var sel = document.getElementById("rm-username");
+    sel.innerHTML = '<option value="">اختر مستخدماً...</option>';
+    sel.disabled = false;
+    (APP.data.users || []).forEach(function (u) {
+      var opt = document.createElement("option");
+      opt.value = u.username;
+      opt.textContent = (u.full_name || u.username) + " (" + u.username + ")";
+      sel.appendChild(opt);
+    });
+
+    document.getElementById("weekly-report-modal").style.display = "flex";
+  }
+
+  function editReportUser(username) {
+    // جلب بيانات المستخدم من الـ backend
+    _gsr(
+      "getWeeklyReportConfigs",
+      [APP.currentUser.username, SESSION.token],
+      {
+        onSuccess: function (res) {
+          if (!res.success) {
+            NotificationEngine.error(res.message);
+            return;
+          }
+          var cfg = (res.data || []).find(function (c) {
+            return c.username === username;
+          });
+          if (!cfg) {
+            NotificationEngine.error("المستخدم غير موجود");
+            return;
+          }
+
+          document.getElementById("report-modal-title").textContent =
+            " تعديل: " + (cfg.full_name || cfg.username);
+          document.getElementById("rm-edit-username").value = cfg.username;
+          document.getElementById("rm-fullname").value = cfg.full_name || "";
+          document.getElementById("rm-phone").value = cfg.phone || "";
+          document.getElementById("rm-apikey").value = ""; // المستخدم لازم يدخله من جديد
+          document.getElementById("rm-types").value = cfg.report_types || "all";
+          var isActive = cfg.active !== false;
+          var cb2 = document.getElementById("rm-active");
+          cb2.checked = isActive;
+          _syncToggle(isActive);
+          cb2.onchange = function () {
+            _syncToggle(this.checked);
+          };
+
+          // اعمل username select محتويه القيمة الحالية ومعطّل
+          var sel = document.getElementById("rm-username");
+          sel.innerHTML =
+            '<option value="' +
+            esc(cfg.username) +
+            '">' +
+            esc(cfg.full_name || cfg.username) +
+            "</option>";
+          sel.disabled = true;
+
+          document.getElementById("weekly-report-modal").style.display = "flex";
+        },
+        onError: function (e) {
+          NotificationEngine.error("خطأ: " + e.message);
+        },
+      },
+    );
+  }
+
+  function onReportUserSelect() {
+    var sel = document.getElementById("rm-username");
+    var username = sel.value;
+    if (!username) return;
+    var user = (APP.data.users || []).find(function (u) {
+      return u.username === username;
+    });
+    if (user) {
+      document.getElementById("rm-fullname").value = user.full_name || username;
+    }
+  }
+
+  function closeReportModal() {
+    document.getElementById("weekly-report-modal").style.display = "none";
+  }
+
+  function saveReportUser() {
+    var editUsername = document.getElementById("rm-edit-username").value;
+    var username = editUsername || document.getElementById("rm-username").value;
+    var fullname = document.getElementById("rm-fullname").value.trim();
+    var phone = document.getElementById("rm-phone").value.trim();
+    var apikey = document.getElementById("rm-apikey").value.trim();
+    var types = document.getElementById("rm-types").value;
+    var active = document.getElementById("rm-active").checked;
+
+    if (!username) return NotificationEngine.error("يجب اختيار مستخدم");
+    if (!phone) return NotificationEngine.error("رقم الواتساب مطلوب");
+    var _phoneDigits = phone.replace(/\D/g, "");
+    var _phoneOk =
+      typeof WA_PHONE !== "undefined"
+        ? WA_PHONE.isValid(_phoneDigits)
+        : /^\d{10,15}$/.test(_phoneDigits);
+    if (!_phoneOk)
+      return NotificationEngine.error("رقم الواتساب غير صحيح — أدخل رقم دولي مثل 201001234567");
+
+    if (!editUsername && !apikey)
+      return NotificationEngine.error("API Key مطلوب — راجع تعليمات CallMeBot أعلاه");
+
+    var cfg = {
+      username: username,
+      full_name: fullname || username,
+      phone: phone.replace(/\D/g, ""),
+      apikey: apikey || "****keep", // keep existing if editing
+      report_types: types,
+      active: active,
+    };
+
+    // لو تعديل وما فيش apikey جديد → أرسل placeholder والـ backend هيحتفظ بالقديم
+    if (editUsername && !apikey) cfg.apikey = "****keep";
+
+    showSaveAnim({ title: SAVE_MESSAGES.SAVING, emoji: "" });
+
+    _gsr(
+      "saveWeeklyReportConfig",
+      [cfg, APP.currentUser.username, SESSION.token],
+      {
+        onSuccess: function (res) {
+          _closeSaveAnim(true);
+          if (res.success) {
+            NotificationEngine.success(res.message);
+            closeReportModal();
+            loadWeeklyReportUsers();
+          } else {
+            NotificationEngine.error(res.message);
+          }
+        },
+        onError: function (e) {
+          _closeSaveAnim(true);
+          NotificationEngine.error("خطأ: " + e.message);
+        },
+      },
+    );
+  }
+
+  function deleteReportUser(username) {
+    showConfirm({
+      icon: "ti-trash",
+      iconColor: "#dc2626",
+      title: "إزالة من التقارير",
+      message: 'هل تريد إزالة "' + username + '" من قائمة التقارير الأسبوعية؟',
+      confirmText: "نعم، إزالة",
+      confirmClass: "btn-danger",
+      freezeMessage: "⏳ جاري الحذف...",
+      onConfirm: function (unfreeze) {
+        _gsr(
+          "deleteWeeklyReportConfig",
+          [username, APP.currentUser.username, SESSION.token],
+          {
+            onSuccess: function (res) {
+              unfreeze();
+              NotificationEngine[res.success ? "success" : "error"](res.message); // [UNIFY-NOTIF]
+              if (res.success) loadWeeklyReportUsers();
+            },
+            onError: function (e) {
+              unfreeze();
+              NotificationEngine.error("خطأ: " + e.message);
+            },
+          },
+        );
+      },
+    });
+  }
+
+  // ── إرسال تجريبي ──
+
+  function testReportUser(username) {
+    NotificationEngine.loading("⏳ جاري إرسال التقرير التجريبي...");
+    _gsr("testWeeklyReportPDF", [username], {
+      onSuccess: function (res) {
+        finishLoadingToast(res.message, res.success ? "success" : "error");
+        if (res.success) loadWeeklyReportUsers(); // تحديث آخر إرسال
+      },
+      onError: function (e) {
+        finishLoadingToast("خطأ: " + e.message, "error");
+      },
+    });
+  }
+
+  // ── إدارة الـ Trigger ──
+
+  // fillUI = true فقط لما الصفحة تتفتح لأول مرة — مش بعد كل عملية حفظ
+  function checkTriggerStatus(fillUI) {
+    var statusEl = document.getElementById("trigger-status");
+    if (!statusEl) return;
+    statusEl.innerHTML = "⏳ جاري التحقق...";
+
+    _gsr(
+      "getTriggerStatus",
+      [APP.currentUser ? APP.currentUser.username : "", SESSION.token],
+      {
+        onSuccess: function (res) {
+          if (!statusEl) return;
+          if (res.success) {
+            statusEl.style.background = res.active
+              ? "rgba(16,185,129,.08)"
+              : "rgba(245,158,11,.08)";
+            statusEl.style.border = res.active
+              ? "1px solid rgba(16,185,129,.3)"
+              : "1px solid rgba(245,158,11,.3)";
+            statusEl.innerHTML =
+              '<span style="font-size:18px">' +
+              (res.active ? "" : "") +
+              "</span> <strong>" +
+              res.message +
+              "</strong>";
+
+            // ← املأ الـ UI فقط عند أول تحميل للصفحة (مش بعد الحفظ)
+            if (fillUI && res.active) {
+              var freqEl = document.getElementById("wr-frequency");
+              if (freqEl) {
+                freqEl.value = res.frequency || "weekly";
+                onWrFreqChange();
+              }
+              var d1El = document.getElementById("wr-day1");
+              if (d1El) d1El.value = res.day1 || "SUNDAY";
+              var d2El = document.getElementById("wr-day2");
+              if (d2El) d2El.value = res.day2 || "WEDNESDAY";
+              var hrEl = document.getElementById("wr-hour");
+              if (hrEl) hrEl.value = String(res.hour != null ? res.hour : 8);
+              var dmEl = document.getElementById("wr-dom");
+              if (dmEl) dmEl.value = String(res.dayOfMonth || 1);
+            }
+          } else {
+            statusEl.innerHTML = " " + esc(res.message);
+          }
+        },
+        onError: function (e) {
+          if (statusEl) statusEl.innerHTML = " خطأ: " + esc(e.message);
+        },
+      },
+    );
+  }
+
+  // ── ضبط ظهور/إخفاء حقول الجدولة حسب التكرار المختار ──
+  function onWrFreqChange() {
+    var freq =
+      (document.getElementById("wr-frequency") || {}).value || "weekly";
+    var day1Wrap = document.getElementById("wr-day1-wrap");
+    var day2Wrap = document.getElementById("wr-day2-wrap");
+    var domWrap = document.getElementById("wr-dom-wrap");
+    if (day1Wrap)
+      day1Wrap.style.display = freq === "monthly" ? "none" : "block";
+    if (day2Wrap)
+      day2Wrap.style.display = freq === "twice_weekly" ? "block" : "none";
+    if (domWrap) domWrap.style.display = freq === "monthly" ? "block" : "none";
+  }
+
+  function setupTrigger() {
+    var freq =
+      (document.getElementById("wr-frequency") || {}).value || "weekly";
+    var day1 = (document.getElementById("wr-day1") || {}).value || "SUNDAY";
+    var day2 = (document.getElementById("wr-day2") || {}).value || "WEDNESDAY";
+    var hour = Number((document.getElementById("wr-hour") || {}).value) || 8;
+    var dom = Number((document.getElementById("wr-dom") || {}).value) || 1;
+
+    var freqLabel =
+      {
+        weekly: "مرة في الأسبوع",
+        twice_weekly: "مرتين في الأسبوع",
+        monthly: "مرة في الشهر",
+      }[freq] || freq;
+    var hourLabel =
+      hour === 0
+        ? "12:00 ص"
+        : hour < 12
+          ? hour + ":00 ص"
+          : hour === 12
+            ? "12:00 م"
+            : hour - 12 + ":00 م";
+
+    showConfirm({
+      icon: "ti-clock-play",
+      iconColor: "#16a34a",
+      title: "تفعيل الجدولة التلقائية",
+      message: freqLabel + " — الساعة " + hourLabel,
+      confirmText: "نعم، فعّل",
+      confirmClass: "btn-success",
+      freezeMessage: "⏳ جاري ضبط الجدولة...",
+      onConfirm: function (unfreeze) {
+        _gsr(
+          "setupWeeklyTrigger",
+          [
+            {
+              frequency: freq,
+              day1: day1,
+              day2: day2,
+              hour: hour,
+              dayOfMonth: dom,
+            },
+          ],
+          {
+            onSuccess: function (res) {
+              unfreeze();
+              NotificationEngine[res.success ? "success" : "error"](res.message || "تم"); // [UNIFY-NOTIF]
+              checkTriggerStatus();
+            },
+            onError: function (e) {
+              unfreeze();
+              NotificationEngine.error("خطأ: " + e.message);
+            },
+          },
+        );
+      },
+    });
+  }
+
+  function removeTrigger() {
+    showConfirm({
+      icon: "ti-player-stop",
+      iconColor: "#dc2626",
+      title: "إيقاف الجدولة التلقائية",
+      message: "هل تريد إيقاف الإرسال التلقائي للتقارير؟",
+      confirmText: "نعم، أوقف",
+      confirmClass: "btn-danger",
+      freezeMessage: "⏳ جاري الإيقاف...",
+      onConfirm: function (unfreeze) {
+        _gsr(
+          "removeWeeklyTrigger",
+          [APP.currentUser ? APP.currentUser.username : "", SESSION.token],
+          {
+            onSuccess: function (res) {
+              unfreeze();
+              NotificationEngine.success(typeof res === "string" ? res : res.message || "تم");
+              checkTriggerStatus();
+            },
+            onError: function (e) {
+              unfreeze();
+              NotificationEngine.error("خطأ: " + e.message);
+            },
+          },
+        );
+      },
+    });
+  }
+
+  function sendNow() {
+    showConfirm({
+      icon: "ti-send",
+      iconColor: "#2563eb",
+      title: "إرسال فوري",
+      message: "هل تريد إرسال التقرير الآن لجميع المشتركين المفعّلين؟",
+      confirmText: "نعم، أرسل",
+      confirmClass: "btn-primary",
+      freezeMessage: "⏳ جاري الإرسال...",
+      onConfirm: function (unfreeze) {
+        _gsr("sendWeeklyReportsPDF", [], {
+          onSuccess: function (res) {
+            unfreeze();
+            NotificationEngine[res.success ? "success" : "error"](res.message); // [UNIFY-NOTIF]
+            loadWeeklyReportUsers();
+          },
+          onError: function (e) {
+            unfreeze();
+            NotificationEngine.error("خطأ: " + e.message);
+          },
+        });
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // إرسال كتالوج مخصص لعميل — مُعاد كتابته بالكامل
+  // ─────────────────────────────────────────────────────────────
+
+  var _CS = {
+    selWarehouses: [], // IDs المخازن المختارة
+    selGroups: [], // IDs المجموعات المختارة
+    showPrices: true,
+    showZero: false, // عرض الأصناف رصيدها صفر
+    noQty: false, // إخفاء الرصيد والحالة عن العميل
+    excludeCodes: [], // أكواد الأصناف المستثناة من الكتالوج
+    clientName: "",
+    baseUrl: "",
+  };
+
+  // ── دالة مساعدة: كل أصناف المخزن المختار ──────────────────
+  function _csItemsInWarehouses(whIds) {
+    var items = APP.data.items || [];
+    var stock = APP.data.stock || [];
+    var warehouses = APP.data.warehouses || [];
+
+    if (!whIds.length) return items; // الكل مختار
+
+    // حوّل IDs → أسماء (لأن stock.warehouse مخزون كاسم)
+    var whNames = whIds.map(function (wid) {
+      var w = warehouses.find(function (x) {
+        return String(x.id) === String(wid);
+      });
+      return w ? String(w.name).trim() : String(wid).trim();
+    });
+
+    // اجمع item_ids التي لها مخزون > 0 في أي من المخازن
+    var validIds = {};
+    stock.forEach(function (s) {
+      if (
+        Number(s.quantity) > 0 &&
+        whNames.indexOf(String(s.warehouse || "").trim()) !== -1
+      ) {
+        validIds[String(s.item_id)] = true;
+      }
+    });
+
+    // Fallback: لو stock فاضي، استخدم pub_qty
+    if (!Object.keys(validIds).length) {
+      items.forEach(function (it) {
+        validIds[String(it.id)] = true;
+      });
+    }
+
+    return items.filter(function (it) {
+      return validIds[String(it.id)];
+    });
+  }
+
+  // ── المجموعات المتاحة حسب المخازن المختارة ────────────────
+  function _csAvailableGroups() {
+    var allGroups = APP.data.groups || [];
+    var warehouses = APP.data.warehouses || [];
+
+    // لو "الكل" مختار → رجع كل المجموعات
+    if (!_CS.selWarehouses.length) return allGroups;
+
+    // ابحث عن أسماء المخازن المختارة (warehouse_id ممكن يكون ID أو اسم)
+    var selWhIds = _CS.selWarehouses;
+    var selWhNames = selWhIds.map(function (wid) {
+      var w = warehouses.find(function (x) {
+        return String(x.id) === String(wid);
+      });
+      return w ? String(w.name).trim() : String(wid).trim();
+    });
+
+    // فلتر المجموعات بناءً على warehouse_id مباشرةً
+    return allGroups.filter(function (g) {
+      var gwid = String(g.warehouse_id || "").trim();
+      if (!gwid) return false;
+      return selWhIds.indexOf(gwid) !== -1 || selWhNames.indexOf(gwid) !== -1;
+    });
+  }
+
+  // ── عدد الأصناف التي ستظهر في الكتالوج ────────────────────
+  function _csCountItems() {
+    var pool = _csItemsInWarehouses(_CS.selWarehouses);
+    // فلتر الأصناف المستثناة بالكود
+    if (_CS.excludeCodes.length) {
+      pool = pool.filter(function (it) {
+        var code = String(it.code || it.id || "")
+          .trim()
+          .toLowerCase();
+        return _CS.excludeCodes.indexOf(code) === -1;
+      });
+    }
+    // لو في مجموعات محددة → فلتر بيها
+    if (_CS.selGroups.length) {
+      pool = pool.filter(function (it) {
+        return _CS.selGroups.indexOf(String(it.group)) !== -1;
+      });
+    } else if (_CS.selWarehouses.length) {
+      // لو مخزن مختار بدون تحديد مجموعة → فلتر بالمجموعات المتاحة للمخزن ده
+      var available = _csAvailableGroups();
+      if (available.length) {
+        var availIds = available.map(function (g) {
+          return String(g.id);
+        });
+        pool = pool.filter(function (it) {
+          return availIds.indexOf(String(it.group)) !== -1;
+        });
+      }
+    }
+    return pool.length;
+  }
+
+  // ── إعادة رسم chips المجموعات ──────────────────────────────
+  function _csRebuildGroupChips() {
+    var container = document.getElementById("cs-grp-chips");
+    var hint = document.getElementById("cs-grp-hint");
+    var connLine = document.getElementById("cs-conn-line");
+    if (!container) return;
+
+    var available = _csAvailableGroups();
+    var groups = APP.data.groups || [];
+    var items = APP.data.items || [];
+
+    // احسب عدد الأصناف لكل مجموعة
+    function countItemsInGroup(gid) {
+      return items.filter(function (it) {
+        return String(it.group) === String(gid);
+      }).length;
+    }
+
+    // امسح الاختيارات غير المتاحة
+    _CS.selGroups = _CS.selGroups.filter(function (gid) {
+      return available.some(function (g) {
+        return String(g.id) === gid;
+      });
+    });
+
+    var allActive = _CS.selGroups.length === 0;
+
+    // خط الربط
+    if (connLine) {
+      if (_CS.selWarehouses.length && available.length) {
+        connLine.classList.add("visible");
+      } else {
+        connLine.classList.remove("visible");
+      }
+    }
+
+    var html =
+      '<button class="cs-grp-chip' +
+      (allActive ? " active" : "") +
+      '" data-gid="__all__" style="animation-delay:0ms">الكل</button>';
+
+    available.forEach(function (g, i) {
+      var isActive = _CS.selGroups.indexOf(String(g.id)) !== -1;
+      var cnt = countItemsInGroup(g.id);
+      var delay = i * 35 + "ms";
+      html +=
+        '<button class="cs-grp-chip' +
+        (isActive ? " active" : "") +
+        '" data-gid="' +
+        esc(String(g.id)) +
+        '" style="animation-delay:' +
+        delay +
+        '">' +
+        esc(g.name) +
+        (cnt ? '<span class="cs-chip-count">' + cnt + "</span>" : "") +
+        "</button>";
+    });
+
+    if (!available.length) {
+      html =
+        '<span style="color:var(--text3);font-size:13px;padding:4px 0"> لا توجد مجموعات في هذا المخزن</span>';
+    }
+
+    container.innerHTML = html;
+
+    if (hint) {
+      hint.textContent = _CS.selWarehouses.length
+        ? available.length
+          ? "هتظهر فقط المجموعات الموجودة في المخازن المختارة (" +
+            available.length +
+            " مجموعة)"
+          : "هذا المخزن ليس لديه مجموعات"
+        : "اختر المجموعات — لو مش اخترت حاجة هيظهر كل شيء";
+    }
+  }
+  // ── بناء الـ URL ────────────────────────────────────────────
+  function _csBuildUrl() {
+    if (!_CS.baseUrl) return "";
+    // [VERCEL-MIGRATION] لو الصفحة شغالة standalone (برة الـ iframe
+    // اللي HtmlService بتاع GAS بيغلّف بيه أي صفحة دايمًا — window.top
+    // بيبقى !== window.self جوه GAS حتى لو فتحت رابط الـ exec مباشرة)،
+    // يبقى ده نشر Vercel: المسار الصحيح للكتالوج هو /catalog (زي ما
+    // معرّف في vercel.json rewrites)، مش ?page=catalog القديمة اللي
+    // كانت بتتفهم بس من doGet(e) بتاع Apps Script.
+    var isStandalone = window.top === window.self;
+    var params = isStandalone ? [] : ["page=catalog"];
+
+    // تحديد المجموعات الفعلية للـ URL
+    var effectiveGroups = _CS.selGroups.slice();
+    if (!effectiveGroups.length && _CS.selWarehouses.length) {
+      // مخزن مختار بدون تحديد مجموعة → ابعت مجموعات المخزن ده فقط
+      var available = _csAvailableGroups();
+      effectiveGroups = available.map(function (g) {
+        return String(g.id);
+      });
+    }
+    if (effectiveGroups.length)
+      params.push("groups=" + encodeURIComponent(effectiveGroups.join(",")));
+
+    if (_CS.selWarehouses.length)
+      params.push("wh=" + encodeURIComponent(_CS.selWarehouses.join(",")));
+    if (!_CS.showPrices) params.push("noprices=1");
+    if (_CS.showZero) params.push("showzero=1");
+    if (_CS.noQty) params.push("noqty=1");
+    if (_CS.excludeCodes.length)
+      params.push("exclude=" + encodeURIComponent(_CS.excludeCodes.join(",")));
+    if (_CS.clientName)
+      params.push("client=" + encodeURIComponent(_CS.clientName));
+
+    var qs = params.length ? "?" + params.join("&") : "";
+    if (isStandalone) {
+      return _CS.baseUrl.replace(/\/$/, "") + "/catalog" + qs;
+    }
+    return _CS.baseUrl + qs;
+  }
+
+  // ── تحديث المعاينة (اللينك + العداد + الملخص) ─────────────
+  function _csUpdatePreview() {
+    var linkEl = document.getElementById("cs-link-preview");
+    var countEl = document.getElementById("cs-item-count");
+    var subEl = document.getElementById("cs-count-sub");
+    var summaryEl = document.getElementById("cs-summary");
+
+    var url = _csBuildUrl();
+    if (linkEl) linkEl.textContent = url || "—";
+
+    var count = _csCountItems();
+    if (countEl) countEl.textContent = count + " صنف سيظهر في الكتالوج";
+    if (subEl) {
+      var subLines = [];
+      if (!_CS.showPrices) subLines.push("الأسعار مخفية");
+      if (_CS.showZero) subLines.push("عرض الأصناف المنتهية");
+      if (_CS.noQty) subLines.push("الرصيد مخفي");
+      subEl.textContent = subLines.join(" · ");
+    }
+
+    // ملخص
+    if (summaryEl) {
+      var warehouses = APP.data.warehouses || [];
+      var groups = APP.data.groups || [];
+      var lines = [];
+
+      if (_CS.selWarehouses.length) {
+        var whNames = _CS.selWarehouses.map(function (wid) {
+          var w = warehouses.find(function (x) {
+            return String(x.id) === String(wid);
+          });
+          return w ? w.name : wid;
+        });
+        lines.push("<b> المخازن:</b> " + whNames.join("، "));
+      }
+      if (_CS.selGroups.length) {
+        var grpNames = _CS.selGroups.map(function (gid) {
+          var g = groups.find(function (x) {
+            return String(x.id) === String(gid);
+          });
+          return g ? g.name : gid;
+        });
+        lines.push("<b> المجموعات:</b> " + grpNames.join("، "));
+      }
+      if (!_CS.showPrices)
+        lines.push(
+          '<span style="color:var(--warning)"> الأسعار مخفية</span>',
+        );
+      if (_CS.showZero)
+        lines.push(
+          '<span style="color:var(--text2)"> عرض الأصناف المنتهية</span>',
+        );
+      if (_CS.noQty)
+        lines.push(
+          '<span style="color:var(--text2)"> الرصيد مخفي عن العميل</span>',
+        );
+      if (_CS.excludeCodes.length)
+        lines.push(
+          '<span style="color:#991b1b"> مستثنى: ' +
+            _CS.excludeCodes
+              .map(function (c) {
+                return c.toUpperCase();
+              })
+              .join("، ") +
+            "</span>",
+        );
+
+      summaryEl.innerHTML = lines.length
+        ? '<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;' +
+          'font-size:11px;color:var(--text2);display:flex;flex-direction:column;gap:5px">' +
+          lines
+            .map(function (l) {
+              return "<div>" + l + "</div>";
+            })
+            .join("") +
+          "</div>"
+        : "";
+
+      // tags معاينة
+      var tagsEl = document.getElementById("cs-preview-tags");
+      if (tagsEl) {
+        var tagHtml = "";
+        if (_CS.selWarehouses.length) {
+          _CS.selWarehouses.forEach(function (wid) {
+            var w = (APP.data.warehouses || []).find(function (x) {
+              return String(x.id) === wid;
+            });
+            if (w)
+              tagHtml +=
+                '<span class="cs-preview-tag" style="border-color:#93c5fd;background:var(--primary-soft);color:var(--accent)"> ' +
+                esc(w.name) +
+                "</span>";
+          });
+        }
+        if (_CS.selGroups.length) {
+          _CS.selGroups.forEach(function (gid) {
+            var g = (APP.data.groups || []).find(function (x) {
+              return String(x.id) === gid;
+            });
+            if (g)
+              tagHtml +=
+                '<span class="cs-preview-tag" style="border-color:#86efac;color:#15803d"> ' +
+                esc(g.name) +
+                "</span>";
+          });
+        }
+        tagsEl.innerHTML = tagHtml;
+      }
+    }
+  }
+
+  // ── الدالة الرئيسية للربط ──────────────────────────────────
+  function bindCatalogSend() {
+    // reset
+    _CS.selWarehouses = [];
+    _CS.selGroups = [];
+    _CS.showPrices = true;
+    _CS.showZero = false;
+    _CS.noQty = false;
+    _CS.excludeCodes = [];
+    _CS.clientName = "";
+    _CS.baseUrl = "";
+
+    // جلب الـ base URL
+    // [VERCEL-MIGRATION] لو standalone (برة GAS iframe)، الدومين
+    // الصحيح هو window.location.origin نفسه (دومين Vercel) — نداء
+    // الباك اند getScriptUrl() هيرجّع رابط الـ /exec القديم بالغلط،
+    // فمش محتاجينه أصلًا في الحالة دي (وبنوفر رحلة شبكة كمان).
+    if (window.top === window.self) {
+      _CS.baseUrl = window.location.origin;
+      _csUpdatePreview();
+    } else {
+      _gsr("getScriptUrl", [], {
+        onSuccess: function (url) {
+          _CS.baseUrl = url || "";
+          _csUpdatePreview();
+        },
+        onError: function () {
+          _CS.baseUrl = window.location.href.split("?")[0];
+          _csUpdatePreview();
+        },
+      });
+    }
+
+    // ابن chips المجموعات الأولية (كل المجموعات)
+    _csRebuildGroupChips();
+
+    // ── اسم العميل
+    var nameEl = document.getElementById("cs-client-name");
+    if (nameEl)
+      nameEl.addEventListener("input", function () {
+        _CS.clientName = this.value.trim();
+      });
+
+    // ── chips المخازن — بطاقات تفاعلية
+    var whWrap = document.getElementById("cs-wh-chips");
+    var whAllBtn = document.getElementById("cs-wh-all");
+
+    if (whAllBtn) {
+      whAllBtn.addEventListener("click", function () {
+        _CS.selWarehouses = [];
+        if (whWrap)
+          whWrap.querySelectorAll(".cs-wh-card").forEach(function (c) {
+            c.classList.remove("active");
+          });
+        whAllBtn.classList.add("active");
+        _csRebuildGroupChips();
+        _csUpdatePreview();
+      });
+    }
+
+    if (whWrap) {
+      whWrap.addEventListener("click", function (e) {
+        var card = e.target.closest(".cs-wh-card");
+        if (!card) return;
+        var wid = card.dataset.wid;
+        if (whAllBtn) whAllBtn.classList.remove("active");
+
+        var idx = _CS.selWarehouses.indexOf(wid);
+        if (idx === -1) {
+          _CS.selWarehouses.push(wid);
+          card.classList.add("active");
+        } else {
+          _CS.selWarehouses.splice(idx, 1);
+          card.classList.remove("active");
+        }
+
+        if (!_CS.selWarehouses.length && whAllBtn)
+          whAllBtn.classList.add("active");
+
+        _csRebuildGroupChips();
+        _csUpdatePreview();
+      });
+    }
+
+    // ── chips المجموعات (event delegation — بتتبنى ديناميكياً)
+    var grpWrap = document.getElementById("cs-grp-chips");
+    if (grpWrap) {
+      grpWrap.addEventListener("click", function (e) {
+        var chip = e.target.closest(".cs-grp-chip");
+        if (!chip) return;
+        var gid = chip.dataset.gid;
+
+        if (gid === "__all__") {
+          _CS.selGroups = [];
+          grpWrap.querySelectorAll(".cs-grp-chip").forEach(function (c) {
+            c.classList.toggle("active", c.dataset.gid === "__all__");
+          });
+        } else {
+          var allBtn = grpWrap.querySelector('[data-gid="__all__"]');
+          if (allBtn) allBtn.classList.remove("active");
+
+          var idx = _CS.selGroups.indexOf(gid);
+          if (idx === -1) {
+            _CS.selGroups.push(gid);
+            chip.classList.add("active");
+          } else {
+            _CS.selGroups.splice(idx, 1);
+            chip.classList.remove("active");
+          }
+
+          if (!_CS.selGroups.length) {
+            if (allBtn) allBtn.classList.add("active");
+          }
+        }
+        _csUpdatePreview();
+      });
+    }
+
+    // ── toggle الأسعار
+    var priceChk = document.getElementById("cs-show-prices");
+    if (priceChk)
+      priceChk.addEventListener("change", function () {
+        _CS.showPrices = this.checked;
+        _csUpdatePreview();
+      });
+
+    // ── عرض الأصناف رصيدها صفر
+    var showZeroChk = document.getElementById("cs-show-zero");
+    if (showZeroChk)
+      showZeroChk.addEventListener("change", function () {
+        _CS.showZero = this.checked;
+        _csUpdatePreview();
+      });
+
+    // ── إخفاء الرصيد عن العميل
+    var noQtyChk = document.getElementById("cs-no-qty");
+    if (noQtyChk)
+      noQtyChk.addEventListener("change", function () {
+        _CS.noQty = this.checked;
+        _csUpdatePreview();
+      });
+
+    // ── نسخ اللينك
+    var copyBtn = document.getElementById("cs-copy-btn");
+    if (copyBtn)
+      copyBtn.addEventListener("click", function () {
+        var url =
+          (document.getElementById("cs-link-preview") || {}).textContent || "";
+        if (!url || url === "—") {
+          NotificationEngine.warning("لا يوجد لينك للنسخ");
+          return;
+        }
+        navigator.clipboard
+          .writeText(url)
+          .then(function () {
+            NotificationEngine.success(" تم نسخ اللينك");
+          })
+          .catch(function () {
+            NotificationEngine.error("تعذّر النسخ");
+          });
+      });
+
+    // ── إرسال واتساب (موحّد عبر موديول الواتساب المركزي — قوالب + تسجيل) ──
+    var waBtn = document.getElementById("cs-wa-btn");
+    if (waBtn)
+      waBtn.addEventListener("click", function () {
+        var url =
+          (document.getElementById("cs-link-preview") || {}).textContent || "";
+        if (!url || url === "—") {
+          NotificationEngine.warning("اختر مخزن أو مجموعة أولاً");
+          return;
+        }
+        var name = _CS.clientName || "العميل";
+        if (typeof sendCatalogShareLink === "function") {
+          sendCatalogShareLink(name, url, "");
+        } else {
+          // مسار احتياطي فقط في حال عدم تحميل موديول الواتساب لأي سبب
+          var msg =
+            "أهلاً " +
+            name +
+            " \n\n" +
+            "تفضل كتالوج المنتجات المخصص لك:\n\n" +
+            url +
+            "\n\nنتشرف بخدمتك ";
+          window.open(
+            "https://wa.me/?text=" + encodeURIComponent(msg),
+            "_blank",
+          );
+        }
+      });
+
+    // ── استثناء أصناف بالكود ──────────────────────────────────
+    (function () {
+      var tagWrap = document.getElementById("cs-exclude-tags");
+      var inputEl = document.getElementById("cs-exclude-input");
+      var addBtn = document.getElementById("cs-exclude-add");
+      var dropEl = document.getElementById("cs-exclude-dropdown");
+      if (!inputEl || !tagWrap || !addBtn) return;
+
+      function _parseCode(raw) {
+        return raw.trim().toLowerCase();
+      }
+
+      function _renderTags() {
+        tagWrap.innerHTML = _CS.excludeCodes
+          .map(function (code) {
+            return (
+              '<span class="cs-excl-tag">' +
+              esc(code.toUpperCase()) +
+              '<button class="cs-excl-rm" data-code="' +
+              esc(code) +
+              '" title="إزالة">×</button>' +
+              "</span>"
+            );
+          })
+          .join("");
+        _csUpdatePreview();
+      }
+
+      // ── بناء الـ dropdown من البحث ──────────────────────────
+      function _buildDropdown(q) {
+        if (!dropEl) return;
+        q = (q || "").trim().toLowerCase();
+        if (!q) {
+          dropEl.style.display = "none";
+          return;
+        }
+
+        var allItems = APP.data.items || [];
+        var filtered = allItems
+          .filter(function (it) {
+            var name = String(it.name || "").toLowerCase();
+            var code = String(it.code || it.id || "").toLowerCase();
+            return name.includes(q) || code.includes(q);
+          })
+          .slice(0, 30);
+
+        if (!filtered.length) {
+          dropEl.innerHTML =
+            '<div style="padding:10px 14px;font-size:12px;color:var(--text3)">لا توجد نتائج</div>';
+          dropEl.style.display = "block";
+          return;
+        }
+
+        dropEl.innerHTML = filtered
+          .map(function (it) {
+            var code = String(it.code || it.id || "");
+            var alreadyAdded =
+              _CS.excludeCodes.indexOf(code.toLowerCase()) !== -1;
+            return (
+              '<div class="cs-excl-opt" data-code="' +
+              esc(code.toLowerCase()) +
+              '" ' +
+              'style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;cursor:pointer;' +
+              "font-size:13px;border-bottom:1px solid var(--border);gap:10px;" +
+              (alreadyAdded ? "opacity:.45;pointer-events:none;" : "") +
+              '">' +
+              '<span style="font-weight:600;color:var(--text1)">' +
+              esc(it.name) +
+              "</span>" +
+              '<span style="font-size:11px;color:var(--text3);font-family:monospace;flex-shrink:0">' +
+              esc(code) +
+              "</span>" +
+              "</div>"
+            );
+          })
+          .join("");
+        dropEl.style.display = "block";
+      }
+
+      function _addByCode(code) {
+        code = _parseCode(code);
+        if (!code) return;
+        var found = (APP.data.items || []).find(function (it) {
+          return (
+            String(it.code || it.id || "")
+              .trim()
+              .toLowerCase() === code
+          );
+        });
+        if (!found) {
+          NotificationEngine.warning(" الكود " + code.toUpperCase() + " غير موجود");
+          return;
+        }
+        if (_CS.excludeCodes.indexOf(code) === -1) {
+          _CS.excludeCodes.push(code);
+        }
+        inputEl.value = "";
+        dropEl.style.display = "none";
+        _renderTags();
+      }
+
+      function _addCode(raw) {
+        var codes = raw
+          .split(/[,،\s]+/)
+          .map(_parseCode)
+          .filter(Boolean);
+        codes.forEach(function (c) {
+          _addByCode(c);
+        });
+      }
+
+      // input → فلتر dropdown
+      inputEl.addEventListener("input", function () {
+        _buildDropdown(this.value);
+      });
+
+      inputEl.addEventListener("focus", function () {
+        if (this.value.trim()) _buildDropdown(this.value);
+      });
+
+      // اختيار من الـ dropdown
+      dropEl.addEventListener("mousedown", function (e) {
+        var opt = e.target.closest(".cs-excl-opt");
+        if (!opt) return;
+        e.preventDefault();
+        _addByCode(opt.dataset.code);
+      });
+
+      // إغلاق الـ dropdown لما يضغط برا
+      document.addEventListener("click", function (e) {
+        if (!inputEl.contains(e.target) && !dropEl.contains(e.target)) {
+          dropEl.style.display = "none";
+        }
+      });
+
+      addBtn.addEventListener("click", function () {
+        _addCode(inputEl.value);
+      });
+
+      inputEl.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === ",") {
+          e.preventDefault();
+          _addCode(inputEl.value);
+        }
+        if (e.key === "Escape") {
+          dropEl.style.display = "none";
+        }
+      });
+
+      tagWrap.addEventListener("click", function (e) {
+        var btn = e.target.closest(".cs-excl-rm");
+        if (!btn) return;
+        var code = btn.dataset.code;
+        _CS.excludeCodes = _CS.excludeCodes.filter(function (c) {
+          return c !== code;
+        });
+        _renderTags();
+      });
+    })();
+
+    _csUpdatePreview();
+  }
+
+  var AUDIT_STATE = {
+    data: [], // البيانات المحمّلة
+    filtered: [], // البيانات بعد الفلترة
+    page: 1,
+    // [إصلاح — ربط items_per_page] كانت 50 قيمة ثابتة يدويًا بدون أي علاقة
+    // بتفضيل المستخدم. تُقرأ الآن من PreferenceService عند توفره (نفس نمط
+    // الربط في 04_JS_Transactions.html و12_JS_HR.html).
+    pageSize:
+      typeof PreferenceService !== "undefined"
+        ? PreferenceService.get("items_per_page", 50)
+        : 50,
+    loading: false,
+    lastLoaded: 0, // FIX: وقت آخر تحميل (ms) للـ cache
+    CACHE_TTL: 30000, // FIX: 30 ثانية كاش
+  };
+
+  // اشتراك: أي تغيير لاحق في items_per_page يعيد رسم الصفحة الحالية فورًا
+  // لو شاشة سجل الأحداث مفتوحة وقت التغيير، بدون طلب جديد من السيرفر.
+  if (typeof PreferenceService !== "undefined") {
+    PreferenceService.subscribe("items_per_page", function (val) {
+      AUDIT_STATE.pageSize = val || 50;
+      AUDIT_STATE.page = 1;
+      if (AUDIT_STATE.filtered && AUDIT_STATE.filtered.length) {
+        _renderAuditTable(AUDIT_STATE.filtered);
+      }
+    });
+  }
+
+  // ─── ألوان وأيقونات أنواع العمليات ──────────────────────────
+  var AUDIT_ACTION_MAP = {
+    LOGIN: {
+      icon: "<i class='ti ti-login' style='font-size:13px'></i>",
+      label: "تسجيل دخول",
+      color: "#2563eb",
+      bg: "#eff4ff",
+    },
+    ADD: {
+      icon: "<i class='ti ti-circle-plus' style='font-size:13px'></i>",
+      label: "إضافة",
+      color: "#10b981",
+      bg: "#ecfdf5",
+    },
+    UPDATE: {
+      icon: "<i class='ti ti-pencil' style='font-size:13px'></i>",
+      label: "تعديل",
+      color: "#f59e0b",
+      bg: "#fffbeb",
+    },
+    DELETE: {
+      icon: "<i class='ti ti-trash' style='font-size:13px'></i>",
+      label: "حذف",
+      color: "#ef4444",
+      bg: "#fef2f2",
+    },
+    BACKUP: {
+      icon: "<i class='ti ti-device-floppy' style='font-size:13px'></i>",
+      label: "نسخ احتياطي",
+      color: "#6366f1",
+      bg: "#eef2ff",
+    },
+    DENIED: {
+      icon: "<i class='ti ti-ban' style='font-size:13px'></i>",
+      label: "مرفوض",
+      color: "#dc2626",
+      bg: "#fef2f2",
+    },
+    CLEAR: {
+      icon: "<i class='ti ti-eraser' style='font-size:13px'></i>",
+      label: "مسح",
+      color: "#9333ea",
+      bg: "#faf5ff",
+    },
+    RESTORE: {
+      icon: "<i class='ti ti-refresh' style='font-size:13px'></i>",
+      label: "استعادة",
+      color: "#0891b2",
+      bg: "#ecfeff",
+    },
+    IMPORT: {
+      icon: "<i class='ti ti-file-import' style='font-size:13px'></i>",
+      label: "استيراد",
+      color: "#059669",
+      bg: "#ecfdf5",
+    },
+    EXPORT: {
+      icon: "<i class='ti ti-file-export' style='font-size:13px'></i>",
+      label: "تصدير",
+      color: "#0891b2",
+      bg: "#ecfeff",
+    },
+    SETUP: {
+      icon: "<i class='ti ti-settings' style='font-size:13px'></i>",
+      label: "إعداد",
+      color: "#64748b",
+      bg: "#f8fafc",
+    },
+    LOGOUT: {
+      icon: "<i class='ti ti-logout' style='font-size:13px'></i>",
+      label: "تسجيل خروج",
+      color: "#6366f1",
+      bg: "#eef2ff",
+    },
+  };
+
+  var AUDIT_TABLE_LABELS = {
+    Users: "<i class='ti ti-users' style='font-size:12px'></i> مستخدمون",
+    Items: "<i class='ti ti-box' style='font-size:12px'></i> أصناف",
+    Groups: "<i class='ti ti-folder' style='font-size:12px'></i> مجموعات",
+    Warehouses:
+      "<i class='ti ti-building-warehouse' style='font-size:12px'></i> مخازن",
+    Transactions:
+      "<i class='ti ti-arrows-exchange' style='font-size:12px'></i> حركات",
+    ProductionOrders:
+      "<i class='ti ti-tools' style='font-size:12px'></i> إنتاج",
+    Shipments: "<i class='ti ti-truck' style='font-size:12px'></i> شحنات",
+    Colors: "<i class='ti ti-palette' style='font-size:12px'></i> ألوان",
+    AuditLog:
+      "<i class='ti ti-clipboard-list' style='font-size:12px'></i> السجل",
+    ALL: "<i class='ti ti-world' style='font-size:12px'></i> الكل",
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  //  renderAuditLog — الصفحة المستقلة (تُستدعى من nav audit_log)
+  //  ملاحظة: الصفحة الرئيسية موجودة الآن داخل renderUsers
+  // ═══════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+</script>

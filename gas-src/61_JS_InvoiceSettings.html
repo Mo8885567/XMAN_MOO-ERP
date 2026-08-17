@@ -1,0 +1,938 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 61_JS_InvoiceSettings.html — شاشة إعدادات الفواتير العامة
+  // ═══════════════════════════════════════════════════════════════════
+  // [INV2-SETTINGS-2026-08-07] نفس معمارية 57_JS_InventorySettings.html /
+  // 60_JS_CustomerSettings.html. بادئة العناصر "iset" (تفاديًا لتصادم مع
+  // "inv" الخاصة بالمخزون و"cset" الخاصة بالعملاء).
+  // ═══════════════════════════════════════════════════════════════════
+
+  var ISET_SECTIONS = [
+    { key: "general", label: "خصائص عامة", icon: "ti-adjustments" },
+    { key: "purchase_invoices", label: "فواتير المشتريات", icon: "ti-truck-delivery" },
+    { key: "sale_invoices", label: "فواتير المبيعات", icon: "ti-shopping-cart" },
+    { key: "returns_transfers", label: "المرتجعات والتحويلات", icon: "ti-transfer" },
+    { key: "types", label: "أنواع الفواتير", icon: "ti-file-invoice" },
+    { key: "numbering", label: "ترقيم الفواتير", icon: "ti-list-numbers" },
+    { key: "creation", label: "إعدادات إنشاء الفاتورة", icon: "ti-edit" },
+    { key: "pricing", label: "سياسة الأسعار", icon: "ti-tag" },
+    { key: "discounts", label: "الخصومات", icon: "ti-discount-2" },
+    { key: "tax", label: "الضرائب", icon: "ti-receipt-tax" },
+    { key: "payment_methods", label: "طرق الدفع", icon: "ti-credit-card" },
+    { key: "status", label: "حالة الفاتورة", icon: "ti-git-branch" },
+    { key: "stock_link", label: "ربط الفواتير بالمخزون", icon: "ti-transfer" },
+    { key: "printing", label: "الطباعة", icon: "ti-printer" },
+    { key: "accounting", label: "الإعدادات المحاسبية", icon: "ti-report-money" },
+    { key: "log", label: "سجل التغييرات", icon: "ti-history" },
+  ];
+
+  var _isetTabsCtrl = null;
+  var _isetCurrentData = null;
+  var _isetLogLoaded = false;
+
+  function _isetRow(labelText, controlHtml, hint) {
+    return (
+      '<div class="invset-field-row">' +
+      '<div class="invset-field-label">' +
+      "<label>" +
+      labelText +
+      "</label>" +
+      (hint ? '<span class="invset-field-hint">' + hint + "</span>" : "") +
+      "</div>" +
+      '<div class="invset-field-control">' +
+      controlHtml +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function _isetSubheading(text) {
+    return (
+      '<div style="font-size:14px;font-weight:700;color:var(--text);margin:18px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--border)">' +
+      text +
+      "</div>"
+    );
+  }
+
+  function _isetToggle(key) {
+    return (
+      '<label class="invset-switch">' +
+      '<input type="checkbox" data-iset-key="' +
+      key +
+      '" data-iset-type="bool">' +
+      '<span class="invset-switch-track"><span class="invset-switch-thumb"></span></span>' +
+      "</label>"
+    );
+  }
+
+  function _isetNumber(key, opts) {
+    opts = opts || {};
+    return (
+      '<input class="input invset-input-sm" type="number" data-iset-key="' +
+      key +
+      '" data-iset-type="number"' +
+      (opts.min !== undefined ? ' min="' + opts.min + '"' : "") +
+      (opts.max !== undefined ? ' max="' + opts.max + '"' : "") +
+      ">"
+    );
+  }
+
+  function _isetText(key, opts) {
+    opts = opts || {};
+    return (
+      '<input class="input invset-input-sm" type="text" data-iset-key="' +
+      key +
+      '" data-iset-type="text"' +
+      (opts.placeholder ? ' placeholder="' + opts.placeholder + '"' : "") +
+      ">"
+    );
+  }
+
+  function _isetSelect(key, options) {
+    var opts = options
+      .map(function (o) {
+        return '<option value="' + o.v + '">' + o.label + "</option>";
+      })
+      .join("");
+    return '<select class="input" data-iset-key="' + key + '" data-iset-type="text">' + opts + "</select>";
+  }
+
+  // ── تاب: خصائص عامة ──────────────────────────────────────────────
+  function _isetPanelGeneral() {
+    return (
+      _isetRow("السماح بصرف البضاعة على المكشوف", _isetToggle("allow_dispense_on_negative_stock"), "عندما لا يوجد رصيد للصنف بالمخزن") +
+      _isetRow("ظهور شاشة إدخال النقدية المدفوعة قبل حفظ كل فاتورة؟", _isetToggle("show_cash_payment_screen_before_save")) +
+      _isetRow("السماح بإجراء تعاملات فى أكثر من مخزن فى نفس الفاتورة؟", _isetToggle("allow_multi_warehouse_per_invoice")) +
+      _isetRow("ملء خانة الكمية فى الفاتورة بالرقم = ١ .. دائمًا؟", _isetToggle("default_qty_always_one")) +
+      _isetRow("إمكانية التعديل على خانة الإجمالى بالفاتورة", _isetToggle("allow_edit_invoice_total")) +
+      _isetRow(
+        "عند تعديل الإجمالى ما الذى تريد تعديله",
+        _isetSelect("edit_total_adjusts", [
+          { v: "price", label: "السعر" },
+          { v: "discount", label: "الخصم" },
+        ]),
+      ) +
+      _isetRow("السماح بعمل مرتجعات من داخل الفواتير", _isetToggle("allow_returns_inside_invoice")) +
+      _isetRow(
+        "فى حالة سداد الفاتورة بمبالغ مالية أكبر من قيمتها . ما الذى تود فعله؟",
+        _isetSelect("overpayment_action", [
+          { v: "ask_decision", label: "دعنى آخذ القرار" },
+          { v: "return_change", label: "إرجاع الباقى نقدًا" },
+          { v: "credit_balance", label: "ترحيله كرصيد للعميل" },
+        ]),
+      ) +
+      _isetRow(
+        "ظهور شاشة التبرعات وتحويل النقاط عند الدفع نقدًا فى حالة",
+        _isetSelect("donation_points_screen_on_cash", [
+          { v: "none", label: "عدم الظهور" },
+          { v: "always", label: "الظهور دائمًا" },
+          { v: "if_available", label: "الظهور عند توفر رصيد نقاط" },
+        ]),
+      ) +
+      _isetRow(
+        "فى حالة وجود أصناف بداخل أصناف الفاتورة . عند إغلاقها . ما الذى تود فعله؟",
+        _isetSelect("items_left_on_close_action", [
+          { v: "close_anyway", label: "إغلاق الفاتورة" },
+          { v: "warn_before_close", label: "تنبيه قبل الإغلاق" },
+          { v: "block_close", label: "منع الإغلاق" },
+        ]),
+      ) +
+      _isetRow("التعديل على اسم الصنف داخل الفاتورة", _isetToggle("allow_edit_item_name_in_invoice")) +
+      _isetRow("ظهور تنبيه إذا كان سعر الصنف الذى يتم التعامل به لم يربح مع إمكانية تثبيت هذا السعر", _isetToggle("warn_if_item_price_not_profitable")) +
+      _isetRow("ظهور تنبيه فى حالة التنقل بين مستوى الأسعار", _isetToggle("warn_on_price_level_switch")) +
+      _isetRow(
+        "كيفية تقريب الإجمالى فى الفاتورة؟",
+        _isetSelect("invoice_total_rounding", [
+          { v: "none", label: "بدون تقريب" },
+          { v: "nearest_integer", label: "أقرب رقم صحيح" },
+          { v: "nearest_half", label: "أقرب نصف جنيه" },
+        ]),
+      ) +
+      _isetRow("استخدام شاشات اللمس فى شاشة الكاشير؟", _isetToggle("use_touch_screen_in_cashier"))
+    );
+  }
+
+  // ── تاب: فواتير المشتريات ─────────────────────────────────────────
+  function _isetPanelPurchaseInvoices() {
+    return (
+      _isetRow("هل تستخدم دائمًا التعاملات الكاش فى المشتريات؟", _isetToggle("purchase_always_cashier_transactions")) +
+      _isetRow("هل أسمح بتكرار نفس الصنف فى الفاتورة أكثر من مرة؟", _isetToggle("purchase_allow_repeat_item")) +
+      _isetRow(
+        "فى حالة تكرار نفس الصنف فى الفاتورة، هل أقوم بزيادة الكمية وعدم تكرار الصنف؟",
+        _isetToggle("purchase_repeat_item_increase_qty"),
+      ) +
+      _isetRow("هل تريد التعديل على سعر البيع أثناء عمل فاتورة المشتريات؟", _isetToggle("purchase_allow_edit_sale_price")) +
+      _isetRow("ظهور الأصناف التى يتعامل بها المورد المفضل فقط فى فواتير الشراء؟", _isetToggle("purchase_show_preferred_vendor_items_only")) +
+      _isetSubheading("ما الذى تريده فى شاشة معلومات عن الصنف؟") +
+      _isetRow("ظهور رصيد الصنف؟", _isetToggle("purchase_item_show_balance")) +
+      _isetRow("ظهور أسعار الصنف؟", _isetToggle("purchase_item_show_prices")) +
+      _isetRow("ظهور الأصناف البديلة لهذا الصنف؟", _isetToggle("purchase_item_show_alternatives")) +
+      _isetRow("ظهور رصيد الصنف فى جميع المخازن؟", _isetToggle("purchase_item_show_balance_all_warehouses")) +
+      _isetSubheading("ما الذى تريده فى شاشة معلومات عن المورد؟") +
+      _isetRow("ظهور الرصيد الحالى له؟", _isetToggle("purchase_vendor_show_balance")) +
+      _isetRow("ظهور حد الإئتمان؟", _isetToggle("purchase_vendor_show_credit_limit")) +
+      _isetRow("ظهور آخر تعاملات تمت معه؟", _isetToggle("purchase_vendor_show_last_transactions")) +
+      _isetRow("ظهور البيانات الشخصية له؟", _isetToggle("purchase_vendor_show_personal_data"))
+    );
+  }
+
+  // ── تاب: فواتير المبيعات ──────────────────────────────────────────
+  function _isetPanelSaleInvoices() {
+    return (
+      _isetRow(
+        "السماح للأصناف التى قد تسبب خسائر أثناء البيع",
+        _isetSelect("sale_loss_items_policy", [
+          { v: "ask_decision", label: "دعنى آخذ القرار" },
+          { v: "block", label: "منع البيع" },
+          { v: "allow", label: "السماح دائمًا" },
+        ]),
+      ) +
+      _isetRow("هل تستخدم دائمًا التعاملات الكاش فى المبيعات؟", _isetToggle("sale_always_cashier_transactions")) +
+      _isetRow("هل أسمح بتكرار نفس الصنف فى الفاتورة أكثر من مرة؟", _isetToggle("sale_allow_repeat_item")) +
+      _isetRow(
+        "فى حالة تكرار نفس الصنف فى الفاتورة، هل أقوم بزيادة الكمية وعدم تكرار الصنف؟",
+        _isetToggle("sale_repeat_item_increase_qty"),
+      ) +
+      _isetRow("عدم السماح بتكرار الصنف فى حالة وجود نفس الكمية و الوحدة؟", _isetToggle("sale_block_repeat_if_same_qty_unit")) +
+      _isetRow("إذا كان الصنف المباع رصيده لا يكفى . هل أقوم بعمل طلبية بعمل طلبية منه؟", _isetToggle("sale_auto_order_if_balance_insufficient")) +
+      _isetRow(
+        "لا يزيد عدد الأصناف بداخل أى فاتورة عن",
+        _isetNumber("sale_max_items_per_invoice", { min: 0 }) +
+          '<span style="margin-inline-start:8px;color:var(--text-muted);font-size:12px">صنف</span>',
+      ) +
+      _isetRow(
+        "فترة سريان عرض السعر من تاريخ الإصدار",
+        _isetNumber("sale_price_validity_days", { min: 0 }) +
+          '<span style="margin-inline-start:8px;color:var(--text-muted);font-size:12px">يوم</span>',
+      ) +
+      _isetSubheading("ما الذى تريده فى شاشة معلومات عن الصنف؟") +
+      _isetRow("ظهور رصيد الصنف؟", _isetToggle("sale_item_show_balance")) +
+      _isetRow("ظهور أسعار الصنف؟", _isetToggle("sale_item_show_prices")) +
+      _isetRow("ظهور الأصناف البديلة لهذا الصنف؟", _isetToggle("sale_item_show_alternatives")) +
+      _isetRow("ظهور رصيد الصنف فى جميع المخازن؟", _isetToggle("sale_item_show_balance_all_warehouses")) +
+      _isetSubheading("ما الذى تريده فى شاشة معلومات عن العميل؟") +
+      _isetRow("ظهور الرصيد الحالى له؟", _isetToggle("sale_customer_show_balance")) +
+      _isetRow("ظهور حد الإئتمان؟", _isetToggle("sale_customer_show_credit_limit")) +
+      _isetRow("ظهور آخر تعاملات تمت معه؟", _isetToggle("sale_customer_show_last_transactions")) +
+      _isetRow("ظهور البيانات الشخصية له؟", _isetToggle("sale_customer_show_personal_data"))
+    );
+  }
+
+  // ── تاب: المرتجعات والتحويلات ─────────────────────────────────────
+  function _isetPanelReturnsTransfers() {
+    return (
+      _isetSubheading("المرتجعات") +
+      _isetRow("لا يتم قبول مرتجع المبيعات بدون أصل الفاتورة؟", _isetToggle("block_sale_return_without_original_invoice")) +
+      _isetRow(
+        "لا يتم إرتجاع الفواتير التى مر عليها",
+        _isetNumber("return_block_after_days", { min: 0 }) +
+          '<span style="margin-inline-start:8px;color:var(--text-muted);font-size:12px">يوم من تاريخ بيعها</span>',
+      ) +
+      _isetRow("يجب إدخال أصل فاتورة المشتريات قبل إجراء أى مرتجعات؟", _isetToggle("require_original_purchase_invoice_for_return")) +
+      _isetRow("هل يتم قبول الصنف المنتهى صلاحيته؟", _isetToggle("accept_expired_item_in_return")) +
+      _isetSubheading("أخرى") +
+      _isetRow(
+        "تحويل الأصناف بين المخازن بسعر",
+        _isetSelect("warehouse_transfer_price_basis", [
+          { v: "cost_price", label: "سعر التكلفة" },
+          { v: "sale_price", label: "سعر البيع" },
+          { v: "last_purchase_price", label: "آخر سعر شراء" },
+        ]),
+      ) +
+      _isetRow(
+        "أقل مبلغ يتم قبول عليه عمل طلبية مبيعات",
+        '<div style="display:flex;align-items:center;gap:6px">' +
+          _isetNumber("min_sale_request_amount", { min: 0 }) +
+          '<span style="color:var(--text-muted);font-size:12px">EGP</span></div>',
+      )
+    );
+  }
+
+  // ── تاب 1: أنواع الفواتير ────────────────────────────────────────
+  function _isetPanelTypes() {
+    return (
+      '<div class="invset-section-title">أنواع الفواتير المتاحة في النظام — إمكانية إضافة أنواع جديدة بدون تعديل كود</div>' +
+      '<div id="iset-types-list"></div>' +
+      '<button type="button" class="btn btn-outline-primary" id="iset-add-type-btn" style="margin-top:10px">' +
+      '<i class="ti ti-plus"></i> إضافة نوع جديد</button>'
+    );
+  }
+
+  function _isetRenderTypesList(types) {
+    var container = document.getElementById("iset-types-list");
+    if (!container) return;
+    container.innerHTML = (types || [])
+      .map(function (t, i) {
+        return (
+          '<div class="invset-field-row" data-itype-row data-itype-index="' +
+          i +
+          '">' +
+          '<div class="invset-field-label" style="flex:1;display:flex;align-items:center;gap:8px">' +
+          '<input class="input invset-input-sm" data-itype-field="key" placeholder="key" value="' +
+          (t.key || "") +
+          '" style="width:130px">' +
+          '<input class="input invset-input-sm" data-itype-field="label" placeholder="الاسم المعروض" value="' +
+          (t.label || "") +
+          '" style="width:170px">' +
+          '<label class="invset-switch"><input type="checkbox" data-itype-field="enabled" ' +
+          (t.enabled !== false ? "checked" : "") +
+          '><span class="invset-switch-track"><span class="invset-switch-thumb"></span></span></label>' +
+          "</div>" +
+          '<button type="button" class="btn btn-sm btn-outline-danger" data-remove-itype>' +
+          '<i class="ti ti-trash"></i></button>' +
+          "</div>"
+        );
+      })
+      .join("");
+    container.querySelectorAll("[data-remove-itype]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        btn.closest("[data-itype-row]").remove();
+      });
+    });
+  }
+
+  function _isetGatherTypes() {
+    var container = document.getElementById("iset-types-list");
+    if (!container) return [];
+    var out = [];
+    container.querySelectorAll("[data-itype-row]").forEach(function (row) {
+      var keyEl = row.querySelector('[data-itype-field="key"]');
+      var labelEl = row.querySelector('[data-itype-field="label"]');
+      var enabledEl = row.querySelector('[data-itype-field="enabled"]');
+      var key = keyEl ? keyEl.value.trim() : "";
+      if (!key) return;
+      out.push({ key: key, label: (labelEl ? labelEl.value.trim() : "") || key, enabled: enabledEl ? !!enabledEl.checked : true });
+    });
+    return out;
+  }
+
+  // ── تاب 2: ترقيم الفواتير ────────────────────────────────────────
+  function _isetPanelNumbering() {
+    return (
+      '<div class="invset-section-title">مثال: <code>INV-2026-000001</code> — مربوطة فعليًا (InvoiceNumberingService) وبتولّد عمود invoice_no منفصل عن رقم النظام الداخلي id</div>' +
+      _isetRow("البادئة (Prefix)", _isetText("numbering_prefix", { placeholder: "INV-" })) +
+      _isetRow("عدد الأرقام", _isetNumber("numbering_digits", { min: 1, max: 12 })) +
+      _isetRow("تضمين السنة في الرقم", _isetToggle("numbering_include_year")) +
+      _isetRow("التسلسل حسب السنة (إعادة الترقيم كل سنة)", _isetToggle("numbering_reset_yearly")) +
+      _isetRow(
+        "التسلسل حسب الفرع",
+        _isetToggle("numbering_reset_per_branch"),
+        "لا يوجد كيان \"فرع\" مستقل في النظام حاليًا — الإعداد جاهز لمستقبل تعدد الفروع",
+      ) +
+      _isetRow("التسلسل حسب نوع الفاتورة", _isetToggle("numbering_reset_per_type"))
+    );
+  }
+
+  // ── تاب 3: إعدادات إنشاء الفاتورة ────────────────────────────────
+  function _isetPanelCreation() {
+    return (
+      _isetRow(
+        "السماح بتعديل الفاتورة بعد الحفظ",
+        _isetToggle("allow_edit_after_save"),
+        "لا توجد دالة تعديل فاتورة منفَّذة في النظام حاليًا — الإعداد جاهز لأي تنفيذ مستقبلي",
+      ) +
+      _isetRow("السماح بحذف الفاتورة", _isetToggle("allow_delete"), "مربوطة فعليًا بـ deleteSaleInvoice / deletePurchaseInvoice") +
+      _isetRow("السماح بإلغاء الفاتورة", _isetToggle("allow_cancel")) +
+      _isetRow("طلب سبب الإلغاء", _isetToggle("require_cancel_reason")) +
+      _isetRow("اعتماد الفاتورة قبل الترحيل", _isetToggle("require_approval_before_post")) +
+      _isetRow("منع تعديل السعر", _isetToggle("prevent_price_edit")) +
+      _isetRow("منع تعديل الخصم", _isetToggle("prevent_discount_edit"))
+    );
+  }
+
+  // ── تاب 4: سياسة الأسعار ─────────────────────────────────────────
+  function _isetPanelPricing() {
+    return (
+      '<div class="invset-section-title">أولوية تطبيق السعر (الأعلى بالقائمة = الأولوية الأولى) — الترتيب الحالي: سعر العميل ← سعر المجموعة ← قائمة الأسعار ← آخر سعر بيع ← السعر العام</div>' +
+      '<ol id="iset-price-priority-list" class="invset-num-table" style="padding:10px 24px"></ol>' +
+      _isetRow("قائمة الأسعار الافتراضية", _isetText("default_price_list"))
+    );
+  }
+
+  function _isetRenderPriceLabels() {
+    return {
+      customer_price: "سعر العميل",
+      group_price: "سعر المجموعة",
+      price_list: "قائمة الأسعار",
+      last_sale_price: "آخر سعر بيع",
+      general_price: "السعر العام",
+    };
+  }
+
+  function _isetRenderPricePriority(order) {
+    var el = document.getElementById("iset-price-priority-list");
+    if (!el) return;
+    var labels = _isetRenderPriceLabels();
+    el.innerHTML = (order || [])
+      .map(function (k) {
+        return '<li data-priority-key="' + k + '" style="padding:6px 0;cursor:grab">↕ ' + (labels[k] || k) + "</li>";
+      })
+      .join("");
+    // ترتيب بسيط بالسحب غير متاح هنا (خارج نطاق آمن)؛ الترتيب يتغيّر عبر
+    // الأزرار ▲▼ التالية لضمان توافق بدون مكتبة Drag&Drop خارجية
+    el.querySelectorAll("li").forEach(function (li, idx) {
+      li.innerHTML +=
+        ' <button type="button" class="btn btn-sm" data-move="up" style="margin-inline-start:10px">▲</button>' +
+        '<button type="button" class="btn btn-sm" data-move="down">▼</button>';
+    });
+    el.querySelectorAll('[data-move="up"]').forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var li = btn.closest("li");
+        var prev = li.previousElementSibling;
+        if (prev) el.insertBefore(li, prev);
+      });
+    });
+    el.querySelectorAll('[data-move="down"]').forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var li = btn.closest("li");
+        var next = li.nextElementSibling;
+        if (next) el.insertBefore(next, li);
+      });
+    });
+  }
+
+  function _isetGatherPricePriority() {
+    var el = document.getElementById("iset-price-priority-list");
+    if (!el) return [];
+    return Array.prototype.map.call(el.querySelectorAll("li"), function (li) {
+      return li.dataset.priorityKey;
+    });
+  }
+
+  // ── تاب 5: الخصومات ──────────────────────────────────────────────
+  function _isetPanelDiscounts() {
+    return (
+      _isetRow("السماح بخصم على الصنف", _isetToggle("allow_item_discount")) +
+      _isetRow("السماح بخصم على الفاتورة", _isetToggle("allow_invoice_discount")) +
+      _isetRow(
+        "نوع الخصم الافتراضي",
+        _isetSelect("default_discount_type", [
+          { v: "percent", label: "نسبة %" },
+          { v: "fixed", label: "مبلغ ثابت" },
+        ]),
+      ) +
+      _isetRow("الحد الأقصى للخصم %", _isetNumber("max_discount_percent", { min: 0, max: 100 }), "0 = بدون حد أقصى") +
+      _isetRow(
+        "يحتاج موافقة عند تجاوز الحد",
+        _isetToggle("require_approval_over_max_discount"),
+        "مربوطة فعليًا في addSaleInvoice — راجع صلاحية \"تجاوز الحد الأقصى للخصم\"",
+      )
+    );
+  }
+
+  // ── تاب 6: الضرائب ───────────────────────────────────────────────
+  function _isetPanelTax() {
+    return (
+      _isetRow("تفعيل الضريبة", _isetToggle("tax_enabled")) +
+      _isetRow("نسبة الضريبة الافتراضية %", _isetNumber("default_tax_rate", { min: 0, max: 100 })) +
+      _isetRow(
+        "الأسعار",
+        _isetSelect("prices_include_tax", [
+          { v: "false", label: "غير شاملة الضريبة" },
+          { v: "true", label: "شاملة الضريبة" },
+        ]),
+      ) +
+      _isetRow("أكثر من نوع ضريبة", _isetToggle("multiple_tax_types_enabled"))
+    );
+  }
+
+  // ── تاب 7: طرق الدفع ─────────────────────────────────────────────
+  function _isetPanelPaymentMethods() {
+    return (
+      '<div class="invset-section-title">كل طريقة دفع مربوطة بمفتاح حساب من شجرة الحسابات (POSTING_CONFIG_KEYS)</div>' +
+      '<div id="iset-pm-list"></div>' +
+      '<button type="button" class="btn btn-outline-primary" id="iset-add-pm-btn" style="margin-top:10px">' +
+      '<i class="ti ti-plus"></i> إضافة طريقة دفع</button>'
+    );
+  }
+
+  function _isetRenderPmList(methods) {
+    var container = document.getElementById("iset-pm-list");
+    if (!container) return;
+    container.innerHTML = (methods || [])
+      .map(function (m, i) {
+        return (
+          '<div class="invset-field-row" data-pm-row data-pm-index="' +
+          i +
+          '">' +
+          '<div class="invset-field-label" style="flex:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+          '<input class="input invset-input-sm" data-pm-field="key" placeholder="key" value="' +
+          (m.key || "") +
+          '" style="width:100px">' +
+          '<input class="input invset-input-sm" data-pm-field="label" placeholder="الاسم" value="' +
+          (m.label || "") +
+          '" style="width:120px">' +
+          '<input class="input invset-input-sm" data-pm-field="account_key" placeholder="مفتاح الحساب" value="' +
+          (m.account_key || "") +
+          '" style="width:150px">' +
+          '<label class="invset-switch"><input type="checkbox" data-pm-field="enabled" ' +
+          (m.enabled !== false ? "checked" : "") +
+          '><span class="invset-switch-track"><span class="invset-switch-thumb"></span></span></label>' +
+          "</div>" +
+          '<button type="button" class="btn btn-sm btn-outline-danger" data-remove-pm>' +
+          '<i class="ti ti-trash"></i></button>' +
+          "</div>"
+        );
+      })
+      .join("");
+    container.querySelectorAll("[data-remove-pm]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        btn.closest("[data-pm-row]").remove();
+      });
+    });
+  }
+
+  function _isetGatherPm() {
+    var container = document.getElementById("iset-pm-list");
+    if (!container) return [];
+    var out = [];
+    container.querySelectorAll("[data-pm-row]").forEach(function (row) {
+      var get = function (f) {
+        var el = row.querySelector('[data-pm-field="' + f + '"]');
+        return el ? el.value : "";
+      };
+      var key = (get("key") || "").trim();
+      if (!key) return;
+      var enabledEl = row.querySelector('[data-pm-field="enabled"]');
+      out.push({
+        key: key,
+        label: (get("label") || key).trim(),
+        account_key: get("account_key") || "",
+        enabled: enabledEl ? !!enabledEl.checked : true,
+      });
+    });
+    return out;
+  }
+
+  // ── تاب 8: حالة الفاتورة (دورة الحياة) ───────────────────────────
+  function _isetPanelStatus() {
+    var s = (_isetCurrentData && _isetCurrentData.status_flow) || ["draft", "review", "approved", "posted", "paid"];
+    var labels = { draft: "مسودة", review: "مراجعة", approved: "معتمدة", posted: "مرحلة محاسبيًا", paid: "مدفوعة" };
+    return (
+      '<div class="invset-section-title">دورة حياة الفاتورة الثابتة في النظام — العرض هنا توثيقي (state machine كاملة لمنع الانتقال العشوائي بين الحالات تحتاج تنفيذ منفصل، راجع الملحوظة في الـ README)</div>' +
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 0">' +
+      s
+        .map(function (st, i) {
+          return (
+            '<span style="padding:6px 14px;border-radius:999px;background:var(--primary-soft, var(--accent-soft));color:var(--primary);font-weight:600">' +
+            (labels[st] || st) +
+            "</span>" +
+            (i < s.length - 1 ? '<i class="ti ti-arrow-narrow-left"></i>' : "")
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  // ── تاب 9: ربط الفواتير بالمخزون ─────────────────────────────────
+  function _isetPanelStockLink() {
+    return (
+      '<div class="invset-section-title">هذا هو السلوك الفعلي الحالي وقت اعتماد فاتورة بيع/شراء أو مرتجع — التبديل الفعلي (تعطيل خصم المخزون مثلاً) يحتاج تعديل addSaleInvoice نفسها، لم يُنفَّذ في هذه الجولة لخطورته على تكامل المخزون/الحسابات</div>' +
+      _isetRow("خصم المخزون عند اعتماد فاتورة البيع", _isetToggle("deduct_stock_on_sale_confirm")) +
+      _isetRow("إنشاء قيد محاسبي عند اعتماد فاتورة البيع", _isetToggle("create_journal_on_sale_confirm")) +
+      _isetRow("تحديث تكلفة البضاعة عند اعتماد فاتورة البيع", _isetToggle("update_cost_on_sale_confirm")) +
+      _isetRow("إعادة المخزون عند المرتجع", _isetToggle("restock_on_return")) +
+      _isetRow("عكس القيود عند المرتجع", _isetToggle("reverse_journal_on_return"))
+    );
+  }
+
+  // ── تاب 10: الطباعة ──────────────────────────────────────────────
+  function _isetPanelPrinting() {
+    return (
+      _isetRow("إستخدام الطريقة المُثلى لطباعة الفاتورة بشكل أسرع؟", _isetToggle("use_fast_print_method")) +
+      _isetRow("إستخدام تتبع الكميات؟", _isetToggle("print_use_qty_tracking")) +
+      _isetRow("ظهور صنف المجموعة بدون مكونات؟", _isetToggle("print_show_bundle_without_components")) +
+      _isetRow("ظهور تقسيط الفاتورة؟", _isetToggle("print_show_installments")) +
+      _isetRow("ظهور طريقة دفع الفاتورة؟", _isetToggle("print_show_payment_method")) +
+      _isetRow("ظهور أرقام السريال للأصناف؟", _isetToggle("print_show_serial_numbers")) +
+      _isetRow("ظهور ال QR Code؟", _isetToggle("print_show_qr_code")) +
+      _isetRow("ظهور رسالة الشكر؟", _isetToggle("print_show_thank_you_message")) +
+      _isetRow("ظهور رسالة الشروط؟", _isetToggle("print_show_terms_message")) +
+      _isetRow("ظهور سياسة التعامل؟", _isetToggle("print_show_dealing_policy")) +
+      _isetSubheading("بيانات الشركة") +
+      _isetRow("العنوان", _isetToggle("print_show_company_address")) +
+      _isetRow("التليفون", _isetToggle("print_show_company_phone")) +
+      _isetRow("الرقم الضريبى", _isetToggle("print_show_company_tax_number")) +
+      _isetSubheading("الرسالة") +
+      _isetRow("نص رسالة الشكر", _isetText("print_thank_you_message_text", { placeholder: "شكرًا لتعاملكم معنا" })) +
+      _isetRow("نص رسالة الشروط", _isetText("print_terms_message_text", { placeholder: "الأصناف المباعة لا ترد ولا تستبدل بعد..." })) +
+      '<div class="invset-section-title" style="margin-top:18px">تعريف عناصر قالب الطباعة (توليد PDF/HTML فعلي يحتاج محرك طباعة مستقل غير موجود بعد — راجع README)</div>' +
+      '<div id="iset-templates-list"></div>' +
+      '<button type="button" class="btn btn-outline-primary" id="iset-add-template-btn" style="margin-top:10px">' +
+      '<i class="ti ti-plus"></i> إضافة قالب جديد</button>'
+    );
+  }
+
+  var ISET_TEMPLATE_FIELDS = [
+    { key: "show_logo", label: "شعار الشركة" },
+    { key: "show_company_info", label: "بيانات الشركة" },
+    { key: "show_customer_info", label: "بيانات العميل" },
+    { key: "show_qr", label: "QR Code" },
+    { key: "show_barcode", label: "باركود" },
+    { key: "show_signature", label: "توقيع" },
+    { key: "show_notes", label: "ملاحظات" },
+    { key: "show_terms", label: "شروط البيع" },
+  ];
+
+  function _isetRenderTemplatesList(templates) {
+    var container = document.getElementById("iset-templates-list");
+    if (!container) return;
+    container.innerHTML = (templates || [])
+      .map(function (t, i) {
+        var chips = ISET_TEMPLATE_FIELDS.map(function (f) {
+          return (
+            '<label style="display:inline-flex;align-items:center;gap:4px;margin-inline-end:12px;font-size:12px">' +
+            '<input type="checkbox" data-tpl-field="' +
+            f.key +
+            '" ' +
+            (t[f.key] ? "checked" : "") +
+            "> " +
+            f.label +
+            "</label>"
+          );
+        }).join("");
+        return (
+          '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px" data-tpl-row data-tpl-index="' +
+          i +
+          '">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
+          '<input class="input invset-input-sm" data-tpl-field="key" placeholder="key" value="' +
+          (t.key || "") +
+          '" style="width:110px">' +
+          '<input class="input invset-input-sm" data-tpl-field="label" placeholder="اسم القالب" value="' +
+          (t.label || "") +
+          '" style="width:180px">' +
+          '<button type="button" class="btn btn-sm btn-outline-danger" data-remove-tpl>' +
+          '<i class="ti ti-trash"></i></button>' +
+          "</div>" +
+          '<div style="display:flex;flex-wrap:wrap">' +
+          chips +
+          "</div>" +
+          "</div>"
+        );
+      })
+      .join("");
+    container.querySelectorAll("[data-remove-tpl]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        btn.closest("[data-tpl-row]").remove();
+      });
+    });
+  }
+
+  function _isetGatherTemplates() {
+    var container = document.getElementById("iset-templates-list");
+    if (!container) return [];
+    var out = [];
+    container.querySelectorAll("[data-tpl-row]").forEach(function (row) {
+      var keyEl = row.querySelector('[data-tpl-field="key"]');
+      var labelEl = row.querySelector('[data-tpl-field="label"]');
+      var key = keyEl ? keyEl.value.trim() : "";
+      if (!key) return;
+      var tpl = { key: key, label: (labelEl ? labelEl.value.trim() : "") || key };
+      ISET_TEMPLATE_FIELDS.forEach(function (f) {
+        var el = row.querySelector('[data-tpl-field="' + f.key + '"]');
+        tpl[f.key] = el ? !!el.checked : false;
+      });
+      out.push(tpl);
+    });
+    return out;
+  }
+
+  // ── تاب 11: الإعدادات المحاسبية (نفس نمط قسم 13 بإعدادات المخزون) ──
+  var ISET_ACCOUNTING_RELATED_KEYS = [
+    "revenue_account",
+    "ar_account",
+    "vat_output_account",
+    "vat_input_account",
+    "sales_discount_account",
+    "purchase_discount_account",
+    "cash_account",
+    "cogs_account",
+    "inventory_account",
+  ];
+
+  function _isetPanelAccounting() {
+    var itemsHtml = ISET_ACCOUNTING_RELATED_KEYS.map(function (k) {
+      return "<li><code>" + k + "</code></li>";
+    }).join("");
+    return (
+      '<div class="invset-panel-placeholder">' +
+      '<i class="ti ti-report-money" style="font-size:32px;opacity:.35"></i>' +
+      "<p>ربط الفواتير بالحسابات (الإيراد، العملاء، الضريبة، الخصم، الصندوق/البنك،" +
+      " تكلفة المبيعات، المخزون) بيتم من شاشة" +
+      ' <b>"إعدادات الترحيل المحاسبي"</b> الموجودة أصلاً — نفس مفاتيح' +
+      " POSTING_CONFIG_KEYS المستخدمة في المخزون:</p>" +
+      '<ul class="invset-accounting-keys-list">' +
+      itemsHtml +
+      "</ul>" +
+      '<button type="button" class="btn btn-outline-primary" onclick="navigate(\'posting-config\')">' +
+      '<i class="ti ti-external-link"></i> فتح شاشة إعدادات الترحيل المحاسبي' +
+      "</button>" +
+      "</div>"
+    );
+  }
+
+  function _isetPanelLog() {
+    return (
+      '<div id="iset-log-list" class="invset-log-list">' +
+      '<div class="invset-panel-placeholder"><i class="ti ti-history" style="font-size:28px;opacity:.35"></i>' +
+      "<p>جارِ التحميل...</p></div></div>"
+    );
+  }
+
+  var ISET_PANEL_BUILDERS = {
+    general: _isetPanelGeneral,
+    purchase_invoices: _isetPanelPurchaseInvoices,
+    sale_invoices: _isetPanelSaleInvoices,
+    returns_transfers: _isetPanelReturnsTransfers,
+    types: _isetPanelTypes,
+    numbering: _isetPanelNumbering,
+    creation: _isetPanelCreation,
+    pricing: _isetPanelPricing,
+    discounts: _isetPanelDiscounts,
+    tax: _isetPanelTax,
+    payment_methods: _isetPanelPaymentMethods,
+    status: _isetPanelStatus,
+    stock_link: _isetPanelStockLink,
+    printing: _isetPanelPrinting,
+    accounting: _isetPanelAccounting,
+    log: _isetPanelLog,
+  };
+
+  function renderInvoiceSettings() {
+    var tabsBtns = ISET_SECTIONS.map(function (s, i) {
+      return (
+        '<button type="button" class="invset-tab' +
+        (i === 0 ? " active" : "") +
+        '" data-tab="' +
+        s.key +
+        '"><i class="ti ' +
+        s.icon +
+        '"></i><span>' +
+        s.label +
+        "</span></button>"
+      );
+    }).join("");
+
+    var panels = ISET_SECTIONS.map(function (s, i) {
+      var builder = ISET_PANEL_BUILDERS[s.key];
+      var innerHtml = builder ? builder() : '<div class="invset-panel-placeholder"><p>' + s.label + "</p></div>";
+      return (
+        '<div class="invset-panel' +
+        (i === 0 ? " active" : "") +
+        '" id="iset-panel-' +
+        s.key +
+        '" data-panel="' +
+        s.key +
+        '">' +
+        '<div class="invset-section-heading"><i class="ti ' +
+        s.icon +
+        '"></i><h3>' +
+        s.label +
+        "</h3></div>" +
+        innerHtml +
+        "</div>"
+      );
+    }).join("");
+
+    return (
+      '<div class="invset-wrap">' +
+      '<div class="page-header"><div>' +
+      "<h2>إعدادات الفواتير</h2>" +
+      '<p class="page-subtitle">المرجع الوحيد لكل سياسات الفواتير في النظام</p>' +
+      "</div>" +
+      '<div class="invset-header-actions">' +
+      '<button type="button" class="btn btn-secondary" id="iset-reset-btn">استرجاع الافتراضي</button>' +
+      '<button type="button" class="btn btn-primary" id="iset-save-btn">حفظ الإعدادات</button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="invset-body">' +
+      '<div class="invset-tabs" id="iset-tabs">' +
+      tabsBtns +
+      "</div>" +
+      '<div class="invset-panels" id="iset-panels">' +
+      panels +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function bindInvoiceSettings() {
+    if (_isetTabsCtrl && _isetTabsCtrl.destroy) _isetTabsCtrl.destroy();
+    _isetTabsCtrl = TabEngine.init({
+      scope: document.getElementById("iset-tabs").parentElement,
+      tabSelector: ".invset-tab",
+      panelPrefix: "iset-panel-",
+      activeClass: "active",
+    });
+
+    var saveBtn = document.getElementById("iset-save-btn");
+    var resetBtn = document.getElementById("iset-reset-btn");
+    if (saveBtn) saveBtn.addEventListener("click", _isetSave);
+    if (resetBtn) resetBtn.addEventListener("click", _isetResetToDefault);
+
+    var addTypeBtn = document.getElementById("iset-add-type-btn");
+    if (addTypeBtn) {
+      addTypeBtn.addEventListener("click", function () {
+        var current = _isetGatherTypes();
+        current.push({ key: "", label: "", enabled: true });
+        _isetRenderTypesList(current);
+      });
+    }
+    var addPmBtn = document.getElementById("iset-add-pm-btn");
+    if (addPmBtn) {
+      addPmBtn.addEventListener("click", function () {
+        var current = _isetGatherPm();
+        current.push({ key: "", label: "", account_key: "", enabled: true });
+        _isetRenderPmList(current);
+      });
+    }
+    var addTplBtn = document.getElementById("iset-add-template-btn");
+    if (addTplBtn) {
+      addTplBtn.addEventListener("click", function () {
+        var current = _isetGatherTemplates();
+        current.push({ key: "", label: "" });
+        _isetRenderTemplatesList(current);
+      });
+    }
+
+    _isetLogLoaded = false;
+    var logTabBtn = document.querySelector('#iset-tabs .invset-tab[data-tab="log"]');
+    if (logTabBtn) logTabBtn.addEventListener("click", _isetLoadLogIfNeeded);
+
+    _isetLoad();
+  }
+
+  function _isetApplyToUI(data) {
+    if (!data) return;
+    var root = document.getElementById("iset-panels");
+    if (!root) return;
+    root.querySelectorAll("[data-iset-key]").forEach(function (el) {
+      var key = el.dataset.isetKey;
+      if (!(key in data)) return;
+      if (el.dataset.isetType === "bool") {
+        el.checked = !!data[key];
+      } else {
+        el.value = data[key] == null ? "" : String(data[key]);
+      }
+    });
+    _isetRenderTypesList(data.invoice_types || []);
+    _isetRenderPricePriority(data.price_priority || []);
+    _isetRenderPmList(data.payment_methods || []);
+    _isetRenderTemplatesList(data.print_templates || []);
+  }
+
+  function _isetGatherFromUI() {
+    var root = document.getElementById("iset-panels");
+    var out = {};
+    if (!root) return out;
+    root.querySelectorAll("[data-iset-key]").forEach(function (el) {
+      var key = el.dataset.isetKey;
+      if (el.dataset.isetType === "bool") {
+        out[key] = !!el.checked;
+      } else if (el.dataset.isetType === "number") {
+        out[key] = Number(el.value || 0);
+      } else if (key === "prices_include_tax") {
+        out[key] = el.value === "true";
+      } else {
+        out[key] = el.value || "";
+      }
+    });
+    out.invoice_types = _isetGatherTypes();
+    out.price_priority = _isetGatherPricePriority();
+    out.payment_methods = _isetGatherPm();
+    out.print_templates = _isetGatherTemplates();
+    return out;
+  }
+
+  function _isetLoadLogIfNeeded() {
+    if (_isetLogLoaded) return;
+    var listEl = document.getElementById("iset-log-list");
+    if (!listEl) return;
+    _isetLogLoaded = true;
+    _gsr("getAuditLog", [50, { table: "InvoiceSettings" }], {
+      label: "InvoiceSettings.auditLog",
+      onSuccess: function (res) {
+        var rows = (res && res.success && res.data) || [];
+        if (!rows.length) {
+          listEl.innerHTML = '<div class="invset-panel-placeholder"><p>لا يوجد تغييرات مسجّلة بعد</p></div>';
+          return;
+        }
+        listEl.innerHTML =
+          '<table class="invset-num-table"><thead><tr><th>التاريخ</th><th>المستخدم</th><th>التفاصيل</th></tr></thead><tbody>' +
+          rows
+            .map(function (r) {
+              return "<tr><td>" + (r.timestamp || "") + "</td><td>" + (r.user || "") + "</td><td>" + (r.details || "") + "</td></tr>";
+            })
+            .join("") +
+          "</tbody></table>";
+      },
+      onError: function () {
+        _isetLogLoaded = false;
+        listEl.innerHTML = '<div class="invset-panel-placeholder"><p>تعذّر تحميل السجل</p></div>';
+      },
+    });
+  }
+
+  function _isetLoad() {
+    _gsr("getInvoiceSettings", [APP.currentUser.username, SESSION ? SESSION.token : null], {
+      label: "InvoiceSettings.get",
+      onSuccess: function (res) {
+        if (res && res.success) {
+          _isetCurrentData = res.data;
+          _isetApplyToUI(_isetCurrentData);
+        }
+      },
+      onError: function () {
+        if (typeof showToast === "function") showToast("تعذّر تحميل إعدادات الفواتير", "error");
+      },
+    });
+  }
+
+  function _isetSave() {
+    var payload = { callerUser: APP.currentUser.username, settings: _isetGatherFromUI() };
+    _gsr("saveInvoiceSettings", [payload, SESSION ? SESSION.token : null], {
+      label: "InvoiceSettings.save",
+      onSuccess: function (res) {
+        if (res && res.success) {
+          _isetCurrentData = res.data;
+          _isetApplyToUI(_isetCurrentData);
+          if (typeof showToast === "function") showToast("تم حفظ إعدادات الفواتير", "success");
+        } else if (typeof showToast === "function") {
+          showToast((res && res.message) || "فشل الحفظ", "error");
+        }
+      },
+      onError: function () {
+        if (typeof showToast === "function") showToast("خطأ في الاتصال أثناء الحفظ", "error");
+      },
+    });
+  }
+
+  function _isetResetToDefault() {
+    showConfirm({
+      title: "استرجاع الإعدادات الافتراضية",
+      message: "هل تريد استرجاع كل إعدادات الفواتير للقيم الافتراضية؟",
+      confirmText: "استرجاع",
+      confirmClass: "btn-danger",
+      onConfirm: function () {
+        _gsr("resetInvoiceSettings", [{ callerUser: APP.currentUser.username }, SESSION ? SESSION.token : null], {
+          label: "InvoiceSettings.reset",
+          onSuccess: function (res) {
+            if (res && res.success) {
+              _isetCurrentData = res.data;
+              _isetApplyToUI(_isetCurrentData);
+              if (typeof showToast === "function") showToast("تم استرجاع الإعدادات الافتراضية", "success");
+            } else if (typeof showToast === "function") {
+              showToast((res && res.message) || "فشل الاسترجاع", "error");
+            }
+          },
+          onError: function () {
+            if (typeof showToast === "function") showToast("خطأ في الاتصال", "error");
+          },
+        });
+      },
+    });
+  }
+</script>

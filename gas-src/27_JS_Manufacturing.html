@@ -1,0 +1,2322 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 27_JS_Manufacturing.html — واجهة موديول التصنيع (Manufacturing Frontend)
+  // ──────────────────────────────────────────────────────────────────────────
+  // يعتمد بالكامل على الـ Backend الموجود فعلياً في Code_Manufacturing.gs
+  // (Phase 0 + Phase 1 Step 1 — راجع HANDOFF_Manufacturing_Phase0_Phase1Step1.md)
+  //
+  // المحتوى:
+  //   §MFG-UI-0   Helpers مشتركة (auth payload، ألوان الحالة، بحث عن سجل)
+  //   §MFG-UI-WC  مراكز العمل — Work Centers (render / bind / drawer / حذف)
+  //   §MFG-UI-MCH الآلات — Machines (render / bind / drawer / حذف)
+  //   §MFG-UI-BOM قوائم المكونات — BOM + BOM Lines (render / bind / drawer / حذف)
+  //   §MFG-UI-RTG مسارات التصنيع — Routing + Routing Operations (render / bind / drawer / حذف)
+  //
+  // ملاحظات معمارية:
+  //   - Work Centers و Machines مش جزء من getAllDataExtended (نفس فلسفة
+  //     شركات الشحن shipping-companies) — كل شاشة بتحمّل بياناتها بنداء
+  //     منفصل وتخزّنها في APP.data.workCenters / APP.data.machines.
+  //   - الـ Drawer بيستخدم opts.fields + opts.onSave الجاهزة في
+  //     openStyledDrawer (02_JS_UI_Shell.html) — بدون بناء HTML يدوي.
+  //   - الصلاحيات: viewWorkCenters (عرض) / manageWorkCenters (إضافة+
+  //     تعديل+حذف) — نفس المفاتيح المُعرَّفة في Code_Core.gs بالفعل.
+  // - ملاحظة توافق مهمة: دوال الـ Backend هنا (addWorkCenter/
+  //     updateWorkCenter/addMachine/updateMachine) تتوقع الحقلين
+  //     data.user + data.sessionToken (وليس data.callerUser مثل باقي
+  //     النظام) — لذلك بنستخدم _mfgAuth() المحلية بدل _authPayload()
+  //     العامة لتفادي كسر فحص الصلاحية في الباك إند.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+  // §MFG-UI-0  Helpers مشتركة
+  // ─────────────────────────────────────────────────────────────
+
+  /** يبني payload متوافق مع توقيع Backend الحالي لدوال التصنيع (data.user/data.sessionToken) */
+  function _mfgAuth(payload) {
+    payload = payload || {};
+    payload.user = APP.currentUser ? APP.currentUser.username : null;
+    payload.sessionToken = SESSION ? SESSION.token : null;
+    return payload;
+  }
+
+  var MFG_WC_STATUS_META = {
+    active: { label: "نشط", bg: "var(--success-soft)", color: "#059669" },
+    inactive: { label: "غير نشط", bg: "var(--danger-soft)", color: "#DC2626" },
+  };
+  var MFG_MCH_STATUS_META = {
+    active: { label: "نشط", bg: "var(--success-soft)", color: "#059669" },
+    maintenance: {
+      label: "تحت الصيانة",
+      bg: "var(--warning-soft)",
+      color: "#D97706",
+    },
+    idle: { label: "متوقفة", bg: "var(--surface2)", color: "#64748B" },
+  };
+
+  function _mfgStatusBadge(status, metaMap) {
+    var m = metaMap[status] || metaMap.active;
+    return (
+      '<span class="badge" style="background:' +
+      m.bg +
+      ";color:" +
+      m.color +
+      '">' +
+      m.label +
+      "</span>"
+    );
+  }
+
+  function _mfgFindById(list, id) {
+    return (list || []).find(function (r) {
+      return String(r.id) === String(id);
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // §MFG-UI-WC  مراكز العمل — Work Centers
+  // ═══════════════════════════════════════════════════════════════════════
+
+  function _loadWorkCenters(cb, force) {
+    if (!force && Array.isArray(APP.data.workCenters)) {
+      if (cb) cb();
+      return;
+    }
+    // [SE-ROLLOUT] عبر _gsr بدل google.script.run المباشر — Rule 9/10
+    if (typeof _gsr !== "function") return;
+    _gsr(
+      "getWorkCenters",
+      [APP.currentUser ? APP.currentUser.username : null, SESSION ? SESSION.token : null],
+      {
+        label: "getWorkCenters",
+        onSuccess: function (res) {
+          APP.data.workCenters = res.data || [];
+          if (cb) cb();
+        },
+        onError: function (res) {
+          NotificationEngine.error((res && res.message) || "خطأ في تحميل مراكز العمل");
+        },
+      },
+    );
+  }
+
+  function renderWorkCenters() {
+    var centers = (APP.data.workCenters || []).slice().reverse();
+    var total = centers.length;
+    var activeCount = centers.filter(function (w) {
+      return (w.status || "active") === "active";
+    }).length;
+    var linkedMachinesCount = (APP.data.machines || []).length;
+
+    var statsHtml =
+      '<div class="stat-grid" style="margin-bottom:20px">' +
+      statCard(
+        iconBadge(
+          "ti-building-factory-2",
+          "var(--warning-soft)",
+          "var(--warning)",
+        ),
+        "إجمالي مراكز العمل",
+        total,
+        "مركز",
+        "var(--warning-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-circle-check", "var(--success-soft)", "var(--success)"),
+        "نشطة",
+        activeCount,
+        "مركز",
+        "var(--success-soft)",
+      ) +
+      statCard(
+        iconBadge(
+          "ti-settings-automation",
+          "var(--accent-soft)",
+          "var(--primary)",
+        ),
+        "الآلات المرتبطة",
+        linkedMachinesCount,
+        "آلة",
+        "var(--accent-soft)",
+      ) +
+      "</div>";
+
+    var filterHtml = ""; // [COLUMN-ENGINE] البحث أصبح مدمجًا في تولبار ColumnEngine
+
+    // [COLUMN-ENGINE] الجدول انتقل لـ ColumnEngine (Metadata-Driven) بدل
+    // بناء <tr> يدويًا هنا — راجع _wcRegisterColumns/_wcRenderTable أدناه.
+    var tableHtml = '<div class="card"><div id="wc-ce-container"></div></div>';
+
+    return (
+      '<div class="page-header">' +
+      '<div><h1 style="display:flex;align-items:center;gap:10px">' +
+      iconBadge(
+        "ti-building-factory-2",
+        "var(--warning-soft)",
+        "var(--warning)",
+      ) +
+      "<span>مراكز العمل</span></h1>" +
+      "<p>إدارة مراكز العمل الإنتاجية — الوحدة الأساسية لخطوط التشغيل (Routing) وأوامر التصنيع</p></div>" +
+      '<div class="header-actions">' +
+      withPermission(
+        '<button class="btn btn-primary" id="wc-btn-add">+ مركز عمل جديد</button>',
+        "manageWorkCenters",
+      ) +
+      "</div></div>" +
+      statsHtml +
+      filterHtml +
+      tableHtml
+    );
+  }
+
+  // [COLUMN-ENGINE] تعريف أعمدة جدول مراكز العمل كـ Metadata. الإجراءات
+  // (تعديل/حذف) انتقلت لقائمة الزر اليمين (CTX_DEFINITIONS.work_centers
+  // في 20_JS_ContextMenu.html) بدل عمود "إجراءات" الثابت.
+  var _wcColumnsRegistered = false;
+
+  function _wcRegisterColumns() {
+    if (_wcColumnsRegistered) return;
+    _wcColumnsRegistered = true;
+    ColumnEngine.register(
+      "work_centers",
+      [
+        {
+          key: "code",
+          label: "الكود",
+          type: "text",
+          width: 110,
+          frozen: "right",
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px;color:#92400E">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "name",
+          label: "اسم مركز العمل",
+          type: "text",
+          width: 220,
+          format: function (v) {
+            return (
+              '<div style="display:flex;align-items:center;gap:8px">' +
+              iconBadge(
+                "ti-building-factory-2",
+                "var(--warning-soft)",
+                "#D97706",
+              ) +
+              "<b>" +
+              esc(v || "—") +
+              "</b></div>"
+            );
+          },
+        },
+        {
+          key: "department_id",
+          label: "القسم",
+          type: "text",
+          width: 140,
+          format: function (v) {
+            var dept = _mfgFindById(APP.data.departments, v);
+            return esc(dept ? dept.name : "—");
+          },
+        },
+        {
+          key: "capacity_per_day",
+          label: "الطاقة اليومية",
+          type: "text",
+          width: 130,
+          format: function (v, row) {
+            return v != null && v !== ""
+              ? esc(v + " " + (row.capacity_unit || ""))
+              : "—";
+          },
+        },
+        {
+          key: "cost_per_hour",
+          label: "تكلفة الساعة",
+          type: "currency",
+          width: 130,
+          format: function (v) {
+            return (
+              "<span class='sensitive-price'>" +
+              formatMoney(v || 0) +
+              " / ساعة</span>"
+            );
+          },
+        },
+        {
+          key: "status",
+          label: "الحالة",
+          type: "badge",
+          width: 100,
+          format: function (v) {
+            return _mfgStatusBadge(v || "active", MFG_WC_STATUS_META);
+          },
+        },
+      ],
+      {
+        title: "مراكز العمل",
+        rowKey: "id",
+        contextMenuType: "work_centers",
+      },
+    );
+  }
+
+  function _wcRenderTable() {
+    var container = document.getElementById("wc-ce-container");
+    if (!container) return;
+    _wcRegisterColumns();
+    var centers = (APP.data.workCenters || []).slice().reverse();
+    ColumnEngine.renderTable("work_centers", container, centers, {
+      onRowClick: function (row) {
+        requirePermission("manageWorkCenters", function () {
+          editWorkCenter(row.id);
+        });
+      },
+    });
+  }
+
+  function bindWorkCenters() {
+    var addBtn = document.getElementById("wc-btn-add");
+    if (addBtn) {
+      addBtn.addEventListener("click", function () {
+        requirePermission("manageWorkCenters", function () {
+          _openWorkCenterDrawer(null);
+        });
+      });
+    }
+    if (!Array.isArray(APP.data.workCenters)) {
+      _loadWorkCenters(function () {
+        var page = document.getElementById("page-content");
+        if (page && APP.currentPage === "work-centers") {
+          page.innerHTML = renderWorkCenters();
+          bindWorkCenters();
+        }
+      });
+    } else {
+      _wcRenderTable();
+    }
+    if (!Array.isArray(APP.data.machines)) {
+      // نحمّلها بصمت لعرض عدّاد "الآلات المرتبطة" في الكروت فقط
+      _loadMachines(function () {
+        var page = document.getElementById("page-content");
+        if (page && APP.currentPage === "work-centers") {
+          page.innerHTML = renderWorkCenters();
+          bindWorkCenters();
+        }
+      });
+    }
+  }
+
+  function editWorkCenter(id) {
+    requirePermission("manageWorkCenters", function () {
+      var w = _mfgFindById(APP.data.workCenters, id);
+      if (!w) {
+        NotificationEngine.error("مركز العمل غير موجود");
+        return;
+      }
+      _openWorkCenterDrawer(w);
+    });
+  }
+
+  function _openWorkCenterDrawer(wc) {
+    ensureExtendedData(function () {
+      var isEdit = !!(wc && wc.id);
+      var depts = (APP.data.departments || []).filter(function (d) {
+        return (
+          d.is_active !== false &&
+          d.is_active !== "false" &&
+          d.is_active !== "FALSE"
+        );
+      });
+      var deptOptions = [{ value: "", label: "— بدون قسم —" }].concat(
+        depts.map(function (d) {
+          return { value: d.id, label: d.name };
+        }),
+      );
+
+      openStyledDrawer({
+        title: isEdit ? "تعديل مركز عمل" : "مركز عمل جديد",
+        subtitle: isEdit ? wc.name : "أضف مركز عمل إنتاجي جديد",
+        icon: "ti-building-factory-2",
+        color: "amber",
+        width: 560,
+        fields: [
+          {
+            id: "wc-f-code",
+            label: "الكود",
+            type: "text",
+            value: isEdit ? wc.code || "" : "",
+            placeholder: "مثال: WC-CUT",
+          },
+          {
+            id: "wc-f-name",
+            label: "اسم مركز العمل",
+            type: "text",
+            value: isEdit ? wc.name || "" : "",
+            placeholder: "مثال: قسم القص",
+            required: true,
+            full: true,
+          },
+          {
+            id: "wc-f-department",
+            label: "القسم (اختياري)",
+            type: "select",
+            value: isEdit ? wc.department_id || "" : "",
+            options: deptOptions,
+          },
+          {
+            id: "wc-f-status",
+            label: "الحالة",
+            type: "select",
+            value: isEdit ? wc.status || "active" : "active",
+            options: [
+              { value: "active", label: "نشط" },
+              { value: "inactive", label: "غير نشط" },
+            ],
+          },
+          {
+            id: "wc-f-capacity",
+            label: "الطاقة اليومية",
+            type: "number",
+            value:
+              isEdit && wc.capacity_per_day != null ? wc.capacity_per_day : "",
+            placeholder: "0",
+          },
+          {
+            id: "wc-f-capacity-unit",
+            label: "وحدة الطاقة",
+            type: "datalist",
+            value: isEdit ? wc.capacity_unit || "" : "",
+            options: ["قطعة/يوم", "ساعة عمل/يوم", "كجم/يوم", "متر/يوم"],
+            placeholder: "قطعة/يوم",
+          },
+          {
+            id: "wc-f-cost",
+            label: "تكلفة الساعة",
+            type: "number",
+            value: isEdit && wc.cost_per_hour != null ? wc.cost_per_hour : "",
+            placeholder: "0.00",
+          },
+          {
+            id: "wc-f-notes",
+            label: "ملاحظات",
+            type: "textarea",
+            value: isEdit ? wc.notes || "" : "",
+            full: true,
+          },
+        ],
+        onSave: function (vals) {
+          if (!String(vals["wc-f-name"] || "").trim())
+            return NotificationEngine.error("اسم مركز العمل مطلوب");
+          var costVal = parseFloat(vals["wc-f-cost"]);
+          if (vals["wc-f-cost"] !== "" && costVal < 0)
+            return NotificationEngine.error("تكلفة الساعة لا يمكن أن تكون سالبة");
+
+          var payload = _mfgAuth({
+            code: vals["wc-f-code"],
+            name: vals["wc-f-name"],
+            department_id: vals["wc-f-department"],
+            status: vals["wc-f-status"],
+            capacity_per_day: vals["wc-f-capacity"] || 0,
+            capacity_unit: vals["wc-f-capacity-unit"],
+            cost_per_hour: vals["wc-f-cost"] || 0,
+            notes: vals["wc-f-notes"],
+          });
+
+          // [SE-ROLLOUT] عبر SaveEngine.run بدل google.script.run المباشر —
+          // نفس رسائل النجاح بالظبط اللي كان بيرجعها الباك إند (add/update).
+          SaveEngine.run({
+            screen: "manufacturing-work-centers",
+            entity: "workCenter",
+            recordId: isEdit ? wc.id : null,
+            buttonId: "__sd-fields-save-btn",
+            fn: isEdit ? "updateWorkCenter" : "addWorkCenter",
+            params: isEdit ? [wc.id, payload] : [payload],
+            successMessage: isEdit
+              ? " تم تعديل مركز العمل بنجاح"
+              : " تم إضافة مركز العمل بنجاح",
+            onSuccess: function () {
+              closeStyledDrawer();
+              _loadWorkCenters(function () {
+                renderPage("work-centers");
+              }, true);
+            },
+          });
+        },
+      });
+    });
+  }
+
+  function deleteWorkCenterConfirm(id) {
+    if (!requirePermission("manageWorkCenters")) return;
+    var w = _mfgFindById(APP.data.workCenters, id);
+    if (!w) return;
+
+    showConfirm({
+      title: "حذف مركز العمل",
+      message: "هل أنت متأكد من حذف مركز العمل «<b>" + esc(w.name) + "</b>»؟",
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      icon: "ti-trash",
+      iconColor: "#dc2626",
+      freezeMessage: "⏳ جاري الحذف...",
+      onConfirm: function (unfreezeUI) {
+        // [SE-ROLLOUT] عبر SaveEngine.run بدل google.script.run المباشر.
+        // unfreezeUI بتاعة showConfirm بتتنفّذ في onSuccess/onError زي ما
+        // كانت بتتنفّذ في withSuccessHandler/withFailureHandler الأصليين.
+        SaveEngine.run({
+          screen: "manufacturing-work-centers",
+          entity: "workCenter",
+          recordId: id,
+          fn: "deleteWorkCenter",
+          params: [
+            id,
+            APP.currentUser ? APP.currentUser.username : null,
+            SESSION ? SESSION.token : null,
+          ],
+          successMessage: " تم حذف مركز العمل بنجاح",
+          onSuccess: function () {
+            if (unfreezeUI) unfreezeUI();
+            APP.data.workCenters = (APP.data.workCenters || []).filter(
+              function (x) {
+                return String(x.id) !== String(id);
+              },
+            );
+            renderPage("work-centers");
+          },
+          onError: function () {
+            if (unfreezeUI) unfreezeUI();
+          },
+        });
+      },
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // §MFG-UI-MCH  الآلات — Machines
+  // ═══════════════════════════════════════════════════════════════════════
+
+  function _loadMachines(cb, force) {
+    if (!force && Array.isArray(APP.data.machines)) {
+      if (cb) cb();
+      return;
+    }
+    // [SE-ROLLOUT] عبر _gsr بدل google.script.run المباشر — Rule 9/10
+    if (typeof _gsr !== "function") return;
+    _gsr(
+      "getMachines",
+      [APP.currentUser ? APP.currentUser.username : null, SESSION ? SESSION.token : null],
+      {
+        label: "getMachines",
+        onSuccess: function (res) {
+          APP.data.machines = res.data || [];
+          if (cb) cb();
+        },
+        onError: function (res) {
+          NotificationEngine.error((res && res.message) || "خطأ في تحميل الآلات");
+        },
+      },
+    );
+  }
+
+  function renderMachines() {
+    var machines = (APP.data.machines || []).slice().reverse();
+    var total = machines.length;
+    var activeCount = machines.filter(function (m) {
+      return (m.status || "active") === "active";
+    }).length;
+    var maintenanceCount = machines.filter(function (m) {
+      return m.status === "maintenance";
+    }).length;
+
+    var statsHtml =
+      '<div class="stat-grid" style="margin-bottom:20px">' +
+      statCard(
+        iconBadge(
+          "ti-settings-automation",
+          "var(--accent-soft)",
+          "var(--primary)",
+        ),
+        "إجمالي الآلات",
+        total,
+        "آلة",
+        "var(--accent-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-circle-check", "var(--success-soft)", "var(--success)"),
+        "نشطة",
+        activeCount,
+        "آلة",
+        "var(--success-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-tool", "var(--warning-soft)", "var(--warning)"),
+        "تحت الصيانة",
+        maintenanceCount,
+        "آلة",
+        "var(--warning-soft)",
+      ) +
+      "</div>";
+
+    var filterHtml = ""; // [COLUMN-ENGINE] البحث أصبح مدمجًا في تولبار ColumnEngine
+
+    // [COLUMN-ENGINE] الجدول انتقل لـ ColumnEngine بدل بناء <tr> يدويًا هنا.
+    var tableHtml = '<div class="card"><div id="mch-ce-container"></div></div>';
+
+    var hasWorkCenters = (APP.data.workCenters || []).length > 0;
+    var addBtnHtml = hasWorkCenters
+      ? withPermission(
+          '<button class="btn btn-primary" id="mch-btn-add">+ آلة جديدة</button>',
+          "manageWorkCenters",
+        )
+      : '<button class="btn btn-outline" disabled title="أضف مركز عمل أولاً">+ آلة جديدة</button>';
+
+    return (
+      '<div class="page-header">' +
+      '<div><h1 style="display:flex;align-items:center;gap:10px">' +
+      iconBadge(
+        "ti-settings-automation",
+        "var(--accent-soft)",
+        "var(--primary)",
+      ) +
+      "<span>الآلات</span></h1>" +
+      "<p>إدارة آلات الإنتاج المرتبطة بمراكز العمل — مع ربط اختياري بالأصول الثابتة للإهلاك</p></div>" +
+      '<div class="header-actions">' +
+      addBtnHtml +
+      "</div></div>" +
+      statsHtml +
+      filterHtml +
+      tableHtml
+    );
+  }
+
+  // [COLUMN-ENGINE] تعريف أعمدة جدول الآلات كـ Metadata. الإجراءات انتقلت
+  // لقائمة الزر اليمين (CTX_DEFINITIONS.machines).
+  var _mchColumnsRegistered = false;
+
+  function _mchRegisterColumns() {
+    if (_mchColumnsRegistered) return;
+    _mchColumnsRegistered = true;
+    ColumnEngine.register(
+      "machines",
+      [
+        {
+          key: "code",
+          label: "الكود",
+          type: "text",
+          width: 110,
+          frozen: "right",
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px;color:#0E7490">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "name",
+          label: "اسم الآلة",
+          type: "text",
+          width: 220,
+          format: function (v) {
+            return (
+              '<div style="display:flex;align-items:center;gap:8px">' +
+              iconBadge(
+                "ti-settings-automation",
+                "var(--accent-soft)",
+                "#0E7490",
+              ) +
+              "<b>" +
+              esc(v || "—") +
+              "</b></div>"
+            );
+          },
+        },
+        {
+          key: "work_center_id",
+          label: "مركز العمل",
+          type: "text",
+          width: 160,
+          format: function (v) {
+            var wc = _mfgFindById(APP.data.workCenters, v);
+            return esc(wc ? wc.name : "—");
+          },
+        },
+        {
+          key: "cost_per_hour",
+          label: "تكلفة الساعة",
+          type: "currency",
+          width: 130,
+          format: function (v) {
+            return (
+              "<span class='sensitive-price'>" +
+              formatMoney(v || 0) +
+              " / ساعة</span>"
+            );
+          },
+        },
+        {
+          key: "fixed_asset_id",
+          label: "الأصل الثابت",
+          type: "text",
+          width: 160,
+          format: function (v) {
+            var asset = _mfgFindById(APP.data.fixedAssets, v);
+            return esc(asset ? asset.name : "—");
+          },
+        },
+        {
+          key: "status",
+          label: "الحالة",
+          type: "badge",
+          width: 100,
+          format: function (v) {
+            return _mfgStatusBadge(v || "active", MFG_MCH_STATUS_META);
+          },
+        },
+      ],
+      {
+        title: "الآلات",
+        rowKey: "id",
+        contextMenuType: "machines",
+      },
+    );
+  }
+
+  function _mchRenderTable() {
+    var container = document.getElementById("mch-ce-container");
+    if (!container) return;
+    _mchRegisterColumns();
+    var machines = (APP.data.machines || []).slice().reverse();
+    ColumnEngine.renderTable("machines", container, machines, {
+      onRowClick: function (row) {
+        requirePermission("manageWorkCenters", function () {
+          editMachine(row.id);
+        });
+      },
+    });
+  }
+
+  function bindMachines() {
+    var addBtn = document.getElementById("mch-btn-add");
+    if (addBtn) {
+      addBtn.addEventListener("click", function () {
+        requirePermission("manageWorkCenters", function () {
+          if (!(APP.data.workCenters || []).length) {
+            NotificationEngine.error("أضف مركز عمل واحد على الأقل أولاً");
+            return;
+          }
+          _openMachineDrawer(null);
+        });
+      });
+    }
+    if (!Array.isArray(APP.data.workCenters)) {
+      _loadWorkCenters(function () {
+        var page = document.getElementById("page-content");
+        if (page && APP.currentPage === "machines") {
+          page.innerHTML = renderMachines();
+          bindMachines();
+        }
+      });
+    }
+    if (!Array.isArray(APP.data.machines)) {
+      _loadMachines(function () {
+        var page = document.getElementById("page-content");
+        if (page && APP.currentPage === "machines") {
+          page.innerHTML = renderMachines();
+          bindMachines();
+        }
+      });
+    } else {
+      _mchRenderTable();
+    }
+  }
+
+  function editMachine(id) {
+    requirePermission("manageWorkCenters", function () {
+      var m = _mfgFindById(APP.data.machines, id);
+      if (!m) {
+        NotificationEngine.error("الآلة غير موجودة");
+        return;
+      }
+      _openMachineDrawer(m);
+    });
+  }
+
+  function _openMachineDrawer(m) {
+    ensureExtendedData(function () {
+      _loadWorkCenters(function () {
+        var isEdit = !!(m && m.id);
+        var wcList = (APP.data.workCenters || []).filter(function (w) {
+          return (
+            (w.status || "active") !== "inactive" ||
+            (isEdit && w.id === m.work_center_id)
+          );
+        });
+        if (!wcList.length) {
+          NotificationEngine.error("لا توجد مراكز عمل — أضف مركز عمل أولاً");
+          return;
+        }
+        var wcOptions = wcList.map(function (w) {
+          return { value: w.id, label: w.name };
+        });
+        var assets = (APP.data.fixedAssets || []).filter(function (a) {
+          return !a.deleted_at;
+        });
+        var assetOptions = [{ value: "", label: "— بدون ربط —" }].concat(
+          assets.map(function (a) {
+            return { value: a.id, label: a.name };
+          }),
+        );
+
+        openStyledDrawer({
+          title: isEdit ? "تعديل آلة" : "آلة جديدة",
+          subtitle: isEdit ? m.name : "أضف آلة جديدة لأحد مراكز العمل",
+          icon: "ti-settings-automation",
+          color: "cyan",
+          width: 560,
+          fields: [
+            {
+              id: "mch-f-code",
+              label: "الكود",
+              type: "text",
+              value: isEdit ? m.code || "" : "",
+              placeholder: "مثال: MCH-SEW-01",
+            },
+            {
+              id: "mch-f-name",
+              label: "اسم الآلة",
+              type: "text",
+              value: isEdit ? m.name || "" : "",
+              placeholder: "مثال: ماكينة خياطة رقم 1",
+              required: true,
+              full: true,
+            },
+            {
+              id: "mch-f-workcenter",
+              label: "مركز العمل",
+              type: "select",
+              value: isEdit ? m.work_center_id || "" : wcOptions[0].value,
+              options: wcOptions,
+              required: true,
+            },
+            {
+              id: "mch-f-status",
+              label: "الحالة",
+              type: "select",
+              value: isEdit ? m.status || "active" : "active",
+              options: [
+                { value: "active", label: "نشط" },
+                { value: "maintenance", label: "تحت الصيانة" },
+                { value: "idle", label: "متوقفة" },
+              ],
+            },
+            {
+              id: "mch-f-cost",
+              label: "تكلفة الساعة",
+              type: "number",
+              value: isEdit && m.cost_per_hour != null ? m.cost_per_hour : "",
+              placeholder: "0.00",
+            },
+            {
+              id: "mch-f-purchase-date",
+              label: "تاريخ الشراء (اختياري)",
+              type: "date",
+              value: isEdit ? m.purchase_date || "" : "",
+            },
+            {
+              id: "mch-f-asset",
+              label: "الأصل الثابت المرتبط (اختياري)",
+              type: "select",
+              value: isEdit ? m.fixed_asset_id || "" : "",
+              options: assetOptions,
+              full: true,
+            },
+            {
+              id: "mch-f-notes",
+              label: "ملاحظات",
+              type: "textarea",
+              value: isEdit ? m.notes || "" : "",
+              full: true,
+            },
+          ],
+          onSave: function (vals) {
+            if (!String(vals["mch-f-name"] || "").trim())
+              return NotificationEngine.error("اسم الآلة مطلوب");
+            if (!vals["mch-f-workcenter"])
+              return NotificationEngine.error("يجب تحديد مركز العمل التابعة له الآلة");
+            var costVal = parseFloat(vals["mch-f-cost"]);
+            if (vals["mch-f-cost"] !== "" && costVal < 0)
+              return NotificationEngine.error("تكلفة الساعة لا يمكن أن تكون سالبة");
+
+            var payload = _mfgAuth({
+              code: vals["mch-f-code"],
+              name: vals["mch-f-name"],
+              work_center_id: vals["mch-f-workcenter"],
+              status: vals["mch-f-status"],
+              cost_per_hour: vals["mch-f-cost"] || 0,
+              purchase_date: vals["mch-f-purchase-date"],
+              fixed_asset_id: vals["mch-f-asset"],
+              notes: vals["mch-f-notes"],
+            });
+
+            // [SE-ROLLOUT] عبر SaveEngine.run بدل google.script.run المباشر.
+            SaveEngine.run({
+              screen: "manufacturing-machines",
+              entity: "machine",
+              recordId: isEdit ? m.id : null,
+              buttonId: "__sd-fields-save-btn",
+              fn: isEdit ? "updateMachine" : "addMachine",
+              params: isEdit ? [m.id, payload] : [payload],
+              successMessage: isEdit
+                ? " تم تعديل الآلة بنجاح"
+                : " تم إضافة الآلة بنجاح",
+              onSuccess: function () {
+                closeStyledDrawer();
+                _loadMachines(function () {
+                  renderPage("machines");
+                }, true);
+              },
+            });
+          },
+        });
+      });
+    });
+  }
+
+  function deleteMachineConfirm(id) {
+    if (!requirePermission("manageWorkCenters")) return;
+    var m = _mfgFindById(APP.data.machines, id);
+    if (!m) return;
+
+    showConfirm({
+      title: "حذف الآلة",
+      message: "هل أنت متأكد من حذف الآلة «<b>" + esc(m.name) + "</b>»؟",
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      icon: "ti-trash",
+      iconColor: "#dc2626",
+      freezeMessage: "⏳ جاري الحذف...",
+      onConfirm: function (unfreezeUI) {
+        // [SE-ROLLOUT] عبر SaveEngine.run بدل google.script.run المباشر.
+        SaveEngine.run({
+          screen: "manufacturing-machines",
+          entity: "machine",
+          recordId: id,
+          fn: "deleteMachine",
+          params: [
+            id,
+            APP.currentUser ? APP.currentUser.username : null,
+            SESSION ? SESSION.token : null,
+          ],
+          successMessage: " تم حذف الآلة بنجاح",
+          onSuccess: function () {
+            if (unfreezeUI) unfreezeUI();
+            APP.data.machines = (APP.data.machines || []).filter(function (x) {
+              return String(x.id) !== String(id);
+            });
+            renderPage("machines");
+          },
+          onError: function () {
+            if (unfreezeUI) unfreezeUI();
+          },
+        });
+      },
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // §MFG-UI-BOM  قوائم المكونات — Bill of Materials (Phase 1 Step 2)
+  // ──────────────────────────────────────────────────────────────────────
+  // يعتمد على Code_Manufacturing.gs §MFG-BOM (getBOMs/getBOMLines/addBOM/
+  // updateBOM/deleteBOM) — راجع HANDOFF_Manufacturing_Phase1_BOM.md
+  //
+  // ملاحظات معمارية:
+  //   - نفس فلسفة Work Centers/Machines: تحميل مستقل في APP.data.boms،
+  //     ليست جزءاً من getAllDataExtended.
+  //   - المكوّنات (BOMLines) بيانها بنداء منفصل getBOMLines عند فتح
+  //     الـ Drawer فقط (Lazy) — تفادياً لتحميل كل السطور مقدماً بلا داعٍ.
+  //   - الـ Drawer هنا بيستخدم opts.body مخصص (مش opts.fields التلقائية)
+  //     عشان يستوعب جدول مكوّنات ديناميكي (إضافة/حذف صفوف) بنفس أسلوب
+  //     بنود أمر الشراء في 22_JS_PurchaseOrders.html (_buildPOLineRow).
+  //   - الصلاحيات: viewBOM (عرض) / manageBOM (إضافة+تعديل+حذف) — نفس
+  //     المفاتيح المُعرَّفة في Code_Core.gs بالفعل من دفعة Phase 0.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  var MFG_BOM_STATUS_META = {
+    draft: { label: "مسودة", bg: "var(--surface2)", color: "#64748B" },
+    approved: { label: "معتمدة", bg: "var(--success-soft)", color: "#059669" },
+    obsolete: { label: "ملغاة", bg: "var(--danger-soft)", color: "#DC2626" },
+  };
+  var MFG_BOM_TYPE_LABELS = { standard: "قياسية", alternate: "بديلة" };
+
+  function _mfgTruthy(v) {
+    return v === true || v === "true" || v === "TRUE" || v === 1 || v === "1";
+  }
+
+  function _loadBOMs(cb, force) {
+    if (!force && Array.isArray(APP.data.boms)) {
+      if (cb) cb();
+      return;
+    }
+    // [SE-ROLLOUT] عبر _gsr بدل google.script.run المباشر — Rule 9/10
+    if (typeof _gsr !== "function") return;
+    _gsr(
+      "getBOMs",
+      [APP.currentUser ? APP.currentUser.username : null, SESSION ? SESSION.token : null],
+      {
+        label: "getBOMs",
+        onSuccess: function (res) {
+          APP.data.boms = res.data || [];
+          if (cb) cb();
+        },
+        onError: function (res) {
+          NotificationEngine.error((res && res.message) || "خطأ في تحميل قوائم المكونات");
+        },
+      },
+    );
+  }
+
+  function renderBOMs() {
+    var boms = (APP.data.boms || []).slice().reverse();
+    var total = boms.length;
+    var activeCount = boms.filter(function (b) {
+      return _mfgTruthy(b.is_active);
+    }).length;
+    var draftCount = boms.filter(function (b) {
+      return (b.status || "draft") === "draft";
+    }).length;
+
+    var statsHtml =
+      '<div class="stat-grid" style="margin-bottom:20px">' +
+      statCard(
+        iconBadge("ti-list-details", "var(--accent-soft)", "var(--primary)"),
+        "إجمالي القوائم",
+        total,
+        "BOM",
+        "var(--accent-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-circle-check", "var(--success-soft)", "var(--success)"),
+        "نسخ نشطة",
+        activeCount,
+        "BOM",
+        "var(--success-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-file-pencil", "var(--warning-soft)", "var(--warning)"),
+        "مسودات",
+        draftCount,
+        "BOM",
+        "var(--warning-soft)",
+      ) +
+      "</div>";
+
+    var filterHtml = ""; // [COLUMN-ENGINE] البحث أصبح مدمجًا في تولبار ColumnEngine
+
+    // [COLUMN-ENGINE] الجدول انتقل لـ ColumnEngine بدل بناء <tr> يدويًا هنا.
+    var tableHtml = '<div class="card"><div id="bom-ce-container"></div></div>';
+
+    var hasItems = (APP.data.items || []).length > 0;
+    var addBtnHtml = hasItems
+      ? withPermission(
+          '<button class="btn btn-primary" id="bom-btn-add">+ قائمة مكونات جديدة</button>',
+          "manageBOM",
+        )
+      : '<button class="btn btn-outline" disabled title="أضف صنفاً في الكتالوج أولاً">+ قائمة مكونات جديدة</button>';
+
+    return (
+      '<div class="page-header">' +
+      '<div><h1 style="display:flex;align-items:center;gap:10px">' +
+      iconBadge("ti-list-details", "var(--accent-soft)", "var(--primary)") +
+      "<span>قوائم المكونات (BOM)</span></h1>" +
+      "<p>عرّف مكوّنات كل صنف مُصنَّع وكمياتها — الأساس لحساب التكلفة المعيارية ولأوامر التصنيع لاحقاً</p></div>" +
+      '<div class="header-actions">' +
+      addBtnHtml +
+      "</div></div>" +
+      statsHtml +
+      filterHtml +
+      tableHtml
+    );
+  }
+
+  // [COLUMN-ENGINE] تعريف أعمدة جدول قوائم المكونات (BOM) كـ Metadata.
+  var _bomColumnsRegistered = false;
+
+  function _bomRegisterColumns() {
+    if (_bomColumnsRegistered) return;
+    _bomColumnsRegistered = true;
+    ColumnEngine.register(
+      "boms",
+      [
+        {
+          key: "product_id",
+          label: "الصنف المُصنَّع",
+          type: "text",
+          width: 220,
+          frozen: "right",
+          format: function (v) {
+            var product = _mfgFindById(APP.data.items, v);
+            return (
+              '<div style="display:flex;align-items:center;gap:8px">' +
+              iconBadge("ti-list-details", "var(--accent-soft)", "#7C3AED") +
+              "<b>" +
+              esc(product ? product.name : v) +
+              "</b></div>"
+            );
+          },
+        },
+        {
+          key: "version",
+          label: "الإصدار",
+          type: "text",
+          width: 100,
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "bom_type",
+          label: "النوع",
+          type: "text",
+          width: 120,
+          format: function (v) {
+            return esc(MFG_BOM_TYPE_LABELS[v] || v || "—");
+          },
+        },
+        {
+          key: "output_qty",
+          label: "كمية الإنتاج",
+          type: "text",
+          width: 120,
+          format: function (v, row) {
+            return esc((v != null ? v : "—") + " " + (row.output_unit || ""));
+          },
+        },
+        {
+          key: "lines_count",
+          label: "المكوّنات",
+          type: "number",
+          width: 100,
+          format: function (v) {
+            return Number(v || 0) + " مكوّن";
+          },
+        },
+        {
+          key: "status",
+          label: "الحالة",
+          type: "badge",
+          width: 100,
+          format: function (v) {
+            return _mfgStatusBadge(v || "draft", MFG_BOM_STATUS_META);
+          },
+        },
+        {
+          key: "is_active",
+          label: "نشطة؟",
+          type: "badge",
+          width: 90,
+          format: function (v) {
+            return _mfgTruthy(v)
+              ? '<span class="badge" style="background:var(--success-soft);color:#059669">نشطة</span>'
+              : '<span class="badge" style="background:var(--surface2);color:#64748B">غير نشطة</span>';
+          },
+        },
+      ],
+      {
+        title: "قوائم المكونات",
+        rowKey: "id",
+        contextMenuType: "boms",
+      },
+    );
+  }
+
+  function _bomRenderTable() {
+    var container = document.getElementById("bom-ce-container");
+    if (!container) return;
+    _bomRegisterColumns();
+    var boms = (APP.data.boms || []).slice().reverse();
+    ColumnEngine.renderTable("boms", container, boms, {
+      onRowClick: function (row) {
+        requirePermission("manageBOM", function () {
+          editBOM(row.id);
+        });
+      },
+    });
+  }
+
+  function bindBOMs() {
+    var addBtn = document.getElementById("bom-btn-add");
+    if (addBtn) {
+      addBtn.addEventListener("click", function () {
+        requirePermission("manageBOM", function () {
+          _openBOMDrawer(null, []);
+        });
+      });
+    }
+    ensureExtendedData(function () {
+      if (!Array.isArray(APP.data.boms)) {
+        _loadBOMs(function () {
+          var page = document.getElementById("page-content");
+          if (page && APP.currentPage === "bom") {
+            page.innerHTML = renderBOMs();
+            bindBOMs();
+          }
+        });
+      } else {
+        _bomRenderTable();
+      }
+    });
+  }
+
+  function editBOM(id) {
+    requirePermission("manageBOM", function () {
+      var b = _mfgFindById(APP.data.boms, id);
+      if (!b) {
+        NotificationEngine.error("قائمة المكونات غير موجودة");
+        return;
+      }
+      // [SE-ROLLOUT] عبر _gsr بدل google.script.run المباشر — Rule 9/10
+      if (typeof _gsr !== "function") return;
+      _gsr(
+        "getBOMLines",
+        [APP.currentUser ? APP.currentUser.username : null, SESSION ? SESSION.token : null, id],
+        {
+          label: "getBOMLines",
+          onSuccess: function (res) {
+            _openBOMDrawer(b, res.data || []);
+          },
+          onError: function (res) {
+            NotificationEngine.error((res && res.message) || "خطأ في تحميل مكوّنات القائمة");
+          },
+        },
+      );
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §MFG-UI-BOM-LINES  بناء صفوف جدول المكوّنات داخل الـ Drawer
+  // ─────────────────────────────────────────────────────────────
+  var _bomLineCounter = 0;
+
+  function _buildBOMLineRow(idx, line) {
+    line = line || {};
+    var items = (APP.data.items || []).filter(function (it) {
+      return !it.deleted_at;
+    });
+    var itemOpts =
+      '<option value="">-- اختر مكوّن --</option>' +
+      items
+        .map(function (it) {
+          var sel = line.component_item_id === it.id ? " selected" : "";
+          return (
+            '<option value="' +
+            esc(it.id) +
+            '" data-unit="' +
+            esc(it.unit || "") +
+            '"' +
+            sel +
+            ">" +
+            esc(it.name) +
+            "</option>"
+          );
+        })
+        .join("");
+
+    return (
+      '<tr id="bom-line-row-' +
+      idx +
+      '">' +
+      "<td>" +
+      '<select class="input input-sm bom-line-item" data-idx="' +
+      idx +
+      '" onchange="_onBOMLineItemChange(this)">' +
+      itemOpts +
+      "</select></td>" +
+      "<td>" +
+      '<input type="number" class="input input-sm bom-line-qty" value="' +
+      (line.quantity != null ? line.quantity : 1) +
+      '" min="0.0001" step="0.0001" style="width:80px;text-align:center"></td>' +
+      "<td>" +
+      '<input type="text" class="input input-sm bom-line-unit" value="' +
+      esc(line.unit || "") +
+      '" style="width:90px"></td>' +
+      "<td>" +
+      '<input type="number" class="input input-sm bom-line-scrap" value="' +
+      (line.scrap_percent != null ? line.scrap_percent : 0) +
+      '" min="0" step="0.01" style="width:80px;text-align:center"></td>' +
+      '<td style="text-align:center">' +
+      '<input type="checkbox" class="bom-line-optional"' +
+      (line.is_optional ? " checked" : "") +
+      "></td>" +
+      "<td>" +
+      '<input type="text" class="input input-sm bom-line-notes" value="' +
+      esc(line.notes || "") +
+      '" placeholder="ملاحظات"></td>' +
+      "<td>" +
+      '<button class="btn btn-delete btn-xs" type="button" onclick="_removeBOMLine(' +
+      idx +
+      ')" title="حذف"><i class="ti ti-x" style="font-size:12px"></i></button></td>' +
+      "</tr>"
+    );
+  }
+
+  function _addBOMLine() {
+    _bomLineCounter++;
+    var tbody = document.getElementById("bom-lines-body");
+    if (!tbody) return;
+    var wrap = document.createElement("tbody");
+    wrap.innerHTML = _buildBOMLineRow(_bomLineCounter, {});
+    tbody.appendChild(wrap.firstChild);
+  }
+
+  function _removeBOMLine(idx) {
+    var row = document.getElementById("bom-line-row-" + idx);
+    if (row) row.remove();
+  }
+
+  // عند اختيار مكوّن — يملأ الوحدة تلقائياً من وحدة الصنف (لو الحقل فاضي)
+  function _onBOMLineItemChange(sel) {
+    var opt = sel.options[sel.selectedIndex];
+    if (!opt) return;
+    var idx = sel.dataset.idx;
+    var row = document.getElementById("bom-line-row-" + idx);
+    if (!row) return;
+    var unitInput = row.querySelector(".bom-line-unit");
+    if (unitInput && !unitInput.value) {
+      unitInput.value = opt.getAttribute("data-unit") || "";
+    }
+  }
+
+  // عند اختيار الصنف المُصنَّع — يملأ وحدة الإنتاج تلقائياً (لو الحقل فاضي)
+  function _onBOMProductChange(sel) {
+    var opt = sel.options[sel.selectedIndex];
+    if (!opt) return;
+    var unitInput = document.getElementById("bom-f-output-unit");
+    if (unitInput && !unitInput.value) {
+      unitInput.value = opt.getAttribute("data-unit") || "";
+    }
+  }
+
+  function _openBOMDrawer(bom, existingLines) {
+    ensureExtendedData(function () {
+      var isEdit = !!(bom && bom.id);
+      var items = (APP.data.items || []).filter(function (it) {
+        return !it.deleted_at;
+      });
+      if (!items.length) {
+        NotificationEngine.error("لا توجد أصناف في الكتالوج — أضف صنفاً أولاً");
+        return;
+      }
+
+      _bomLineCounter = 0;
+      var lines = existingLines && existingLines.length ? existingLines : [{}];
+      var linesRowsHtml = lines
+        .map(function (l, i) {
+          _bomLineCounter = i;
+          return _buildBOMLineRow(i, l);
+        })
+        .join("");
+
+      var productOptionsHtml =
+        '<option value="">-- اختر الصنف --</option>' +
+        items
+          .map(function (it) {
+            var sel = isEdit && bom.product_id === it.id ? " selected" : "";
+            return (
+              '<option value="' +
+              esc(it.id) +
+              '" data-unit="' +
+              esc(it.unit || "") +
+              '"' +
+              sel +
+              ">" +
+              esc(it.name) +
+              (it.code ? " (" + esc(it.code) + ")" : "") +
+              "</option>"
+            );
+          })
+          .join("");
+
+      var statusOptionsHtml = ["draft", "approved", "obsolete"]
+        .map(function (s) {
+          var sel =
+            (isEdit ? bom.status || "draft" : "draft") === s ? " selected" : "";
+          return (
+            '<option value="' +
+            s +
+            '"' +
+            sel +
+            ">" +
+            MFG_BOM_STATUS_META[s].label +
+            "</option>"
+          );
+        })
+        .join("");
+
+      var isActiveNow = isEdit && _mfgTruthy(bom.is_active);
+
+      var headerFieldsHtml =
+        '<div class="form-grid">' +
+        '<div class="field full"><label>الصنف المُصنَّع (Product) *</label>' +
+        '<select class="input" id="bom-f-product" onchange="_onBOMProductChange(this)"' +
+        (isEdit ? " disabled" : "") +
+        ">" +
+        productOptionsHtml +
+        "</select></div>" +
+        '<div class="field"><label>رقم الإصدار (Version)</label>' +
+        '<input class="input" id="bom-f-version" value="' +
+        esc(isEdit ? bom.version || "v1" : "v1") +
+        '" placeholder="v1"></div>' +
+        '<div class="field"><label>النوع</label>' +
+        '<select class="input" id="bom-f-type">' +
+        '<option value="standard"' +
+        (!isEdit || bom.bom_type !== "alternate" ? " selected" : "") +
+        ">قياسية (Standard)</option>" +
+        '<option value="alternate"' +
+        (isEdit && bom.bom_type === "alternate" ? " selected" : "") +
+        ">بديلة (Alternate)</option>" +
+        "</select></div>" +
+        '<div class="field"><label>كمية الإنتاج (Output Qty) *</label>' +
+        '<input class="input" type="number" id="bom-f-output-qty" value="' +
+        (isEdit && bom.output_qty != null ? bom.output_qty : 1) +
+        '" min="0.0001" step="0.0001"></div>' +
+        '<div class="field"><label>وحدة الإنتاج</label>' +
+        '<input class="input" id="bom-f-output-unit" list="bom-output-unit-dl" value="' +
+        esc(isEdit ? bom.output_unit || "" : "") +
+        '" placeholder="قطعة">' +
+        '<datalist id="bom-output-unit-dl"><option value="قطعة"><option value="دستة"><option value="متر"><option value="كجم"></datalist>' +
+        "</div>" +
+        '<div class="field"><label>الحالة</label>' +
+        '<select class="input" id="bom-f-status">' +
+        statusOptionsHtml +
+        "</select></div>" +
+        '<div class="field"><label>تفعيل كنسخة نشطة الآن؟</label>' +
+        '<select class="input" id="bom-f-active">' +
+        '<option value="false"' +
+        (!isActiveNow ? " selected" : "") +
+        ">لا</option>" +
+        '<option value="true"' +
+        (isActiveNow ? " selected" : "") +
+        ">نعم — وتعطيل أي نسخة قياسية أخرى لنفس الصنف</option>" +
+        "</select></div>" +
+        '<div class="field full"><label>ملاحظات</label>' +
+        '<textarea class="input" id="bom-f-notes" rows="2">' +
+        esc(isEdit ? bom.notes || "" : "") +
+        "</textarea></div>" +
+        "</div>";
+
+      var linesHtml =
+        '<div class="card" style="margin:16px 0 0;padding:0;overflow:hidden">' +
+        '<div style="padding:10px 14px;background:#F5F3FF;border-bottom:1px solid #DDD6FE;display:flex;justify-content:space-between;align-items:center">' +
+        '<span style="font-weight:700;font-size:13px;color:#3B0764">مكوّنات القائمة (BOM Lines)</span>' +
+        "</div>" +
+        '<div class="table-wrap" style="margin:0"><table>' +
+        "<thead><tr>" +
+        '<th>المكوّن</th><th style="width:90px">الكمية</th><th style="width:100px">الوحدة</th>' +
+        '<th style="width:90px">هالك %</th><th style="width:70px">اختياري</th><th>ملاحظات</th><th style="width:36px"></th>' +
+        "</tr></thead>" +
+        '<tbody id="bom-lines-body">' +
+        linesRowsHtml +
+        "</tbody></table></div>" +
+        '<div style="padding:10px 14px">' +
+        '<button class="btn btn-outline btn-sm" type="button" onclick="_addBOMLine()"><i class="ti ti-plus" style="font-size:12px"></i> إضافة مكوّن</button>' +
+        "</div></div>";
+
+      function doSaveBOM() {
+        var productId = isEdit
+          ? bom.product_id
+          : (document.getElementById("bom-f-product") || {}).value;
+        if (!productId) return NotificationEngine.error("اختر الصنف المُصنَّع أولاً");
+
+        var outputQty = parseFloat(
+          (document.getElementById("bom-f-output-qty") || {}).value,
+        );
+        if (!outputQty || outputQty <= 0)
+          return NotificationEngine.error("كمية الإنتاج يجب أن تكون أكبر من صفر");
+
+        var tbody = document.getElementById("bom-lines-body");
+        var lines = [];
+        if (tbody) {
+          tbody.querySelectorAll("tr").forEach(function (row) {
+            var itemSel = row.querySelector(".bom-line-item");
+            if (!itemSel || !itemSel.value) return;
+            var qtyInput = row.querySelector(".bom-line-qty");
+            var qty = Number(qtyInput ? qtyInput.value : 0);
+            if (qty <= 0) return;
+            var unitInput = row.querySelector(".bom-line-unit");
+            var scrapInput = row.querySelector(".bom-line-scrap");
+            var optCheck = row.querySelector(".bom-line-optional");
+            var notesInput = row.querySelector(".bom-line-notes");
+            lines.push({
+              component_item_id: itemSel.value,
+              quantity: qty,
+              unit: unitInput ? unitInput.value : "",
+              scrap_percent: Number(scrapInput ? scrapInput.value : 0),
+              is_optional: !!(optCheck && optCheck.checked),
+              notes: notesInput ? notesInput.value : "",
+            });
+          });
+        }
+        if (!lines.length)
+          return NotificationEngine.error("أضف مكوّناً واحداً على الأقل");
+        if (
+          lines.some(function (l) {
+            return String(l.component_item_id) === String(productId);
+          })
+        ) {
+          return NotificationEngine.error("لا يمكن أن يكون أحد المكوّنات هو نفس الصنف المُصنَّع");
+        }
+
+        var payload = _mfgAuth({
+          product_id: productId,
+          version:
+            (document.getElementById("bom-f-version") || {}).value || "v1",
+          bom_type:
+            (document.getElementById("bom-f-type") || {}).value || "standard",
+          output_qty: outputQty,
+          output_unit:
+            (document.getElementById("bom-f-output-unit") || {}).value || "",
+          status:
+            (document.getElementById("bom-f-status") || {}).value || "draft",
+          is_active:
+            (document.getElementById("bom-f-active") || {}).value === "true",
+          notes: (document.getElementById("bom-f-notes") || {}).value || "",
+          lines: lines,
+        });
+
+        // [SE-ROLLOUT] عبر SaveEngine.run بدل google.script.run المباشر —
+        // بيدير الزرار (bom-save-btn) تلقائيًا، مفيش داعي لـ SaveButtonController
+        // يدوي هنا زي قبل كده.
+        SaveEngine.run({
+          screen: "manufacturing-bom",
+          entity: "bom",
+          recordId: isEdit ? bom.id : null,
+          buttonId: "bom-save-btn",
+          fn: isEdit ? "updateBOM" : "addBOM",
+          params: isEdit ? [bom.id, payload] : [payload],
+          successMessage: isEdit
+            ? " تم تعديل قائمة المكونات بنجاح"
+            : " تم إضافة قائمة المكونات بنجاح",
+          onSuccess: function () {
+            closeStyledDrawer();
+            _loadBOMs(function () {
+              renderPage("bom");
+            }, true);
+          },
+        });
+      }
+
+      openStyledDrawer({
+        title: isEdit ? "تعديل قائمة مكونات" : "قائمة مكونات جديدة",
+        subtitle: isEdit
+          ? (_mfgFindById(APP.data.items, bom.product_id) || {}).name || ""
+          : "عرّف مكوّنات صنف مُصنَّع (BOM)",
+        icon: "ti-list-details",
+        color: "purple",
+        width: 780,
+        body:
+          '<div class="modal-body">' + headerFieldsHtml + linesHtml + "</div>",
+        footer:
+          '<button class="btn btn-outline" onclick="closeStyledDrawer()">إلغاء</button>' +
+          '<button class="btn btn-primary" id="bom-save-btn"><i class="ti ti-device-floppy"></i> حفظ</button>',
+        onReady: function () {
+          var saveBtn = document.getElementById("bom-save-btn");
+          if (saveBtn) saveBtn.addEventListener("click", doSaveBOM);
+        },
+      });
+    });
+  }
+
+  function deleteBOMConfirm(id) {
+    if (!requirePermission("manageBOM")) return;
+    var b = _mfgFindById(APP.data.boms, id);
+    if (!b) return;
+    var product = _mfgFindById(APP.data.items, b.product_id);
+
+    showConfirm({
+      title: "حذف قائمة المكونات",
+      message:
+        "هل أنت متأكد من حذف قائمة مكونات «<b>" +
+        esc(product ? product.name : b.product_id) +
+        " — " +
+        esc(b.version || "") +
+        "</b>»؟",
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      icon: "ti-trash",
+      iconColor: "#dc2626",
+      freezeMessage: "⏳ جاري الحذف...",
+      onConfirm: function (unfreezeUI) {
+        // [SE-ROLLOUT] عبر SaveEngine.run بدل google.script.run المباشر.
+        SaveEngine.run({
+          screen: "manufacturing-bom",
+          entity: "bom",
+          recordId: id,
+          fn: "deleteBOM",
+          params: [
+            id,
+            APP.currentUser ? APP.currentUser.username : null,
+            SESSION ? SESSION.token : null,
+          ],
+          successMessage: " تم حذف قائمة المكونات بنجاح",
+          onSuccess: function () {
+            if (unfreezeUI) unfreezeUI();
+            APP.data.boms = (APP.data.boms || []).filter(function (x) {
+              return String(x.id) !== String(id);
+            });
+            renderPage("bom");
+          },
+          onError: function () {
+            if (unfreezeUI) unfreezeUI();
+          },
+        });
+      },
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // §MFG-UI-RTG  مسارات التصنيع — Routing + Routing Operations
+  // نفس نمط شاشة BOM حرفياً (Drawer مخصّص + جدول ديناميكي لخطوات التشغيل)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // نفس حالات BOM بالضبط (draft/approved/obsolete) — إعادة استخدام بدل تكرار
+  var MFG_ROUTING_STATUS_META = MFG_BOM_STATUS_META;
+  var MFG_LABOR_RATE_LABELS = { piece_rate: "أجر بالقطعة", hourly: "بالساعة" };
+
+  function _loadRoutings(cb, force) {
+    if (!force && Array.isArray(APP.data.routings)) {
+      if (cb) cb();
+      return;
+    }
+    // [SE-ROLLOUT] عبر _gsr بدل google.script.run المباشر — Rule 9/10
+    if (typeof _gsr !== "function") return;
+    _gsr(
+      "getRoutings",
+      [APP.currentUser ? APP.currentUser.username : null, SESSION ? SESSION.token : null],
+      {
+        label: "getRoutings",
+        onSuccess: function (res) {
+          APP.data.routings = res.data || [];
+          if (cb) cb();
+        },
+        onError: function (res) {
+          NotificationEngine.error((res && res.message) || "خطأ في تحميل مسارات التصنيع");
+        },
+      },
+    );
+  }
+
+  /** مراحل الإنتاج (ProductionStages) مش جزء من getAllDataExtended — تحميل كسول منفصل خاص بشاشة الـ Routing */
+  function _loadProductionStagesForRouting(cb, force) {
+    if (!force && Array.isArray(APP.data.productionStages)) {
+      if (cb) cb();
+      return;
+    }
+    // [SE-ROLLOUT] عبر _gsr بدل google.script.run المباشر — Rule 9/10
+    if (typeof _gsr !== "function") return;
+    _gsr("getProductionStages", [], {
+      label: "getProductionStages",
+      onSuccess: function (res) {
+        APP.data.productionStages = res.data || [];
+        if (cb) cb();
+      },
+      onError: function (res) {
+        NotificationEngine.error((res && res.message) || "خطأ في تحميل مراحل الإنتاج");
+      },
+    });
+  }
+
+  /** يضمن تحميل كل بيانات الاعتماد (Work Centers + Machines + Production Stages + BOMs) قبل فتح شاشة/Drawer الـ Routing */
+  function _ensureRoutingDeps(cb) {
+    ensureExtendedData(function () {
+      _loadWorkCenters(function () {
+        _loadMachines(function () {
+          _loadProductionStagesForRouting(function () {
+            _loadBOMs(function () {
+              cb();
+            });
+          });
+        });
+      });
+    });
+  }
+
+  function renderRoutings() {
+    var routings = (APP.data.routings || []).slice().reverse();
+    var total = routings.length;
+    var activeCount = routings.filter(function (r) {
+      return _mfgTruthy(r.is_active);
+    }).length;
+    var draftCount = routings.filter(function (r) {
+      return (r.status || "draft") === "draft";
+    }).length;
+
+    var statsHtml =
+      '<div class="stat-grid" style="margin-bottom:20px">' +
+      statCard(
+        iconBadge("ti-route", "var(--accent-soft)", "var(--primary)"),
+        "إجمالي المسارات",
+        total,
+        "Routing",
+        "var(--accent-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-circle-check", "var(--success-soft)", "var(--success)"),
+        "نسخ نشطة",
+        activeCount,
+        "Routing",
+        "var(--success-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-file-pencil", "var(--warning-soft)", "var(--warning)"),
+        "مسودات",
+        draftCount,
+        "Routing",
+        "var(--warning-soft)",
+      ) +
+      "</div>";
+
+    var filterHtml = ""; // [COLUMN-ENGINE] البحث أصبح مدمجًا في تولبار ColumnEngine
+
+    // [COLUMN-ENGINE] الجدول انتقل لـ ColumnEngine بدل بناء <tr> يدويًا هنا.
+    var tableHtml =
+      '<div class="card"><div id="routing-ce-container"></div></div>';
+
+    var hasItems = (APP.data.items || []).length > 0;
+    var hasWorkCenters = (APP.data.workCenters || []).length > 0;
+    var addBtnHtml =
+      hasItems && hasWorkCenters
+        ? withPermission(
+            '<button class="btn btn-primary" id="routing-btn-add">+ مسار تصنيع جديد</button>',
+            "manageRouting",
+          )
+        : '<button class="btn btn-outline" disabled title="أضف صنفاً ومركز عمل واحداً على الأقل أولاً">+ مسار تصنيع جديد</button>';
+
+    return (
+      '<div class="page-header">' +
+      '<div><h1 style="display:flex;align-items:center;gap:10px">' +
+      iconBadge("ti-route", "var(--accent-soft)", "var(--primary)") +
+      "<span>مسارات التصنيع (Routing)</span></h1>" +
+      "<p>عرّف خطوات التشغيل بالتسلسل لكل صنف مُصنَّع — مركز العمل، الآلة، الزمن المعياري، ونوع احتساب الأجر</p></div>" +
+      '<div class="header-actions">' +
+      addBtnHtml +
+      "</div></div>" +
+      statsHtml +
+      filterHtml +
+      tableHtml
+    );
+  }
+
+  // [COLUMN-ENGINE] تعريف أعمدة جدول مسارات التصنيع (Routing) كـ Metadata.
+  var _routingColumnsRegistered = false;
+
+  function _routingRegisterColumns() {
+    if (_routingColumnsRegistered) return;
+    _routingColumnsRegistered = true;
+    ColumnEngine.register(
+      "routings",
+      [
+        {
+          key: "product_id",
+          label: "الصنف المُصنَّع / اسم المسار",
+          type: "text",
+          width: 240,
+          frozen: "right",
+          format: function (v, row) {
+            var product = _mfgFindById(APP.data.items, v);
+            return (
+              '<div style="display:flex;align-items:center;gap:8px">' +
+              iconBadge("ti-route", "var(--accent-soft)", "#0D9488") +
+              "<div><b>" +
+              esc(product ? product.name : v) +
+              "</b>" +
+              (row.name
+                ? '<div style="font-size:11px;color:var(--text-muted)">' +
+                  esc(row.name) +
+                  "</div>"
+                : "") +
+              "</div></div>"
+            );
+          },
+        },
+        {
+          key: "version",
+          label: "الإصدار",
+          type: "text",
+          width: 100,
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "operations_count",
+          label: "خطوات التشغيل",
+          type: "number",
+          width: 120,
+          format: function (v) {
+            return Number(v || 0) + " خطوة";
+          },
+        },
+        {
+          key: "status",
+          label: "الحالة",
+          type: "badge",
+          width: 100,
+          format: function (v) {
+            return _mfgStatusBadge(v || "draft", MFG_ROUTING_STATUS_META);
+          },
+        },
+        {
+          key: "is_active",
+          label: "نشط؟",
+          type: "badge",
+          width: 90,
+          format: function (v) {
+            return _mfgTruthy(v)
+              ? '<span class="badge" style="background:var(--success-soft);color:#059669">نشط</span>'
+              : '<span class="badge" style="background:var(--surface2);color:#64748B">غير نشط</span>';
+          },
+        },
+      ],
+      {
+        title: "مسارات التصنيع",
+        rowKey: "id",
+        contextMenuType: "routings",
+      },
+    );
+  }
+
+  function _routingRenderTable() {
+    var container = document.getElementById("routing-ce-container");
+    if (!container) return;
+    _routingRegisterColumns();
+    var routings = (APP.data.routings || []).slice().reverse();
+    ColumnEngine.renderTable("routings", container, routings, {
+      onRowClick: function (row) {
+        requirePermission("manageRouting", function () {
+          editRouting(row.id);
+        });
+      },
+    });
+  }
+
+  function bindRoutings() {
+    var addBtn = document.getElementById("routing-btn-add");
+    if (addBtn) {
+      addBtn.addEventListener("click", function () {
+        requirePermission("manageRouting", function () {
+          _ensureRoutingDeps(function () {
+            _openRoutingDrawer(null, []);
+          });
+        });
+      });
+    }
+    ensureExtendedData(function () {
+      if (!Array.isArray(APP.data.routings)) {
+        _loadRoutings(function () {
+          var page = document.getElementById("page-content");
+          if (page && APP.currentPage === "routing") {
+            page.innerHTML = renderRoutings();
+            bindRoutings();
+          }
+        });
+      } else {
+        _routingRenderTable();
+      }
+    });
+  }
+
+  function editRouting(id) {
+    requirePermission("manageRouting", function () {
+      var r = _mfgFindById(APP.data.routings, id);
+      if (!r) {
+        NotificationEngine.error("مسار التصنيع غير موجود");
+        return;
+      }
+      _ensureRoutingDeps(function () {
+        // [SE-ROLLOUT] عبر _gsr بدل google.script.run المباشر — Rule 9/10
+        if (typeof _gsr !== "function") return;
+        _gsr(
+          "getRoutingOperations",
+          [APP.currentUser ? APP.currentUser.username : null, SESSION ? SESSION.token : null, id],
+          {
+            label: "getRoutingOperations",
+            onSuccess: function (res) {
+              _openRoutingDrawer(r, res.data || []);
+            },
+            onError: function (res) {
+              NotificationEngine.error((res && res.message) || "خطأ في تحميل خطوات المسار");
+            },
+          },
+        );
+      });
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §MFG-UI-RTG-OPS  بناء صفوف جدول خطوات التشغيل داخل الـ Drawer
+  // ─────────────────────────────────────────────────────────────
+  var _rtgOpCounter = 0;
+
+  function _rtgMachineOptionsHtml(workCenterId, selectedMachineId) {
+    var machines = (APP.data.machines || []).filter(function (m) {
+      return (
+        !m.deleted_at &&
+        (!workCenterId ||
+          !m.work_center_id ||
+          String(m.work_center_id) === String(workCenterId))
+      );
+    });
+    var html = '<option value="">-- بدون آلة --</option>';
+    machines.forEach(function (m) {
+      var sel =
+        String(selectedMachineId || "") === String(m.id) ? " selected" : "";
+      html +=
+        '<option value="' +
+        esc(m.id) +
+        '" data-wc="' +
+        esc(m.work_center_id || "") +
+        '"' +
+        sel +
+        ">" +
+        esc(m.name) +
+        "</option>";
+    });
+    return html;
+  }
+
+  function _buildRoutingOperationRow(idx, op) {
+    op = op || {};
+    var workCenters = (APP.data.workCenters || []).filter(function (w) {
+      return !w.deleted_at;
+    });
+    var wcOpts =
+      '<option value="">-- اختر مركز عمل --</option>' +
+      workCenters
+        .map(function (w) {
+          var sel = op.work_center_id === w.id ? " selected" : "";
+          return (
+            '<option value="' +
+            esc(w.id) +
+            '"' +
+            sel +
+            ">" +
+            esc(w.name) +
+            "</option>"
+          );
+        })
+        .join("");
+
+    var stages = APP.data.productionStages || [];
+    var stageOpts =
+      '<option value="">-- بدون --</option>' +
+      stages
+        .map(function (s) {
+          var sel = op.production_stage_id === s.id ? " selected" : "";
+          return (
+            '<option value="' +
+            esc(s.id) +
+            '"' +
+            sel +
+            ">" +
+            esc(s.name) +
+            "</option>"
+          );
+        })
+        .join("");
+
+    var laborOpts = MFG_LABOR_RATE_TYPES_UI.map(function (t) {
+      var sel = (op.labor_rate_type || "piece_rate") === t ? " selected" : "";
+      return (
+        '<option value="' +
+        t +
+        '"' +
+        sel +
+        ">" +
+        MFG_LABOR_RATE_LABELS[t] +
+        "</option>"
+      );
+    }).join("");
+
+    return (
+      '<tr id="rtg-op-row-' +
+      idx +
+      '">' +
+      "<td>" +
+      '<input type="text" class="input input-sm rtg-op-name" value="' +
+      esc(op.operation_name || "") +
+      '" placeholder="مثال: قص / خياطة / تشطيب" style="min-width:120px"></td>' +
+      "<td>" +
+      '<select class="input input-sm rtg-op-wc" data-idx="' +
+      idx +
+      '" onchange="_onRoutingOpWorkCenterChange(this)" style="min-width:130px">' +
+      wcOpts +
+      "</select></td>" +
+      "<td>" +
+      '<select class="input input-sm rtg-op-machine" style="min-width:130px">' +
+      _rtgMachineOptionsHtml(op.work_center_id, op.machine_id) +
+      "</select></td>" +
+      "<td>" +
+      '<input type="number" class="input input-sm rtg-op-time" value="' +
+      (op.standard_time_minutes != null ? op.standard_time_minutes : 0) +
+      '" min="0" step="0.01" style="width:90px;text-align:center"></td>' +
+      "<td>" +
+      '<select class="input input-sm rtg-op-labor" style="min-width:110px">' +
+      laborOpts +
+      "</select></td>" +
+      "<td>" +
+      '<select class="input input-sm rtg-op-stage" style="min-width:130px">' +
+      stageOpts +
+      "</select></td>" +
+      '<td style="text-align:center">' +
+      '<input type="checkbox" class="rtg-op-subcontract"' +
+      (op.is_subcontract_operation ? " checked" : "") +
+      "></td>" +
+      "<td>" +
+      '<input type="text" class="input input-sm rtg-op-notes" value="' +
+      esc(op.notes || "") +
+      '" placeholder="ملاحظات" style="min-width:110px"></td>' +
+      "<td>" +
+      '<button class="btn btn-delete btn-xs" type="button" onclick="_removeRoutingOperation(' +
+      idx +
+      ')" title="حذف"><i class="ti ti-x" style="font-size:12px"></i></button></td>' +
+      "</tr>"
+    );
+  }
+
+  var MFG_LABOR_RATE_TYPES_UI = ["piece_rate", "hourly"];
+
+  function _addRoutingOperation() {
+    _rtgOpCounter++;
+    var tbody = document.getElementById("rtg-ops-body");
+    if (!tbody) return;
+    var wrap = document.createElement("tbody");
+    wrap.innerHTML = _buildRoutingOperationRow(_rtgOpCounter, {});
+    tbody.appendChild(wrap.firstChild);
+  }
+
+  function _removeRoutingOperation(idx) {
+    var row = document.getElementById("rtg-op-row-" + idx);
+    if (row) row.remove();
+  }
+
+  // عند تغيير مركز العمل في خطوة — يعيد بناء قائمة الآلات لتعرض فقط آلات نفس المركز (أو بلا مركز محدد)
+  function _onRoutingOpWorkCenterChange(sel) {
+    var idx = sel.dataset.idx;
+    var row = document.getElementById("rtg-op-row-" + idx);
+    if (!row) return;
+    var machineSel = row.querySelector(".rtg-op-machine");
+    if (!machineSel) return;
+    var current = machineSel.value;
+    machineSel.innerHTML = _rtgMachineOptionsHtml(sel.value, null);
+    // نحافظ على الاختيار الحالي لو ما زال صالحاً بعد الفلترة
+    var stillValid = Array.prototype.some.call(
+      machineSel.options,
+      function (o) {
+        return o.value === current && current !== "";
+      },
+    );
+    machineSel.value = stillValid ? current : "";
+  }
+
+  function _rtgBomOptionsForProduct(productId, selectedBomId) {
+    var list = (APP.data.boms || []).filter(function (b) {
+      return !b.deleted_at && String(b.product_id) === String(productId);
+    });
+    var html = '<option value="">-- بدون --</option>';
+    list.forEach(function (b) {
+      var sel = String(selectedBomId || "") === String(b.id) ? " selected" : "";
+      html +=
+        '<option value="' +
+        esc(b.id) +
+        '"' +
+        sel +
+        ">" +
+        esc(b.version || b.id) +
+        " (" +
+        esc(MFG_BOM_TYPE_LABELS[b.bom_type] || b.bom_type || "") +
+        ")</option>";
+    });
+    return html;
+  }
+
+  // عند اختيار الصنف المُصنَّع في مسار جديد — يحدّث قائمة BOM المرتبطة اختيارياً لنفس الصنف
+  function _onRoutingProductChange(sel) {
+    var bomSel = document.getElementById("rtg-f-bom");
+    if (bomSel) bomSel.innerHTML = _rtgBomOptionsForProduct(sel.value, null);
+  }
+
+  function _openRoutingDrawer(routing, existingOps) {
+    _ensureRoutingDeps(function () {
+      var isEdit = !!(routing && routing.id);
+      var items = (APP.data.items || []).filter(function (it) {
+        return !it.deleted_at;
+      });
+      if (!items.length) {
+        NotificationEngine.error("لا توجد أصناف في الكتالوج — أضف صنفاً أولاً");
+        return;
+      }
+      if (!(APP.data.workCenters || []).length) {
+        NotificationEngine.error("لا توجد مراكز عمل — أضف مركز عمل أولاً");
+        return;
+      }
+
+      _rtgOpCounter = 0;
+      var ops = existingOps && existingOps.length ? existingOps : [{}];
+      var opsRowsHtml = ops
+        .map(function (o, i) {
+          _rtgOpCounter = i;
+          return _buildRoutingOperationRow(i, o);
+        })
+        .join("");
+
+      var productOptionsHtml =
+        '<option value="">-- اختر الصنف --</option>' +
+        items
+          .map(function (it) {
+            var sel = isEdit && routing.product_id === it.id ? " selected" : "";
+            return (
+              '<option value="' +
+              esc(it.id) +
+              '"' +
+              sel +
+              ">" +
+              esc(it.name) +
+              (it.code ? " (" + esc(it.code) + ")" : "") +
+              "</option>"
+            );
+          })
+          .join("");
+
+      var bomOptionsHtml = isEdit
+        ? _rtgBomOptionsForProduct(routing.product_id, routing.bom_id)
+        : '<option value="">-- اختر الصنف أولاً --</option>';
+
+      var statusOptionsHtml = ["draft", "approved", "obsolete"]
+        .map(function (s) {
+          var sel =
+            (isEdit ? routing.status || "draft" : "draft") === s
+              ? " selected"
+              : "";
+          return (
+            '<option value="' +
+            s +
+            '"' +
+            sel +
+            ">" +
+            MFG_ROUTING_STATUS_META[s].label +
+            "</option>"
+          );
+        })
+        .join("");
+
+      var isActiveNow = isEdit && _mfgTruthy(routing.is_active);
+
+      var headerFieldsHtml =
+        '<div class="form-grid">' +
+        '<div class="field full"><label>الصنف المُصنَّع (Product) *</label>' +
+        '<select class="input" id="rtg-f-product" onchange="_onRoutingProductChange(this)"' +
+        (isEdit ? " disabled" : "") +
+        ">" +
+        productOptionsHtml +
+        "</select></div>" +
+        '<div class="field"><label>اسم المسار</label>' +
+        '<input class="input" id="rtg-f-name" value="' +
+        esc(isEdit ? routing.name || "" : "") +
+        '" placeholder="مثال: مسار قميص قطن كلاسيك"></div>' +
+        '<div class="field"><label>رقم الإصدار (Version)</label>' +
+        '<input class="input" id="rtg-f-version" value="' +
+        esc(isEdit ? routing.version || "v1" : "v1") +
+        '" placeholder="v1"></div>' +
+        '<div class="field"><label>قائمة المكونات المرتبطة (BOM) — اختياري</label>' +
+        '<select class="input" id="rtg-f-bom">' +
+        bomOptionsHtml +
+        "</select></div>" +
+        '<div class="field"><label>الحالة</label>' +
+        '<select class="input" id="rtg-f-status">' +
+        statusOptionsHtml +
+        "</select></div>" +
+        '<div class="field"><label>تفعيل كنسخة نشطة الآن؟</label>' +
+        '<select class="input" id="rtg-f-active">' +
+        '<option value="false"' +
+        (!isActiveNow ? " selected" : "") +
+        ">لا</option>" +
+        '<option value="true"' +
+        (isActiveNow ? " selected" : "") +
+        ">نعم — وتعطيل أي مسار نشط آخر لنفس الصنف</option>" +
+        "</select></div>" +
+        '<div class="field full"><label>ملاحظات</label>' +
+        '<textarea class="input" id="rtg-f-notes" rows="2">' +
+        esc(isEdit ? routing.notes || "" : "") +
+        "</textarea></div>" +
+        "</div>";
+
+      var opsHtml =
+        '<div class="card" style="margin:16px 0 0;padding:0;overflow:hidden">' +
+        '<div style="padding:10px 14px;background:#F0FDFA;border-bottom:1px solid #99F6E4;display:flex;justify-content:space-between;align-items:center">' +
+        '<span style="font-weight:700;font-size:13px;color:#134E4A">خطوات التشغيل (Routing Operations)</span>' +
+        "</div>" +
+        '<div class="table-wrap" style="margin:0"><table>' +
+        "<thead><tr>" +
+        "<th>العملية</th><th>مركز العمل</th><th>الآلة</th><th>الزمن المعياري (دقيقة)</th>" +
+        "<th>نوع الأجر</th><th>مرحلة الإنتاج</th><th>لدى الغير؟</th><th>ملاحظات</th><th></th>" +
+        "</tr></thead>" +
+        '<tbody id="rtg-ops-body">' +
+        opsRowsHtml +
+        "</tbody></table></div>" +
+        '<div style="padding:10px 14px">' +
+        '<button class="btn btn-outline btn-sm" type="button" onclick="_addRoutingOperation()"><i class="ti ti-plus" style="font-size:12px"></i> إضافة خطوة تشغيل</button>' +
+        "</div></div>";
+
+      function doSaveRouting() {
+        var productId = isEdit
+          ? routing.product_id
+          : (document.getElementById("rtg-f-product") || {}).value;
+        if (!productId) return NotificationEngine.error("اختر الصنف المُصنَّع أولاً");
+
+        var tbody = document.getElementById("rtg-ops-body");
+        var operations = [];
+        if (tbody) {
+          tbody.querySelectorAll("tr").forEach(function (row) {
+            var nameInput = row.querySelector(".rtg-op-name");
+            var wcSel = row.querySelector(".rtg-op-wc");
+            if (!nameInput || !nameInput.value.trim() || !wcSel || !wcSel.value)
+              return;
+            var machineSel = row.querySelector(".rtg-op-machine");
+            var timeInput = row.querySelector(".rtg-op-time");
+            var laborSel = row.querySelector(".rtg-op-labor");
+            var stageSel = row.querySelector(".rtg-op-stage");
+            var subCheck = row.querySelector(".rtg-op-subcontract");
+            var notesInput = row.querySelector(".rtg-op-notes");
+            operations.push({
+              operation_name: nameInput.value.trim(),
+              work_center_id: wcSel.value,
+              machine_id: machineSel ? machineSel.value : "",
+              standard_time_minutes: Number(timeInput ? timeInput.value : 0),
+              labor_rate_type: laborSel ? laborSel.value : "piece_rate",
+              production_stage_id: stageSel ? stageSel.value : "",
+              is_subcontract_operation: !!(subCheck && subCheck.checked),
+              notes: notesInput ? notesInput.value : "",
+            });
+          });
+        }
+        if (!operations.length)
+          return NotificationEngine.error("أضف خطوة تشغيل واحدة على الأقل");
+
+        var payload = _mfgAuth({
+          product_id: productId,
+          bom_id: (document.getElementById("rtg-f-bom") || {}).value || "",
+          name: (document.getElementById("rtg-f-name") || {}).value || "",
+          version:
+            (document.getElementById("rtg-f-version") || {}).value || "v1",
+          status:
+            (document.getElementById("rtg-f-status") || {}).value || "draft",
+          is_active:
+            (document.getElementById("rtg-f-active") || {}).value === "true",
+          notes: (document.getElementById("rtg-f-notes") || {}).value || "",
+          operations: operations,
+        });
+
+        // [SE-ROLLOUT] عبر SaveEngine.run بدل google.script.run المباشر —
+        // بيدير الزرار (rtg-save-btn) تلقائيًا، مفيش داعي لـ SaveButtonController
+        // يدوي هنا زي قبل كده.
+        SaveEngine.run({
+          screen: "manufacturing-routing",
+          entity: "routing",
+          recordId: isEdit ? routing.id : null,
+          buttonId: "rtg-save-btn",
+          fn: isEdit ? "updateRouting" : "addRouting",
+          params: isEdit ? [routing.id, payload] : [payload],
+          successMessage: isEdit
+            ? " تم تعديل مسار التصنيع بنجاح"
+            : " تم إضافة مسار التصنيع بنجاح",
+          onSuccess: function () {
+            closeStyledDrawer();
+            _loadRoutings(function () {
+              renderPage("routing");
+            }, true);
+          },
+        });
+      }
+
+      openStyledDrawer({
+        title: isEdit ? "تعديل مسار تصنيع" : "مسار تصنيع جديد",
+        subtitle: isEdit
+          ? (_mfgFindById(APP.data.items, routing.product_id) || {}).name || ""
+          : "عرّف خطوات التشغيل بالتسلسل لصنف مُصنَّع (Routing)",
+        icon: "ti-route",
+        color: "teal",
+        width: 900,
+        body:
+          '<div class="modal-body">' + headerFieldsHtml + opsHtml + "</div>",
+        footer:
+          '<button class="btn btn-outline" onclick="closeStyledDrawer()">إلغاء</button>' +
+          '<button class="btn btn-primary" id="rtg-save-btn"><i class="ti ti-device-floppy"></i> حفظ</button>',
+        onReady: function () {
+          var saveBtn = document.getElementById("rtg-save-btn");
+          if (saveBtn) saveBtn.addEventListener("click", doSaveRouting);
+        },
+      });
+    });
+  }
+
+  function deleteRoutingConfirm(id) {
+    if (!requirePermission("manageRouting")) return;
+    var r = _mfgFindById(APP.data.routings, id);
+    if (!r) return;
+    var product = _mfgFindById(APP.data.items, r.product_id);
+
+    showConfirm({
+      title: "حذف مسار التصنيع",
+      message:
+        "هل أنت متأكد من حذف مسار تصنيع «<b>" +
+        esc(product ? product.name : r.product_id) +
+        " — " +
+        esc(r.version || "") +
+        "</b>»؟",
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      icon: "ti-trash",
+      iconColor: "#dc2626",
+      freezeMessage: "⏳ جاري الحذف...",
+      onConfirm: function (unfreezeUI) {
+        // [SE-ROLLOUT] عبر SaveEngine.run بدل google.script.run المباشر.
+        SaveEngine.run({
+          screen: "manufacturing-routing",
+          entity: "routing",
+          recordId: id,
+          fn: "deleteRouting",
+          params: [
+            id,
+            APP.currentUser ? APP.currentUser.username : null,
+            SESSION ? SESSION.token : null,
+          ],
+          successMessage: " تم حذف مسار التصنيع بنجاح",
+          onSuccess: function () {
+            if (unfreezeUI) unfreezeUI();
+            APP.data.routings = (APP.data.routings || []).filter(function (x) {
+              return String(x.id) !== String(id);
+            });
+            renderPage("routing");
+          },
+          onError: function () {
+            if (unfreezeUI) unfreezeUI();
+          },
+        });
+      },
+    });
+  }
+</script>

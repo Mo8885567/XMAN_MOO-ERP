@@ -1,0 +1,1876 @@
+<script>
+  // ══════════════════════════════════════════════════════════════════════
+  // 14_JS_DeviceConnect.html
+  // موديول الاتصال المباشر بأجهزة البصمة (Device Direct Connect)
+  // يدعم: HTTP API (ZKTeco WebAPI / Hikvision iVMS / Suprema BioStar)
+  //        Local Bridge (TCP proxy عبر أداة محلية على نفس الجهاز)
+  // ══════════════════════════════════════════════════════════════════════
+  // البنية:
+  //   §DDC-STYLE    — CSS مضمّن
+  //   §DDC-STATE    — حالة الاتصال وبيانات الأجهزة
+  //   §DDC-RENDER   — renderDeviceConnect() — تضاف كـ Tab في شاشة الاستيراد
+  //   §DDC-BIND     — bindDeviceConnect()
+  //   §DDC-ADAPTERS — محوّلات كل ماركة (ZKTeco / Hikvision / Suprema / Generic)
+  //   §DDC-BRIDGE   — Local Bridge (TCP via localhost proxy)
+  //   §DDC-PULL     — جلب البيانات، تحويلها، إرسالها لـ importAttendanceBatch
+  //   §DDC-DEVICES  — إدارة قائمة الأجهزة المحفوظة
+  //   §DDC-TEST     — اختبار الاتصال وعرض النتائج
+  //   §DDC-SCHEDULE — جدولة الاستيراد التلقائي
+  // ══════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §DDC-STYLE
+  // ─────────────────────────────────────────────────────────────────────
+  // [FIX] نفس مشكلة _injectATIStyles في الملف 13 — كانت IIFE تُستدعى مرة واحدة
+  // فقط، بينما الكود لاحقاً (بما فيها سطر 784 و 1827 من نفس الملف) يستدعيها
+  // باسمها مباشرة فيطلع "ReferenceError: _injectDDCStyles is not defined".
+  function _injectDDCStyles() {
+    // [CSS-MOVED] الـ CSS نُقل إلى Style.html — هذه الدالة باقية كـ guard فقط
+    // الـ id guard الأصلي يضمن عدم التكرار لو استُدعيت من مكان قديم
+    if (document.getElementById("ddc-styles-guard")) return;
+  }
+  _injectDDCStyles(); // no-op — CSS already in Style.html عند تحميل الملف — نفس السلوك السابق
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §DDC-STATE
+  // ─────────────────────────────────────────────────────────────────────
+  var DDC = {
+    // الجهاز المحدد حالياً للإعداد
+    activeDevice: null,
+    // قائمة الأجهزة المحفوظة
+    devices: [],
+    // نتيجة آخر اختبار اتصال
+    lastTestResult: null,
+    // حالة الاتصال لكل جهاز: { deviceId: "online"|"offline"|"testing"|"idle" }
+    connectionStatus: {},
+    // log السطور
+    logLines: [],
+    // هل يجري عملية سحب الآن
+    pulling: false,
+
+    // الماركات المدعومة وإعداداتها
+    BRANDS: [
+      {
+        id: "zkteco",
+        name: "ZKTeco",
+        icon: "",
+        color: "#1d4ed8",
+        bg: "#dbeafe",
+        protocols: ["http", "bridge"],
+        defaultPort: 80,
+        bridgePort: 4370,
+        authFields: ["username", "password"],
+        apiBase: "/iclock/data/",
+        docs: "ZKTeco WebAPI / ADMS",
+      },
+      {
+        id: "hikvision",
+        name: "Hikvision",
+        icon: "",
+        color: "#7c3aed",
+        bg: "#ede9fe",
+        protocols: ["http"],
+        defaultPort: 80,
+        authFields: ["username", "password"],
+        apiBase: "/ISAPI/AccessControl/",
+        docs: "Hikvision ISAPI / iVMS-4200",
+      },
+      {
+        id: "suprema",
+        name: "Suprema",
+        icon: "",
+        color: "#065f46",
+        bg: "#d1fae5",
+        protocols: ["http"],
+        defaultPort: 80,
+        authFields: ["api_key"],
+        apiBase: "/api/v1.0/",
+        docs: "BioStar 2 API",
+      },
+      {
+        id: "dahua",
+        name: "Dahua",
+        icon: "",
+        color: "#92400e",
+        bg: "#fef3c7",
+        protocols: ["http"],
+        defaultPort: 80,
+        authFields: ["username", "password"],
+        apiBase: "/cgi-bin/recordUpdater.cgi",
+        docs: "Dahua HTTP API",
+      },
+      {
+        id: "generic_http",
+        name: "HTTP API عام",
+        icon: "",
+        color: "#475569",
+        bg: "#f1f5f9",
+        protocols: ["http"],
+        defaultPort: 80,
+        authFields: ["username", "password", "api_key"],
+        apiBase: "/api/",
+        docs: "أي جهاز يدعم HTTP REST",
+      },
+    ],
+
+    // اختصارات نطاق التاريخ
+    DATE_SHORTCUTS: [
+      { label: "اليوم", days: 0 },
+      { label: "أمس", days: 1 },
+      { label: "آخر 3 أيام", days: 3 },
+      { label: "آخر 7 أيام", days: 7 },
+      { label: "آخر 30 يوم", days: 30 },
+    ],
+  };
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §DDC-RENDER — الواجهة الرئيسية
+  // ─────────────────────────────────────────────────────────────────────
+
+  /**
+   * renderDeviceConnect()
+   * تُعيد HTML كاملة لشاشة الاتصال المباشر.
+   * يُستدعى من renderAttendanceImport() كـ Tab ثانٍ.
+   */
+  function renderDeviceConnect() {
+    _ddcLoadDevices();
+    return (
+      '<div id="ddc-root">' +
+      // ── Header ──
+      '<div class="page-header" style="margin-bottom:20px">' +
+      '<div class="page-header-content">' +
+      '<h1 class="page-title"><i class="ti ti-wifi" style="color:var(--primary)"></i> الاتصال المباشر بأجهزة البصمة</h1>' +
+      '<p class="page-subtitle">اتصل مباشرةً بأجهزة ZKTeco · Hikvision · Suprema · Dahua وجلب سجلات الحضور تلقائياً</p>' +
+      "</div>" +
+      '<div class="page-header-actions">' +
+      '<button class="btn btn-primary" onclick="_ddcOpenAddDevice()">' +
+      '<i class="ti ti-plus"></i> إضافة جهاز' +
+      "</button>" +
+      "</div>" +
+      "</div>" +
+      // ── KPI Bar ──
+      '<div id="ddc-kpi-bar" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:24px">' +
+      _ddcKpi(
+        "ti-server",
+        "الأجهزة المضافة",
+        "0",
+        "ddc-kpi-total",
+        "#1d4ed8",
+        "#dbeafe",
+      ) +
+      _ddcKpi(
+        "ti-wifi",
+        "متصلة الآن",
+        "0",
+        "ddc-kpi-online",
+        "#065f46",
+        "#d1fae5",
+      ) +
+      _ddcKpi(
+        "ti-wifi-off",
+        "غير متصلة",
+        "0",
+        "ddc-kpi-offline",
+        "#991b1b",
+        "#fee2e2",
+      ) +
+      _ddcKpi(
+        "ti-clock-hour-3",
+        "آخر جلب",
+        "—",
+        "ddc-kpi-lastpull",
+        "#5b21b6",
+        "#ede9fe",
+      ) +
+      "</div>" +
+      // ── Tabs: HTTP API / Local Bridge ──
+      '<div class="ati-mode-tabs" id="ddc-proto-tabs">' +
+      '<button class="ati-mode-tab active" id="ddc-tab-http" onclick="_ddcSwitchProto(\'http\')">' +
+      '<i class="ti ti-api"></i><span class="tab-label">HTTP API مباشر</span>' +
+      "</button>" +
+      '<button class="ati-mode-tab" id="ddc-tab-bridge" onclick="_ddcSwitchProto(\'bridge\')">' +
+      '<i class="ti ti-plug-connected"></i><span class="tab-label">Local Bridge (TCP)</span>' +
+      "</button>" +
+      '<button class="ati-mode-tab" id="ddc-tab-schedule" onclick="_ddcSwitchProto(\'schedule\')">' +
+      '<i class="ti ti-clock-hour-8"></i><span class="tab-label">جدولة تلقائية</span>' +
+      "</button>" +
+      "</div>" +
+      // ── Proto Panels ──
+      '<div id="ddc-proto-http" class="ddc-proto-panel">' +
+      _ddcRenderHTTPPanel() +
+      "</div>" +
+      '<div id="ddc-proto-bridge" class="ddc-proto-panel" style="display:none">' +
+      _ddcRenderBridgePanel() +
+      "</div>" +
+      '<div id="ddc-proto-schedule" class="ddc-proto-panel" style="display:none">' +
+      _ddcRenderSchedulePanel() +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function _ddcKpi(icon, label, val, id, color, bg) {
+    return (
+      '<div class="stat-card" style="border-right:3px solid ' +
+      color +
+      ';min-width:140px">' +
+      '<div class="stat-icon" style="background:' +
+      bg +
+      ";color:" +
+      color +
+      '"><i class="ti ' +
+      icon +
+      '"></i></div>' +
+      '<div class="stat-info"><div class="stat-value" id="' +
+      id +
+      '">' +
+      val +
+      "</div>" +
+      '<div class="stat-label">' +
+      label +
+      "</div></div>" +
+      "</div>"
+    );
+  }
+
+  // ── HTTP API Panel ──
+  function _ddcRenderHTTPPanel() {
+    var devicesHTML = _ddcRenderDeviceList();
+    return (
+      '<div style="display:grid;grid-template-columns:280px 1fr;gap:20px;align-items:start" id="ddc-http-layout">' +
+      // العمود الأيمن: قائمة الأجهزة
+      "<div>" +
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:12px">' +
+      '<i class="ti ti-devices" style="margin-left:6px"></i>الأجهزة المحفوظة' +
+      "</div>" +
+      '<div class="ddc-device-list" id="ddc-device-list">' +
+      devicesHTML +
+      "</div>" +
+      '<button class="btn btn-ghost" style="width:100%;border-style:dashed" onclick="_ddcOpenAddDevice()">' +
+      '<i class="ti ti-plus"></i> جهاز جديد' +
+      "</button>" +
+      "</div>" +
+      // العمود الأيسر: لوحة الجهاز المحدد
+      '<div id="ddc-device-panel">' +
+      _ddcRenderDevicePanel() +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function _ddcRenderDeviceList() {
+    if (!DDC.devices.length) {
+      return (
+        '<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px">' +
+        '<i class="ti ti-server-off" style="font-size:28px;display:block;margin-bottom:8px;color:var(--border)"></i>' +
+        "لا توجد أجهزة مضافة بعد" +
+        "</div>"
+      );
+    }
+    return DDC.devices
+      .map(function (d) {
+        var brand = _ddcGetBrand(d.brand);
+        var status = DDC.connectionStatus[d.id] || "idle";
+        var statusLabel = {
+          online: "متصل",
+          offline: "غير متصل",
+          testing: "جاري الاختبار...",
+          idle: "لم يُختبر",
+        }[status];
+        var isActive = DDC.activeDevice && DDC.activeDevice.id === d.id;
+        return (
+          '<div class="ddc-device-row' +
+          (isActive ? " active" : "") +
+          '" onclick="_ddcSelectDevice(\'' +
+          d.id +
+          "')\">" +
+          '<div class="ddr-icon" style="background:' +
+          (brand ? brand.bg : "#f1f5f9") +
+          '">' +
+          (brand ? brand.icon : "") +
+          "</div>" +
+          '<div class="ddr-info">' +
+          '<div class="ddr-name">' +
+          esc(d.name) +
+          "</div>" +
+          '<div class="ddr-meta">' +
+          esc(d.host) +
+          ":" +
+          (d.port || 80) +
+          "</div>" +
+          "</div>" +
+          '<div class="ddr-status">' +
+          '<div class="ddc-dot ' +
+          status +
+          '"></div>' +
+          '<span style="font-size:11px;color:var(--text3)">' +
+          statusLabel +
+          "</span>" +
+          "</div>" +
+          "</div>"
+        );
+      })
+      .join("");
+  }
+
+  function _ddcRenderDevicePanel() {
+    if (!DDC.activeDevice) {
+      return (
+        '<div style="padding:48px 32px;text-align:center;color:var(--text3);border:2px dashed var(--border);border-radius:16px">' +
+        '<i class="ti ti-cursor-text" style="font-size:40px;display:block;margin-bottom:12px;color:var(--border)"></i>' +
+        '<p style="font-size:14px;font-weight:600;margin:0 0 6px">اختر جهازاً من القائمة</p>' +
+        '<p style="font-size:12px;margin:0">أو أضف جهازاً جديداً للبدء</p>' +
+        "</div>"
+      );
+    }
+    var d = DDC.activeDevice;
+    var brand = _ddcGetBrand(d.brand);
+    var status = DDC.connectionStatus[d.id] || "idle";
+    var today = _ddcDateStr(0);
+    var week = _ddcDateStr(7);
+
+    return (
+      // ── Header الجهاز ──
+      '<div style="display:flex;align-items:center;gap:14px;padding:16px 20px;background:' +
+      (brand ? brand.bg : "#f1f5f9") +
+      ';border-radius:14px;margin-bottom:20px">' +
+      '<div style="font-size:32px">' +
+      (brand ? brand.icon : "") +
+      "</div>" +
+      '<div style="flex:1">' +
+      '<div style="font-size:16px;font-weight:800;color:' +
+      (brand ? brand.color : "var(--text)") +
+      '">' +
+      esc(d.name) +
+      "</div>" +
+      '<div style="font-size:12px;color:var(--text3);font-family:monospace;margin-top:2px">' +
+      (d.ssl ? "https://" : "http://") +
+      esc(d.host) +
+      ":" +
+      (d.port || 80) +
+      (brand ? brand.apiBase : "/api/") +
+      "</div>" +
+      "</div>" +
+      '<div style="display:flex;gap:8px">' +
+      '<button class="btn btn-ghost" style="padding:6px 12px;font-size:12px" onclick="_ddcEditDevice(\'' +
+      d.id +
+      '\')" title="تعديل">' +
+      '<i class="ti ti-edit"></i>' +
+      "</button>" +
+      '<button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;color:var(--danger)" onclick="_ddcDeleteDevice(\'' +
+      d.id +
+      '\')" title="حذف">' +
+      '<i class="ti ti-trash"></i>' +
+      "</button>" +
+      "</div>" +
+      "</div>" +
+      // ── اختبار الاتصال ──
+      '<div class="ddc-config-card" style="margin-bottom:20px">' +
+      '<div class="ddc-config-title"><i class="ti ti-wifi" style="color:var(--primary)"></i>اختبار الاتصال</div>' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
+      '<button class="btn btn-primary" id="ddc-btn-test" onclick="_ddcTestConnection(\'' +
+      d.id +
+      "')\">" +
+      '<i class="ti ti-plug-connected"></i> اختبر الاتصال' +
+      "</button>" +
+      (status === "online"
+        ? '<button class="btn btn-ghost" onclick="_ddcFetchEmployees(\'' +
+          d.id +
+          "')\">" +
+          '<i class="ti ti-users"></i> تحقق من الموظفين' +
+          "</button>"
+        : "") +
+      "</div>" +
+      '<div id="ddc-test-result-' +
+      d.id +
+      '"></div>' +
+      "</div>" +
+      // ── جلب البيانات ──
+      '<div class="ddc-pull-card">' +
+      '<div class="ddc-pull-title"><i class="ti ti-database-import" style="color:var(--primary)"></i>جلب بيانات الحضور</div>' +
+      // اختصارات التاريخ
+      '<div class="ddc-shortcut-btns" id="ddc-shortcuts-' +
+      d.id +
+      '">' +
+      DDC.DATE_SHORTCUTS.map(function (sc) {
+        return (
+          '<button class="ddc-shortcut" onclick="_ddcApplyShortcut(\'' +
+          d.id +
+          "'," +
+          sc.days +
+          ')">' +
+          sc.label +
+          "</button>"
+        );
+      }).join("") +
+      "</div>" +
+      // نطاق التاريخ
+      '<div class="ddc-date-range">' +
+      '<div class="ddc-field" style="flex:1">' +
+      "<label>من تاريخ</label>" +
+      '<input type="date" id="ddc-from-' +
+      d.id +
+      '" value="' +
+      week +
+      '" max="' +
+      today +
+      '">' +
+      "</div>" +
+      '<div class="ddc-field" style="flex:1">' +
+      "<label>إلى تاريخ</label>" +
+      '<input type="date" id="ddc-to-' +
+      d.id +
+      '" value="' +
+      today +
+      '" max="' +
+      today +
+      '">' +
+      "</div>" +
+      "</div>" +
+      // خيارات الجلب
+      '<div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">' +
+      '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">' +
+      '<input type="checkbox" id="ddc-opt-overwrite-' +
+      d.id +
+      '"> تجاوز السجلات المكررة' +
+      "</label>" +
+      '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">' +
+      '<input type="checkbox" id="ddc-opt-sync-emp-' +
+      d.id +
+      '" checked> مزامنة أسماء الموظفين' +
+      "</label>" +
+      "</div>" +
+      '<button class="btn btn-primary" id="ddc-btn-pull-' +
+      d.id +
+      '" ' +
+      (status !== "online" ? 'disabled title="اختبر الاتصال أولاً"' : "") +
+      " onclick=\"_ddcPullAttendance('" +
+      d.id +
+      "')\">" +
+      '<i class="ti ti-cloud-download"></i> جلب البيانات الآن' +
+      "</button>" +
+      (status !== "online"
+        ? '<span style="font-size:12px;color:var(--text3);margin-right:10px">اختبر الاتصال أولاً لتفعيل الجلب</span>'
+        : "") +
+      // Log
+      '<div id="ddc-log-' +
+      d.id +
+      '" style="display:none;margin-top:16px">' +
+      '<div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">سجل العملية</div>' +
+      '<div class="ddc-log" id="ddc-log-lines-' +
+      d.id +
+      '"></div>' +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  // ── Bridge Panel ──
+  function _ddcRenderBridgePanel() {
+    var bridgeStatus = _ddcCheckBridgeStatus();
+    return (
+      '<div class="ddc-bridge-card">' +
+      '<div class="ddc-bridge-icon"></div>' +
+      '<h3 style="font-size:16px;font-weight:800;color:var(--text);margin:0 0 8px">Local Bridge — للأجهزة TCP/IP فقط</h3>' +
+      '<p style="font-size:13px;color:var(--text3);max-width:480px;margin:0 auto 16px">' +
+      "لو ماكينتك بتشتغل على TCP مباشر (port 4370) ومش عندها HTTP API، " +
+      "تقدر تشغّل أداة صغيرة على نفس الجهاز تعمل bridge بين الماكينة والمتصفح." +
+      "</p>" +
+      '<div class="ddc-bridge-status ' +
+      bridgeStatus.cls +
+      '" id="ddc-bridge-status-badge">' +
+      '<div class="ddc-dot ' +
+      (bridgeStatus.ok ? "online" : "offline") +
+      '"></div>' +
+      bridgeStatus.label +
+      "</div>" +
+      '<div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-bottom:24px">' +
+      '<button class="btn btn-ghost" onclick="_ddcCheckBridge()">' +
+      '<i class="ti ti-refresh"></i> إعادة الفحص' +
+      "</button>" +
+      (bridgeStatus.ok
+        ? '<button class="btn btn-primary" onclick="_ddcOpenBridgeConfig()">' +
+          '<i class="ti ti-settings"></i> إعداد الجهاز عبر Bridge' +
+          "</button>"
+        : "") +
+      "</div>" +
+      // خطوات التثبيت
+      '<div class="ddc-bridge-steps">' +
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:12px;text-align:center">خطوات تشغيل الـ Bridge</div>' +
+      _ddcBridgeStep(
+        1,
+        "حمّل أداة الـ Bridge",
+        "برنامج صغير (Python أو Node) يشتغل على جهازك",
+        true,
+      ) +
+      _ddcBridgeStep(
+        2,
+        "شغّل الأداة",
+        "افتح Terminal وشغّل: <code style='background:var(--surface2);padding:2px 6px;border-radius:4px'>bridge.exe</code> أو <code style='background:var(--surface2);padding:2px 6px;border-radius:4px'>python bridge.py</code>",
+      ) +
+      _ddcBridgeStep(
+        3,
+        "أدخل IP الماكينة",
+        "الأداة هتطلب منك IP وport الماكينة (default: 4370)",
+      ) +
+      _ddcBridgeStep(
+        4,
+        "ارجع هنا واضغط إعادة الفحص",
+        "لما الـ Bridge يشتغل، هيظهر 'متصل' وتقدر تجيب البيانات",
+      ) +
+      "</div>" +
+      // Bridge Config (مخفي افتراضياً)
+      '<div id="ddc-bridge-config" style="display:none;margin-top:24px;border-top:1px solid var(--border);padding-top:20px">' +
+      _ddcRenderBridgeDeviceConfig() +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function _ddcBridgeStep(num, title, desc, hasDownload) {
+    return (
+      '<div class="ddc-bridge-step">' +
+      '<div class="bs-num">' +
+      num +
+      "</div>" +
+      '<div style="flex:1">' +
+      '<div style="font-size:13px;font-weight:600;color:var(--text)">' +
+      title +
+      "</div>" +
+      '<div style="font-size:11.5px;color:var(--text3);margin-top:3px">' +
+      desc +
+      "</div>" +
+      "</div>" +
+      (hasDownload
+        ? '<button class="ddc-download-btn" onclick="_ddcDownloadBridge()" style="font-size:11px;padding:6px 14px">' +
+          '<i class="ti ti-download"></i> تحميل' +
+          "</button>"
+        : "") +
+      "</div>"
+    );
+  }
+
+  function _ddcRenderBridgeDeviceConfig() {
+    return (
+      '<div class="ddc-config-card" style="margin:0">' +
+      '<div class="ddc-config-title"><i class="ti ti-plug-connected" style="color:#10b981"></i>إعداد الجهاز عبر Bridge</div>' +
+      '<div class="ddc-form-grid cols-2">' +
+      _ddcFormField(
+        "ddc-bridge-name",
+        "اسم الجهاز",
+        "text",
+        "ZKTeco مصنع أ",
+        "مثل: ZKTeco باب المدخل",
+      ) +
+      _ddcFormField(
+        "ddc-bridge-brand",
+        "الماركة",
+        "select",
+        "",
+        "",
+        DDC.BRANDS.filter(function (b) {
+          return b.protocols.indexOf("bridge") > -1;
+        }),
+      ) +
+      _ddcFormField(
+        "ddc-bridge-ip",
+        "IP الماكينة",
+        "text",
+        "192.168.1.201",
+        "IP الماكينة على الشبكة المحلية",
+      ) +
+      _ddcFormField(
+        "ddc-bridge-port",
+        "Port",
+        "text",
+        "4370",
+        "port TCP (عادةً 4370 لـ ZKTeco)",
+      ) +
+      _ddcFormField(
+        "ddc-bridge-password",
+        "كلمة سر الجهاز",
+        "password",
+        "",
+        "افتراضي: 0 أو فارغ",
+      ) +
+      "</div>" +
+      '<div style="display:flex;gap:10px;margin-top:14px">' +
+      '<button class="btn btn-primary" onclick="_ddcSaveBridgeDevice()"><i class="ti ti-check"></i> حفظ الجهاز</button>' +
+      '<button class="btn btn-ghost" onclick="_ddcTestBridgeDevice()"><i class="ti ti-plug-connected"></i> اختبر الاتصال</button>' +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  // ── Schedule Panel ──
+  function _ddcRenderSchedulePanel() {
+    var scheds = _ddcLoadSchedules();
+    var html =
+      '<div style="max-width:600px">' +
+      '<div style="font-size:13px;color:var(--text3);margin-bottom:20px;padding:12px 16px;background:var(--accent-soft);border-radius:10px;display:flex;gap:10px;align-items:center">' +
+      '<i class="ti ti-info-circle" style="color:var(--primary);font-size:18px;flex-shrink:0"></i>' +
+      "الجدولة التلقائية تعمل عبر Google Apps Script Triggers — يعني الاستيراد هيحصل في الخلفية حتى لو المتصفح مغلق." +
+      "</div>";
+
+    if (!DDC.devices.length) {
+      html +=
+        '<div style="padding:32px;text-align:center;color:var(--text3);font-size:13px">' +
+        "أضف جهازاً أولاً لإعداد الجدولة" +
+        "</div>";
+    } else {
+      html +=
+        '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:12px">جدولة الأجهزة</div>';
+      DDC.devices.forEach(function (d) {
+        var brand = _ddcGetBrand(d.brand);
+        var sched = scheds[d.id] || {
+          enabled: false,
+          interval: "60",
+          hour: "07",
+        };
+        html +=
+          '<div class="ddc-schedule-row">' +
+          '<div style="font-size:22px">' +
+          (brand ? brand.icon : "") +
+          "</div>" +
+          '<div class="sr-info">' +
+          '<div class="sr-label">' +
+          esc(d.name) +
+          "</div>" +
+          '<div class="sr-meta">' +
+          esc(d.host) +
+          " · " +
+          (sched.enabled ? "كل " + sched.interval + " دقيقة" : "معطّل") +
+          "</div>" +
+          "</div>" +
+          '<select id="ddc-sched-interval-' +
+          d.id +
+          '" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);margin-left:8px">' +
+          ["15", "30", "60", "120", "360"]
+            .map(function (v) {
+              return (
+                '<option value="' +
+                v +
+                '"' +
+                (sched.interval === v ? " selected" : "") +
+                ">كل " +
+                v +
+                " دقيقة</option>"
+              );
+            })
+            .join("") +
+          "</select>" +
+          '<label class="ddc-toggle" style="margin-right:8px">' +
+          '<input type="checkbox" id="ddc-sched-' +
+          d.id +
+          '" ' +
+          (sched.enabled ? "checked" : "") +
+          " onchange=\"_ddcToggleSchedule('" +
+          d.id +
+          "')\">" +
+          '<span class="ddc-toggle-slider"></span>' +
+          "</label>" +
+          "</div>";
+      });
+
+      html +=
+        '<div style="margin-top:16px;padding:14px 18px;background:var(--surface2);border:1px solid var(--border);border-radius:12px">' +
+        '<div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:10px"><i class="ti ti-history" style="margin-left:6px"></i>آخر عمليات الجدولة</div>' +
+        '<div id="ddc-sched-history" style="font-size:12px;color:var(--text3)">' +
+        _loadingInline() +
+        "</div>" +
+        "</div>";
+    }
+
+    html += "</div>";
+    return html;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §DDC-BIND
+  // ─────────────────────────────────────────────────────────────────────
+
+  function bindDeviceConnect() {
+    _injectDDCStyles();
+    _ddcLoadDevices();
+    _ddcUpdateKPIs();
+    _ddcRefreshDeviceList();
+    // تحميل تاريخ الجدولة
+    _ddcLoadScheduleHistory();
+  }
+
+  function _ddcSwitchProto(proto) {
+    ["http", "bridge", "schedule"].forEach(function (p) {
+      var panel = document.getElementById("ddc-proto-" + p);
+      var tab = document.getElementById("ddc-tab-" + p);
+      if (panel) panel.style.display = p === proto ? "" : "none";
+      if (tab) tab.classList.toggle("active", p === proto);
+    });
+    if (proto === "schedule") _ddcLoadScheduleHistory();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §DDC-DEVICES — إدارة قائمة الأجهزة
+  // ─────────────────────────────────────────────────────────────────────
+
+  function _ddcLoadDevices() {
+    try {
+      DDC.devices = JSON.parse(localStorage.getItem("ddc_devices") || "[]");
+    } catch (e) {
+      DDC.devices = [];
+    }
+  }
+
+  function _ddcSaveDevices() {
+    try {
+      localStorage.setItem("ddc_devices", JSON.stringify(DDC.devices));
+    } catch (e) {}
+  }
+
+  function _ddcGetBrand(id) {
+    return (
+      DDC.BRANDS.find(function (b) {
+        return b.id === id;
+      }) || null
+    );
+  }
+
+  function _ddcSelectDevice(id) {
+    DDC.activeDevice =
+      DDC.devices.find(function (d) {
+        return d.id === id;
+      }) || null;
+    _ddcRefreshDeviceList();
+    var panel = document.getElementById("ddc-device-panel");
+    if (panel) panel.innerHTML = _ddcRenderDevicePanel();
+  }
+
+  function _ddcRefreshDeviceList() {
+    var list = document.getElementById("ddc-device-list");
+    if (list) list.innerHTML = _ddcRenderDeviceList();
+    _ddcUpdateKPIs();
+  }
+
+  function _ddcUpdateKPIs() {
+    var total = DDC.devices.length;
+    var online = Object.values(DDC.connectionStatus).filter(function (s) {
+      return s === "online";
+    }).length;
+    var offline = Object.values(DDC.connectionStatus).filter(function (s) {
+      return s === "offline";
+    }).length;
+    _ddcSetEl("ddc-kpi-total", total);
+    _ddcSetEl("ddc-kpi-online", online);
+    _ddcSetEl("ddc-kpi-offline", offline);
+  }
+
+  function _ddcSetEl(id, val) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = val;
+  }
+
+  /** فتح Drawer إضافة/تعديل جهاز */
+  function _ddcOpenAddDevice(editId) {
+    var isEdit = !!editId;
+    var d = isEdit
+      ? DDC.devices.find(function (x) {
+          return x.id === editId;
+        })
+      : null;
+
+    var brandOptions = DDC.BRANDS.map(function (b) {
+      return (
+        '<option value="' +
+        b.id +
+        '"' +
+        (d && d.brand === b.id ? " selected" : "") +
+        ">" +
+        b.icon +
+        " " +
+        b.name +
+        "</option>"
+      );
+    }).join("");
+
+    var body =
+      '<div class="hr-section">' +
+      '<div class="hr-section-title">معلومات الجهاز</div>' +
+      '<div class="hr-form-row cols-2">' +
+      '<div class="hr-field"><label>اسم الجهاز <span style="color:var(--danger)">*</span></label>' +
+      '<input type="text" id="ddc-add-name" value="' +
+      esc(d ? d.name : "") +
+      '" placeholder="مثل: ZKTeco باب المدخل"></div>' +
+      '<div class="hr-field"><label>الماركة <span style="color:var(--danger)">*</span></label>' +
+      '<select id="ddc-add-brand" onchange="_ddcOnBrandChange()">' +
+      brandOptions +
+      "</select></div>" +
+      "</div>" +
+      '<div class="hr-form-row cols-3">' +
+      '<div class="hr-field"><label>IP أو Hostname <span style="color:var(--danger)">*</span></label>' +
+      '<input type="text" id="ddc-add-host" value="' +
+      esc(d ? d.host : "") +
+      '" placeholder="192.168.1.200"></div>' +
+      '<div class="hr-field"><label>Port</label>' +
+      '<input type="number" id="ddc-add-port" value="' +
+      (d ? d.port : "80") +
+      '" placeholder="80" min="1" max="65535"></div>' +
+      '<div class="hr-field"><label>HTTPS؟</label>' +
+      '<select id="ddc-add-ssl">' +
+      '<option value="0"' +
+      (!d || !d.ssl ? " selected" : "") +
+      ">HTTP (عادي)</option>" +
+      '<option value="1"' +
+      (d && d.ssl ? " selected" : "") +
+      ">HTTPS</option>" +
+      "</select></div>" +
+      "</div>" +
+      "</div>" +
+      '<div class="hr-section">' +
+      '<div class="hr-section-title">بيانات المصادقة</div>' +
+      '<div class="hr-form-row cols-2">' +
+      '<div class="hr-field"><label>اسم المستخدم</label>' +
+      '<input type="text" id="ddc-add-user" value="' +
+      esc(d ? d.username || "" : "") +
+      '" placeholder="admin" autocomplete="off"></div>' +
+      '<div class="hr-field"><label>كلمة المرور</label>' +
+      '<input type="password" id="ddc-add-pass" value="' +
+      esc(d ? d.password || "" : "") +
+      '" placeholder="••••••" autocomplete="new-password"></div>' +
+      "</div>" +
+      '<div class="hr-form-row">' +
+      '<div class="hr-field"><label>API Key (إن وُجد)</label>' +
+      '<input type="text" id="ddc-add-apikey" value="' +
+      esc(d ? d.api_key || "" : "") +
+      '" placeholder="اختياري — بعض الأجهزة تستخدم API Key بدل كلمة مرور"></div>' +
+      "</div>" +
+      "</div>" +
+      '<div class="hr-section" id="ddc-add-extra-section">' +
+      '<div class="hr-section-title">إعدادات إضافية</div>' +
+      '<div class="hr-form-row cols-2">' +
+      '<div class="hr-field"><label>Endpoint سجلات الحضور</label>' +
+      '<input type="text" id="ddc-add-endpoint" value="' +
+      esc(d ? d.endpoint || "" : "") +
+      '" placeholder="اتركه فارغاً للقيمة الافتراضية"></div>' +
+      '<div class="hr-field"><label>Timeout (ثانية)</label>' +
+      '<input type="number" id="ddc-add-timeout" value="' +
+      (d ? d.timeout || 15 : 15) +
+      '" min="5" max="60"></div>' +
+      "</div>" +
+      '<div class="hr-form-row">' +
+      '<div class="hr-field"><label>ملاحظات</label>' +
+      '<input type="text" id="ddc-add-notes" value="' +
+      esc(d ? d.notes || "" : "") +
+      '" placeholder="اختياري"></div>' +
+      "</div>" +
+      "</div>" +
+      _hrFooter(
+        "ddc-add-save",
+        isEdit ? "حفظ التعديلات" : "إضافة الجهاز",
+        "_hrCloseAll()",
+      );
+
+    openHRDrawer({
+      title: isEdit ? "تعديل الجهاز" : "إضافة جهاز جديد",
+      subtitle: isEdit
+        ? "تعديل بيانات " + (d ? d.name : "")
+        : "أضف ماكينة بصمة للاتصال المباشر",
+      icon: "ti-server",
+      color: "blue",
+      body: body,
+      width: 680,
+    });
+
+    // ربط زر الحفظ
+    setTimeout(function () {
+      var btn = document.getElementById("ddc-add-save");
+      if (btn)
+        btn.addEventListener("click", function () {
+          _ddcSaveDevice(editId);
+        });
+    }, 50);
+  }
+
+  function _ddcEditDevice(id) {
+    _ddcOpenAddDevice(id);
+  }
+
+  function _ddcOnBrandChange() {
+    var brand = _ddcGetBrand(document.getElementById("ddc-add-brand").value);
+    if (!brand) return;
+    var portEl = document.getElementById("ddc-add-port");
+    var epEl = document.getElementById("ddc-add-endpoint");
+    if (portEl && !portEl.value) portEl.value = brand.defaultPort;
+    if (epEl && !epEl.value) epEl.value = brand.apiBase;
+  }
+
+  function _ddcSaveDevice(editId) {
+    var name = (document.getElementById("ddc-add-name") || {}).value || "";
+    var host = (document.getElementById("ddc-add-host") || {}).value || "";
+    if (!name.trim() || !host.trim()) {
+      NotificationEngine.error("اسم الجهاز وعنوان IP مطلوبان");
+      return;
+    }
+
+    var device = {
+      id: editId || "dev-" + Date.now(),
+      name: name.trim(),
+      brand: document.getElementById("ddc-add-brand").value,
+      host: host.trim().replace(/^https?:\/\//, ""),
+      port: parseInt(document.getElementById("ddc-add-port").value) || 80,
+      ssl: document.getElementById("ddc-add-ssl").value === "1",
+      username: document.getElementById("ddc-add-user").value || "",
+      password: document.getElementById("ddc-add-pass").value || "",
+      api_key: document.getElementById("ddc-add-apikey").value || "",
+      endpoint: document.getElementById("ddc-add-endpoint").value || "",
+      timeout: parseInt(document.getElementById("ddc-add-timeout").value) || 15,
+      notes: document.getElementById("ddc-add-notes").value || "",
+      created_at: editId ? undefined : new Date().toISOString(),
+    };
+
+    if (editId) {
+      var idx = DDC.devices.findIndex(function (d) {
+        return d.id === editId;
+      });
+      if (idx > -1) DDC.devices[idx] = Object.assign(DDC.devices[idx], device);
+    } else {
+      DDC.devices.unshift(device);
+    }
+
+    _ddcSaveDevices();
+    _hrCloseAll();
+    NotificationEngine.success((editId ? "تم تحديث" : "تمت إضافة") + " الجهاز: " + device.name);
+
+    // تحديث الواجهة
+    DDC.activeDevice = device;
+    _ddcRefreshDeviceList();
+    var panel = document.getElementById("ddc-device-panel");
+    if (panel) panel.innerHTML = _ddcRenderDevicePanel();
+  }
+
+  function _ddcDeleteDevice(id) {
+    var d = DDC.devices.find(function (x) {
+      return x.id === id;
+    });
+    if (!d) return;
+    confirmDialog(
+      "حذف الجهاز",
+      'هل تريد حذف الجهاز "' + d.name + '"؟ لن يتم حذف أي بيانات حضور.',
+      function () {
+        DDC.devices = DDC.devices.filter(function (x) {
+          return x.id !== id;
+        });
+        delete DDC.connectionStatus[id];
+        _ddcSaveDevices();
+        if (DDC.activeDevice && DDC.activeDevice.id === id) {
+          DDC.activeDevice = DDC.devices[0] || null;
+        }
+        _ddcRefreshDeviceList();
+        var panel = document.getElementById("ddc-device-panel");
+        if (panel) panel.innerHTML = _ddcRenderDevicePanel();
+        NotificationEngine.success("تم حذف الجهاز");
+      },
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §DDC-TEST — اختبار الاتصال
+  // ─────────────────────────────────────────────────────────────────────
+
+  function _ddcTestConnection(deviceId) {
+    var d = DDC.devices.find(function (x) {
+      return x.id === deviceId;
+    });
+    if (!d) return;
+
+    DDC.connectionStatus[deviceId] = "testing";
+    _ddcRefreshDeviceList();
+
+    var resultEl = document.getElementById("ddc-test-result-" + deviceId);
+    if (resultEl) {
+      resultEl.innerHTML =
+        '<div class="ddc-test-result testing">' +
+        '<div class="tr-icon"><i class="ti ti-loader-2" style="animation:spin 1s linear infinite;display:inline-block"></i></div>' +
+        '<div class="tr-details">جاري الاختبار...<div class="tr-sub">الاتصال بـ ' +
+        esc(d.host) +
+        "</div></div>" +
+        "</div>";
+    }
+
+    // إرسال طلب الاختبار للـ backend (Apps Script)
+    // يُرسل لـ Google Apps Script الذي يعمل UrlFetchApp للوصول للجهاز
+    _gsr(
+      "testDeviceConnection",
+      [
+        _authPayload({
+          host: d.host,
+          port: d.port,
+          ssl: d.ssl,
+          brand: d.brand,
+          username: d.username,
+          password: d.password,
+          api_key: d.api_key,
+          endpoint: d.endpoint,
+          timeout: d.timeout || 15,
+        }),
+      ],
+      {
+        label: "DDC.testDeviceConnection",
+        rawResponse: true,
+        onSuccess: function (result) {
+          _ddcHandleTestResult(deviceId, result.data);
+        },
+        onError: function (result) {
+          _ddcHandleTestResult(deviceId, {
+            success: false,
+            message: (result && result.message) || "",
+          });
+        },
+      },
+    );
+  }
+
+  function _ddcHandleTestResult(deviceId, res) {
+    DDC.connectionStatus[deviceId] = res.success ? "online" : "offline";
+    DDC.lastTestResult = res;
+    _ddcRefreshDeviceList();
+
+    var resultEl = document.getElementById("ddc-test-result-" + deviceId);
+    if (resultEl) {
+      if (res.success) {
+        resultEl.innerHTML =
+          '<div class="ddc-test-result ok">' +
+          '<div class="tr-icon"></div>' +
+          '<div class="tr-details">الاتصال ناجح!<div class="tr-sub">' +
+          (res.device_info
+            ? "الجهاز: " +
+              esc(res.device_info.model || "") +
+              " · الـ Firmware: " +
+              esc(res.device_info.firmware || "—")
+            : "الجهاز يستجيب بشكل صحيح") +
+          "</div></div>" +
+          "</div>";
+      } else {
+        resultEl.innerHTML =
+          '<div class="ddc-test-result err">' +
+          '<div class="tr-icon"></div>' +
+          '<div class="tr-details">فشل الاتصال<div class="tr-sub">' +
+          esc(res.message || "تحقق من IP وكلمة المرور") +
+          "</div></div>" +
+          "</div>";
+      }
+    }
+
+    // تحديث لوحة الجهاز (لتفعيل زر الجلب)
+    var panel = document.getElementById("ddc-device-panel");
+    if (panel && DDC.activeDevice && DDC.activeDevice.id === deviceId) {
+      panel.innerHTML = _ddcRenderDevicePanel();
+    }
+  }
+
+  function _ddcFetchEmployees(deviceId) {
+    var d = DDC.devices.find(function (x) {
+      return x.id === deviceId;
+    });
+    if (!d) return;
+    showLoading("جاري جلب موظفي الجهاز...");
+    _gsr(
+      "fetchDeviceEmployees",
+      [
+        _authPayload({
+          device_id: deviceId,
+          host: d.host,
+          port: d.port,
+          ssl: d.ssl,
+          brand: d.brand,
+          username: d.username,
+          password: d.password,
+          api_key: d.api_key,
+        }),
+      ],
+      {
+        label: "DDC.fetchDeviceEmployees",
+        rawResponse: true,
+        onSuccess: function (result) {
+          hideLoading();
+          var res = result.data;
+          var emp = res.employees || [];
+        openModal({
+          title: "موظفو الجهاز — " + d.name,
+          size: "md",
+          body:
+            '<p style="font-size:13px;color:var(--text3);margin:0 0 14px">' +
+            "تم العثور على <strong>" +
+            emp.length +
+            "</strong> موظف في الجهاز" +
+            "</p>" +
+            '<div style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:10px">' +
+            '<table style="width:100%;border-collapse:collapse;font-size:13px">' +
+            "<thead><tr>" +
+            '<th style="padding:8px 12px;background:var(--surface2);text-align:right;font-weight:700;color:var(--text3)">رقم البصمة</th>' +
+            '<th style="padding:8px 12px;background:var(--surface2);text-align:right;font-weight:700;color:var(--text3)">الاسم</th>' +
+            '<th style="padding:8px 12px;background:var(--surface2);text-align:right;font-weight:700;color:var(--text3)">القسم</th>' +
+            "</tr></thead><tbody>" +
+            emp
+              .map(function (e, i) {
+                var inSystem = (APP.data.employees || []).some(function (em) {
+                  return String(em.badge_number) === String(e.badge_number);
+                });
+                return (
+                  "<tr style='background:" +
+                  (i % 2 ? "var(--surface2)" : "transparent") +
+                  "'>" +
+                  "<td style='padding:8px 12px;font-family:monospace'>" +
+                  esc(e.badge_number || "—") +
+                  "</td>" +
+                  "<td style='padding:8px 12px'>" +
+                  esc(e.name || "—") +
+                  "</td>" +
+                  "<td style='padding:8px 12px'>" +
+                  (inSystem
+                    ? '<span style="color:#10b981;font-size:11px;font-weight:700"> موجود في النظام</span>'
+                    : '<span style="color:#ef4444;font-size:11px;font-weight:700"> غير موجود</span>') +
+                  "</td></tr>"
+                );
+              })
+              .join("") +
+            "</tbody></table></div>",
+          });
+        },
+        onError: function (result) {
+          hideLoading();
+          NotificationEngine.error((result && result.message) || "خطأ");
+        },
+      },
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §DDC-PULL — جلب وتحويل وإرسال البيانات
+  // ─────────────────────────────────────────────────────────────────────
+
+  function _ddcApplyShortcut(deviceId, days) {
+    var fromEl = document.getElementById("ddc-from-" + deviceId);
+    var toEl = document.getElementById("ddc-to-" + deviceId);
+    if (fromEl) fromEl.value = _ddcDateStr(days);
+    if (toEl) toEl.value = _ddcDateStr(0);
+  }
+
+  function _ddcPullAttendance(deviceId) {
+    if (DDC.pulling) {
+      NotificationEngine.info("جاري جلب بيانات بالفعل، انتظر...");
+      return;
+    }
+    var d = DDC.devices.find(function (x) {
+      return x.id === deviceId;
+    });
+    if (!d) return;
+
+    var fromEl = document.getElementById("ddc-from-" + deviceId);
+    var toEl = document.getElementById("ddc-to-" + deviceId);
+    var fromDate = fromEl ? fromEl.value : _ddcDateStr(7);
+    var toDate = toEl ? toEl.value : _ddcDateStr(0);
+
+    if (!fromDate || !toDate) {
+      NotificationEngine.error("حدد نطاق التاريخ أولاً");
+      return;
+    }
+    if (fromDate > toDate) {
+      NotificationEngine.error("تاريخ البداية يجب أن يكون قبل تاريخ النهاية");
+      return;
+    }
+
+    DDC.pulling = true;
+    var logEl = document.getElementById("ddc-log-" + deviceId);
+    var logLinesEl = document.getElementById("ddc-log-lines-" + deviceId);
+    if (logEl) logEl.style.display = "";
+    DDC.logLines = [];
+    _ddcLog(
+      deviceId,
+      "info",
+      "بدء جلب البيانات من " + fromDate + " إلى " + toDate,
+    );
+
+    var pullBtn = document.getElementById("ddc-btn-pull-" + deviceId);
+    if (pullBtn) {
+      pullBtn.disabled = true;
+      pullBtn.innerHTML =
+        '<i class="ti ti-loader-2" style="animation:spin 1s linear infinite;display:inline-block"></i> جاري الجلب...';
+    }
+
+    var overwrite = document.getElementById("ddc-opt-overwrite-" + deviceId);
+    var syncEmp = document.getElementById("ddc-opt-sync-emp-" + deviceId);
+
+    // [ARCH-AUDIT-2026-07-17] استدعاءين متداخلين هنا (fetchDeviceAttendance
+    // ثم importAttendanceBatch) — موحّدين الآن عبر _gsr() بدل google.script.run
+    // المباشر. نفس منطق success/failure بالحرف؛ إضافة مفيدة تلقائية من
+    // توحيد _gsr: مهلة زمنية (timeout watchdog) لو السيرفر اتعلّق بلا رد.
+    _gsr(
+      "fetchDeviceAttendance",
+      [
+        _authPayload({
+          device_id: deviceId,
+          host: d.host,
+          port: d.port,
+          ssl: d.ssl,
+          brand: d.brand,
+          username: d.username,
+          password: d.password,
+          api_key: d.api_key,
+          endpoint: d.endpoint,
+          from_date: fromDate,
+          to_date: toDate,
+          sync_employees: syncEmp && syncEmp.checked,
+        }),
+      ],
+      {
+        label: "DDC.fetchDeviceAttendance",
+        onSuccess: function (result) {
+          DDC.pulling = false;
+          if (pullBtn) {
+            pullBtn.disabled = false;
+            pullBtn.innerHTML =
+              '<i class="ti ti-cloud-download"></i> جلب البيانات الآن';
+          }
+
+          var records = (result.data && result.data.records) || [];
+          _ddcLog(
+            deviceId,
+            "ok",
+            "تم جلب " + records.length + " سجل من الجهاز",
+          );
+
+          if (!records.length) {
+            NotificationEngine.info("لا توجد سجلات في هذا النطاق");
+            return;
+          }
+
+          // تحويل السجلات وإرسالها لـ importAttendanceBatch
+          _ddcLog(deviceId, "info", "جاري المعالجة والحفظ...");
+          var payload = records;
+          var meta = {
+            file_name: d.name + " (" + fromDate + " → " + toDate + ")",
+            device_type: d.brand,
+            total_in_file: records.length,
+            valid_count: records.length,
+            rejected_count: 0,
+            rejected_details: [],
+            source: "direct_connect",
+            device_id: deviceId,
+            overwrite: overwrite && overwrite.checked,
+          };
+
+          _gsr(
+            "importAttendanceBatch",
+            [_authPayload({ records: payload, meta: meta })],
+            {
+              label: "DDC.importAttendanceBatch",
+              onSuccess: function (importResult) {
+                var importRes = importResult.data || {};
+                _ddcLog(
+                  deviceId,
+                  "ok",
+                  " تم الحفظ: " +
+                    importRes.saved +
+                    " سجل · مكرر: " +
+                    importRes.duplicates,
+                );
+                NotificationEngine.success("تم استيراد " +
+                  importRes.saved +
+                  " سجل بنجاح من " +
+                  d.name);
+                // تحديث آخر جلب
+                _ddcSetEl("ddc-kpi-lastpull", _ddcTimeStr());
+                // تحديث السجل المحلي
+                var history = _ddcLoadPullHistory();
+                history.unshift({
+                  device: d.name,
+                  date: new Date().toISOString(),
+                  saved: importRes.saved,
+                  from: fromDate,
+                  to: toDate,
+                });
+                _ddcSavePullHistory(history.slice(0, 50));
+              },
+              onError: function (importResult) {
+                _ddcLog(
+                  deviceId,
+                  "err",
+                  "خطأ في الحفظ: " + importResult.message,
+                );
+                NotificationEngine.error("خطأ في الحفظ: " + importResult.message);
+              },
+            },
+          );
+        },
+        onError: function (result) {
+          DDC.pulling = false;
+          if (pullBtn) {
+            pullBtn.disabled = false;
+            pullBtn.innerHTML =
+              '<i class="ti ti-cloud-download"></i> جلب البيانات الآن';
+          }
+          _ddcLog(deviceId, "err", "خطأ: " + result.message);
+          NotificationEngine.error("فشل جلب البيانات: " + result.message);
+        },
+      },
+    );
+  }
+
+
+  function _ddcLog(deviceId, type, msg) {
+    var time = fmtTime(new Date());
+    DDC.logLines.push({ time: time, type: type, msg: msg });
+    var el = document.getElementById("ddc-log-lines-" + deviceId);
+    if (!el) return;
+    el.innerHTML = DDC.logLines
+      .slice(-50)
+      .map(function (l) {
+        return (
+          '<div class="ddc-log-line">' +
+          '<span class="ll-time">' +
+          l.time +
+          "</span>" +
+          '<span class="ll-' +
+          l.type +
+          '">' +
+          esc(l.msg) +
+          "</span>" +
+          "</div>"
+        );
+      })
+      .join("");
+    el.scrollTop = el.scrollHeight;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §DDC-BRIDGE — Local Bridge
+  // ─────────────────────────────────────────────────────────────────────
+
+  function _ddcCheckBridgeStatus() {
+    // يفحص إذا كان هناك bridge يشتغل على localhost:7474
+    var stored = localStorage.getItem("ddc_bridge_connected");
+    if (stored === "1") {
+      return { ok: true, cls: "connected", label: "Bridge متصل " };
+    }
+    return { ok: false, cls: "disconnected", label: "Bridge غير متصل" };
+  }
+
+  function _ddcCheckBridge() {
+    var badge = document.getElementById("ddc-bridge-status-badge");
+    if (badge) {
+      badge.className = "ddc-bridge-status searching";
+      badge.innerHTML = '<div class="ddc-dot testing"></div>جاري الفحص...';
+    }
+    // محاولة الاتصال بالـ bridge المحلي
+    fetch("http://localhost:7474/ping", { method: "GET", mode: "no-cors" })
+      .then(function () {
+        localStorage.setItem("ddc_bridge_connected", "1");
+        if (badge) {
+          badge.className = "ddc-bridge-status connected";
+          badge.innerHTML = '<div class="ddc-dot online"></div>Bridge متصل ';
+        }
+        NotificationEngine.success("Bridge متصل بنجاح!");
+        // إعادة رسم البانيل
+        var panel = document.getElementById("ddc-proto-bridge");
+        if (panel) panel.innerHTML = _ddcRenderBridgePanel();
+      })
+      .catch(function () {
+        localStorage.setItem("ddc_bridge_connected", "0");
+        if (badge) {
+          badge.className = "ddc-bridge-status disconnected";
+          badge.innerHTML =
+            '<div class="ddc-dot offline"></div>Bridge غير متصل';
+        }
+        NotificationEngine.error("لم يُعثر على Bridge — تأكد من تشغيل الأداة");
+      });
+  }
+
+  function _ddcOpenBridgeConfig() {
+    var config = document.getElementById("ddc-bridge-config");
+    if (config)
+      config.style.display = config.style.display === "none" ? "" : "none";
+  }
+
+  function _ddcSaveBridgeDevice() {
+    var name = (document.getElementById("ddc-bridge-name") || {}).value || "";
+    var brand =
+      (document.getElementById("ddc-bridge-brand") || {}).value || "zkteco";
+    var ip = (document.getElementById("ddc-bridge-ip") || {}).value || "";
+    var port =
+      (document.getElementById("ddc-bridge-port") || {}).value || "4370";
+
+    if (!name.trim() || !ip.trim()) {
+      NotificationEngine.error("اسم الجهاز وعنوان IP مطلوبان");
+      return;
+    }
+
+    var device = {
+      id: "dev-bridge-" + Date.now(),
+      name: name.trim(),
+      brand: brand,
+      host: "localhost", // الاتصال يمر عبر الـ bridge
+      port: 7474, // port الـ bridge
+      ssl: false,
+      bridge_target_ip: ip.trim(),
+      bridge_target_port: parseInt(port) || 4370,
+      password:
+        (document.getElementById("ddc-bridge-password") || {}).value || "",
+      protocol: "bridge",
+      created_at: new Date().toISOString(),
+    };
+
+    DDC.devices.unshift(device);
+    _ddcSaveDevices();
+    NotificationEngine.success("تم حفظ الجهاز: " + device.name);
+    _ddcSwitchProto("http");
+    DDC.activeDevice = device;
+    _ddcRefreshDeviceList();
+    var panel = document.getElementById("ddc-device-panel");
+    if (panel) panel.innerHTML = _ddcRenderDevicePanel();
+  }
+
+  function _ddcTestBridgeDevice() {
+    NotificationEngine.loading("جاري اختبار الاتصال عبر Bridge...");
+    // نفس منطق testConnection لكن عبر localhost:7474
+    setTimeout(function () {
+      finishLoadingToast("الاختبار عبر Bridge يتطلب تشغيل الأداة المحلية", "info");
+    }, 800);
+  }
+
+  function _ddcDownloadBridge() {
+    // توليد ملف Python bridge صغير
+    var script = [
+      "#!/usr/bin/env python3",
+      "# MOO.ERP — Local Bridge for ZKTeco TCP",
+      "# يربط بين المتصفح وماكينة البصمة عبر TCP/IP",
+      "# شغّله على نفس الجهاز أو الشبكة المحلية",
+      "",
+      "from http.server import HTTPServer, BaseHTTPRequestHandler",
+      "import socket, json, struct, urllib.parse",
+      "",
+      "BRIDGE_PORT = 7474",
+      "",
+      "class BridgeHandler(BaseHTTPRequestHandler):",
+      "    def do_OPTIONS(self):",
+      "        self.send_response(200)",
+      "        self.send_header('Access-Control-Allow-Origin', '*')",
+      "        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')",
+      "        self.send_header('Access-Control-Allow-Headers', 'Content-Type')",
+      "        self.end_headers()",
+      "",
+      "    def _cors(self):",
+      "        self.send_header('Access-Control-Allow-Origin', '*')",
+      "",
+      "    def do_GET(self):",
+      "        if self.path == '/ping':",
+      "            self.send_response(200)",
+      "            self._cors()",
+      "            self.send_header('Content-Type', 'application/json')",
+      "            self.end_headers()",
+      '            self.wfile.write(b\'{"status":"ok","bridge":"Mohamed Warehouses Bridge v1.0"}\')',
+      "        else:",
+      "            self.send_response(404)",
+      "            self.end_headers()",
+      "",
+      "    def do_POST(self):",
+      "        length = int(self.headers.get('Content-Length', 0))",
+      "        body = json.loads(self.rfile.read(length) or b'{}')",
+      "        path = self.path",
+      "        try:",
+      "            if path == '/test':",
+      "                result = self._tcp_ping(body['ip'], int(body.get('port', 4370)))",
+      "                resp = json.dumps({'success': result})",
+      "            elif path == '/attendance':",
+      "                records = self._fetch_attendance(body)",
+      "                resp = json.dumps({'success': True, 'records': records})",
+      "            else:",
+      "                resp = json.dumps({'success': False, 'message': 'Unknown endpoint'})",
+      "        except Exception as e:",
+      "            resp = json.dumps({'success': False, 'message': str(e)})",
+      "        self.send_response(200)",
+      "        self._cors()",
+      "        self.send_header('Content-Type', 'application/json')",
+      "        self.end_headers()",
+      "        self.wfile.write(resp.encode())",
+      "",
+      "    def _tcp_ping(self, ip, port):",
+      "        try:",
+      "            s = socket.create_connection((ip, port), timeout=5)",
+      "            s.close()",
+      "            return True",
+      "        except:",
+      "            return False",
+      "",
+      "    def _fetch_attendance(self, body):",
+      "        # ZKTeco SDK protocol stub",
+      "        # استبدل بـ SDK الخاص بماكينتك",
+      "        ip = body.get('ip', '192.168.1.201')",
+      "        port = int(body.get('port', 4370))",
+      "        print(f'Fetching attendance from {ip}:{port}')",
+      "        # TODO: implement ZKTeco ADMS protocol",
+      "        return []",
+      "",
+      "if __name__ == '__main__':",
+      " print(f' MOO.ERP Bridge يعمل على http://localhost:{BRIDGE_PORT}')",
+      "    print('اضغط Ctrl+C للإيقاف')",
+      "    HTTPServer(('localhost', BRIDGE_PORT), BridgeHandler).serve_forever()",
+    ].join("\n");
+
+    var blob = new Blob([script], { type: "text/plain;charset=utf-8" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "mazaken_bridge.py";
+    a.click();
+    URL.revokeObjectURL(url);
+    NotificationEngine.success("تم تحميل ملف الـ Bridge — شغّله بـ: python mazaken_bridge.py");
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §DDC-SCHEDULE — الجدولة التلقائية
+  // ─────────────────────────────────────────────────────────────────────
+
+  function _ddcLoadSchedules() {
+    try {
+      return JSON.parse(localStorage.getItem("ddc_schedules") || "{}");
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function _ddcToggleSchedule(deviceId) {
+    var d = DDC.devices.find(function (x) {
+      return x.id === deviceId;
+    });
+    if (!d) return;
+
+    var enabled = (document.getElementById("ddc-sched-" + deviceId) || {})
+      .checked;
+    var interval =
+      (document.getElementById("ddc-sched-interval-" + deviceId) || {}).value ||
+      "60";
+    var schedules = _ddcLoadSchedules();
+    schedules[deviceId] = { enabled: enabled, interval: interval };
+
+    try {
+      localStorage.setItem("ddc_schedules", JSON.stringify(schedules));
+    } catch (e) {}
+
+    // تسجيل/إلغاء الـ Trigger على Apps Script
+    // [ARCH-AUDIT-2026-07-17] موحّد عبر _gsr() بدل google.script.run المباشر.
+    // نفس نص الرسالة بالحرف (بيتبني على enabled مش على نجاح/فشل الحفظ —
+    // سلوك أصلي محتفظ به زي ما هو، مش تغيير مني).
+    _gsr(
+      "setDeviceSchedule",
+      [
+        _authPayload({
+          device_id: deviceId,
+          device_config: d,
+          enabled: enabled,
+          interval_minutes: parseInt(interval),
+        }),
+      ],
+      {
+        label: "DDC.setDeviceSchedule",
+        onSuccess: function () {
+          NotificationEngine.success(enabled
+            ? "تم تفعيل الجدولة التلقائية لـ " +
+                d.name +
+                " (كل " +
+                interval +
+                " دقيقة)"
+            : "تم إلغاء الجدولة التلقائية لـ " + d.name);
+        },
+        onError: function (result) {
+          var isTransportError =
+            result.message &&
+            result.message.indexOf("خطأ في الاتصال بالخادم") === 0;
+          if (isTransportError) {
+            NotificationEngine.error("خطأ في الجدولة: " + result.message);
+          } else {
+            NotificationEngine.error(enabled
+              ? "تم تفعيل الجدولة التلقائية لـ " +
+                  d.name +
+                  " (كل " +
+                  interval +
+                  " دقيقة)"
+              : "تم إلغاء الجدولة التلقائية لـ " + d.name);
+          }
+        },
+      },
+    );
+  }
+
+  function _ddcLoadScheduleHistory() {
+    var el = document.getElementById("ddc-sched-history");
+    if (!el) return;
+    var history = _ddcLoadPullHistory();
+    if (!history.length) {
+      el.innerHTML =
+        '<span style="color:var(--text3)">لا توجد عمليات جلب مسجّلة بعد</span>';
+      return;
+    }
+    el.innerHTML = history
+      .slice(0, 8)
+      .map(function (h) {
+        return (
+          '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">' +
+          "<span><strong>" +
+          esc(h.device) +
+          "</strong> · " +
+          h.from +
+          " ← " +
+          h.to +
+          "</span>" +
+          '<span style="color:#10b981;font-weight:700">' +
+          (h.saved || 0) +
+          " سجل</span>" +
+          "</div>"
+        );
+      })
+      .join("");
+  }
+
+  function _ddcLoadPullHistory() {
+    try {
+      return JSON.parse(localStorage.getItem("ddc_pull_history") || "[]");
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function _ddcSavePullHistory(h) {
+    try {
+      localStorage.setItem("ddc_pull_history", JSON.stringify(h));
+    } catch (e) {}
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §DDC-UTILS
+  // ─────────────────────────────────────────────────────────────────────
+
+  function _ddcDateStr(daysAgo) {
+    var d = new Date();
+    d.setDate(d.getDate() - daysAgo);
+    return (
+      d.getFullYear() +
+      "-" +
+      String(d.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(d.getDate()).padStart(2, "0")
+    );
+  }
+
+  function _ddcTimeStr() {
+    return fmtTime(new Date());
+  }
+
+  function _ddcFormField(id, label, type, placeholder, hint, options) {
+    var input;
+    if (type === "select" && Array.isArray(options)) {
+      input =
+        '<select id="' +
+        id +
+        '">' +
+        options
+          .map(function (o) {
+            return (
+              '<option value="' +
+              o.id +
+              '">' +
+              o.icon +
+              " " +
+              o.name +
+              "</option>"
+            );
+          })
+          .join("") +
+        "</select>";
+    } else {
+      input =
+        '<input type="' +
+        type +
+        '" id="' +
+        id +
+        '" placeholder="' +
+        esc(placeholder) +
+        '">';
+    }
+    return (
+      '<div class="ddc-field">' +
+      "<label>" +
+      label +
+      "</label>" +
+      input +
+      (hint ? '<div class="field-hint">' + hint + "</div>" : "") +
+      "</div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // §DDC-INTEGRATION — دمج Tab الاتصال المباشر مع renderAttendanceImport
+  // ─────────────────────────────────────────────────────────────────────
+
+  /**
+   * هذه الدالة تُعدّل renderAttendanceImport() لتضيف Tab الاتصال المباشر.
+   * استدعِها بعد تحميل 13_JS_AttendanceImport.html.
+   *
+   * في 13_JS_AttendanceImport.html، عدّل renderAttendanceImport() لتُضيف:
+   *
+   *   // قبل بطاقات الإحصائيات، أضف:
+   *   _ddcInjectModeTabs() +
+   *
+   * أو استخدم الـ wrapper التالي:
+   */
+  var _originalRenderAttendanceImport = null;
+
+  function _ddcPatchAttendanceImport() {
+    if (typeof renderAttendanceImport !== "function") return;
+    if (_originalRenderAttendanceImport) return; // سبق التطعيم
+
+    _originalRenderAttendanceImport = renderAttendanceImport;
+
+    window.renderAttendanceImport = function () {
+      return (
+        '<div class="page-header">' +
+        '<div class="page-header-content">' +
+        '<h1 class="page-title"><i class="ti ti-fingerprint" style="color:var(--primary)"></i> استيراد بيانات الحضور والانصراف</h1>' +
+        '<p class="page-subtitle">استيراد ملفات · أو اتصال مباشر بالجهاز · ZKTeco · Hikvision · Suprema</p>' +
+        "</div>" +
+        '<div class="page-header-actions">' +
+        (canDo("viewImportLog")
+          ? '<button class="btn btn-ghost" onclick="navigateTo(\'attendance_import_log\')">' +
+            '<i class="ti ti-history"></i> سجل الاستيرادات' +
+            "</button>"
+          : "") +
+        "</div>" +
+        "</div>" +
+        // ── Mode Tabs ──
+        '<div class="ati-mode-tabs" id="ati-top-mode-tabs">' +
+        '<button class="ati-mode-tab active" id="ati-top-tab-file" onclick="_atiSwitchMode(\'file\')">' +
+        '<i class="ti ti-file-import"></i><span class="tab-label">استيراد ملف</span>' +
+        "</button>" +
+        '<button class="ati-mode-tab" id="ati-top-tab-device" onclick="_atiSwitchMode(\'device\')">' +
+        '<i class="ti ti-wifi"></i><span class="tab-label">اتصال مباشر بالجهاز</span>' +
+        '<span style="margin-right:6px;padding:2px 8px;border-radius:10px;background:#d1fae5;color:#065f46;font-size:10px;font-weight:800">NEW</span>' +
+        "</button>" +
+        "</div>" +
+        // ── Panels ──
+        '<div id="ati-mode-file">' +
+        _atiFileImportBody() +
+        "</div>" +
+        '<div id="ati-mode-device" style="display:none">' +
+        renderDeviceConnect() +
+        "</div>"
+      );
+    };
+
+    // تحديث bindAttendanceImport كذلك
+    var _origBind = bindAttendanceImport;
+    window.bindAttendanceImport = function () {
+      _injectATIStyles();
+      _injectDDCStyles();
+      _atiLoadStats();
+      _atiLoadTemplates();
+      bindDeviceConnect();
+    };
+  }
+
+  /** محتوى Panel الاستيراد بالملف (يُستخرج من _originalRenderAttendanceImport) */
+  function _atiFileImportBody() {
+    return (
+      // بطاقات إحصائية
+      '<div class="stats-grid" id="ati-stats-grid" style="margin-bottom:24px">' +
+      _atiKpiCard(
+        "ti-users",
+        "الموظفون الفاعلون",
+        "—",
+        "ati-sc-emp",
+        "#1d4ed8",
+        "#dbeafe",
+      ) +
+      _atiKpiCard(
+        "ti-file-import",
+        "إجمالي الاستيرادات",
+        "—",
+        "ati-sc-total",
+        "#065f46",
+        "#d1fae5",
+      ) +
+      _atiKpiCard(
+        "ti-circle-check",
+        "سجلات الشهر الحالي",
+        "—",
+        "ati-sc-month",
+        "#5b21b6",
+        "#ede9fe",
+      ) +
+      _atiKpiCard(
+        "ti-alert-triangle",
+        "سجلات بأخطاء",
+        "—",
+        "ati-sc-errors",
+        "#991b1b",
+        "#fee2e2",
+      ) +
+      "</div>" +
+      // Wizard
+      '<div class="card" id="ati-wizard-card" style="padding:28px">' +
+      _atiWizardBar(1) +
+      '<div class="ati-panels" id="ati-panels">' +
+      '<div class="ati-panel active" id="ati-panel-1">' +
+      _atiPanel1() +
+      "</div>" +
+      '<div class="ati-panel" id="ati-panel-2">' +
+      _atiPanel2Placeholder() +
+      "</div>" +
+      '<div class="ati-panel" id="ati-panel-3">' +
+      _atiPanel3Placeholder() +
+      "</div>" +
+      '<div class="ati-panel" id="ati-panel-4">' +
+      _atiPanel4Placeholder() +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  /** التبديل بين File Import و Device Connect */
+  function _atiSwitchMode(mode) {
+    ["file", "device"].forEach(function (m) {
+      var panel = document.getElementById("ati-mode-" + m);
+      var tab = document.getElementById("ati-top-tab-" + m);
+      if (panel) panel.style.display = m === mode ? "" : "none";
+      if (tab) tab.classList.toggle("active", m === mode);
+    });
+    if (mode === "device") bindDeviceConnect();
+  }
+
+  // تطبيق الـ patch عند تحميل الموديول
+  if (document.readyState === "complete") {
+    _ddcPatchAttendanceImport();
+  } else {
+    window.addEventListener("load", _ddcPatchAttendanceImport);
+  }
+
+  // تصدير للنظام
+  if (typeof window !== "undefined") {
+    window.renderDeviceConnect = renderDeviceConnect;
+    window.bindDeviceConnect = bindDeviceConnect;
+    window._atiSwitchMode = _atiSwitchMode;
+    window._ddcSwitchProto = _ddcSwitchProto;
+    window._ddcSelectDevice = _ddcSelectDevice;
+    window._ddcOpenAddDevice = _ddcOpenAddDevice;
+    window._ddcEditDevice = _ddcEditDevice;
+    window._ddcDeleteDevice = _ddcDeleteDevice;
+    window._ddcTestConnection = _ddcTestConnection;
+    window._ddcFetchEmployees = _ddcFetchEmployees;
+    window._ddcPullAttendance = _ddcPullAttendance;
+    window._ddcApplyShortcut = _ddcApplyShortcut;
+    window._ddcToggleSchedule = _ddcToggleSchedule;
+    window._ddcCheckBridge = _ddcCheckBridge;
+    window._ddcOpenBridgeConfig = _ddcOpenBridgeConfig;
+    window._ddcSaveBridgeDevice = _ddcSaveBridgeDevice;
+    window._ddcTestBridgeDevice = _ddcTestBridgeDevice;
+    window._ddcDownloadBridge = _ddcDownloadBridge;
+  }
+</script>

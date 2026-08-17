@@ -1,0 +1,1585 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════
+  // 35_JS_PartyCategories.html — تصنيفات هرمية للعملاء والموردين
+  // (Hierarchical Party Categories) — [NEW-FEATURE]
+  //
+  // محرك عرض عام واحد (partyType: "customer" | "supplier") يبني شاشتين
+  // متطابقتين تمامًا في السلوك والتصميم: "تصنيفات العملاء" و"تصنيفات
+  // الموردين" — بدون تكرار كود. يعتمد على Code_28_PartyCategories.gs
+  // في الباك-إند، ويعيد استخدام تصميم شجرة دليل الحسابات (كلاسات coa-*
+  // من Style_06_Dashboard.html) حتى يطابق باقي النظام تمامًا بدون أي
+  // CSS جديد.
+  // ═══════════════════════════════════════════════════════════════
+
+  // بيانات ثابتة غير قابلة للترجمة (صلاحيات/ألوان/أيقونات) — النصوص
+  // المعروضة (label/singular/addLabel) بقت بتتحسب لحظيًا عبر _catMeta()
+  // تحت لأن I18N.t() لازم يتنادى بعد جاهزية القاموس، مش وقت تحميل
+  // السكريبت (CAT_TYPE_META كان object ثابت بيتقيّم مرة واحدة بس عند التحميل)
+  var CAT_TYPE_META = {
+    customer: {
+      icon: "ti-users",
+      bg: "var(--accent-soft)",
+      color: "var(--accent)",
+      viewPerm: "viewCustomerCategories",
+      addPerm: "addCustomerCategory",
+      updatePerm: "updateCustomerCategory",
+      deletePerm: "deleteCustomerCategory",
+    },
+    supplier: {
+      icon: "ti-building-community",
+      bg: "var(--purple-soft)",
+      color: "var(--purple)",
+      viewPerm: "viewSupplierCategories",
+      addPerm: "addSupplierCategory",
+      updatePerm: "updateSupplierCategory",
+      deletePerm: "deleteSupplierCategory",
+    },
+  };
+
+  // يبني كائن meta كامل (ثابت + مترجَم) لنوع طرف مُعيَّن — يُستدعى وقت
+  // التنفيذ الفعلي (بعد جاهزية I18N) وليس وقت تحميل السكريبت
+  function _catMeta(partyType) {
+    var base = CAT_TYPE_META[partyType];
+    var isSupplier = partyType === "supplier";
+    return Object.assign({}, base, {
+      label: I18N.t(isSupplier ? "CAT_SUPPLIERS" : "CAT_CUSTOMERS"),
+      singular: I18N.t(
+        isSupplier ? "CAT_SUPPLIER_SINGULAR" : "CAT_CUSTOMER_SINGULAR",
+      ),
+      addLabel: I18N.t(
+        isSupplier ? "CAT_ADD_SUPPLIER_CATEGORY" : "CAT_ADD_CUSTOMER_CATEGORY",
+      ),
+    });
+  }
+
+  // حالة الشاشة (منفصلة لكل partyType حتى لو الاثنين مفتوحين بالتبادل)
+  var _CAT_STATE = {
+    customer: { flat: [], tree: [], view: "tree", search: "", loaded: false },
+    supplier: { flat: [], tree: [], view: "tree", search: "", loaded: false },
+  };
+
+  // ── مساعدات عامة ─────────────────────────────────────────────────────────
+
+  // [ENGINE-UNIFY] كانت دي نسخة خاصة بتنسيق العملة بـ locale ثابت (ar-EG)
+  // بدل formatMoney الموحّد — يعني متجاوزة عملة المستخدم المختارة في
+  // الإعدادات (PreferenceService). بقت الآن غلاف رفيع فوق formatMoney.
+  function _catFmtMoney(n) {
+    return typeof formatMoney === "function"
+      ? formatMoney(n, { decimals: 0 })
+      : Number(n || 0).toLocaleString("ar-EG", { maximumFractionDigits: 0 });
+  }
+
+  // يبني forest (children[]) من قائمة مسطّحة — الباك-إند يرجّع tree جاهزة
+  // أصلاً (getPartyCategoryTree)، لكن نحتفظ بهذه كنسخة احتياطية للفلترة محليًا
+  function _catBuildForestFromFlat(flat) {
+    var map = {};
+    flat.forEach(function (n) {
+      map[n.id] = Object.assign({}, n, { children: [] });
+    });
+    var tree = [];
+    flat.forEach(function (n) {
+      if (n.parent_id && map[n.parent_id]) {
+        map[n.parent_id].children.push(map[n.id]);
+      } else {
+        tree.push(map[n.id]);
+      }
+    });
+    return tree;
+  }
+
+  // يفلتر الشجرة بنص بحث — يبقي أي فرع فيه تطابق (بالاسم/الكود/المسار)
+  function _catFilterTree(nodes, q) {
+    var out = [];
+    nodes.forEach(function (n) {
+      var kids = _catFilterTree(n.children || [], q);
+      var selfMatch =
+        (n.name && String(n.name).toLowerCase().indexOf(q) > -1) ||
+        (n.name_en && String(n.name_en).toLowerCase().indexOf(q) > -1) ||
+        (n.code && String(n.code).toLowerCase().indexOf(q) > -1) ||
+        (n.full_path && String(n.full_path).toLowerCase().indexOf(q) > -1);
+      if (selfMatch || kids.length)
+        out.push(Object.assign({}, n, { children: kids }));
+    });
+    return out;
+  }
+
+  // ترتيب أفقي (DFS) لبناء خيارات select هرمية بمسافات بادئة — تُستخدم في
+  // حقل "ينتمي إلى" وفي حقل "تصنيف العميل/المورد" داخل نموذج العميل/المورد
+  function _catFlattenForSelect(
+    nodes,
+    depth,
+    excludeId,
+    excludeSubtreeIds,
+    out,
+  ) {
+    out = out || [];
+    (nodes || []).forEach(function (n) {
+      if (excludeId && String(n.id) === String(excludeId)) return; // استبعاد نفسه
+      if (excludeSubtreeIds && excludeSubtreeIds.indexOf(n.id) !== -1) return; // استبعاد الفروع (منع اختيار ابن كأب)
+      out.push({
+        value: n.id,
+        label: "— ".repeat(depth) + (n.icon ? "" : "") + n.name,
+      });
+      _catFlattenForSelect(
+        n.children || [],
+        depth + 1,
+        excludeId,
+        excludeSubtreeIds,
+        out,
+      );
+    });
+    return out;
+  }
+
+  // يجمع معرفات كل فروع عقدة مُعيَّنة (لمنع اختيارها كأب لنفسها عند التعديل)
+  function _catSubtreeIds(flat, rootId) {
+    var byParent = {};
+    flat.forEach(function (r) {
+      var p = r.parent_id || "__ROOT__";
+      if (!byParent[p]) byParent[p] = [];
+      byParent[p].push(r.id);
+    });
+    var out = [];
+    var queue = (byParent[rootId] || []).slice();
+    while (queue.length) {
+      var id = queue.shift();
+      out.push(id);
+      (byParent[id] || []).forEach(function (c) {
+        queue.push(c);
+      });
+    }
+    return out;
+  }
+
+  // ── صفحة الشاشة (Header + Toolbar + Tree/Grid containers) ────────────────
+
+  function _renderPartyCategoriesPage(partyType) {
+    var meta = _catMeta(partyType);
+    var addBtn = canDo(meta.addPerm)
+      ? '<button class="btn btn-primary" id="cat-btn-add-' +
+        partyType +
+        '"><i class="ti ti-plus"></i> ' +
+        meta.addLabel +
+        "</button>"
+      : "";
+
+    var html = _renderPageHeader(
+      I18N.t("CAT_PAGE_TITLE", { type: meta.label }),
+      I18N.t("CAT_PAGE_DESC", { type: meta.label }),
+      { bgIcon: meta.icon, bgColor: meta.bg, iconColor: meta.color },
+      addBtn,
+    );
+
+    // شرائط عرض (شجرة/جدول) — نفس أسلوب coa-chips
+    html += '<div class="coa-chips" id="cat-view-chips-' + partyType + '">';
+    html +=
+      '<div class="coa-chip coa-chip-active" data-view="tree"><span class="coa-chip-label"><i class="ti ti-sitemap"></i> ' +
+      I18N.t("CAT_VIEW_TREE") +
+      "</span></div>";
+    html +=
+      '<div class="coa-chip" data-view="grid"><span class="coa-chip-label"><i class="ti ti-table"></i> ' +
+      I18N.t("CAT_VIEW_GRID") +
+      "</span></div>";
+    html += "</div>";
+
+    html += '<div class="card">';
+    html += '<div class="coa-toolbar">';
+    html +=
+      '<div class="coa-search-wrap"><i class="ti ti-search"></i><input type="text" id="cat-search-' +
+      partyType +
+      '" placeholder="' +
+      esc(I18N.t("CAT_SEARCH_PLACEHOLDER")) +
+      '" class="search-input"></div>';
+    html += "</div>";
+
+    html +=
+      '<div id="cat-tree-container-' +
+      partyType +
+      '" class="cat-tree-view"></div>';
+    html +=
+      '<div id="cat-grid-container-' +
+      partyType +
+      '" class="cat-grid-view" style="display:none"></div>';
+    html += "</div>";
+
+    // ── بطاقة أداء التصنيفات (تقرير سريع) ──────────────────────────────
+    html += '<div class="card" style="margin-top:16px">';
+    html +=
+      '<div class="card-title"><i class="ti ti-chart-pie"></i> ' +
+      I18N.t("CAT_PERFORMANCE_TITLE") +
+      "</div>";
+    html += '<div id="cat-stats-container-' + partyType + '">';
+    html +=
+      '<div style="text-align:center;padding:24px;color:var(--text3)"><i class="ti ti-loader-2" style="font-size:22px;animation:spin .8s linear infinite"></i></div>';
+    html += "</div></div>";
+
+    return html;
+  }
+
+  // ── عرض الشجرة (يعيد استخدام كلاسات coa-* لضمان تطابق التصميم) ──────────
+
+  function _catRenderTreeNodes(nodes, depth, partyType) {
+    var meta = _catMeta(partyType);
+    var html = "";
+    nodes.forEach(function (n) {
+      var indent = depth * 22;
+      var hasKids = (n.children || []).length > 0;
+      var gid = "cat-grp-" + partyType + "-" + esc(n.id);
+      var dotColor = n.color || meta.color;
+
+      html +=
+        "<div class='coa-row cat-tree-row" +
+        (hasKids ? " coa-grouprow" : " coa-leafrow") +
+        "' draggable='true' data-id='" +
+        esc(n.id) +
+        "' data-party-type='" +
+        partyType +
+        "' data-name='" +
+        esc(n.name || "") +
+        "' style='padding-right:" +
+        (16 + indent) +
+        "px'>";
+
+      if (hasKids) {
+        html +=
+          "<button type='button' class='coa-toggle' data-toggle='" +
+          gid +
+          "' aria-label='" +
+          esc(I18N.t("CAT_TOGGLE_ARIA")) +
+          "'><i class='ti ti-chevron-down'></i></button>";
+      } else {
+        html +=
+          "<span class='coa-leaf-dot' style='background:" +
+          dotColor +
+          "'></span>";
+      }
+
+      html +=
+        "<span style='display:inline-block;width:10px;height:10px;border-radius:3px;margin-inline-end:6px;background:" +
+        dotColor +
+        "'></span>";
+      if (n.icon)
+        html +=
+          "<i class='ti " +
+          esc(n.icon) +
+          "' style='margin-inline-end:4px;color:" +
+          dotColor +
+          "'></i>";
+
+      html +=
+        "<span class='coa-name" +
+        (hasKids ? " coa-name-strong" : "") +
+        "'>" +
+        esc(n.name || "") +
+        "</span>";
+
+      if (n.status && n.status !== "نشط") {
+        html +=
+          "<span class='badge badge-muted' style='margin-inline-start:8px'>" +
+          I18N.t("STATUS_INACTIVE") +
+          "</span>";
+      }
+
+      if (hasKids) {
+        html +=
+          "<span class='coa-sub-count'>" +
+          n.children.length +
+          " " +
+          I18N.t("CAT_CHILDREN_SUFFIX") +
+          "</span>";
+      }
+
+      html +=
+        "<span class='coa-sub-count' title='" +
+        esc(
+          I18N.t("CAT_COUNT_INCLUDING_CHILDREN_TITLE", { type: meta.singular }),
+        ) +
+        "'><i class='ti ti-users' style='font-size:12px'></i> " +
+        (n.party_count_with_children || 0) +
+        "</span>";
+
+      html += "</div>";
+
+      if (hasKids) {
+        html +=
+          "<div class='coa-grpbody' id='" +
+          gid +
+          "'>" +
+          _catRenderTreeNodes(n.children, depth + 1, partyType) +
+          "</div>";
+      }
+    });
+    return html;
+  }
+
+  function _catRenderTree(partyType) {
+    var state = _CAT_STATE[partyType];
+    var container = document.getElementById("cat-tree-container-" + partyType);
+    if (!container) return;
+
+    var q = (state.search || "").toLowerCase().trim();
+    var forest = state.tree;
+    if (q) forest = _catFilterTree(forest, q);
+
+    if (!forest.length) {
+      container.innerHTML =
+        "<div class='coa-empty'><i class='ti ti-sitemap'></i><p>" +
+        (q ? I18N.t("CAT_NO_MATCH") : I18N.t("CAT_EMPTY_START")) +
+        "</p></div>";
+      return;
+    }
+    container.innerHTML = _catRenderTreeNodes(forest, 0, partyType);
+
+    if (window.CTX)
+      CTX.register(container, "party_categories", function (row) {
+        return {
+          id: row.getAttribute("data-id") || "",
+          name: row.getAttribute("data-name") || "",
+          partyType: row.getAttribute("data-party-type") || "customer",
+        };
+      });
+  }
+
+  // ── عرض الجدول (Grid View) ────────────────────────────────────────────
+  // [COLUMN-ENGINE] انتقل لمحرك الأعمدة الديناميكي. تسجيل منفصل لكل
+  // partyType (customer/supplier) لأن عنوان عمود "عدد ..." يختلف حسب
+  // النوع (meta.singular). القائمة السياقية تُربط يدويًا بعد الرسم
+  // (بدل contextMenuType التلقائي) عشان نضمن تمرير data-party-type
+  // الصحيح بنفس أسلوب _catRenderTree أعلاه تمامًا.
+  var _catColumnsRegistered = {};
+  function _catRegisterColumns(partyType) {
+    if (_catColumnsRegistered[partyType]) return;
+    _catColumnsRegistered[partyType] = true;
+    var meta = _catMeta(partyType);
+    var state = _CAT_STATE[partyType];
+    ColumnEngine.register(
+      "party_categories_" + partyType,
+      [
+        {
+          key: "name",
+          label: I18N.t("LBL_NAME"),
+          type: "text",
+          width: 220,
+          frozen: "right",
+          format: function (v, row) {
+            return (
+              "<span style='display:inline-block;width:9px;height:9px;border-radius:3px;margin-inline-end:6px;background:" +
+              (row.color || meta.color) +
+              "'></span>" +
+              esc(v || "")
+            );
+          },
+        },
+        { key: "code", label: I18N.t("LBL_CODE"), type: "text", width: 110 },
+        {
+          key: "parent_id",
+          label: I18N.t("COL_PARENT_CATEGORY"),
+          type: "text",
+          width: 160,
+          format: function (v) {
+            var parent = state.flat.find(function (p) {
+              return String(p.id) === String(v);
+            });
+            return esc(parent ? parent.name : "—");
+          },
+        },
+        {
+          key: "level",
+          label: I18N.t("COL_LEVEL"),
+          type: "number",
+          width: 90,
+          format: function (v) {
+            return String(v || 1);
+          },
+        },
+        {
+          key: "party_count",
+          label: I18N.t("COL_COUNT_DIRECT", { type: meta.singular }),
+          type: "number",
+          width: 130,
+        },
+        {
+          key: "party_count_with_children",
+          label: I18N.t("COL_INCLUDING_CHILDREN"),
+          type: "number",
+          width: 110,
+        },
+        {
+          key: "children_count",
+          label: I18N.t("COL_CHILDREN_COUNT"),
+          type: "number",
+          width: 90,
+        },
+        {
+          key: "full_path",
+          label: I18N.t("COL_FULL_PATH"),
+          type: "text",
+          width: 220,
+          format: function (v) {
+            return (
+              "<span style='color:var(--text3);font-size:12px'>" +
+              esc(v || "") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "status",
+          label: I18N.t("LBL_STATUS"),
+          type: "badge",
+          width: 100,
+          format: function (v) {
+            return v === "نشط"
+              ? "<span class='badge badge-success'>" +
+                  I18N.t("STATUS_ACTIVE") +
+                  "</span>"
+              : "<span class='badge badge-muted'>" +
+                  I18N.t("STATUS_INACTIVE") +
+                  "</span>";
+          },
+        },
+        // [COLUMN-ENGINE-FULL-FIELDS] حقول موجودة فعليًا في مودال
+        // الإضافة/التعديل (تاب "إعدادات متقدمة" القابل للطي أعلاه) وفي
+        // PARTY_CATEGORY_HEADERS (Code_28_PartyCategories.gs) لكنها لم
+        // تكن معروضة كأعمدة اختيارية في الجدول.
+        {
+          key: "name_en",
+          label: I18N.t("LBL_NAME_EN_OPTIONAL"),
+          type: "text",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "description",
+          label: I18N.t("LBL_DESCRIPTION"),
+          type: "text",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "sort_order",
+          label: I18N.t("LBL_SORT_ORDER"),
+          type: "number",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "color",
+          label: I18N.t("LBL_COLOR_OPTIONAL"),
+          type: "text",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "icon",
+          label: I18N.t("LBL_ICON_OPTIONAL"),
+          type: "text",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "notes",
+          label: I18N.t("LBL_NOTES"),
+          type: "text",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "default_credit_policy",
+          label: I18N.t("LBL_DEFAULT_CREDIT_POLICY"),
+          type: "text",
+          category: "إعدادات متقدمة",
+          defaultVisible: false,
+        },
+        {
+          key: "default_credit_limit",
+          label: I18N.t("LBL_DEFAULT_CREDIT_LIMIT"),
+          type: "number",
+          category: "إعدادات متقدمة",
+          defaultVisible: false,
+        },
+        {
+          key: "default_payment_terms_days",
+          label: I18N.t("LBL_DEFAULT_PAYMENT_TERMS"),
+          type: "number",
+          category: "إعدادات متقدمة",
+          defaultVisible: false,
+        },
+        {
+          key: "default_discount_percent",
+          label: I18N.t("LBL_DEFAULT_DISCOUNT_PCT"),
+          type: "number",
+          category: "إعدادات متقدمة",
+          defaultVisible: false,
+        },
+        {
+          key: "default_price_list",
+          label: I18N.t("LBL_DEFAULT_PRICE_LIST"),
+          type: "text",
+          category: "إعدادات متقدمة",
+          defaultVisible: false,
+        },
+        {
+          key: "default_sales_rep",
+          label: I18N.t("LBL_DEFAULT_SALES_REP"),
+          type: "text",
+          category: "إعدادات متقدمة",
+          defaultVisible: false,
+        },
+        {
+          key: "default_region",
+          label: I18N.t("LBL_DEFAULT_REGION"),
+          type: "text",
+          category: "إعدادات متقدمة",
+          defaultVisible: false,
+        },
+        {
+          key: "default_currency",
+          label: I18N.t("LBL_DEFAULT_CURRENCY"),
+          type: "text",
+          category: "إعدادات متقدمة",
+          defaultVisible: false,
+        },
+        {
+          key: "default_cost_center",
+          label: I18N.t("LBL_DEFAULT_COST_CENTER"),
+          type: "text",
+          category: "إعدادات متقدمة",
+          defaultVisible: false,
+        },
+        {
+          key: "created_at",
+          label: "تاريخ الإضافة",
+          type: "date",
+          category: "بيانات النظام",
+          defaultVisible: false,
+        },
+        {
+          key: "updated_at",
+          label: "تاريخ آخر تعديل",
+          type: "date",
+          category: "بيانات النظام",
+          defaultVisible: false,
+        },
+        {
+          key: "created_by",
+          label: "أُضيف بواسطة",
+          category: "بيانات النظام",
+          defaultVisible: false,
+        },
+      ],
+      {
+        rowKey: "id",
+        title: I18N.t("CAT_PAGE_TITLE", { type: meta.label }),
+        hideSearch: false,
+      },
+    );
+  }
+
+  function _catRenderGrid(partyType) {
+    var state = _CAT_STATE[partyType];
+    var container = document.getElementById("cat-grid-container-" + partyType);
+    if (!container) return;
+
+    var q = (state.search || "").toLowerCase().trim();
+    var rows = state.flat.filter(function (r) {
+      if (!q) return true;
+      return (
+        (r.name && r.name.toLowerCase().indexOf(q) > -1) ||
+        (r.code && r.code.toLowerCase().indexOf(q) > -1) ||
+        (r.full_path && r.full_path.toLowerCase().indexOf(q) > -1)
+      );
+    });
+
+    if (!rows.length) {
+      container.innerHTML =
+        "<div class='coa-empty'><i class='ti ti-table'></i><p>" +
+        I18N.t("CAT_NO_DATA_TO_SHOW") +
+        "</p></div>";
+      return;
+    }
+
+    _catRegisterColumns(partyType);
+    ColumnEngine.renderTable("party_categories_" + partyType, container, rows);
+
+    // ربط القائمة السياقية يدويًا (نفس منطق _catRenderTree) لتمرير
+    // partyType الصحيح — صفوف ColumnEngine الجديدة (.ce-body-row[data-id])
+    // مدعومة بالفعل في CTX.register (راجع 20_JS_ContextMenu.html)
+    if (window.CTX)
+      CTX.register(
+        document.getElementById("ce-tbody-party_categories_" + partyType),
+        "party_categories",
+        function (row) {
+          var id = row.getAttribute("data-id") || "";
+          var rec = state.flat.find(function (r) {
+            return String(r.id) === String(id);
+          });
+          return {
+            id: id,
+            name: rec ? rec.name : "",
+            partyType: partyType,
+          };
+        },
+      );
+  }
+
+  function _catRefreshViews(partyType) {
+    var state = _CAT_STATE[partyType];
+    if (state.view === "grid") {
+      _catRenderGrid(partyType);
+    } else {
+      _catRenderTree(partyType);
+    }
+  }
+
+  // ── إحصائيات/تقرير سريع لكل تصنيف ─────────────────────────────────────
+
+  function _catLoadStats(partyType) {
+    var container = document.getElementById("cat-stats-container-" + partyType);
+    if (!container) return;
+    _gsr(
+      "getPartyCategoryStats",
+      [APP.currentUser.username, SESSION.token, partyType],
+      {
+        onSuccess: function (res) {
+          var data = res.data || {};
+          var mostProfitable = data.mostProfitable || [];
+          var mostActive = data.mostActive || [];
+          if (!mostProfitable.length) {
+            container.innerHTML =
+              "<p style='color:var(--text3);text-align:center;padding:12px 0'>" +
+              I18N.t("CAT_STATS_INSUFFICIENT") +
+              "</p>";
+            return;
+          }
+          var html =
+            "<div style='display:grid;grid-template-columns:1fr 1fr;gap:16px'>";
+
+          html +=
+            "<div><h4 style='margin-bottom:8px;font-size:13px;color:var(--text3)'>" +
+            I18N.t("CAT_MOST_PROFITABLE") +
+            "</h4>";
+          mostProfitable.forEach(function (c) {
+            html +=
+              "<div style='display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px'>" +
+              "<span>" +
+              esc(c.full_path || c.name) +
+              "</span><b>" +
+              _catFmtMoney(c.total_sales) +
+              "</b></div>";
+          });
+          html += "</div>";
+
+          html +=
+            "<div><h4 style='margin-bottom:8px;font-size:13px;color:var(--text3)'>" +
+            I18N.t("CAT_MOST_ACTIVE") +
+            "</h4>";
+          mostActive.forEach(function (c) {
+            html +=
+              "<div style='display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px'>" +
+              "<span>" +
+              esc(c.full_path || c.name) +
+              "</span><b>" +
+              (c.party_count || 0) +
+              "</b></div>";
+          });
+          html += "</div></div>";
+
+          container.innerHTML = html;
+        },
+        onError: function () {
+          container.innerHTML =
+            "<p style='color:var(--text3);text-align:center;padding:12px 0'>" +
+            I18N.t("CAT_STATS_LOAD_ERROR") +
+            "</p>";
+        },
+      },
+    );
+  }
+
+  // ── تحميل البيانات ─────────────────────────────────────────────────────
+
+  // [PERF-CAT-BUNDLE] الحل الجذري: التصنيفات بقت جزء من نفس حزمة
+  // getAllData اللي بتوصل أصلاً عند فتح التطبيق (APP.data.customerCategories
+  // / supplierCategories) — بالضبط زي customers/suppliers. لو الحزمة وصلت،
+  // بنبني الحالة المحلية منها فورًا (الشجرة تُبنى محليًا عبر
+  // _catBuildForestFromFlat) من غير أي رحلة سيرفر، سواء الاستدعاء جاي من
+  // زر "إضافة عميل/مورد" أو من فتح شاشة "التصنيفات" نفسها.
+  // ترجع true لو نجحت في التعبئة من الحزمة، false لو الحزمة لسه ما وصلتش.
+  function _catBootstrapFromBundle(partyType) {
+    var bundleKey =
+      partyType === "supplier" ? "supplierCategories" : "customerCategories";
+    if (!APP.data || !Array.isArray(APP.data[bundleKey])) return false;
+    var flat = APP.data[bundleKey];
+    _CAT_STATE[partyType].flat = flat;
+    _CAT_STATE[partyType].tree = _catBuildForestFromFlat(flat);
+    _CAT_STATE[partyType].loaded = true;
+    return true;
+  }
+
+  function _catLoad(partyType, cb, forceRefresh) {
+    // [FIX-CAT-CACHE] كانت الدالة دي بتضرب السيرفر بنداءين (tree +
+    // flat) في كل مرة تتنادى، حتى لو البيانات كانت متحمّلة أصلاً
+    // (loaded=true) — وده اللي كان بيخلي شاشة "التصنيفات" تعمل تحميل
+    // كامل من جديد في كل ضغطة من السايد بار، بعكس باقي الشاشات.
+    // دلوقتي: لو البيانات محمّلة أصلاً ومفيش forceRefresh صريح، منرجعش
+    // للسيرفر تاني ونكتفي بالكاش الموجود في _CAT_STATE.
+    if (_CAT_STATE[partyType].loaded && !forceRefresh) {
+      if (cb) cb();
+      return;
+    }
+
+    // لسه مش محمّلة في _CAT_STATE؟ جرّب الحزمة الأساسية الأول قبل السيرفر
+    // (إلا لو forceRefresh صريح — يعني المستخدم عايز أحدث بيانات فعلاً،
+    // مثلاً بعد حفظ/حذف تصنيف داخل نفس الشاشة).
+    if (!forceRefresh && _catBootstrapFromBundle(partyType)) {
+      if (cb) cb();
+      return;
+    }
+
+    // [FIX-CAT-RACE] كل نداء لـ _catLoad بياخد "تذكرة" (token) خاصة
+    // بيه. لو اتطلق نداء تاني لنفس partyType قبل ما الأول يخلص (مثلاً
+    // فتح شاشة التصنيفات، وقبل ما ترد، ضغط "إضافة عميل" في شاشة تانية
+    // وطلب نفس البيانات) — بس آخر نداء (آخر تذكرة) هو اللي مسموحله
+    // يكتب فوق _CAT_STATE أو ينفّذ الـ callback بتاعه. أي رد قديم
+    // بيوصل متأخر بيتجاهل تلقائيًا فيتفادى الكتابة فوق بيانات أحدث
+    // أو تنفيذ refresh على DOM بعد ما المستخدم يكون غادر الشاشة.
+    _CAT_STATE[partyType]._loadToken =
+      (_CAT_STATE[partyType]._loadToken || 0) + 1;
+    var myToken = _CAT_STATE[partyType]._loadToken;
+
+    var pending = 2;
+    var hadError = false;
+    function done() {
+      pending--;
+      if (pending === 0 && myToken === _CAT_STATE[partyType]._loadToken) {
+        // [FIX-CAT-STUCK-CALLER] قبل كده لو حصل خطأ (hadError=true) —
+        // مثلاً فشل نداء السيرفر لحظيًا فور فتح النظام — كانت cb() ما
+        // بتتنفذش خالص، فأي حاجة معلّقة عليها (زي فتح درج "عميل جديد"
+        // بعد ensurePartyCategoriesLoaded) كانت بتفضل واقفة للأبد من
+        // غير أي مؤشر غير صوت/رسالة الخطأ. التصنيفات مش حرجة لفتح
+        // الشاشة، فدلوقتي بننفّذ cb() دايمًا (بس من غير ما نعلّم
+        // loaded=true لو فيه خطأ، عشان تتحاول تحميل تاني المرة الجاية).
+        if (!hadError) _CAT_STATE[partyType].loaded = true;
+        if (cb) cb();
+      }
+    }
+    _gsr(
+      "getPartyCategoryTree",
+      [APP.currentUser.username, SESSION.token, partyType],
+      {
+        onSuccess: function (res) {
+          if (myToken !== _CAT_STATE[partyType]._loadToken) return; // رد قديم — يتجاهل
+          _CAT_STATE[partyType].tree = res.data || [];
+          done();
+        },
+        onError: function (r) {
+          if (myToken !== _CAT_STATE[partyType]._loadToken) return;
+          hadError = true;
+          NotificationEngine.error(r.message || I18N.t("CAT_TREE_FETCH_ERROR"));
+        },
+      },
+    );
+    _gsr(
+      "getPartyCategories",
+      [APP.currentUser.username, SESSION.token, partyType],
+      {
+        onSuccess: function (res2) {
+          if (myToken !== _CAT_STATE[partyType]._loadToken) return;
+          _CAT_STATE[partyType].flat = res2.data || [];
+          done();
+        },
+        onError: function (r) {
+          if (myToken !== _CAT_STATE[partyType]._loadToken) return;
+          hadError = true;
+          NotificationEngine.error(r.message || I18N.t("CAT_FETCH_ERROR"));
+        },
+      },
+    );
+  }
+
+  // ── الربط العام للشاشة ──────────────────────────────────────────────────
+
+  function _bindPartyCategoriesPage(partyType) {
+    var meta = _catMeta(partyType);
+
+    // [FIX-CAT-CACHE] فتح الشاشة (تنقل من السايد بار) بيستخدم الكاش
+    // لو موجود — من غير ما يضرب السيرفر تاني. أما بعد أي حفظ/حذف
+    // تصنيف داخل الشاشة نفسها، لازم نجبر تحديث حقيقي من السيرفر
+    // (forceRefresh=true) عشان نشوف أثر العملية فورًا.
+    function refreshAll(forceRefresh) {
+      // [FIX-CAT-STAGES] كانت _catLoadStats بتتأخر لحد ما تحميل
+      // الشجرة/القائمة يخلص خالص (نداء تالت بعد الاتنين الأولانيين
+      // بدل ما يتطلق معاهم بالتوازي) — وده اللي كان بيبان كأن الشاشة
+      // بتحمّل على مراحل واضحة (شجرة الأول، وبعدين الإحصائيات لوحدها).
+      // _catLoadStats مستقلة تمامًا (container خاص بيها + نداء _gsr
+      // خاص بيها) فمفيش أي داعي تستنى الشجرة، فبنطلقها فورًا مع نفس
+      // اللحظة.
+      _catLoadStats(partyType);
+
+      // [FIX-CAT-STALE-DOM] لو المستخدم غادر شاشة التصنيفات قبل ما
+      // الرد يوصل، مش هنلمس DOM شاشة تانية بالغلط.
+      _catLoad(
+        partyType,
+        function () {
+          if (
+            APP.currentPage !== "customer_categories" &&
+            APP.currentPage !== "supplier_categories"
+          )
+            return;
+          _catRefreshViews(partyType);
+        },
+        forceRefresh,
+      );
+    }
+    refreshAll(false);
+    window["_catRefreshAll_" + partyType] = function () {
+      refreshAll(true); // نداء صريح بعد حفظ/حذف — لازم يجيب أحدث بيانات دايمًا
+    };
+
+    // زر إضافة تصنيف رئيسي
+    var addBtn = document.getElementById("cat-btn-add-" + partyType);
+    if (addBtn) {
+      addBtn.addEventListener("click", function () {
+        requirePermission(meta.addPerm, function () {
+          openPartyCategoryModal(partyType, null, null);
+        });
+      });
+    }
+
+    // البحث
+    var searchInput = document.getElementById("cat-search-" + partyType);
+    if (searchInput) {
+      searchInput.addEventListener("input", function () {
+        _CAT_STATE[partyType].search = searchInput.value;
+        _catRefreshViews(partyType);
+      });
+    }
+
+    // تبديل شجرة/جدول
+    var chipsWrap = document.getElementById("cat-view-chips-" + partyType);
+    if (chipsWrap) {
+      chipsWrap.addEventListener("click", function (e) {
+        var chip = e.target.closest(".coa-chip");
+        if (!chip) return;
+        var view = chip.dataset.view;
+        _CAT_STATE[partyType].view = view;
+        chipsWrap.querySelectorAll(".coa-chip").forEach(function (c) {
+          c.classList.toggle("coa-chip-active", c === chip);
+        });
+        document.getElementById(
+          "cat-tree-container-" + partyType,
+        ).style.display = view === "tree" ? "" : "none";
+        document.getElementById(
+          "cat-grid-container-" + partyType,
+        ).style.display = view === "grid" ? "" : "none";
+        _catRefreshViews(partyType);
+      });
+    }
+
+    // طي/فتح الفروع + Drag & Drop — مستمعات مفوّضة على الحاوية (مرة واحدة)
+    var treeContainer = document.getElementById(
+      "cat-tree-container-" + partyType,
+    );
+    if (treeContainer && !treeContainer.dataset.catBound) {
+      treeContainer.dataset.catBound = "1";
+
+      treeContainer.addEventListener("click", function (e) {
+        var toggleBtn = e.target.closest(".coa-toggle");
+        if (toggleBtn) {
+          var body = document.getElementById(toggleBtn.dataset.toggle);
+          if (body) body.classList.toggle("coa-collapsed");
+          toggleBtn.classList.toggle("coa-toggle-collapsed");
+        }
+      });
+
+      var _dragSrcId = null;
+      treeContainer.addEventListener("dragstart", function (e) {
+        var row = e.target.closest(".cat-tree-row");
+        if (!row) return;
+        _dragSrcId = row.dataset.id;
+        e.dataTransfer.effectAllowed = "move";
+        try {
+          e.dataTransfer.setData("text/plain", _dragSrcId);
+        } catch (ex) {}
+      });
+      treeContainer.addEventListener("dragover", function (e) {
+        var row = e.target.closest(".cat-tree-row");
+        if (!row) return;
+        e.preventDefault();
+        row.style.outline = "2px dashed " + meta.color;
+      });
+      treeContainer.addEventListener("dragleave", function (e) {
+        var row = e.target.closest(".cat-tree-row");
+        if (row) row.style.outline = "";
+      });
+      treeContainer.addEventListener("drop", function (e) {
+        var row = e.target.closest(".cat-tree-row");
+        if (!row) return;
+        e.preventDefault();
+        row.style.outline = "";
+        var targetId = row.dataset.id;
+        if (!_dragSrcId || _dragSrcId === targetId) return;
+        requirePermission(meta.updatePerm, function () {
+          _gsr(
+            "movePartyCategory",
+            [APP.currentUser.username, SESSION.token, _dragSrcId, targetId],
+            {
+              onSuccess: function () {
+                NotificationEngine.success(I18N.t("CAT_MOVE_SUCCESS"));
+                refreshAll();
+              },
+              onError: function (r) {
+                NotificationEngine.error(r.message || I18N.t("CAT_MOVE_ERROR"));
+              },
+            },
+          );
+        });
+      });
+    }
+  }
+
+  // ── نقاط الدخول المطابقة لتسمية باقي الشاشات (render*/bind*) ────────────
+
+  function renderCustomerCategories() {
+    return _renderPartyCategoriesPage("customer");
+  }
+  function bindCustomerCategories() {
+    _bindPartyCategoriesPage("customer");
+  }
+  function renderSupplierCategories() {
+    return _renderPartyCategoriesPage("supplier");
+  }
+  function bindSupplierCategories() {
+    _bindPartyCategoriesPage("supplier");
+  }
+
+  // ── نموذج إضافة/تعديل تصنيف ─────────────────────────────────────────────
+
+  // [SIMPLIFY-FORM] يبني HTML لحقل واحد بنفس أسلوب البانى التلقائي
+  // بتاع openStyledDrawer (نفس الكلاسات/الأنواع) — مستخدَم هنا فقط عشان
+  // نقدر نوزّع الحقول يدويًا على قسمين (أساسي / متقدم قابل للطي) بدل ما
+  // نسيبها كلها في form-grid واحد طويل زي ما كانت.
+  function _catFieldHtml(f) {
+    var fType = f.type || "text";
+    var fVal = f.value !== undefined && f.value !== null ? String(f.value) : "";
+    var fRequired = f.required ? " required" : "";
+    var html = '<div class="field' + (f.full ? " full" : "") + '">';
+    html +=
+      "<label>" + (f.label || f.id) + (f.required ? " *" : "") + "</label>";
+    if (fType === "select") {
+      html += '<select class="input" id="' + f.id + '"' + fRequired + ">";
+      (f.options || []).forEach(function (o) {
+        var oVal = typeof o === "object" ? String(o.value) : String(o);
+        var oLabel = typeof o === "object" ? o.label : o;
+        var sel = oVal === fVal || oLabel === fVal ? " selected" : "";
+        html +=
+          '<option value="' +
+          esc(oVal) +
+          '"' +
+          sel +
+          ">" +
+          esc(oLabel) +
+          "</option>";
+      });
+      html += "</select>";
+    } else if (fType === "textarea") {
+      html +=
+        '<textarea class="input" id="' +
+        f.id +
+        '" rows="3"' +
+        fRequired +
+        ">" +
+        esc(fVal) +
+        "</textarea>";
+    } else {
+      html +=
+        '<input class="input" id="' +
+        f.id +
+        '" type="' +
+        fType +
+        '" value="' +
+        esc(fVal) +
+        '"' +
+        fRequired +
+        ">";
+    }
+    html += "</div>";
+    return html;
+  }
+
+  function openPartyCategoryModal(partyType, parentId, editId) {
+    var meta = _catMeta(partyType);
+    var state = _CAT_STATE[partyType];
+    var cat = editId
+      ? state.flat.find(function (r) {
+          return String(r.id) === String(editId);
+        })
+      : null;
+
+    var excludeSubtree = editId ? _catSubtreeIds(state.flat, editId) : [];
+    var parentOptions = [
+      { value: "", label: I18N.t("CAT_NONE_ROOT_OPTION") },
+    ].concat(_catFlattenForSelect(state.tree, 0, editId, excludeSubtree));
+
+    // [SIMPLIFY-FORM] بقت الحقول مقسّمة لمجموعتين: "أساسي" (ظاهر دايمًا،
+    // ٥ حقول بس) و"متقدم" (جوه قسم قابل للطي ومقفول افتراضيًا — نفس
+    // الحقول الـ ١٣ اللي كانت ظاهرة كلها مرة واحدة قبل كده، من غير ما
+    // نفقد أي حقل أو أي functionality). كل الحقول برضو بتتجمع بنفس
+    // آلية fields[] الأصلية بتاعة openStyledDrawer عند الحفظ.
+    var fields = [
+      // ── أساسي ─────────────────────────────────────────────────────
+      {
+        id: "cat-f-name",
+        label: I18N.t("LBL_CATEGORY_NAME"),
+        required: true,
+        value: cat ? cat.name : "",
+        group: "basic",
+      },
+      {
+        id: "cat-f-parent",
+        label: I18N.t("LBL_BELONGS_TO"),
+        type: "select",
+        options: parentOptions,
+        value: cat ? cat.parent_id : parentId || "",
+        group: "basic",
+      },
+      {
+        id: "cat-f-status",
+        label: I18N.t("LBL_STATUS"),
+        type: "select",
+        options: [
+          { value: "نشط", label: I18N.t("STATUS_ACTIVE") },
+          { value: "غير نشط", label: I18N.t("STATUS_INACTIVE") },
+        ],
+        value: cat ? cat.status : "نشط",
+        group: "basic",
+      },
+      {
+        id: "cat-f-color",
+        label: I18N.t("LBL_COLOR_OPTIONAL"),
+        type: "color",
+        value:
+          cat && cat.color
+            ? cat.color
+            : meta.color.indexOf("var(") === 0
+              ? "#2563eb"
+              : meta.color,
+        group: "basic",
+      },
+      {
+        id: "cat-f-description",
+        label: I18N.t("LBL_DESCRIPTION"),
+        type: "textarea",
+        full: true,
+        value: cat ? cat.description : "",
+        group: "basic",
+      },
+      // ── متقدم (قابل للطي) ────────────────────────────────────────
+      {
+        id: "cat-f-name-en",
+        label: I18N.t("LBL_NAME_EN_OPTIONAL"),
+        value: cat ? cat.name_en : "",
+        group: "advanced",
+      },
+      {
+        id: "cat-f-code",
+        label: I18N.t("LBL_CATEGORY_CODE_OPTIONAL"),
+        value: cat ? cat.code : "",
+        group: "advanced",
+      },
+      {
+        id: "cat-f-sort",
+        label: I18N.t("LBL_SORT_ORDER"),
+        type: "number",
+        value: cat ? cat.sort_order : 0,
+        group: "advanced",
+      },
+      {
+        id: "cat-f-icon",
+        label: I18N.t("LBL_ICON_OPTIONAL"),
+        value: cat ? cat.icon : "",
+        group: "advanced",
+      },
+      // ── إعدادات افتراضية تُورَّث عند اختيار التصنيف لعميل/مورد جديد ──
+      {
+        id: "cat-f-credit-policy",
+        label: I18N.t("LBL_DEFAULT_CREDIT_POLICY"),
+        value: cat ? cat.default_credit_policy : "",
+        group: "advanced",
+      },
+      {
+        id: "cat-f-credit-limit",
+        label: I18N.t("LBL_DEFAULT_CREDIT_LIMIT"),
+        type: "number",
+        value: cat ? cat.default_credit_limit : "",
+        group: "advanced",
+      },
+      {
+        id: "cat-f-payment-terms",
+        label: I18N.t("LBL_DEFAULT_PAYMENT_TERMS"),
+        type: "number",
+        value: cat ? cat.default_payment_terms_days : "",
+        group: "advanced",
+      },
+      {
+        id: "cat-f-discount",
+        label: I18N.t("LBL_DEFAULT_DISCOUNT_PCT"),
+        type: "number",
+        value: cat ? cat.default_discount_percent : "",
+        group: "advanced",
+      },
+      {
+        id: "cat-f-price-list",
+        label: I18N.t("LBL_DEFAULT_PRICE_LIST"),
+        value: cat ? cat.default_price_list : "",
+        group: "advanced",
+      },
+      {
+        id: "cat-f-sales-rep",
+        label: I18N.t("LBL_DEFAULT_SALES_REP"),
+        value: cat ? cat.default_sales_rep : "",
+        group: "advanced",
+      },
+      {
+        id: "cat-f-region",
+        label: I18N.t("LBL_DEFAULT_REGION"),
+        value: cat ? cat.default_region : "",
+        group: "advanced",
+      },
+      {
+        id: "cat-f-currency",
+        label: I18N.t("LBL_DEFAULT_CURRENCY"),
+        value: cat ? cat.default_currency : "",
+        group: "advanced",
+      },
+      {
+        id: "cat-f-cost-center",
+        label: I18N.t("LBL_DEFAULT_COST_CENTER"),
+        value: cat ? cat.default_cost_center : "",
+        group: "advanced",
+      },
+      {
+        id: "cat-f-notes",
+        label: I18N.t("LBL_NOTES"),
+        type: "textarea",
+        full: true,
+        value: cat ? cat.notes : "",
+        group: "advanced",
+      },
+    ];
+
+    // [TABS-FORM] بدل الـ <details> القابل للطي، بقت الحقول موزّعة على
+    // تابين داخل نفس شاشة الإضافة/التعديل: "أساسي" و"إعدادات متقدمة"،
+    // بنفس كلاسات .tabs/.tab العامة المستخدمة في باقي النظام. لو التصنيف
+    // بيتعدّل وعنده بيانات في أي حقل متقدم، بنحط نقطة (•) على التاب
+    // نفسه كتنبيه بسيط بدل ما نفتحه إجباريًا.
+    var basicFields = fields.filter(function (f) {
+      return f.group === "basic";
+    });
+    var advancedFields = fields.filter(function (f) {
+      return f.group === "advanced";
+    });
+    var hasAdvancedData = advancedFields.some(function (f) {
+      return (
+        f.value !== undefined &&
+        f.value !== null &&
+        String(f.value) !== "" &&
+        f.id !== "cat-f-sort"
+      );
+    });
+    var bodyHtml = '<div class="modal-body">';
+    bodyHtml += '<div class="tabs" id="cat-form-tabs">';
+    bodyHtml +=
+      '<div class="tab active" data-cat-tab="basic">' +
+      I18N.t("CAT_TAB_BASIC") +
+      "</div>";
+    bodyHtml +=
+      '<div class="tab" data-cat-tab="advanced">' +
+      I18N.t("CAT_ADVANCED_SETTINGS") +
+      (hasAdvancedData ? ' <span style="color:var(--accent)">•</span>' : "") +
+      "</div>";
+    bodyHtml += "</div>";
+    bodyHtml +=
+      '<div class="cat-tab-panel" id="cat-form-panel-basic" style="display:block">';
+    bodyHtml += '<div class="form-grid">';
+    basicFields.forEach(function (f) {
+      bodyHtml += _catFieldHtml(f);
+    });
+    bodyHtml += "</div></div>";
+    bodyHtml +=
+      '<div class="cat-tab-panel" id="cat-form-panel-advanced" style="display:none">';
+    bodyHtml +=
+      '<div style="font-size:12.5px;color:var(--text-muted);margin:0 0 12px">' +
+      I18N.t("CAT_ADVANCED_SETTINGS_HINT") +
+      "</div>";
+    bodyHtml += '<div class="form-grid">';
+    advancedFields.forEach(function (f) {
+      bodyHtml += _catFieldHtml(f);
+    });
+    bodyHtml += "</div></div></div>";
+
+    openStyledDrawer({
+      title: cat
+        ? I18N.t("CAT_EDIT_TITLE", { name: cat.name })
+        : I18N.t("CAT_ADD_TITLE", { label: meta.addLabel }),
+      icon: meta.icon,
+      fields: fields,
+      body: bodyHtml,
+      onReady: function (inner) {
+        var tabsWrap = inner.querySelector("#cat-form-tabs");
+        if (!tabsWrap) return;
+        tabsWrap.querySelectorAll(".tab").forEach(function (tabEl) {
+          tabEl.addEventListener("click", function () {
+            tabsWrap.querySelectorAll(".tab").forEach(function (t) {
+              t.classList.remove("active");
+            });
+            this.classList.add("active");
+            ["basic", "advanced"].forEach(function (key) {
+              var panel = inner.querySelector("#cat-form-panel-" + key);
+              if (panel)
+                panel.style.display =
+                  key === tabEl.dataset.catTab ? "block" : "none";
+            });
+          });
+        });
+      },
+      onSave: function (vals) {
+        // [SE-ROLLOUT] عبر SaveEngine.run بدل _gsr اليدوي المباشر —
+        // نفس الـ payload بالظبط، الفرق الوحيد إن الحفظ بقى بيمر من
+        // نقطة الدخول الموحّدة (spinner على زر الحفظ + رسائل موحّدة +
+        // dirty/retry logic لو احتجناها لاحقًا). التحقق (required) لسه
+        // بيحصل قبلها عبر VF.quickSave زي ما كان بالظبط.
+        SaveEngine.run({
+          screen: "PartyCategories." + partyType,
+          entity: "party_category",
+          recordId: cat ? cat.id : null,
+          buttonId: "__sd-fields-save-btn",
+          collect: function () {
+            return {
+              party_type: partyType,
+              name: vals["cat-f-name"],
+              name_en: vals["cat-f-name-en"],
+              parent_id: vals["cat-f-parent"],
+              code: vals["cat-f-code"],
+              status: vals["cat-f-status"],
+              sort_order: vals["cat-f-sort"],
+              color: vals["cat-f-color"],
+              icon: vals["cat-f-icon"],
+              description: vals["cat-f-description"],
+              notes: vals["cat-f-notes"],
+              default_credit_policy: vals["cat-f-credit-policy"],
+              default_credit_limit: vals["cat-f-credit-limit"],
+              default_payment_terms_days: vals["cat-f-payment-terms"],
+              default_discount_percent: vals["cat-f-discount"],
+              default_price_list: vals["cat-f-price-list"],
+              default_sales_rep: vals["cat-f-sales-rep"],
+              default_region: vals["cat-f-region"],
+              default_currency: vals["cat-f-currency"],
+              default_cost_center: vals["cat-f-cost-center"],
+            };
+          },
+          fn: cat ? "updatePartyCategory" : "addPartyCategory",
+          params: function (data) {
+            return cat
+              ? [APP.currentUser.username, SESSION.token, cat.id, data]
+              : [APP.currentUser.username, SESSION.token, data];
+          },
+          successMessage: I18N.t(
+            cat ? "CAT_UPDATE_SUCCESS" : "CAT_ADD_SUCCESS",
+          ),
+          onSuccess: function () {
+            closeStyledDrawer();
+            var refresh = window["_catRefreshAll_" + partyType];
+            if (refresh) refresh();
+          },
+        });
+      },
+    });
+  }
+
+  // ── إجراءات الحذف (مع التعامل مع التعارضات: أبناء/عملاء مرتبطون) ────────
+
+  function deletePartyCategoryFlow(partyType, id) {
+    var meta = _catMeta(partyType);
+    var state = _CAT_STATE[partyType];
+    var cat = state.flat.find(function (r) {
+      return String(r.id) === String(id);
+    });
+    if (!cat) return;
+
+    confirmDelete(
+      I18N.t("CAT_DELETE_TITLE"),
+      I18N.t("CAT_DELETE_CONFIRM", { name: cat.name }),
+      function () {
+        _gsr(
+          "deletePartyCategory",
+          [APP.currentUser.username, SESSION.token, id, {}],
+          {
+            onSuccess: function () {
+              NotificationEngine.success(I18N.t("CAT_DELETE_SUCCESS"));
+              var refresh = window["_catRefreshAll_" + partyType];
+              if (refresh) refresh();
+            },
+            onError: function (r) {
+              if (r && r.conflict) {
+                _openCategoryReassignDialog(partyType, cat, r);
+              } else {
+                NotificationEngine.error((r && r.message) || I18N.t("CAT_DELETE_ERROR"));
+              }
+            },
+          },
+        );
+      },
+    );
+  }
+
+  function _openCategoryReassignDialog(partyType, cat, conflictInfo) {
+    var meta = _catMeta(partyType);
+    var state = _CAT_STATE[partyType];
+    var excludeSubtree = _catSubtreeIds(state.flat, cat.id).concat([cat.id]);
+    var options = [
+      { value: "", label: I18N.t("CAT_NONE_ROOT_REASSIGN_OPTION") },
+    ].concat(_catFlattenForSelect(state.tree, 0, null, excludeSubtree));
+
+    var fields = [];
+    if (conflictInfo.childrenCount) {
+      fields.push({
+        id: "cat-reassign-children",
+        label: I18N.t("CAT_REASSIGN_CHILDREN_LABEL", {
+          count: conflictInfo.childrenCount,
+        }),
+        type: "select",
+        options: options,
+        value: "",
+      });
+    }
+    if (conflictInfo.partyCount) {
+      fields.push({
+        id: "cat-reassign-parties",
+        label: I18N.t("CAT_REASSIGN_PARTIES_LABEL", {
+          type: meta.singular,
+          count: conflictInfo.partyCount,
+        }),
+        type: "select",
+        options: options,
+        value: "",
+      });
+    }
+
+    openStyledDrawer({
+      title: I18N.t("CAT_CANNOT_DELETE_TITLE", { name: cat.name }),
+      subtitle: conflictInfo.message,
+      icon: "ti-alert-triangle",
+      color: "orange",
+      fields: fields,
+      onSave: function (vals) {
+        var opts = {};
+        if (conflictInfo.childrenCount)
+          opts.reassignChildrenTo = vals["cat-reassign-children"] || "";
+        if (conflictInfo.partyCount)
+          opts.reassignPartiesTo = vals["cat-reassign-parties"] || "";
+        _gsr(
+          "deletePartyCategory",
+          [APP.currentUser.username, SESSION.token, cat.id, opts],
+          {
+            onSuccess: function () {
+              NotificationEngine.success(I18N.t("CAT_DELETE_SUCCESS_REASSIGNED"));
+              closeStyledDrawer();
+              var refresh = window["_catRefreshAll_" + partyType];
+              if (refresh) refresh();
+            },
+            onError: function (r) {
+              NotificationEngine.error(r.message || I18N.t("CAT_DELETE_ERROR"));
+            },
+          },
+        );
+      },
+    });
+  }
+
+  // ── إجراءات القائمة السياقية (تُستدعى من 20_JS_ContextMenu.html) ───────
+
+  function editPartyCategoryFromCtx(id) {
+    var row = document.querySelector('.cat-tree-row[data-id="' + id + '"]');
+    var partyType = row ? row.dataset.partyType : "customer";
+    requirePermission(_catMeta(partyType).updatePerm, function () {
+      openPartyCategoryModal(partyType, null, id);
+    });
+  }
+
+  function addChildPartyCategoryFromCtx(id) {
+    var row = document.querySelector('.cat-tree-row[data-id="' + id + '"]');
+    var partyType = row ? row.dataset.partyType : "customer";
+    requirePermission(_catMeta(partyType).addPerm, function () {
+      openPartyCategoryModal(partyType, id, null);
+    });
+  }
+
+  function deletePartyCategoryFromCtx(id) {
+    var row = document.querySelector('.cat-tree-row[data-id="' + id + '"]');
+    var partyType = row ? row.dataset.partyType : "customer";
+    requirePermission(_catMeta(partyType).deletePerm, function () {
+      deletePartyCategoryFlow(partyType, id);
+    });
+  }
+
+  // يبني HTML خام لـ <select> هرمي لتضمينه مباشرة داخل نماذج العميل/المورد
+  // القديمة (renderCustomerModal/renderSupplierModal في Templates_07.html)
+  // التي تُبنى كسلسلة نصية HTML وليست عبر openStyledDrawer
+  function renderPartyCategoryFieldRawHTML(
+    partyType,
+    currentCategoryId,
+    selectId,
+  ) {
+    var state = _CAT_STATE[partyType];
+    var options = [{ value: "", label: I18N.t("CAT_NONE_OPTION") }].concat(
+      _catFlattenForSelect(state.tree || [], 0, null, null),
+    );
+    var html =
+      '<select class="input" id="' +
+      selectId +
+      '" style="height:40px;border-radius:10px;font-size:13px" onchange="onPartyCategoryFieldChange(\'' +
+      partyType +
+      "', this.value)\">";
+    options.forEach(function (o) {
+      html +=
+        '<option value="' +
+        esc(o.value) +
+        '"' +
+        (String(o.value) === String(currentCategoryId || "")
+          ? " selected"
+          : "") +
+        ">" +
+        esc(o.label) +
+        "</option>";
+    });
+    html += "</select>";
+    return html;
+  }
+
+  // خريطة حقول النموذج (لكل partyType) التي تُملأ تلقائيًا من إعدادات
+  // التصنيف الافتراضية عند اختيار تصنيف — تبقى الحقول قابلة للتعديل يدويًا
+  var CAT_DEFAULTS_FIELD_MAP = {
+    customer: {
+      default_credit_limit: "cust-modal-credit-limit",
+      default_payment_terms_days: "cust-modal-payment-terms",
+      default_discount_percent: "cust-modal-discount-percent",
+      default_price_list: "cust-modal-price-list",
+    },
+    supplier: {
+      default_payment_terms_days: "sup-modal-payment-terms",
+      default_price_list: "sup-modal-price-list",
+    },
+  };
+
+  function onPartyCategoryFieldChange(partyType, categoryId) {
+    applyPartyCategoryDefaults(
+      partyType,
+      categoryId,
+      CAT_DEFAULTS_FIELD_MAP[partyType] || {},
+    );
+  }
+
+  // يرجّع كل معرفات فروع تصنيف مُعيَّن (شامل نفسه) من الحالة المحلية —
+  // تُستخدم في فلترة قوائم العملاء/الموردين حسب تصنيف مع تضمين الفروع
+  function getPartyCategoryDescendantIdsClient(partyType, rootId) {
+    if (!rootId) return null;
+    var flat = _CAT_STATE[partyType].flat || [];
+    var byParent = {};
+    flat.forEach(function (r) {
+      var p = r.parent_id || "__ROOT__";
+      if (!byParent[p]) byParent[p] = [];
+      byParent[p].push(r.id);
+    });
+    var out = [rootId];
+    var queue = (byParent[rootId] || []).slice();
+    while (queue.length) {
+      var id = queue.shift();
+      out.push(id);
+      (byParent[id] || []).forEach(function (c) {
+        queue.push(c);
+      });
+    }
+    return out;
+  }
+
+  // يملأ عنصر <select> بفلتر التصنيفات الهرمية (مع "الكل") — تُستدعى من
+  // bindCustomers/bindSuppliers بعد تحميل التصنيفات
+  function populatePartyCategoryFilterSelect(partyType, selectEl) {
+    if (!selectEl) return;
+    var state = _CAT_STATE[partyType];
+    var options = [{ value: "", label: I18N.t("CAT_ALL_OPTION") }].concat(
+      _catFlattenForSelect(state.tree || [], 0, null, null),
+    );
+    selectEl.innerHTML = options
+      .map(function (o) {
+        return (
+          '<option value="' + esc(o.value) + '">' + esc(o.label) + "</option>"
+        );
+      })
+      .join("");
+  }
+
+  // ── واجهة عامة يستخدمها نموذج العميل/المورد (Templates_06.html) ────────
+  // تبني <select> هرمي لحقل "تصنيف العميل/المورد" + تُحمِّل الإعدادات
+  // الافتراضية عند الاختيار لتعبئة باقي حقول النموذج تلقائيًا (قابلة للتعديل)
+
+  function buildPartyCategorySelectField(
+    partyType,
+    currentCategoryId,
+    fieldId,
+  ) {
+    // يُستخدم كـ field عادي داخل مصفوفة fields الخاصة بـ openStyledDrawer
+    // في شاشة العميل/المورد. القيم تُحمَّل بشكل كسول (lazy) عبر
+    // ensurePartyCategoriesLoaded قبل فتح النموذج.
+    var state = _CAT_STATE[partyType];
+    var options = [{ value: "", label: I18N.t("CAT_NONE_OPTION") }].concat(
+      _catFlattenForSelect(state.tree || [], 0, null, null),
+    );
+    return {
+      id: fieldId || "party-f-category",
+      label: I18N.t("LBL_CATEGORY_OF", {
+        type: I18N.t(
+          partyType === "supplier"
+            ? "CAT_SUPPLIER_SINGULAR"
+            : "CAT_CUSTOMER_SINGULAR",
+        ),
+      }),
+      type: "select",
+      options: options,
+      value: currentCategoryId || "",
+    };
+  }
+
+  // يحمّل تصنيفات النوع المطلوب لو لسه مش محمَّلة (تُستدعى قبل فتح نموذج
+  // عميل/مورد جديد حتى يكون حقل التصنيف جاهزًا فورًا)
+  function ensurePartyCategoriesLoaded(partyType, cb) {
+    // _catLoad نفسها بقت بتجرّب الحزمة الأساسية (getAllData) قبل أي نداء
+    // سيرفر — راجع _catBootstrapFromBundle أعلاه. فده بيغطي حالة "زر
+    // إضافة عميل/مورد" (النموذج بيفتح فورًا من غير انتظار) وحالة فتح
+    // شاشة "التصنيفات" نفسها بنفس الحل.
+    _catLoad(partyType, cb);
+  }
+
+  // عند اختيار تصنيف في نموذج عميل/مورد — يجلب الإعدادات الافتراضية
+  // ويملأ الحقول المقابلة تلقائيًا (تبقى قابلة للتعديل يدويًا بعد ذلك)
+  function applyPartyCategoryDefaults(partyType, categoryId, fieldIdMap) {
+    if (!categoryId) return;
+    _gsr(
+      "getPartyCategoryDefaults",
+      [APP.currentUser.username, SESSION.token, categoryId],
+      {
+        onSuccess: function (res) {
+          var d = (res.data && res.data.defaults) || {};
+          Object.keys(fieldIdMap || {}).forEach(function (defaultKey) {
+            var el = document.getElementById(fieldIdMap[defaultKey]);
+            if (el && d[defaultKey] !== undefined && !el.value) {
+              el.value = d[defaultKey];
+            }
+          });
+        },
+      },
+    );
+  }
+</script>

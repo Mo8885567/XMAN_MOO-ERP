@@ -1,0 +1,158 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 50_JS_TabEngine.html — محرك التابات الموحّد (Lazy Tabs)
+  // ═══════════════════════════════════════════════════════════════════
+  // [DATA-LOADING-ENGINE / المرحلة 7] المشكلة اللي هذا الملف بيحلّها:
+  //
+  //   حالياً (مثال حقيقي: 12_JS_HR.html سطر ~2550) أي مودال فيه تابات
+  //   بيحمّل بيانات كل التابات الأربعة/الخمسة مرة واحدة لحظة الفتح
+  //   (_loadEmpDocumentsTab + _loadEmpQualificationsTab + ...) حتى لو
+  //   المستخدم هيفتح تاب واحد بس. ده معناه:
+  //     - N نداء google.script.run بدل نداء واحد وقت الفتح.
+  //     - وقت فتح الشاشة = مجموع وقت كل التابات مش أسرع تاب واحد.
+  //
+  //   الحل: TabEngine.init() — بيربط التابات بالبيانات، ولا يستدعي أي
+  //   loader إلا لما التاب يتفتح لأول مرة. بعد كده بيتخزّن نتيجته محلياً
+  //   (per-record-id) فمفيش إعادة تحميل تانية إلا لو استدعيت invalidate()
+  //   صراحةً (بعد حفظ/تعديل في التاب ده).
+  //
+  //   [SYSTEM-UNIFY] أي شاشة جديدة فيها تابات (فاتورة، مورد، صنف...)
+  //   المفروض تستخدم هذا المحرك بدل ما تكتب "Tabs logic" يدوي زي القديم.
+  // ─────────────────────────────────────────────────────────────
+  //
+  // ── الاستخدام ──
+  //   var tabs = TabEngine.init({
+  //     scope: modalEl,                 // عنصر يحتوي كل التابات (اختياري، افتراضي document)
+  //     tabSelector: '.hr-tab',         // أزرار التابات
+  //     panelPrefix: 'emp-tab-',        // بادئة id اللوحة = panelPrefix + dataset.tab
+  //     activeClass: 'active',
+  //     recordId: employeeId,           // مفتاح الـ cache — يتغيّر مع كل سجل مختلف
+  //     defaultTab: 'personal',         // التاب اللي يتفتح افتراضياً (مش بيتحمّل بيانات لوحده،
+  //                                     // لازم يتسجل بردو لو محتاج تحميل)
+  //     loaders: {
+  //       documents:      function (recordId, done) { _loadEmpDocumentsTab(recordId); done(); },
+  //       qualifications: function (recordId, done) { _loadEmpQualificationsTab(recordId); done(); },
+  //     },
+  //     onSwitch: function (tabName) { /* اختياري */ }
+  //   });
+  //
+  //   // بعد حفظ توثيق مثلاً — يخلي التاب يعيد التحميل في المرة الجاية:
+  //   tabs.invalidate('documents');
+  //
+  //   // لو المودال اتقفل وهيتفتح لسجل مختلف تماماً:
+  //   tabs.destroy();
+  // ═══════════════════════════════════════════════════════════════════
+
+  var TabEngine = (function () {
+    "use strict";
+
+    // instance-id -> { loadedKeys:Set, listeners:[] } — لإدارة destroy() بأمان
+    var _instances = [];
+
+    function init(opts) {
+      opts = opts || {};
+      var scope = opts.scope || document;
+      var tabSelector = opts.tabSelector || ".hr-tab";
+      var panelPrefix = opts.panelPrefix || "";
+      var activeClass = opts.activeClass || "active";
+      var loaders = opts.loaders || {};
+      var onSwitch = opts.onSwitch || function () {};
+      var recordId = opts.recordId;
+
+      // key = tabName + '::' + recordId  → يمنع استخدام cache قديم لو
+      // المودال اتفتح لسجل مختلف (نفس فكرة invalidation في DataModule)
+      var loadedKeys = {};
+
+      function cacheKey(tabName) {
+        return tabName + "::" + (recordId == null ? "_new_" : recordId);
+      }
+
+      function ensureLoaded(tabName, panelEl) {
+        var key = cacheKey(tabName);
+        if (loadedKeys[key]) return; // اتحمّل قبل كده لنفس السجل — لا تكرار
+        var loaderFn = loaders[tabName];
+        if (typeof loaderFn !== "function") {
+          // مفيش loader مسجّل لهذا التاب (يعني بياناته الساكنة already في
+          // الـ DOM، أو تاب بدون بيانات خارجية) — نعتبره "محمّل" ونطلع
+          loadedKeys[key] = true;
+          return;
+        }
+        if (panelEl && typeof panelEl.classList !== "undefined") {
+          panelEl.classList.add("tab-loading");
+        }
+        loaderFn(recordId, function () {
+          loadedKeys[key] = true;
+          if (panelEl) panelEl.classList.remove("tab-loading");
+        });
+      }
+
+      var tabEls = Array.prototype.slice.call(
+        scope.querySelectorAll(tabSelector),
+      );
+      var boundHandlers = []; // [{el, fn}] لإزالتهم في destroy()
+
+      tabEls.forEach(function (tabEl) {
+        var handler = function () {
+          var tabName = this.dataset.tab;
+          tabEls.forEach(function (t) {
+            t.classList.remove(activeClass);
+          });
+          scope
+            .querySelectorAll("[id^='" + panelPrefix + "']")
+            .forEach(function (p) {
+              p.classList.remove(activeClass);
+            });
+          this.classList.add(activeClass);
+          var panel = scope.querySelector(
+            "#" + panelPrefix + tabName,
+          );
+          if (panel) panel.classList.add(activeClass);
+          ensureLoaded(tabName, panel);
+          onSwitch(tabName);
+        };
+        tabEl.addEventListener("click", handler);
+        boundHandlers.push({ el: tabEl, fn: handler });
+      });
+
+      // حمّل بيانات التاب الافتراضي بس (المفتوح فعلياً وقت init) —
+      // ولا حاجة غيره. هذا هو جوهر إصلاح المرحلة 7.
+      if (opts.defaultTab) {
+        var defPanel = scope.querySelector(
+          "#" + panelPrefix + opts.defaultTab,
+        );
+        ensureLoaded(opts.defaultTab, defPanel);
+      }
+
+      var instance = {
+        invalidate: function (tabName) {
+          delete loadedKeys[cacheKey(tabName)];
+        },
+        invalidateAll: function () {
+          loadedKeys = {};
+        },
+        reload: function (tabName) {
+          this.invalidate(tabName);
+          var panel = scope.querySelector("#" + panelPrefix + tabName);
+          ensureLoaded(tabName, panel);
+        },
+        setRecordId: function (newId) {
+          // بيسمح بإعادة استخدام نفس instance مع سجل تاني (بدل init جديد)
+          recordId = newId;
+        },
+        destroy: function () {
+          boundHandlers.forEach(function (b) {
+            b.el.removeEventListener("click", b.fn);
+          });
+          boundHandlers = [];
+          loadedKeys = {};
+          var idx = _instances.indexOf(instance);
+          if (idx > -1) _instances.splice(idx, 1);
+        },
+      };
+      _instances.push(instance);
+      return instance;
+    }
+
+    return { init: init };
+  })();
+</script>

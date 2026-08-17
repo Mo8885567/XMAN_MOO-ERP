@@ -1,0 +1,1634 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════
+  // Templates_10.html — جزء من Templates.html الأصلي (تقسيم آلي نصي بحت، 2026-07-04)
+  // النطاق: renderPurchaseInvoices → _vfcRenderLineDetail (Purchase Invoices + VodafoneCash)
+  // راجع Architecture Audit 2026-07-03، المرحلة 5 — تقسيم بحسب الحجم،
+  // على حدود دوال كاملة فقط (لا قطع لأي دالة في نص). تحقق برمجيًا:
+  // التركيب النهائي لكل الأجزاء الـ10 مطابق 100% لمحتوى Templates.html
+  // القديم حرفيًا (نفس الترتيب، بدون فقد أو تكرار).
+  // يُحمَّل بالترتيب عبر <script> في Index.html مع باقي الأجزاء.
+  // ═══════════════════════════════════════════════════════════════
+  function renderPurchaseInvoices() {
+    var invoices = (APP.data.purchaseInvoices || []).slice().reverse();
+    var pendingTx = _getPendingInTransactions(); // أذونات وارد لم تُفوتَر بعد
+
+    var totalInvoiced = invoices.length;
+    var totalPending = pendingTx.length;
+    var totalAmount = invoices.reduce(function (s, inv) {
+      return s + Number(inv.net_total || 0);
+    }, 0);
+    var unpaidCount = invoices.filter(function (inv) {
+      return inv.payment_status === "آجل";
+    }).length;
+
+    var statsHtml =
+      '<div class="stat-grid" style="margin-bottom:20px">' +
+      statCard(
+        iconBadge("ti-file-invoice", "var(--purple-soft)", "var(--purple)"),
+        "إجمالي الفواتير",
+        totalInvoiced,
+        "فاتورة",
+        "#F5F3FF",
+      ) +
+      statCard(
+        iconBadge("ti-clock", "var(--warning-soft)", "var(--warning)"),
+        "في انتظار الفوترة",
+        totalPending,
+        "إذن",
+        "var(--warning-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-currency-pound", "var(--danger-soft)", "var(--danger)"),
+        "إجمالي المشتريات",
+        formatMoney(totalAmount, { decimals: 0, withSymbol: false }),
+        "ج.م",
+        "var(--danger-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-alert-circle", "var(--warning-soft)", "var(--warning)"),
+        "آجل غير مدفوع",
+        unpaidCount,
+        "فاتورة",
+        "var(--warning-soft)",
+      ) +
+      "</div>";
+
+    // ── جدول الأذونات المعلّقة ──────────────────────────────────
+    var pendingRows = pendingTx
+      .map(function (tx) {
+        var item =
+          (APP.data.items || []).find(function (i) {
+            return i.id === tx.item_id;
+          }) || {};
+        var d = tx.date ? fmtDate(tx.date) : "—";
+        return (
+          "<tr>" +
+          '<td><span class="mono" style="font-size:11px;color:#5B21B6">' +
+          esc(tx.permit_id || tx.id || "") +
+          "</span></td>" +
+          "<td>" +
+          d +
+          "</td>" +
+          "<td>" +
+          esc(tx.party || "—") +
+          "</td>" +
+          "<td>" +
+          esc(item.name || tx.item_id || "—") +
+          "</td>" +
+          '<td style="text-align:center">' +
+          esc(String(tx.quantity || 0)) +
+          "</td>" +
+          "<td>" +
+          esc(tx.to_warehouse || "—") +
+          "</td>" +
+          "<td>" +
+          esc(tx.user || "—") +
+          "</td>" +
+          "<td>" +
+          withPermission(
+            '<button class="btn btn-primary btn-xs" onclick="openCreatePurchaseInvoiceModal(\'' +
+              esc(tx.permit_id || tx.id) +
+              '\')" style="white-space:nowrap;background:#5B21B6;border-color:#5B21B6">' +
+              '<i class="ti ti-file-plus" style="font-size:12px"></i> إنشاء فاتورة</button>',
+            "addPurchaseInvoice",
+          ) +
+          "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    var pendingSection =
+      totalPending > 0
+        ? '<div class="card" style="margin-bottom:20px;border:2px solid #DDD6FE">' +
+          '<div style="padding:14px 16px;border-bottom:1px solid var(--border);background:#F5F3FF;display:flex;align-items:center;gap:10px">' +
+          iconBadge("ti-clock", "var(--purple-soft)", "var(--purple)") +
+          '<div><b style="color:#3B0764">أذونات وارد في انتظار الفوترة</b>' +
+          '<span style="margin-right:10px;font-size:12px;color:var(--text3)">' +
+          totalPending +
+          " إذن</span></div></div>" +
+          '<div class="table-wrap" style="margin:0"><table>' +
+          '<thead><tr><th>رقم الإذن</th><th>التاريخ</th><th>المورد</th><th>الصنف</th><th style="text-align:center">الكمية</th><th>المخزن</th><th>بواسطة</th><th>إجراء</th></tr></thead>' +
+          "<tbody>" +
+          (pendingRows ||
+            '<tr><td colspan="8" class="empty-state">لا توجد أذونات معلّقة</td></tr>') +
+          "</tbody>" +
+          "</table></div></div>"
+        : "";
+
+    // ── جدول الفواتير المُصدرة ────────────────────────────────
+    // [COLUMN-ENGINE] الجدول الثابت انتقل بالكامل إلى ColumnEngine (راجع
+    // 34_JS_ColumnEngine.html و _pinvRenderTable/_pinvRegisterColumns في
+    // 15_JS_Invoices.html). الأعمدة الآن Metadata قابلة للتخصيص.
+    var tableSection =
+      '<div class="card" style="padding:0;overflow:hidden">' +
+      '<div style="padding:14px 16px;border-bottom:1px solid var(--border);background:var(--surface2);display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+      '<div style="display:flex;gap:6px;align-items:center">' +
+      '<div style="display:flex;gap:4px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:3px">' +
+      '<button class="pinv-filter-btn active" data-status="" style="border:none;background:#5B21B6;color:#fff;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">الكل</button>' +
+      '<button class="pinv-filter-btn" data-status="كاش" style="border:none;background:transparent;color:var(--text2);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">كاش</button>' +
+      '<button class="pinv-filter-btn" data-status="آجل" style="border:none;background:transparent;color:var(--text2);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">آجل</button>' +
+      "</div>" +
+      '<span style="font-size:12px;color:var(--text3);background:var(--bg);border:1px solid var(--border);padding:4px 10px;border-radius:20px;font-weight:600">' +
+      totalInvoiced +
+      " فاتورة</span>" +
+      "</div></div>" +
+      '<div id="pinv-ce-container" style="padding:12px"></div></div>';
+
+    return (
+      '<div class="page-header">' +
+      '<div style="display:flex;align-items:center;gap:12px">' +
+      iconBadge("ti-file-invoice", "var(--purple-soft)", "var(--purple)") +
+      '<div><h1 style="font-size:22px;margin:0">فواتير الشراء</h1>' +
+      '<p style="margin:2px 0 0;color:var(--text3);font-size:13px">' +
+      totalInvoiced +
+      " فاتورة — " +
+      totalPending +
+      " إذن في الانتظار</p>" +
+      "</div></div>" +
+      '<div style="display:flex;gap:8px">' +
+      withPermission(
+        '<button class="btn btn-primary" id="pinv-new-btn" style="background:#5B21B6;border-color:#5B21B6"><i class="ti ti-plus" style="font-size:14px"></i> فاتورة جديدة</button>',
+        "addPurchaseInvoice",
+      ) +
+      withPermission(
+        '<button class="btn btn-outline" style="color:#7C3AED;border-color:#7C3AED" onclick="renderPage(\'purchase-returns\')"><i class="ti ti-file-minus" style="font-size:14px"></i> مرتجع الشراء</button>',
+        "addPurchaseInvoice",
+      ) +
+      "</div></div>" +
+      statsHtml +
+      pendingSection +
+      tableSection
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §helpers — دوال مساعدة للفواتير
+  // ─────────────────────────────────────────────────────────────
+
+  function _invStatusBadge(status) {
+    if (status === "كاش")
+      return '<span style="background:#D1FAE5;color:#065F46;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700"> كاش</span>';
+    if (status === "آجل")
+      return '<span style="background:#FEF3C7;color:#92400E;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700">⏳ آجل</span>';
+    return (
+      '<span style="background:var(--surface2);color:var(--text3);padding:2px 8px;border-radius:20px;font-size:11px">' +
+      esc(status || "—") +
+      "</span>"
+    );
+  }
+
+  // أذونات صادر (OUT) التي ليس لها فاتورة بيع بعد
+  /**
+   * _getPartyPhone — يجيب رقم هاتف العميل/المورد من APP.data.customers
+   */
+  function _getPartyPhone(partyNameOrId) {
+    if (!partyNameOrId) return "";
+    var customers = APP.data.customers || [];
+    var party = customers.find(function (c) {
+      return c.id === partyNameOrId || c.name === partyNameOrId;
+    });
+    return party ? party.phone || party.mobile || "" : "";
+  }
+
+  function _getPendingOutTransactions() {
+    var txs = APP.data.transactions || [];
+    var invoices = APP.data.saleInvoices || [];
+    var invoicedPermits = {};
+    invoices.forEach(function (inv) {
+      if (inv.permit_id) invoicedPermits[inv.permit_id] = true;
+    });
+
+    // اجمع الحركات OUT في سندات (permit_id) ولم تُفوتَر
+    var seen = {};
+    return txs.filter(function (tx) {
+      if (tx.type !== "OUT") return false;
+      var key = tx.permit_id && tx.permit_id.trim() ? tx.permit_id : tx.id;
+      if (!key) return false;
+      if (invoicedPermits[key]) return false;
+      if (seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+  }
+
+  // أذونات وارد (IN) التي ليس لها فاتورة شراء بعد
+  function _getPendingInTransactions() {
+    var txs = APP.data.transactions || [];
+    var invoices = APP.data.purchaseInvoices || [];
+    var invoicedPermits = {};
+    invoices.forEach(function (inv) {
+      if (inv.permit_id) invoicedPermits[inv.permit_id] = true;
+    });
+
+    var seen = {};
+    return txs.filter(function (tx) {
+      if (tx.type !== "IN") return false;
+      var key = tx.permit_id && tx.permit_id.trim() ? tx.permit_id : tx.id;
+      if (!key) return false;
+      if (invoicedPermits[key]) return false;
+      if (seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+  }
+
+  // ═════════════════════════════════════════════════════════════════
+  // نهاية §renderInvoices
+  // ═════════════════════════════════════════════════════════════════
+
+  // ═════════════════════════════════════════════════════════════════
+  // §renderReturns — مرتجع البيع ومرتجع الشراء
+  // ═════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+  // §renderSaleReturns — مرتجع البيع
+  // ─────────────────────────────────────────────────────────────
+  function renderSaleReturns() {
+    var returns = (APP.data.saleReturns || []).slice().reverse();
+
+    var totalReturns = returns.length;
+    var totalAmount = returns.reduce(function (s, r) {
+      return s + Number(r.net_total || 0);
+    }, 0);
+    var thisMonth = new Date().toISOString().slice(0, 7);
+    var monthCount = returns.filter(function (r) {
+      return (r.date || "").slice(0, 7) === thisMonth;
+    }).length;
+
+    var statsHtml =
+      '<div class="stat-grid" style="margin-bottom:20px">' +
+      statCard(
+        iconBadge("ti-file-minus", "var(--danger-soft)", "var(--danger)"),
+        "إجمالي المرتجعات",
+        totalReturns,
+        "مرتجع",
+        "var(--danger-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-calendar-month", "var(--warning-soft)", "var(--warning)"),
+        "مرتجعات هذا الشهر",
+        monthCount,
+        "مرتجع",
+        "var(--warning-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-currency-pound", "var(--success-soft)", "var(--success)"),
+        "إجمالي قيمة المرتجع",
+        formatMoney(totalAmount, { decimals: 0, withSymbol: false }),
+        "ج.م",
+        "var(--success-soft)",
+      ) +
+      "</div>";
+
+    // [COLUMN-ENGINE] الجدول الثابت انتقل بالكامل إلى ColumnEngine (راجع
+    // 34_JS_ColumnEngine.html و _sretRenderTable/_sretRegisterColumns في
+    // 15_JS_Invoices.html). زر الحذف انتقل إلى column.format لعمود _actions.
+    return (
+      '<div class="page-header"><h1 class="page-title"><i class="ti ti-file-minus" style="color:#DC2626"></i> مرتجع البيع</h1>' +
+      withPermission(
+        '<button class="btn btn-danger" id="sret-new-btn"><i class="ti ti-plus"></i> مرتجع جديد</button>',
+        "addSaleInvoice",
+      ) +
+      "</div>" +
+      statsHtml +
+      '<div class="card" style="padding:0;overflow:hidden">' +
+      '<div id="sret-ce-container" style="padding:12px"></div></div>'
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §renderPurchaseReturns — مرتجع الشراء
+  // ─────────────────────────────────────────────────────────────
+  function renderPurchaseReturns() {
+    var returns = (APP.data.purchaseReturns || []).slice().reverse();
+
+    var totalReturns = returns.length;
+    var totalAmount = returns.reduce(function (s, r) {
+      return s + Number(r.net_total || 0);
+    }, 0);
+    var thisMonth = new Date().toISOString().slice(0, 7);
+    var monthCount = returns.filter(function (r) {
+      return (r.date || "").slice(0, 7) === thisMonth;
+    }).length;
+
+    var statsHtml =
+      '<div class="stat-grid" style="margin-bottom:20px">' +
+      statCard(
+        iconBadge("ti-file-minus", "var(--purple-soft)", "var(--purple)"),
+        "إجمالي المرتجعات",
+        totalReturns,
+        "مرتجع",
+        "var(--accent-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-calendar-month", "var(--warning-soft)", "var(--warning)"),
+        "مرتجعات هذا الشهر",
+        monthCount,
+        "مرتجع",
+        "var(--warning-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-currency-pound", "var(--success-soft)", "var(--success)"),
+        "إجمالي قيمة المرتجع",
+        formatMoney(totalAmount, { decimals: 0, withSymbol: false }),
+        "ج.م",
+        "var(--success-soft)",
+      ) +
+      "</div>";
+
+    // [COLUMN-ENGINE] الجدول الثابت انتقل بالكامل إلى ColumnEngine (راجع
+    // 34_JS_ColumnEngine.html و _pretRenderTable/_pretRegisterColumns في
+    // 15_JS_Invoices.html). ملاحظة: كان هذا الجدول القديم به Bug — صفوفه
+    // كانت تفتقد أعمدة البنود/الإجمالي/الحذف (raw HTML string غير مكتمل)
+    // — تم تصحيحه تلقائيًا لأن ColumnEngine يبني كل عمود من الـ Metadata
+    // بدل تركيب <td> يدويًا لكل صف.
+    return (
+      '<div class="page-header"><h1 class="page-title"><i class="ti ti-file-minus" style="color:#7C3AED"></i> مرتجع الشراء</h1>' +
+      withPermission(
+        '<button class="btn" style="background:#7C3AED;color:#fff" id="pret-new-btn"><i class="ti ti-plus"></i> مرتجع جديد</button>',
+        "addPurchaseInvoice",
+      ) +
+      "</div>" +
+      statsHtml +
+      '<div class="card" style="padding:0;overflow:hidden">' +
+      '<div id="pret-ce-container" style="padding:12px"></div></div>'
+    );
+  }
+
+  // ═════════════════════════════════════════════════════════════════
+  // نهاية §renderReturns
+  // ═════════════════════════════════════════════════════════════════
+
+  // ================================================================
+  // §R-PROD-STAGES  مراحل الإنتاج — Production Stages
+  // ================================================================
+  // ── Monthly Attendance Report — التقرير الشهري للحضور ──
+  function renderMonthlyAttendance() {
+    var html = _renderPageHeader(
+      "التقرير الشهري للحضور",
+      "ملخص حضور وغياب وتأخيرات الموظفين لكل شهر",
+      {
+        bgIcon: "ti-table",
+        bgColor: "var(--success-soft)",
+        iconColor: "var(--success-dark)",
+      },
+      "",
+    );
+
+    html += '<div class="card">';
+    html +=
+      '<div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end">';
+    html +=
+      '<div style="display:flex;flex-direction:column;gap:4px"><label style="font-size:12px;color:var(--text3)">السنة</label>' +
+      '<input type="number" id="matt-year" class="form-input" style="width:100px" value="' +
+      DateEngine.currentYear() +
+      '"></div>';
+    html +=
+      '<div style="display:flex;flex-direction:column;gap:4px"><label style="font-size:12px;color:var(--text3)">الشهر</label>' +
+      '<input type="number" id="matt-month" class="form-input" style="width:80px" min="1" max="12" value="' +
+      (new Date().getMonth() + 1) +
+      '"></div>';
+    html +=
+      '<div style="display:flex;flex-direction:column;gap:4px"><label style="font-size:12px;color:var(--text3)">الموظف</label>' +
+      '<select id="matt-emp-filter" class="form-select" style="min-width:180px"><option value="">كل الموظفين</option></select></div>';
+    html +=
+      '<button class="btn btn-primary" id="matt-btn-load" style="align-self:flex-end"><i class="ti ti-search"></i> عرض التقرير</button>';
+    html += "</div>";
+    html +=
+      '<div id="matt-results"><div class="empty-state"><div class="empty-icon"></div>' +
+      "<p>اختر الشهر والسنة ثم اضغط عرض التقرير</p></div></div>";
+    html += "</div>";
+
+    return html;
+  }
+
+  // ── Leave Balance — رصيد الإجازات ──
+  function renderLeaveBalance() {
+    var html = _renderPageHeader(
+      "رصيد الإجازات",
+      "عرض رصيد الإجازات المتبقي لكل موظف",
+      {
+        bgIcon: "ti-chart-pie",
+        bgColor: "var(--teal-soft)",
+        iconColor: "var(--teal)",
+      },
+      "",
+    );
+
+    html += '<div class="card">';
+    html +=
+      '<div style="display:flex;gap:12px;margin-bottom:20px;align-items:center">';
+    html +=
+      '<select id="lbal-emp-select" class="form-select" style="flex:1;max-width:320px"><option value="">— اختر الموظف —</option></select>';
+    html += "</div>";
+    html +=
+      '<div id="lbal-results"><div class="empty-state"><div class="empty-icon"></div>' +
+      "<p>اختر موظفاً لعرض رصيد إجازاته</p></div></div>";
+    html += "</div>";
+
+    return html;
+  }
+
+  function renderProductionStages() {
+    var canAdd = canDo("viewHR"); // يمكن ضبطها على صلاحية خاصة لاحقاً
+
+    var html = _renderPageHeader(
+      "موظفو الإنتاج (أجور القطعة)",
+      "إدارة مراحل العمل وأسعار الوحدات لاحتساب أجور موظفي الإنتاج",
+      {
+        bgIcon: "ti-tools",
+        bgColor: "var(--teal-soft)",
+        iconColor: "var(--teal)",
+      },
+      canAdd
+        ? '<button class="btn btn-primary" id="ps-btn-add"><i class="ti ti-plus"></i> مرحلة جديدة</button>' +
+            '<button class="btn btn-outline" id="ps-btn-export-excel" style="margin-right:8px"><i class="ti ti-table-export"></i> Excel</button>' +
+            '<button class="btn btn-outline" id="ps-btn-export-pdf" style="margin-right:8px"><i class="ti ti-file-type-pdf"></i> PDF</button>'
+        : "",
+    );
+
+    // ── بطاقات الإحصائيات ──
+    html += '<div class="stat-grid" id="ps-stats-grid">';
+    html += statCard(
+      iconBadge("ti-tools", "var(--teal-soft)", "var(--teal)"),
+      "إجمالي المراحل",
+      '<span id="ps-stat-total">—</span>',
+      "مرحلة",
+      "",
+    );
+    html += statCard(
+      iconBadge(
+        "ti-circle-check",
+        "var(--success-soft)",
+        "var(--success-dark)",
+      ),
+      "مراحل نشطة",
+      '<span id="ps-stat-active">—</span>',
+      "مرحلة",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-refresh", "var(--accent-soft)", "var(--primary)"),
+      "إجمالي التنفيذات",
+      '<span id="ps-stat-exec">—</span>',
+      "عملية",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-cash", "var(--purple-soft)", "var(--purple)"),
+      "إجمالي المستحقات",
+      '<span id="ps-stat-cost" class="sensitive-balance">—</span>',
+      "ج.م",
+      "",
+    );
+    html += "</div>";
+
+    // ── شريط البحث والفلترة ──
+    html +=
+      '<div class="card" style="margin-bottom:0;border-radius:12px 12px 0 0;border-bottom:none">';
+    html +=
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:4px 0">';
+    html += '<div style="position:relative;flex:1;min-width:200px">';
+    html +=
+      '<i class="ti ti-search" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--text3);pointer-events:none"></i>';
+    html +=
+      '<input class="input" id="ps-search" placeholder="بحث بالاسم أو الكود..." style="padding-right:34px;width:100%">';
+    html += "</div>";
+    html +=
+      '<select class="input" id="ps-filter-dept" style="width:160px"><option value="">كل الأقسام</option></select>';
+    html += '<select class="input" id="ps-filter-status" style="width:130px">';
+    html += '<option value="">كل الحالات</option>';
+    html += '<option value="active">نشطة</option>';
+    html += '<option value="inactive">موقوفة</option>';
+    html += "</select>";
+    html += '<select class="input" id="ps-filter-unit" style="width:130px">';
+    html += '<option value="">كل الوحدات</option>';
+    html += '<option value="قطعة">قطعة</option>';
+    html += '<option value="كيلو">كيلو</option>';
+    html += '<option value="متر">متر</option>';
+    html += '<option value="عبوة">عبوة</option>';
+    html += "</select>";
+    html +=
+      '<button class="btn btn-outline btn-sm" id="ps-btn-clear-filters"><i class="ti ti-x"></i> مسح</button>';
+    html += "</div></div>";
+
+    // ── الجدول الرئيسي ──
+    html +=
+      '<div class="card" style="border-radius:0 0 12px 12px;margin-top:0">';
+    html += '<div class="table-wrap">';
+    html +=
+      '<table class="table" id="ps-main-table">' +
+      "<thead><tr>" +
+      "<th style='width:90px'>الكود</th>" +
+      "<th>اسم المرحلة</th>" +
+      "<th>القسم</th>" +
+      "<th style='width:80px'>الوحدة</th>" +
+      "<th style='width:110px'>السعر/وحدة</th>" +
+      "<th style='width:80px;text-align:center'>تنفيذات</th>" +
+      "<th style='width:90px'>الحالة</th>" +
+      "<th style='width:105px'>تاريخ الإنشاء</th>" +
+      "</tr></thead>" +
+      '<tbody id="ps-table-body">' +
+      _loadingRow(9) +
+      "</tbody></table>";
+    html += "</div>";
+
+    // ── Pagination ──
+    html +=
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 4px 0;flex-wrap:wrap;gap:8px">';
+    html +=
+      '<span id="ps-pagination-info" style="font-size:12px;color:var(--text3)"></span>';
+    html += '<div id="ps-pagination-btns" style="display:flex;gap:4px"></div>';
+    html += "</div>";
+
+    html += "</div>"; // end card
+
+    // ── ملاحظة: نموذج الإضافة/التعديل بقى يُبنى ديناميكياً عبر openHRDrawer()
+    // (راجع openPSFormDrawer في 12_JS_HR.html) — لم يعد يُولَّد كـ HTML ثابت هنا.
+
+    // ── Drawer: التفاصيل ──
+    html += _renderPSDetailDrawer();
+
+    return html;
+  }
+
+  // ── Drawer: تفاصيل المرحلة ──
+  function _renderPSDetailDrawer() {
+    return (
+      '<div id="ps-detail-drawer" style="display:none;position:fixed;inset:0;z-index:1200;direction:rtl">' +
+      '<div class="hr-drawer-overlay" onclick="closePSDetailDrawer()"></div>' +
+      '<div class="hr-drawer" style="width:min(720px,100vw)">' +
+      '<div class="hr-drawer-header" style="background:linear-gradient(135deg,#0f766e,#14b8a6)">' +
+      '<div style="display:flex;align-items:center;gap:12px">' +
+      '<div style="width:38px;height:38px;border-radius:10px;background:rgba(255,255,255,.15);display:flex;align-items:center;justify-content:center;font-size:18px">' +
+      '<i class="ti ti-eye"></i></div>' +
+      '<div><div id="ps-detail-title" style="font-size:15px;font-weight:700;color:#fff">تفاصيل المرحلة</div>' +
+      '<div id="ps-detail-code" style="font-size:12px;color:rgba(255,255,255,.75)">—</div></div>' +
+      "</div>" +
+      '<button onclick="closePSDetailDrawer()" style="background:rgba(255,255,255,.15);border:none;color:#fff;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center">&times;</button>' +
+      "</div>" +
+      '<div class="hr-drawer-body" style="padding:24px" id="ps-detail-body">' +
+      _loadingBlock() +
+      "</div>" +
+      '<div class="hr-drawer-footer">' +
+      '<button class="btn btn-primary" id="ps-detail-edit-btn"><i class="ti ti-edit"></i> تعديل</button>' +
+      '<button class="btn btn-outline" onclick="closePSDetailDrawer()"><i class="ti ti-x"></i> إغلاق</button>' +
+      "</div>" +
+      "</div></div>"
+    );
+  }
+
+  // ═════════════════════════════════════════════════════════════════
+  // نهاية §R-PROD-STAGES
+  // ═════════════════════════════════════════════════════════════════
+
+  // نهاية §renderReturns
+  // ═════════════════════════════════════════════════════════════════
+
+  // ═════════════════════════════════════════════════════════════════
+  // §VFC  مركز عمليات المحافظ الإلكترونية (Wallets Operations Center)
+  // ═════════════════════════════════════════════════════════════════
+
+  // ── شعارات شركات المحافظ (SVG مضمّن كـ data URI) ──────────────
+  var VFC_LOGOS = {
+    vodafone:
+      "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20200%20200%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20rx%3D%2240%22%20fill%3D%22%23E60000%22%2F%3E%3Cpath%20d%3D%22M52%2055%20L100%20145%20L148%2055%20L122%2055%20L100%20100%20L78%2055%20Z%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E",
+    orange:
+      "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20200%20200%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20rx%3D%2240%22%20fill%3D%22%23FF7900%22%2F%3E%3Ccircle%20cx%3D%22100%22%20cy%3D%22100%22%20r%3D%2252%22%20fill%3D%22white%22%2F%3E%3Ccircle%20cx%3D%22100%22%20cy%3D%22100%22%20r%3D%2232%22%20fill%3D%22%23FF7900%22%2F%3E%3C%2Fsvg%3E",
+    etisalat:
+      "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20200%20200%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20rx%3D%2240%22%20fill%3D%22%2384BD00%22%2F%3E%3Ctext%20x%3D%22100%22%20y%3D%22148%22%20font-family%3D%22Arial%2Csans-serif%22%20font-weight%3D%22900%22%20font-size%3D%22140%22%20fill%3D%22white%22%20text-anchor%3D%22middle%22%3Ee%3C%2Ftext%3E%3C%2Fsvg%3E",
+    we: "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20200%20200%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20rx%3D%2240%22%20fill%3D%22%236F2DA8%22%2F%3E%3Ctext%20x%3D%22100%22%20y%3D%22138%22%20font-family%3D%22Arial%20Black%2CArial%22%20font-weight%3D%22900%22%20font-size%3D%22100%22%20fill%3D%22white%22%20text-anchor%3D%22middle%22%3EWE%3C%2Ftext%3E%3C%2Fsvg%3E",
+    instapay:
+      "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20200%20200%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20rx%3D%2240%22%20fill%3D%22%231D4ED8%22%2F%3E%3Cpolygon%20points%3D%22115%2C25%2060%2C110%2095%2C110%2085%2C175%20140%2C90%20105%2C90%22%20fill%3D%22white%22%2F%3E%3C%2Fsvg%3E",
+  };
+
+  var VFC_PROVIDER_META = {
+    vodafone: {
+      name: "Vodafone Cash",
+      short: "فودافون كاش",
+      color: "#E60000",
+      icon: "ti-device-mobile-dollar",
+      logo: VFC_LOGOS.vodafone,
+    },
+    orange: {
+      name: "Orange Cash",
+      short: "أورانج كاش",
+      color: "#FF7900",
+      icon: "ti-device-mobile-dollar",
+      logo: VFC_LOGOS.orange,
+    },
+    etisalat: {
+      name: "Etisalat Cash",
+      short: "اتصالات كاش",
+      color: "#84BD00",
+      icon: "ti-device-mobile-dollar",
+      logo: VFC_LOGOS.etisalat,
+    },
+    we: {
+      name: "WE Pay",
+      short: "وي باي",
+      color: "#6F2DA8",
+      icon: "ti-device-mobile-dollar",
+      logo: VFC_LOGOS.we,
+    },
+    instapay: {
+      name: "InstaPay",
+      short: "إنستاباي",
+      color: "#1D4ED8",
+      icon: "ti-bolt",
+      logo: VFC_LOGOS.instapay,
+    },
+  };
+
+  var VFC_STATUS_META_FE = {
+    available: { label: "متاح", color: "#10B981", dot: "" },
+    near_limit: { label: "اقترب من الحد", color: "#F59E0B", dot: "" },
+    needs_recharge: { label: "يحتاج شحن", color: "#F97316", dot: "" },
+    over_limit: { label: "تجاوز الحد", color: "#EF4444", dot: "" },
+    suspended: { label: "موقوف", color: "#64748B", dot: "" },
+  };
+
+  function _vfcFmtMoney(n) {
+    return formatMoney(n, { decimals: 0 });
+  }
+
+  function _vfcFmtDateTime(d) {
+    if (!d) return "—";
+    var dt = new Date(d);
+    if (isNaN(dt)) return "—";
+    return dt.toLocaleString("en-US", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  function _vfcTimeAgo(d) {
+    if (!d) return "—";
+    var diff = Date.now() - new Date(d).getTime();
+    if (diff < 0) diff = 0;
+    var m = Math.floor(diff / 60000);
+    if (m < 1) return "الآن";
+    if (m < 60) return "منذ " + m + " دقيقة";
+    var h = Math.floor(m / 60);
+    if (h < 24) return "منذ " + h + " ساعة";
+    var dd = Math.floor(h / 24);
+    return "منذ " + dd + " يوم";
+  }
+
+  function _vfcTypeLabel(type) {
+    return (
+      {
+        deposit: "إيداع",
+        withdraw: "سحب",
+        transfer_in: "تحويل وارد",
+        transfer_out: "تحويل صادر",
+        recharge: "شحن رصيد",
+      }[type] || type
+    );
+  }
+
+  function _vfcTypeIcon(type) {
+    return (
+      {
+        deposit: "ti-arrow-down-circle",
+        withdraw: "ti-arrow-up-circle",
+        transfer_in: "ti-corner-left-down",
+        transfer_out: "ti-corner-right-up",
+        recharge: "ti-battery-charging",
+      }[type] || "ti-receipt"
+    );
+  }
+
+  // ── أداة رسم SVG بسيطة (Bar Chart) — لا اعتماد على مكتبات خارجية ──
+  function _vfcSvgBarChart(series, opts) {
+    opts = opts || {};
+    var w = opts.width || 560,
+      h = opts.height || 160,
+      pad = 28;
+    var max = 1;
+    series.forEach(function (s) {
+      max = Math.max(max, s.a || 0, s.b || 0);
+    });
+    var n = series.length || 1;
+    var groupW = (w - pad * 2) / n;
+    var barW = Math.max(6, groupW * 0.28);
+    var bars = "";
+    series.forEach(function (s, i) {
+      var gx = pad + i * groupW + groupW / 2;
+      var ah = max > 0 ? ((s.a || 0) / max) * (h - pad - 18) : 0;
+      var bh = max > 0 ? ((s.b || 0) / max) * (h - pad - 18) : 0;
+      bars +=
+        '<rect x="' +
+        (gx - barW - 2) +
+        '" y="' +
+        (h - pad - ah) +
+        '" width="' +
+        barW +
+        '" height="' +
+        ah +
+        '" rx="3" fill="' +
+        (opts.colorA || "#10B981") +
+        '" opacity="0.92"/>';
+      bars +=
+        '<rect x="' +
+        (gx + 2) +
+        '" y="' +
+        (h - pad - bh) +
+        '" width="' +
+        barW +
+        '" height="' +
+        bh +
+        '" rx="3" fill="' +
+        (opts.colorB || "#EF4444") +
+        '" opacity="0.92"/>';
+      bars +=
+        '<text x="' +
+        gx +
+        '" y="' +
+        (h - 8) +
+        '" font-size="10" fill="var(--text3,#64748B)" text-anchor="middle">' +
+        esc(s.label || "") +
+        "</text>";
+    });
+    bars +=
+      '<line x1="' +
+      pad +
+      '" y1="' +
+      (h - pad) +
+      '" x2="' +
+      (w - pad) +
+      '" y2="' +
+      (h - pad) +
+      '" stroke="var(--border,#1E293B)" stroke-width="1"/>';
+    return (
+      '<svg viewBox="0 0 ' +
+      w +
+      " " +
+      h +
+      '" width="100%" height="' +
+      h +
+      '" xmlns="http://www.w3.org/2000/svg">' +
+      bars +
+      "</svg>"
+    );
+  }
+
+  function _vfcSvgDonut(slices, opts) {
+    opts = opts || {};
+    var size = opts.size || 140,
+      r = size / 2 - 10,
+      cx = size / 2,
+      cy = size / 2;
+    var total =
+      slices.reduce(function (s, x) {
+        return s + (x.value || 0);
+      }, 0) || 1;
+    var startAngle = -90;
+    var paths = "";
+    slices.forEach(function (sl) {
+      var angle = (sl.value / total) * 360;
+      var endAngle = startAngle + angle;
+      var x1 = cx + r * Math.cos((Math.PI * startAngle) / 180);
+      var y1 = cy + r * Math.sin((Math.PI * startAngle) / 180);
+      var x2 = cx + r * Math.cos((Math.PI * endAngle) / 180);
+      var y2 = cy + r * Math.sin((Math.PI * endAngle) / 180);
+      var large = angle > 180 ? 1 : 0;
+      if (sl.value > 0) {
+        paths +=
+          '<path d="M' +
+          cx +
+          " " +
+          cy +
+          " L" +
+          x1 +
+          " " +
+          y1 +
+          " A" +
+          r +
+          " " +
+          r +
+          " 0 " +
+          large +
+          " 1 " +
+          x2 +
+          " " +
+          y2 +
+          ' Z" fill="' +
+          sl.color +
+          '" opacity="0.9"><title>' +
+          esc(sl.label) +
+          "</title></path>";
+      }
+      startAngle = endAngle;
+    });
+    return (
+      '<svg viewBox="0 0 ' +
+      size +
+      " " +
+      size +
+      '" width="' +
+      size +
+      '" height="' +
+      size +
+      '" xmlns="http://www.w3.org/2000/svg"><circle cx="' +
+      cx +
+      '" cy="' +
+      cy +
+      '" r="' +
+      r +
+      '" fill="var(--bg2,#1E293B)"/>' +
+      paths +
+      '<circle cx="' +
+      cx +
+      '" cy="' +
+      cy +
+      '" r="' +
+      r * 0.55 +
+      '" fill="var(--bg1,#0F172A)"/></svg>'
+    );
+  }
+
+  function _vfcSparkline(values, color) {
+    if (!values || !values.length) return "";
+    var w = 70,
+      h = 26;
+    var max = Math.max.apply(null, values.concat([1]));
+    var min = Math.min.apply(null, values.concat([0]));
+    var range = max - min || 1;
+    var step = w / Math.max(1, values.length - 1);
+    var pts = values
+      .map(function (v, i) {
+        return i * step + "," + (h - ((v - min) / range) * (h - 4) - 2);
+      })
+      .join(" ");
+    return (
+      '<svg viewBox="0 0 ' +
+      w +
+      " " +
+      h +
+      '" width="' +
+      w +
+      '" height="' +
+      h +
+      '" xmlns="http://www.w3.org/2000/svg"><polyline points="' +
+      pts +
+      '" fill="none" stroke="' +
+      color +
+      '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+    );
+  }
+
+  // ── KPI Card واحد ──
+  function _vfcKpiCard(opts) {
+    return (
+      '<div class="vc-kpi-card" style="--kpi-color:' +
+      opts.color +
+      '">' +
+      '<div class="vc-kpi-top">' +
+      '<div class="vc-kpi-icon"><i class="ti ' +
+      opts.icon +
+      '"></i></div>' +
+      (opts.trend !== undefined && opts.trend !== null
+        ? '<div class="vc-kpi-trend ' +
+          (opts.trend >= 0 ? "up" : "down") +
+          '"><i class="ti ti-trending-' +
+          (opts.trend >= 0 ? "up" : "down") +
+          '"></i>' +
+          Math.abs(opts.trend) +
+          "%</div>"
+        : "") +
+      "</div>" +
+      '<div class="vc-kpi-value">' +
+      opts.value +
+      "</div>" +
+      '<div class="vc-kpi-label">' +
+      opts.label +
+      "</div>" +
+      (opts.spark ? '<div class="vc-kpi-spark">' + opts.spark + "</div>" : "") +
+      "</div>"
+    );
+  }
+
+  // ── شاشة الدخول الرئيسية ──
+  function renderVodafoneCash() {
+    if (!canDo("viewVodafoneCash")) {
+      return "<div style='padding:40px;text-align:center;color:#ef4444;font-size:18px'> ليس لديك صلاحية لعرض هذه الشاشة</div>";
+    }
+    return (
+      '<div class="vc-page">' +
+      '<div class="vc-header">' +
+      '<div class="vc-header-title">' +
+      '<div class="vc-header-icon"><i class="ti ti-wallet"></i></div>' +
+      "<div><h1>مركز عمليات المحافظ الإلكترونية</h1>" +
+      "<p>Vodafone Cash · Orange Cash · Etisalat Cash · WE Pay · InstaPay</p></div>" +
+      "</div>" +
+      '<div class="header-actions">' +
+      '<button class="btn btn-outline btn-sm" id="vc-refresh-btn"><i class="ti ti-refresh"></i> تحديث</button>' +
+      '<button class="btn btn-outline btn-sm" id="vc-export-excel-btn"><i class="ti ti-file-spreadsheet"></i> تصدير Excel</button>' +
+      (canDo("addVodafoneCashLine")
+        ? '<button class="btn btn-primary btn-sm" id="vc-add-line-btn"><i class="ti ti-plus"></i> إضافة خط جديد</button>'
+        : "") +
+      "</div>" +
+      "</div>" +
+      '<div class="vc-provider-tabs" id="vc-provider-tabs"></div>' +
+      '<div class="vc-kpi-grid" id="vc-kpi-grid"><div class="vc-skel-row"></div></div>' +
+      '<div class="vc-grid-2col">' +
+      '<div class="vc-panel">' +
+      '<div class="vc-panel-head"><h3><i class="ti ti-bell"></i> مركز التنبيهات</h3><span class="vc-badge" id="vc-alerts-count">0</span></div>' +
+      '<div class="vc-alerts-wrap" id="vc-alerts-wrap">' +
+      _loadingInline() +
+      "</div>" +
+      "</div>" +
+      '<div class="vc-panel">' +
+      '<div class="vc-panel-head"><h3><i class="ti ti-bulb"></i> ذكاء الأعمال (Business Insights)</h3></div>' +
+      '<div class="vc-insights-wrap" id="vc-insights-wrap">' +
+      _loadingInline() +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      '<div class="vc-grid-2col">' +
+      '<div class="vc-panel" style="flex:1.4">' +
+      '<div class="vc-panel-head"><h3><i class="ti ti-chart-bar"></i> الإيداعات والسحوبات (آخر 7 أيام)</h3></div>' +
+      '<div id="vc-chart-week" class="vc-chart-wrap"></div>' +
+      "</div>" +
+      '<div class="vc-panel">' +
+      '<div class="vc-panel-head"><h3><i class="ti ti-chart-donut"></i> توزيع الشركات</h3></div>' +
+      '<div id="vc-chart-providers" class="vc-chart-wrap vc-chart-center"></div>' +
+      "</div>" +
+      "</div>" +
+      '<div class="vc-grid-2col">' +
+      '<div class="vc-panel">' +
+      '<div class="vc-panel-head"><h3><i class="ti ti-trophy"></i> أكثر الخطوط استخداماً</h3></div>' +
+      '<div id="vc-top-lines" class="vc-top-list"></div>' +
+      "</div>" +
+      '<div class="vc-panel">' +
+      '<div class="vc-panel-head"><h3><i class="ti ti-users"></i> أكثر الموظفين تنفيذاً</h3></div>' +
+      '<div id="vc-top-employees" class="vc-top-list"></div>' +
+      "</div>" +
+      "</div>" +
+      '<div class="vc-panel">' +
+      '<div class="vc-panel-head vc-toolbar-head">' +
+      '<h3><i class="ti ti-list-details"></i> لوحة متابعة الخطوط</h3>' +
+      '<div class="vc-toolbar">' +
+      '<div class="vc-search-box"><i class="ti ti-search"></i><input type="text" id="vc-search" placeholder="بحث برقم الخط / الاسم / الفرع / الموظف..."/></div>' +
+      '<select id="vc-filter-status" class="vc-select"><option value="">كل الحالات</option>' +
+      Object.keys(VFC_STATUS_META_FE)
+        .map(function (k) {
+          return (
+            '<option value="' +
+            k +
+            '">' +
+            VFC_STATUS_META_FE[k].dot +
+            " " +
+            VFC_STATUS_META_FE[k].label +
+            "</option>"
+          );
+        })
+        .join("") +
+      "</select>" +
+      '<button class="btn btn-outline btn-sm" id="vc-filters-toggle"><i class="ti ti-adjustments"></i> فلاتر متقدمة</button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="vc-advanced-filters" id="vc-advanced-filters" style="display:none">' +
+      '<select id="vc-filter-branch" class="vc-select"><option value="">كل الفروع</option></select>' +
+      '<select id="vc-filter-employee" class="vc-select"><option value="">كل الموظفين</option></select>' +
+      '<button class="btn btn-ghost btn-sm" id="vc-filters-clear">مسح الفلاتر</button>' +
+      "</div>" +
+      '<div class="vc-table-wrap" id="vc-lines-table-wrap">' +
+      _loadingInline() +
+      "</div>" +
+      "</div>" +
+      '<div class="vc-panel">' +
+      '<div class="vc-panel-head"><h3><i class="ti ti-bolt"></i> مراقبة مباشرة (Live Feed)</h3><span class="vc-live-pill" id="vc-live-pill"><i class="ti ti-circle-filled"></i> مباشر</span></div>' +
+      '<div class="vc-live-feed" id="vc-live-feed">' +
+      _loadingInline() +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  // ── شريط تابات الشركات ──
+  function _vfcRenderProviderTabs(activeProvider, providerUsage) {
+    var tabs = [
+      '<button class="vc-ptab' +
+        (!activeProvider ? " active" : "") +
+        '" data-provider="">' +
+        '<i class="ti ti-apps"></i> الكل</button>',
+    ];
+    Object.keys(VFC_PROVIDER_META).forEach(function (key) {
+      var meta = VFC_PROVIDER_META[key];
+      var usage = (providerUsage || []).find(function (p) {
+        return p.provider === key;
+      });
+      var logoHtml = meta.logo
+        ? '<img class="vc-ptab-logo" src="' +
+          meta.logo +
+          '" alt="' +
+          meta.name +
+          '"/>'
+        : '<i class="ti ' + meta.icon + '"></i>';
+      tabs.push(
+        '<button class="vc-ptab' +
+          (activeProvider === key ? " active" : "") +
+          '" data-provider="' +
+          key +
+          '" style="--ptab-color:' +
+          meta.color +
+          '">' +
+          logoHtml +
+          " " +
+          meta.short +
+          (usage
+            ? '<span class="vc-ptab-count">' + usage.linesCount + "</span>"
+            : "") +
+          "</button>",
+      );
+    });
+    return tabs.join("");
+  }
+
+  // ── شبكة الـ KPI Cards ──
+  function _vfcRenderKpis(data) {
+    var k = data.kpis;
+    return (
+      _vfcKpiCard({
+        icon: "ti-circle-check",
+        color: "#10B981",
+        value: k.activeLines,
+        label: "خطوط نشطة",
+      }) +
+      _vfcKpiCard({
+        icon: "ti-circle-x",
+        color: "#64748B",
+        value: k.suspendedLines,
+        label: "خطوط موقوفة",
+      }) +
+      _vfcKpiCard({
+        icon: "ti-wallet",
+        color: "#2563EB",
+        value:
+          '<span class="sensitive-balance">' +
+          _vfcFmtMoney(k.totalBalance) +
+          "</span>",
+        label: "إجمالي الرصيد الحالي",
+      }) +
+      _vfcKpiCard({
+        icon: "ti-receipt",
+        color: "#7C3AED",
+        value: k.todayTxCount,
+        label: "عمليات اليوم",
+        trend: k.vsYesterdayTxPct,
+      }) +
+      _vfcKpiCard({
+        icon: "ti-arrow-down-circle",
+        color: "#10B981",
+        value:
+          '<span class="sensitive-balance">' +
+          _vfcFmtMoney(k.todayDeposits) +
+          "</span>",
+        label: "إجمالي الإيداعات اليوم",
+      }) +
+      _vfcKpiCard({
+        icon: "ti-arrow-up-circle",
+        color: "#EF4444",
+        value:
+          '<span class="sensitive-balance">' +
+          _vfcFmtMoney(k.todayWithdrawals) +
+          "</span>",
+        label: "إجمالي السحوبات اليوم",
+      }) +
+      _vfcKpiCard({
+        icon: "ti-percentage",
+        color: "#F59E0B",
+        value:
+          '<span class="sensitive-balance">' +
+          _vfcFmtMoney(k.todayCommission) +
+          "</span>",
+        label: "عمولات اليوم",
+      }) +
+      _vfcKpiCard({
+        icon: "ti-clock-hour-4",
+        color: "#F97316",
+        value: k.pendingCount,
+        label: "عمليات معلقة",
+      }) +
+      _vfcKpiCard({
+        icon: "ti-alert-circle",
+        color: "#EF4444",
+        value: k.failedCount,
+        label: "عمليات فاشلة",
+      }) +
+      _vfcKpiCard({
+        icon: "ti-gauge",
+        color: "#F59E0B",
+        value: k.nearLimitCount,
+        label: "اقتربت من الحد اليومي",
+      }) +
+      _vfcKpiCard({
+        icon: "ti-alert-triangle",
+        color: "#EF4444",
+        value: k.overLimitCount,
+        label: "تجاوزت الحد",
+      }) +
+      _vfcKpiCard({
+        icon: "ti-battery-2",
+        color: "#F97316",
+        value: k.needsRechargeCount,
+        label: "تحتاج شحن رصيد",
+      })
+    );
+  }
+
+  // ── مركز التنبيهات ──
+  function _vfcRenderAlerts(alerts) {
+    if (!alerts || !alerts.length) {
+      return '<div class="vc-empty-mini"><i class="ti ti-check"></i> لا توجد تنبيهات حالياً</div>';
+    }
+    var sevIcon = {
+      critical: "ti-alert-octagon",
+      warning: "ti-alert-triangle",
+      info: "ti-info-circle",
+    };
+    var sevColor = { critical: "#EF4444", warning: "#F59E0B", info: "#3B82F6" };
+    return alerts
+      .slice(0, 12)
+      .map(function (a) {
+        return (
+          '<div class="vc-alert-item" data-line-id="' +
+          (a.lineId || "") +
+          '" style="--alert-color:' +
+          sevColor[a.severity] +
+          '">' +
+          '<i class="ti ' +
+          sevIcon[a.severity] +
+          '"></i>' +
+          '<div class="vc-alert-text">' +
+          esc(a.message) +
+          "</div>" +
+          "</div>"
+        );
+      })
+      .join("");
+  }
+
+  // ── ذكاء الأعمال ──
+  function _vfcRenderInsights(ins) {
+    var rows = [];
+    if (ins.bestLineToday)
+      rows.push({
+        icon: "ti-crown",
+        color: "#F59E0B",
+        text:
+          "أفضل خط اليوم: " +
+          esc(ins.bestLineToday.name) +
+          " (" +
+          ins.bestLineToday.count +
+          " عملية)",
+      });
+    if (ins.leastUsedLine)
+      rows.push({
+        icon: "ti-trending-down",
+        color: "#64748B",
+        text: "أقل خط استخداماً: " + esc(ins.leastUsedLine.name),
+      });
+    (ins.needsLimitIncrease || []).slice(0, 3).forEach(function (l) {
+      rows.push({
+        icon: "ti-arrow-big-up-lines",
+        color: "#F97316",
+        text: "خط " + esc(l.name) + " يحتاج لمراجعة/زيادة الحد",
+      });
+    });
+    (ins.shouldStop || []).slice(0, 2).forEach(function (l) {
+      rows.push({
+        icon: "ti-player-stop",
+        color: "#EF4444",
+        text:
+          "خط " + esc(l.name) + " غير مستخدم منذ فترة طويلة — يُنصح بإيقافه",
+      });
+    });
+    (ins.unusedWeek || []).slice(0, 2).forEach(function (l) {
+      rows.push({
+        icon: "ti-clock-pause",
+        color: "#3B82F6",
+        text: "خط " + esc(l.name) + " لم يُستخدم منذ أسبوع",
+      });
+    });
+    if (!rows.length)
+      return '<div class="vc-empty-mini"><i class="ti ti-info-circle"></i> لا توجد ملاحظات حالياً</div>';
+    return rows
+      .map(function (r) {
+        return (
+          '<div class="vc-insight-item" style="--insight-color:' +
+          r.color +
+          '"><i class="ti ' +
+          r.icon +
+          '"></i><span>' +
+          r.text +
+          "</span></div>"
+        );
+      })
+      .join("");
+  }
+
+  // ── أعلى الخطوط / الموظفين ──
+  function _vfcRenderTopList(items, valueKey, labelFn) {
+    if (!items || !items.length)
+      return '<div class="vc-empty-mini">لا توجد بيانات</div>';
+    var max = Math.max.apply(
+      null,
+      items
+        .map(function (i) {
+          return i[valueKey] || 0;
+        })
+        .concat([1]),
+    );
+    return items
+      .map(function (i, idx) {
+        var pct = Math.round(((i[valueKey] || 0) / max) * 100);
+        return (
+          '<div class="vc-top-row">' +
+          '<div class="vc-top-rank">#' +
+          (idx + 1) +
+          "</div>" +
+          '<div class="vc-top-info"><div class="vc-top-name">' +
+          esc(labelFn(i)) +
+          "</div>" +
+          '<div class="vc-top-bar-wrap"><div class="vc-top-bar" style="width:' +
+          pct +
+          '%"></div></div></div>' +
+          '<div class="vc-top-value">' +
+          (i[valueKey] || 0) +
+          "</div>" +
+          "</div>"
+        );
+      })
+      .join("");
+  }
+
+  // ── صف واحد في جدول الخطوط ──
+  // ── مساعد عرض شريط الحد (يومي/شهري) — بقى Global عشان يتشارك بين
+  // الصف القديم (تحت، DEPRECATED) وأعمدة ColumnEngine الجديدة ──
+  function _vfcLimitBar(pct, remaining, limit, color) {
+    if (!limit) return '<span class="vc-no-limit">بدون حد</span>';
+    return (
+      '<div class="vc-limit-cell">' +
+      '<div class="vc-progress"><div class="vc-progress-fill" style="width:' +
+      (pct || 0) +
+      "%;background:" +
+      color +
+      '"></div></div>' +
+      '<span class="sensitive-balance">' +
+      _vfcFmtMoney(remaining) +
+      " متبقي</span>" +
+      "</div>"
+    );
+  }
+
+  // [DEPRECATED — COLUMN-ENGINE] لم تعد مستخدَمة بعد التحويل لجدول
+  // vfc_lines عبر ColumnEngine (راجع _vfcRegisterLineColumns في
+  // 16_JS_VodafoneCash.html). باقية هنا فقط كمرجع مؤقت.
+  function _vfcRenderLineRow(l) {
+    var meta = VFC_PROVIDER_META[l.provider] || VFC_PROVIDER_META.vodafone;
+    var sm =
+      l.statusMeta ||
+      VFC_STATUS_META_FE[l.computedStatus] ||
+      VFC_STATUS_META_FE.available;
+    function limitBar(pct, remaining, limit, color) {
+      return _vfcLimitBar(pct, remaining, limit, color);
+    }
+    return (
+      '<tr data-line-id="' +
+      l.id +
+      '" class="vc-row">' +
+      '<td><div class="vc-line-cell"><b>' +
+      esc(l.customer_name) +
+      "</b><span>" +
+      esc(l.vf_number) +
+      "</span></div></td>" +
+      '<td><span class="vc-provider-pill" style="--pc:' +
+      meta.color +
+      '">' +
+      (meta.logo
+        ? '<img class="vc-pill-logo" src="' + meta.logo + '" alt=""/>'
+        : "") +
+      meta.short +
+      "</span></td>" +
+      '<td><div class="vc-meta-cell"><span>' +
+      esc(l.branch || "—") +
+      "</span><span>" +
+      esc(l.employee || "—") +
+      "</span></div></td>" +
+      "<td class='sensitive-balance'><b>" +
+      _vfcFmtMoney(l.balance) +
+      "</b></td>" +
+      "<td>" +
+      limitBar(l.dailyPct, l.dailyRemaining, l.dailyLimit, "#2563EB") +
+      "</td>" +
+      "<td>" +
+      limitBar(l.monthlyPct, l.monthlyRemaining, l.monthlyLimit, "#7C3AED") +
+      "</td>" +
+      "<td>" +
+      l.txCount +
+      "</td>" +
+      '<td class="sensitive-balance"><div class="vc-inout"><span class="in">+' +
+      _vfcFmtMoney(l.totalDeposit) +
+      '</span><span class="out">-' +
+      _vfcFmtMoney(l.totalWithdraw) +
+      "</span></div></td>" +
+      "<td class='sensitive-balance'>" +
+      _vfcFmtMoney(l.totalCommission) +
+      "</td>" +
+      "<td>" +
+      _vfcTimeAgo(l.lastTxDate) +
+      "</td>" +
+      '<td><span class="vc-status-pill" style="--sc:' +
+      sm.color +
+      '">' +
+      sm.dot +
+      " " +
+      sm.label +
+      "</span></td>" +
+      '<td><button class="vc-row-open-btn" data-open-line="' +
+      l.id +
+      '"><i class="ti ti-chevron-left"></i></button></td>' +
+      "</tr>"
+    );
+  }
+
+  // [DEPRECATED — COLUMN-ENGINE] راجع _vfcRenderLineRow أعلاه.
+  function _vfcRenderLinesTable(lines) {
+    if (!lines || !lines.length) {
+      return '<tr><td colspan="12"><div class="vc-empty-mini"><i class="ti ti-mood-empty"></i> لا توجد خطوط مطابقة</div></td></tr>';
+    }
+    return lines.map(_vfcRenderLineRow).join("");
+  }
+
+  // ── عنصر واحد في الـ Live Feed ──
+  function _vfcRenderLiveFeedItem(t, isNew) {
+    var inTypes = ["deposit", "transfer_in", "recharge"];
+    var dirClass = inTypes.indexOf(t.type) !== -1 ? "in" : "out";
+    var meta = VFC_PROVIDER_META[t.provider] || VFC_PROVIDER_META.vodafone;
+    return (
+      '<div class="vc-feed-item ' +
+      dirClass +
+      (isNew ? " vc-feed-new" : "") +
+      '" data-line-id="' +
+      t.line_id +
+      '">' +
+      '<div class="vc-feed-icon"><i class="ti ' +
+      _vfcTypeIcon(t.type) +
+      '"></i></div>' +
+      '<div class="vc-feed-body">' +
+      '<div class="vc-feed-line">' +
+      "<b>" +
+      esc(t.user || "—") +
+      "</b> قام بـ" +
+      _vfcTypeLabel(t.type) +
+      ' <b class="sensitive-balance">' +
+      _vfcFmtMoney(t.amount) +
+      "</b> " +
+      'على الخط <span class="vc-provider-pill sm" style="--pc:' +
+      meta.color +
+      '">' +
+      (meta.logo
+        ? '<img class="vc-pill-logo" src="' + meta.logo + '" alt=""/>'
+        : "") +
+      esc(t.vf_number) +
+      "</span>" +
+      "</div>" +
+      '<div class="vc-feed-time">' +
+      _vfcTimeAgo(t.created_at) +
+      "</div>" +
+      "</div>" +
+      '<div class="vc-feed-status vc-status-' +
+      t.status +
+      '">' +
+      (t.status === "success"
+        ? "ناجحة"
+        : t.status === "failed"
+          ? "فاشلة"
+          : "معلّقة") +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function _vfcRenderLiveFeed(txs) {
+    if (!txs || !txs.length)
+      return '<div class="vc-empty-mini">لا توجد عمليات حتى الآن</div>';
+    return txs
+      .map(function (t) {
+        return _vfcRenderLiveFeedItem(t, false);
+      })
+      .join("");
+  }
+
+  // ── صفحة تفاصيل الخط (Drawer) ──
+  function _vfcRenderLineDetail(payload) {
+    var l = payload.line,
+      txs = payload.transactions,
+      series = payload.series,
+      auditLog = payload.auditLog;
+    var meta = VFC_PROVIDER_META[l.provider] || VFC_PROVIDER_META.vodafone;
+    var sm = l.statusMeta || VFC_STATUS_META_FE[l.computedStatus];
+
+    var statsHtml =
+      '<div class="vc-detail-stats">' +
+      [
+        "balance:الرصيد الحالي",
+        "totalDeposit:إجمالي الإيداع",
+        "totalWithdraw:إجمالي السحب",
+        "totalCommission:إجمالي العمولات",
+        "txCount:عدد العمليات",
+      ]
+        .map(function (pair) {
+          var parts = pair.split(":"),
+            key = parts[0],
+            label = parts[1];
+          var val = key === "txCount" ? l[key] : _vfcFmtMoney(l[key]);
+          return (
+            '<div class="vc-detail-stat"><span>' +
+            label +
+            "</span><b" +
+            (key === "txCount" ? "" : ' class="sensitive-balance"') +
+            ">" +
+            val +
+            "</b></div>"
+          );
+        })
+        .join("") +
+      "</div>";
+
+    var chartHtml = _vfcSvgBarChart(
+      series.map(function (s) {
+        return { label: s.date.slice(5), a: s.deposit, b: s.withdraw };
+      }),
+      { width: 520, height: 150, colorA: "#10B981", colorB: "#EF4444" },
+    );
+
+    var limitsHtml =
+      '<div class="vc-detail-limits">' +
+      '<div><span>الحد اليومي</span><div class="vc-progress"><div class="vc-progress-fill" style="width:' +
+      (l.dailyPct || 0) +
+      '%;background:#2563EB"></div></div>' +
+      '<small class="sensitive-balance">' +
+      (l.dailyLimit
+        ? _vfcFmtMoney(l.dailyUsed) + " من " + _vfcFmtMoney(l.dailyLimit)
+        : "بدون حد") +
+      "</small></div>" +
+      '<div><span>الحد الشهري</span><div class="vc-progress"><div class="vc-progress-fill" style="width:' +
+      (l.monthlyPct || 0) +
+      '%;background:#7C3AED"></div></div>' +
+      '<small class="sensitive-balance">' +
+      (l.monthlyLimit
+        ? _vfcFmtMoney(l.monthlyUsed) + " من " + _vfcFmtMoney(l.monthlyLimit)
+        : "بدون حد") +
+      "</small></div>" +
+      "</div>";
+
+    var txRows = txs
+      .map(function (t) {
+        var inTypes = ["deposit", "transfer_in", "recharge"];
+        return (
+          "<tr><td>" +
+          _vfcTypeLabel(t.type) +
+          "</td>" +
+          '<td class="sensitive-balance ' +
+          (inTypes.indexOf(t.type) !== -1 ? "in" : "out") +
+          '">' +
+          _vfcFmtMoney(t.amount) +
+          "</td>" +
+          '<td><span class="vc-status-' +
+          t.status +
+          '">' +
+          (t.status === "success"
+            ? "ناجحة"
+            : t.status === "failed"
+              ? "فاشلة"
+              : "معلّقة") +
+          "</span></td>" +
+          "<td>" +
+          _vfcFmtDateTime(t.date) +
+          "</td>" +
+          "<td>" +
+          esc(t.ref_number || "—") +
+          "</td>" +
+          "<td>" +
+          esc(t.user || "—") +
+          "</td></tr>"
+        );
+      })
+      .join("");
+
+    var auditRows = (auditLog || [])
+      .map(function (a) {
+        return (
+          "<tr><td>" +
+          esc(a.user || "") +
+          "</td><td>" +
+          esc(a.action || "") +
+          "</td><td>" +
+          _vfcFmtDateTime(a.timestamp) +
+          "</td></tr>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div class="vc-detail">' +
+      '<div class="vc-detail-head" style="--pc:' +
+      meta.color +
+      '">' +
+      '<div class="vc-detail-title"><h2>' +
+      esc(l.customer_name) +
+      "</h2>" +
+      "<p>" +
+      esc(l.vf_number) +
+      ' · <span class="vc-provider-pill" style="--pc:' +
+      meta.color +
+      '">' +
+      (meta.logo
+        ? '<img class="vc-pill-logo" src="' + meta.logo + '" alt=""/>'
+        : "") +
+      meta.short +
+      "</span> · " +
+      '<span class="vc-status-pill" style="--sc:' +
+      sm.color +
+      '">' +
+      sm.dot +
+      " " +
+      sm.label +
+      "</span></p></div>" +
+      '<div class="vc-detail-actions">' +
+      (canDo("addVodafoneCashTransaction")
+        ? '<button class="btn btn-sm btn-primary" onclick="openVCTxForm(\'' +
+          l.id +
+          "', 'deposit')\"><i class=\"ti ti-arrow-down-circle\"></i> إيداع</button>"
+        : "") +
+      (canDo("addVodafoneCashTransaction")
+        ? '<button class="btn btn-sm btn-outline" onclick="openVCTxForm(\'' +
+          l.id +
+          "', 'withdraw')\"><i class=\"ti ti-arrow-up-circle\"></i> سحب</button>"
+        : "") +
+      (canDo("addVodafoneCashTransaction")
+        ? '<button class="btn btn-sm btn-outline" onclick="openVCTxForm(\'' +
+          l.id +
+          "', 'recharge')\"><i class=\"ti ti-battery-charging\"></i> شحن</button>"
+        : "") +
+      (canDo("updateVodafoneCashLine")
+        ? '<button class="btn btn-sm btn-ghost" onclick="openVCLineEditForm(\'' +
+          l.id +
+          '\')"><i class="ti ti-edit"></i> تعديل البيانات</button>'
+        : "") +
+      (canDo("updateVodafoneCashLine")
+        ? '<button class="btn btn-sm btn-ghost" onclick="openVCLimitsForm(\'' +
+          l.id +
+          '\')"><i class="ti ti-gauge"></i> تعديل الحدود</button>'
+        : "") +
+      (canDo("updateVodafoneCashLine")
+        ? '<button class="btn btn-sm btn-ghost" onclick="toggleVCLineStatus(\'' +
+          l.id +
+          "','" +
+          (l.status === "active" ? "suspended" : "active") +
+          '\')"><i class="ti ti-power"></i> ' +
+          (l.status === "active" ? "إيقاف" : "تشغيل") +
+          "</button>"
+        : "") +
+      '<button class="btn btn-sm btn-ghost" onclick="exportVCCustomerExcel(\'' +
+      l.id +
+      '\')"><i class="ti ti-file-spreadsheet"></i></button>' +
+      '<button class="btn btn-sm btn-ghost" onclick="exportVCCustomerPDF(\'' +
+      l.id +
+      '\')"><i class="ti ti-printer"></i></button>' +
+      "</div>" +
+      "</div>" +
+      statsHtml +
+      limitsHtml +
+      '<div class="vc-detail-chart">' +
+      chartHtml +
+      "</div>" +
+      '<div class="vc-detail-section"><h4><i class="ti ti-history"></i> آخر العمليات (' +
+      txs.length +
+      ")</h4>" +
+      '<div class="vc-table-wrap"><table class="vc-table"><thead><tr><th>النوع</th><th>المبلغ</th><th>الحالة</th><th>التاريخ</th><th>المرجع</th><th>بواسطة</th></tr></thead>' +
+      "<tbody>" +
+      (txRows ||
+        '<tr><td colspan="6"><div class="vc-empty-mini">لا توجد عمليات</div></td></tr>') +
+      "</tbody></table></div></div>" +
+      (auditRows
+        ? '<div class="vc-detail-section"><h4><i class="ti ti-clipboard-list"></i> سجل التعديلات</h4>' +
+          '<div class="vc-table-wrap"><table class="vc-table"><thead><tr><th>المستخدم</th><th>الإجراء</th><th>التاريخ</th></tr></thead><tbody>' +
+          auditRows +
+          "</tbody></table></div></div>"
+        : "") +
+      "</div>"
+    );
+  }
+
+  // نهاية §VFC
+</script>

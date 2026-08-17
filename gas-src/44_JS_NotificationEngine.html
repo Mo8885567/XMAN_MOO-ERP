@@ -1,0 +1,498 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 44_JS_NotificationEngine.html — محرك الإشعارات الموحّد (NotificationEngine)
+  // ═══════════════════════════════════════════════════════════════════
+  // [NOTIFICATION-ENGINE-DESIGN] نظام Toast الكامل (طابور/صوت/أولوية عبر
+  // duration/loading state) موجود بالفعل في Core_UIManagers.html
+  // (showToast · finishLoadingToast · dismissLoadingToast)، ونافذة
+  // التأكيد في showConfirm (02_JS_UI_Shell.html). NotificationEngine
+  // *لا يعيد تنفيذهم* — هو الواجهة الموحّدة الوحيدة المسموح للشاشات
+  // استدعاءها (بدل alert() أو أي Toast مخصص محلي)، وتضيف فوقهم:
+  //   - أسماء صريحة لكل نوع (success/error/warning/info/loading/progress)
+  //   - Sticky / Auto-close عبر تمرير duration للطبقة الأدنى
+  //   - Undo (زر تراجع داخل رسالة الإشعار نفسها)
+  //   - Notification History (سجل آخر الإشعارات في الذاكرة لهذه الجلسة)
+  //   - Stack/Queue: موجودة بالفعل في showToast (طابور تلقائي) — نكتفي
+  //     بالتفويض لها.
+  //
+  //   NotificationEngine.success("تم الحفظ بنجاح");
+  //   NotificationEngine.error("فشل الاتصال بالسيرفر");
+  //   var closeLoading = NotificationEngine.loading("جاري الحفظ...");
+  //   // ... بعد انتهاء العملية:
+  //   NotificationEngine.success("تم الحفظ"); // تلقائيًا بتقفل الـ loading السابق
+  //
+  //   NotificationEngine.confirm({
+  //     title: "حذف الصنف", message: "هل أنت متأكد؟", confirmClass: "btn-danger",
+  //     onConfirm: function () { ... }
+  //   });
+  //
+  //   NotificationEngine.withUndo("تم حذف الصف", function onUndo(){ restoreRow(); });
+  // ═══════════════════════════════════════════════════════════════════
+
+  var NotificationEngine = (function () {
+    "use strict";
+
+    var MAX_HISTORY = 200; // [NOTIF-HISTORY] رفعناها من 50 عشان تبويب Notifications يفيد فعلاً
+    var _history = [];
+    var _seq = 0;
+    var _listeners = []; // [NOTIF-HISTORY] Subscribers (المساعد الذكي/الجرس) بيتنادوا عند أي تغيير
+    var _actions = {}; // [NOTIF-ACTION] id -> onOpen callback (لا يُخزَّن في _history عشان مينفعش يتسلسل)
+    var _lastEntryId = null; // [NOTIF-TOAST-LINK] آخر إشعار اتعمله _emit — التوست بيربط نفسه بيه لحظة الضغط
+    var _DEDUPE_WINDOW_MS = 120000; // [NOTIF-DEDUPE] نفس dedupeKey خلال دقيقتين = نفس الحدث، مش إشعار جديد
+
+    // [NOTIF-CATEGORIES] الأنواع الموسّعة المطلوبة — كل واحدة بترث شكلها
+    // البصري (لون/صوت) من نوع أساسي (success/error/warning/info) وبتضيف
+    // فوقه "category" واضحة تتعرض في السجل وبتتفلتر بيها.
+    var _CATEGORY_VISUAL = {
+      success: "success",
+      error: "error",
+      warning: "warning",
+      info: "info",
+      validation: "warning",
+      permission: "error",
+      background: "info",
+      import: "info",
+      export: "info",
+      ai: "info",
+      sync: "info",
+      save: "success",
+      delete: "warning",
+      print: "info",
+      apiError: "error",
+      session: "warning",
+    };
+
+    function _currentScreen() {
+      try {
+        if (typeof _getCurrentPageName === "function") return _getCurrentPageName();
+      } catch (e) {}
+      return (window.location && window.location.hash) || "";
+    }
+
+    function _currentUser() {
+      try {
+        if (typeof CURRENT_USER !== "undefined" && CURRENT_USER) {
+          return CURRENT_USER.username || CURRENT_USER.full_name || "";
+        }
+      } catch (e) {}
+      try {
+        if (typeof APP !== "undefined" && APP && APP.currentUser) {
+          return APP.currentUser.username || "";
+        }
+      } catch (e) {}
+      return "";
+    }
+
+    // [NOTIF-LOGGING] الفئات دي بس بتتسجل في الباك إند (AuditLog) — باقي
+    // الأنواع (success/info عادية) بتتسجل في الذاكرة (History) بس، عشان
+    // منغرقش شيت الـ AuditLog بكل توست عادي.
+    var _SERVER_LOGGED_CATEGORIES = {
+      error: 1,
+      apiError: 1,
+      permission: 1,
+      session: 1,
+      warning: 1,
+    };
+
+    function _logToServer(entry) {
+      if (!_SERVER_LOGGED_CATEGORIES[entry.category]) return;
+      try {
+        var user = entry.user;
+        var token =
+          (typeof SESSION !== "undefined" && SESSION && SESSION.token) || null;
+        if (!user || !token) return; // قبل تسجيل الدخول — لا يوجد شيء نسجّله له
+        if (typeof google === "undefined" || !google.script || !google.script.run)
+          return;
+        google.script.run
+          .withFailureHandler(function (e) {
+            console.warn("[NotificationEngine] فشل تسجيل الإشعار بالسيرفر:", e);
+          })
+          .logClientNotification(user, token, {
+            category: entry.category,
+            message: entry.message,
+            screen: entry.screen,
+            module: entry.module,
+            type: entry.type,
+          });
+      } catch (e) {
+        /* التسجيل بالسيرفر لا يجب أن يكسر أي شيء بالواجهة */
+      }
+    }
+
+    function _notifyListeners() {
+      _listeners.forEach(function (fn) {
+        try {
+          fn();
+        } catch (e) {}
+      });
+    }
+
+    /** onChange — يسمح لواجهة (تبويب الإشعارات بالمساعد الذكي) بمتابعة أي تحديث */
+    function onChange(fn) {
+      if (typeof fn === "function") _listeners.push(fn);
+      return function unsubscribe() {
+        var idx = _listeners.indexOf(fn);
+        if (idx > -1) _listeners.splice(idx, 1);
+      };
+    }
+
+    // [NOTIF-DEDUPE] بيدوّر على إشعار غير مقروء بنفس dedupeKey خلال آخر
+    // _DEDUPE_WINDOW_MS — لو لقى واحد، يرجّعه عشان نحدّثه بدل خلق نسخة
+    // جديدة (نفس فكرة "stock_low:item_123" المطلوبة في المواصفة).
+    function _findDupe(dedupeKey) {
+      if (!dedupeKey) return null;
+      var cutoff = Date.now() - _DEDUPE_WINDOW_MS;
+      for (var i = 0; i < _history.length; i++) {
+        var e = _history[i];
+        if (e.dedupeKey === dedupeKey && e.at.getTime() >= cutoff) return e;
+      }
+      return null;
+    }
+
+    function _record(category, msg, opts) {
+      opts = opts || {};
+
+      // [NOTIF-DEDUPE] نفس الحدث اتكرر — حدّث الإشعار الموجود بدل ما نزوّد فقاعة جديدة
+      var dupe = _findDupe(opts.dedupeKey);
+      if (dupe) {
+        dupe.message = msg;
+        dupe.count = (dupe.count || 1) + 1;
+        dupe.at = new Date();
+        if (!dupe.read) {
+          /* لسه غير مقروء — سيبه زي ما هو */
+        } else {
+          dupe.read = false; // حدث جديد فعليًا حتى لو نفس الـ key، رجّعه غير مقروء
+        }
+        if (opts.page) dupe.page = opts.page;
+        if (opts.perm) dupe.perm = opts.perm;
+        if (typeof opts.onOpen === "function") _actions[dupe.id] = opts.onOpen;
+        _lastEntryId = dupe.id;
+        _notifyListeners();
+        return dupe;
+      }
+
+      var entry = {
+        id: "n" + Date.now() + "_" + ++_seq,
+        type: _CATEGORY_VISUAL[category] || "info",
+        category: category,
+        message: msg,
+        priority: opts.priority || "normal",
+        screen: opts.screen || _currentScreen(),
+        module: opts.module || "",
+        source: opts.source || "",
+        user: _currentUser(),
+        at: new Date(),
+        read: false,
+        // [NOTIF-ACTION] بيانات التنقّل/الصلاحية — نفس الحقول المستخدمة في
+        // منظومة الجرس (_buildNotifications: page) عشان تتوحّد معاها بسهولة
+        page: opts.page || null, // اسم الصفحة اللي navigate() هتتنقل لها
+        perm: opts.perm || null, // الصلاحية المطلوبة لفتح action الإشعار ده (null = بدون قيد إضافي)
+        dedupeKey: opts.dedupeKey || null,
+        count: 1,
+      };
+      _history.unshift(entry);
+      if (_history.length > MAX_HISTORY) _history.length = MAX_HISTORY;
+      if (typeof opts.onOpen === "function") _actions[entry.id] = opts.onOpen;
+      _lastEntryId = entry.id;
+      _logToServer(entry);
+      _notifyListeners();
+      return entry;
+    }
+
+    function _emit(category, msg, opts) {
+      opts = opts || {};
+      var visualType = _CATEGORY_VISUAL[category] || "info";
+      var entry = _record(category, msg, opts);
+      // [NOTIF-SILENT] لبعض الشاشات فيه بالفعل بابل مرئي تاني (زي فقاعة
+      // "الحفظ الناعم" _saveAnimSuccess) — مش محتاجين توست تاني فوقه لنفس
+      // الحدث بالظبط. silent:true بيسجّل الإشعار في المركز الموحّد
+      // (النقطة الوحيدة للمصدر) من غير ما يطلق فقاعة FAB تانية.
+      if (opts.silent) return entry;
+      if (typeof showToast !== "function") {
+        // Fallback نادر (لو اتنادت قبل تحميل Core_UIManagers.html) —
+        // أفضل من فشل صامت، لكن لا يُستخدم alert() الممنوع في الشاشات.
+        console.warn("[NotificationEngine]", category, msg);
+        return entry;
+      }
+      // [NOTIF-TOAST-LINK] بنمرّر id الإشعار مع الرسالة عشان الفقاعة (Toast)
+      // تعرف تربط نفسها بالإشعار ده لحظة الضغط عليها (mark read + navigate).
+      showToast(msg, visualType, opts.duration, opts.urgent, entry.id);
+      return entry;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §1c — فتح إشعار (من التوست، من الجرس، من تبويب المساعد) — نقطة
+    // واحدة موحّدة لسلوك الضغط: mark read → تنفيذ onOpen لو موجودة →
+    // التنقّل لصفحته (مع احترام الصلاحيات) لو مفيش onOpen مخصّصة.
+    // ══════════════════════════════════════════════════════════════════
+    function openEntry(id) {
+      if (!id) return false;
+      var entry = _history.filter(function (n) {
+        return n.id === id;
+      })[0];
+      if (!entry) return false;
+
+      markRead(id);
+
+      var customAction = _actions[id];
+      if (typeof customAction === "function") {
+        try {
+          customAction(entry);
+        } catch (e) {
+          console.warn("[NotificationEngine] onOpen فشلت:", e);
+        }
+        return true;
+      }
+
+      if (!entry.page) return true; // مفيش وجهة — الاكتفاء بالتحديد كمقروء (فتح تفاصيل لو موجودة يتم من الطرف المستدعي)
+
+      // [NOTIF-PERMISSION] لو الإشعار محدد له صلاحية، ما ننقلش المستخدم
+      // لصفحة ممنوع عليه يشوفها — بدل كده نعرض رسالة صلاحية واضحة.
+      if (entry.perm && typeof canDo === "function" && !canDo(entry.perm)) {
+        if (typeof NotificationEngine !== "undefined") {
+          // تفادي استدعاء self قبل ما return يتجهز — استخدم warning() المحلية تحت
+        }
+        warning(I18N && I18N.t ? I18N.t("AUTH_MSG_NO_PERMISSION_ACTION") : "ليس لديك صلاحية لعرض هذا الإشعار");
+        return false;
+      }
+
+      if (typeof navigate === "function") navigate(entry.page);
+      return true;
+    }
+
+    function getLastEntryId() {
+      return _lastEntryId;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §1 — الأنواع الأساسية
+    // ══════════════════════════════════════════════════════════════════
+    function success(msg, opts) {
+      _emit("success", msg, opts);
+    }
+    function error(msg, opts) {
+      _emit("error", msg, Object.assign({ urgent: true }, opts || {}));
+    }
+    function warning(msg, opts) {
+      _emit("warning", msg, opts);
+    }
+    function info(msg, opts) {
+      _emit("info", msg, opts);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §1b — الأنواع الموسّعة (Permission / Background / Import / Export /
+    // AI / Sync / Save / Delete / Print / API Errors / Session)
+    // كل واحدة بتتسجل بفئتها الخاصة في الـ History، وبتظهر بصريًا بلون
+    // نوعها الأساسي المرتبط بيها في _CATEGORY_VISUAL أعلاه.
+    // ══════════════════════════════════════════════════════════════════
+    function validation(msg, opts) {
+      _emit("validation", msg, opts);
+    }
+    function permission(msg, opts) {
+      _emit("permission", msg, Object.assign({ urgent: true }, opts || {}));
+    }
+    function background(msg, opts) {
+      _emit("background", msg, opts);
+    }
+    function importMsg(msg, opts) {
+      _emit("import", msg, opts);
+    }
+    function exportMsg(msg, opts) {
+      _emit("export", msg, opts);
+    }
+    function ai(msg, opts) {
+      _emit("ai", msg, opts);
+    }
+    function sync(msg, opts) {
+      _emit("sync", msg, opts);
+    }
+    function save(msg, opts) {
+      _emit("save", msg, opts);
+    }
+    function del(msg, opts) {
+      _emit("delete", msg, opts);
+    }
+    function print(msg, opts) {
+      _emit("print", msg, opts);
+    }
+    function apiError(msg, opts) {
+      _emit("apiError", msg, Object.assign({ urgent: true }, opts || {}));
+    }
+    function session(msg, opts) {
+      _emit("session", msg, opts);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §2 — Loading / Progress (Sticky حتى يُغلَق يدويًا)
+    // ══════════════════════════════════════════════════════════════════
+    /** loading — يعرض إشعار تحميل مستمر، ويرجّع دالة close() لإقفاله يدويًا */
+    function loading(msg) {
+      _record("background", msg);
+      if (typeof showToast === "function") showToast(msg, "loading");
+      return function close(resultMsg, resultType) {
+        if (typeof finishLoadingToast === "function") {
+          finishLoadingToast(resultMsg, resultType || "success");
+        }
+      };
+    }
+
+    /** progress — نفس loading لكن برسالة قابلة للتحديث (نسبة/عداد) */
+    function progress(msg) {
+      return loading(msg);
+    }
+
+    function dismissLoading() {
+      if (typeof dismissLoadingToast === "function") dismissLoadingToast();
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §3 — Confirmation Dialog (تفويض لـ showConfirm الموجودة)
+    // ══════════════════════════════════════════════════════════════════
+    function confirm(opts) {
+      if (typeof showConfirm !== "function") {
+        console.warn("[NotificationEngine] showConfirm غير متاحة");
+        return;
+      }
+      showConfirm(opts || {});
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §4 — Undo
+    // ══════════════════════════════════════════════════════════════════
+    // [NOTIF-UNDO] الطبقة الأدنى (showToast) بتاخد نص رسالة عادي، فبنبني
+    // هنا نص تحذيري واضح ("تم الحذف — يمكن التراجع خلال N ثانية") بدل ما
+    // نضيف زرار فعلي جوه الفقاعة (ده تغيير بنية Toast نفسها، خارج نطاق
+    // هذا المحرك). onUndo تُستدعى تلقائيًا لو المستخدم ضغط على نفس عنصر
+    // الشاشة اللي بيستدعيها الكولباك التاني (زرار "تراجع" في الشاشة نفسها
+    // بيستدعي resolve()) خلال المهلة المحددة.
+    function withUndo(msg, onUndo, timeoutMs) {
+      var expired = false;
+      var timer = setTimeout(function () {
+        expired = true;
+      }, timeoutMs || 6000);
+
+      success(msg + " — يمكن التراجع خلال " + Math.round((timeoutMs || 6000) / 1000) + " ث");
+
+      return function resolveUndo() {
+        if (expired) {
+          warning("انتهت مهلة التراجع");
+          return false;
+        }
+        clearTimeout(timer);
+        if (typeof onUndo === "function") onUndo();
+        info("تم التراجع");
+        return true;
+      };
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §5 — Notification History (تبويب Notifications بالمساعد الذكي)
+    // ══════════════════════════════════════════════════════════════════
+    function getHistory() {
+      return _history.slice();
+    }
+    function clearHistory() {
+      _history = [];
+      _notifyListeners();
+    }
+
+    /** query — بحث + فلترة حسب النوع مع دعم "غير المقروء فقط" */
+    function query(opts) {
+      opts = opts || {};
+      var list = _history;
+      if (opts.category) {
+        list = list.filter(function (n) {
+          return n.category === opts.category;
+        });
+      }
+      if (opts.unreadOnly) {
+        list = list.filter(function (n) {
+          return !n.read;
+        });
+      }
+      if (opts.q) {
+        var q = String(opts.q).trim().toLowerCase();
+        if (q) {
+          list = list.filter(function (n) {
+            return (
+              (n.message || "").toLowerCase().indexOf(q) > -1 ||
+              (n.screen || "").toLowerCase().indexOf(q) > -1 ||
+              (n.module || "").toLowerCase().indexOf(q) > -1
+            );
+          });
+        }
+      }
+      return list.slice();
+    }
+
+    function markRead(id) {
+      var entry = _history.filter(function (n) {
+        return n.id === id;
+      })[0];
+      if (entry && !entry.read) {
+        entry.read = true;
+        _notifyListeners();
+      }
+    }
+
+    function markAllRead() {
+      var changed = false;
+      _history.forEach(function (n) {
+        if (!n.read) {
+          n.read = true;
+          changed = true;
+        }
+      });
+      if (changed) _notifyListeners();
+    }
+
+    function remove(id) {
+      var before = _history.length;
+      _history = _history.filter(function (n) {
+        return n.id !== id;
+      });
+      if (_history.length !== before) _notifyListeners();
+    }
+
+    function getUnreadCount() {
+      return _history.reduce(function (acc, n) {
+        return acc + (n.read ? 0 : 1);
+      }, 0);
+    }
+
+    return {
+      success: success,
+      error: error,
+      warning: warning,
+      info: info,
+      validation: validation,
+      permission: permission,
+      background: background,
+      import: importMsg,
+      export: exportMsg,
+      ai: ai,
+      sync: sync,
+      save: save,
+      delete: del,
+      print: print,
+      apiError: apiError,
+      session: session,
+      loading: loading,
+      progress: progress,
+      dismissLoading: dismissLoading,
+      confirm: confirm,
+      withUndo: withUndo,
+      getHistory: getHistory,
+      clearHistory: clearHistory,
+      query: query,
+      markRead: markRead,
+      markAllRead: markAllRead,
+      remove: remove,
+      getUnreadCount: getUnreadCount,
+      onChange: onChange,
+      openEntry: openEntry,
+      getLastEntryId: getLastEntryId,
+    };
+  })();
+</script>

@@ -1,0 +1,1906 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════
+  // Templates_08.html — جزء من Templates.html الأصلي (تقسيم آلي نصي بحت، 2026-07-04)
+  // النطاق: _paSwitch → renderBankingDashboard (Purchase/Assets + Banking)
+  // راجع Architecture Audit 2026-07-03، المرحلة 5 — تقسيم بحسب الحجم،
+  // على حدود دوال كاملة فقط (لا قطع لأي دالة في نص). تحقق برمجيًا:
+  // التركيب النهائي لكل الأجزاء الـ10 مطابق 100% لمحتوى Templates.html
+  // القديم حرفيًا (نفس الترتيب، بدون فقد أو تكرار).
+  // يُحمَّل بالترتيب عبر <script> في Index.html مع باقي الأجزاء.
+  // ═══════════════════════════════════════════════════════════════
+  function _paSwitch(panel) {
+    var ovEl = document.getElementById("pa-panel-overview");
+    var tbEl = document.getElementById("pa-panel-table");
+    var t1 = document.getElementById("pa-tab-overview");
+    var t2 = document.getElementById("pa-tab-table");
+    if (!ovEl || !tbEl) return;
+    if (panel === "overview") {
+      ovEl.style.display = "";
+      tbEl.style.display = "none";
+      if (t1) t1.classList.add("active");
+      if (t2) t2.classList.remove("active");
+    } else {
+      ovEl.style.display = "none";
+      tbEl.style.display = "";
+      if (t1) t1.classList.remove("active");
+      if (t2) t2.classList.add("active");
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // renderPartyMovementsPage — صفحة كشف حركات العملاء والموردين
+  // نسخة v2 — تصميم full-screen بـ sidebar للقوائم
+  // ─────────────────────────────────────────────────────────────
+  function renderPartyMovementsPage() {
+    var canSeeCustomers = canDo("viewCustomers");
+    var canSeeSuppliers = canDo("viewSuppliers");
+    var defaultType =
+      window._pmpCurrentType || (canSeeSuppliers ? "supplier" : "customer");
+
+    return (
+      '<div class="pmp-shell">' +
+      // ══════════════════════════════════════
+      // SIDEBAR — قائمة الأطراف
+      // ══════════════════════════════════════
+      '<div class="pmp-sidebar">' +
+      // ── عنوان الشاشة ──
+      '<div class="pmp-sidebar-head">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">' +
+      '<div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#1d4ed8);display:flex;align-items:center;justify-content:center;flex-shrink:0">' +
+      '<i class="ti ti-address-book" style="color:#fff;font-size:17px"></i></div>' +
+      '<div><div style="font-size:14px;font-weight:800;color:var(--text1)">كشف الحركات</div>' +
+      '<div style="font-size:11px;color:var(--text3)">العملاء والموردين</div></div>' +
+      "</div>" +
+      // ── تبويب النوع ──
+      '<div class="pmp-type-tabs">' +
+      (canSeeSuppliers
+        ? '<button id="pmp-type-supplier" class="pmp-type-tab' +
+          (defaultType === "supplier" ? " active supplier" : "") +
+          '" onclick="pmpSetType(\'supplier\')">' +
+          '<i class="ti ti-building-factory-2"></i><span>الموردين</span>' +
+          '<span id="pmp-sup-count" class="pmp-tab-count"></span></button>'
+        : "") +
+      (canSeeCustomers
+        ? '<button id="pmp-type-customer" class="pmp-type-tab' +
+          (defaultType === "customer" ? " active customer" : "") +
+          '" onclick="pmpSetType(\'customer\')">' +
+          '<i class="ti ti-users"></i><span>العملاء</span>' +
+          '<span id="pmp-cus-count" class="pmp-tab-count"></span></button>'
+        : "") +
+      "</div>" +
+      // ── بحث ──
+      '<div class="pmp-side-search-wrap">' +
+      '<i class="ti ti-search pmp-side-search-icon"></i>' +
+      '<input id="pmp-side-search" class="input pmp-side-search-input" placeholder="بحث بالاسم..." oninput="_pmpSideSearch(this.value)">' +
+      "</div>" +
+      "</div>" + // end sidebar-head
+      // ── قائمة الأطراف ──
+      '<div class="pmp-party-list" id="pmp-party-list">' +
+      '<div class="pmp-list-empty">' +
+      _loadingInline() +
+      "</div>" +
+      "</div>" +
+      "</div>" + // end sidebar
+      // ══════════════════════════════════════
+      // MAIN — منطقة عرض الكشف
+      // ══════════════════════════════════════
+      '<div class="pmp-main">' +
+      '<div id="pmp-result" class="pmp-result-area">' +
+      // حالة الترحيب الأولية
+      '<div class="pmp-welcome">' +
+      '<div class="pmp-welcome-icon">' +
+      '<i class="ti ti-address-book" style="font-size:40px;color:var(--accent);opacity:.35"></i>' +
+      "</div>" +
+      '<div class="pmp-welcome-title">اختر عميلاً أو مورداً</div>' +
+      '<div class="pmp-welcome-sub">اختر من القائمة على اليمين لعرض كشف حركاته المخزنية</div>' +
+      "</div>" +
+      "</div>" + // end pmp-result
+      "</div>" + // end main
+      "</div>" // end shell
+    );
+  }
+
+  // Event delegation عالمي لأزرار واتساب في جداول الفواتير
+  (function _setupWaInvDelegation() {
+    if (document._waInvDelegationSet) return;
+    document._waInvDelegationSet = true;
+    document.addEventListener("click", function (e) {
+      var btn = e.target.closest(".wa-inv-btn");
+      if (!btn) return;
+      e.stopPropagation();
+      var party = btn.getAttribute("data-wa-party") || "";
+      var phone = btn.getAttribute("data-wa-phone") || "";
+      var invId = btn.getAttribute("data-wa-inv-id") || "";
+      var invDate = btn.getAttribute("data-wa-inv-date") || "";
+      var invTot = btn.getAttribute("data-wa-inv-total") || "";
+      if (typeof WA_MODAL !== "undefined") {
+        WA_MODAL.open({
+          category: "invoice_message",
+          customer_name: party,
+          phone: phone,
+          customer_id: party,
+          source_type: "invoice",
+          source_id: invId,
+          context_data: {
+            customer_name: party,
+            invoice_number: invId,
+            invoice_date: invDate,
+            invoice_total: invTot,
+          },
+        });
+      }
+    });
+  })();
+
+  // [DEDUP] bindPartyMovementsPage / bindSupplierStatementPage / bindCustomerStatementPage
+  // تم نقلها إلى 10_JS_Settings_Search_Parties.html — النسخة الصحيحة موجودة هناك
+  // لا تعيد إضافتها هنا لتفادي تعارض التعريفات
+  // ─────────────────────────────────────────────────────────────
+  // renderSupplierStatementPage — كشف حساب المورد (مستقل)
+  // ─────────────────────────────────────────────────────────────
+  function renderSupplierStatementPage() {
+    return (
+      '<div class="pmp-shell">' +
+      // SIDEBAR
+      '<div class="pmp-sidebar">' +
+      '<div class="pmp-sidebar-head">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">' +
+      '<div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#7C3AED,#5B21B6);display:flex;align-items:center;justify-content:center;flex-shrink:0">' +
+      '<i class="ti ti-building-factory-2" style="color:#fff;font-size:17px"></i></div>' +
+      '<div><div style="font-size:14px;font-weight:800;color:var(--text1)">كشف حساب المورد</div>' +
+      '<div style="font-size:11px;color:var(--text3)">اختر مورداً من القائمة</div></div>' +
+      "</div>" +
+      '<div class="pmp-side-search-wrap">' +
+      '<i class="ti ti-search pmp-side-search-icon"></i>' +
+      '<input id="pmp-side-search" class="input pmp-side-search-input" placeholder="بحث بالاسم..." oninput="_pmpSideSearch(this.value)">' +
+      "</div>" +
+      "</div>" +
+      '<div class="pmp-party-list" id="pmp-party-list">' +
+      '<div class="pmp-list-empty">' +
+      _loadingInline() +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // MAIN
+      '<div class="pmp-main">' +
+      '<div id="pmp-result" class="pmp-result-area">' +
+      '<div class="pmp-welcome">' +
+      '<div class="pmp-welcome-icon">' +
+      '<i class="ti ti-building-factory-2" style="font-size:40px;color:#7C3AED;opacity:.35"></i>' +
+      "</div>" +
+      '<div class="pmp-welcome-title">اختر مورداً</div>' +
+      '<div class="pmp-welcome-sub">اختر من القائمة على اليمين لعرض كشف حركاته المخزنية</div>' +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  // [DEDUP] نسخة مكررة — الدالة الحقيقية في 10_JS_Settings_Search_Parties.html
+
+  // ─────────────────────────────────────────────────────────────
+  // renderCustomerStatementPage — كشف حساب العميل (مستقل)
+  // ─────────────────────────────────────────────────────────────
+  function renderCustomerStatementPage() {
+    return (
+      '<div class="pmp-shell">' +
+      // SIDEBAR
+      '<div class="pmp-sidebar">' +
+      '<div class="pmp-sidebar-head">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">' +
+      '<div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#2563EB,#0369A1);display:flex;align-items:center;justify-content:center;flex-shrink:0">' +
+      '<i class="ti ti-users" style="color:#fff;font-size:17px"></i></div>' +
+      '<div><div style="font-size:14px;font-weight:800;color:var(--text1)">كشف حساب العميل</div>' +
+      '<div style="font-size:11px;color:var(--text3)">اختر عميلاً من القائمة</div></div>' +
+      "</div>" +
+      '<div class="pmp-side-search-wrap">' +
+      '<i class="ti ti-search pmp-side-search-icon"></i>' +
+      '<input id="pmp-side-search" class="input pmp-side-search-input" placeholder="بحث بالاسم..." oninput="_pmpSideSearch(this.value)">' +
+      "</div>" +
+      "</div>" +
+      '<div class="pmp-party-list" id="pmp-party-list">' +
+      '<div class="pmp-list-empty">' +
+      _loadingInline() +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // MAIN
+      '<div class="pmp-main">' +
+      '<div id="pmp-result" class="pmp-result-area">' +
+      '<div class="pmp-welcome">' +
+      '<div class="pmp-welcome-icon">' +
+      '<i class="ti ti-users" style="font-size:40px;color:#2563EB;opacity:.35"></i>' +
+      "</div>" +
+      '<div class="pmp-welcome-title">اختر عميلاً</div>' +
+      '<div class="pmp-welcome-sub">اختر من القائمة على اليمين لعرض كشف حركاته المخزنية</div>' +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  // [DEDUP] نسخة مكررة — الدالة الحقيقية في 10_JS_Settings_Search_Parties.html
+
+  // ══════════════════════════════════════════════════════
+  // ERP v5: Accounting + HR render functions
+  // ══════════════════════════════════════════════════════
+  // ╔═════════════════════════════════════════════════════════════════╗
+  // ║  Templates_Accounting_HR.html — دوال render للموديولات       ║
+  // ║  الجديدة (Accounting + HR)                                    ║
+  // ║  تُضاف إلى Templates.html الموجود                            ║
+  // ╚═════════════════════════════════════════════════════════════════╝
+
+  // ================================================================
+  // مساعدات مشتركة
+  // ================================================================
+
+  function _renderPageHeader(title, subtitle, icon, actions) {
+    var html = '<div class="page-header">';
+    html += '<div><h1 style="display:flex;align-items:center;gap:10px">';
+    if (icon) html += iconBadge(icon.bgIcon, icon.bgColor, icon.iconColor);
+    html += "<span>" + title + "</span></h1>";
+    if (subtitle) html += '<p style="margin-top:4px">' + subtitle + "</p>";
+    html += "</div>";
+    if (actions) html += '<div class="header-actions">' + actions + "</div>";
+    html += "</div>";
+    return html;
+  }
+
+  // ================================================================
+  // §R-ACCOUNTING  Accounting Module — موديول المحاسبة
+  // ================================================================
+
+  // ── Accounting Dashboard ──
+  // ── Accounting Dashboard — Phase 3 (Dashboard Framework Work Center) ──
+  // [PHASE-3] أول قسم يتطبق عليه DashboardWidgets (26_JS_DashboardFramework.html)
+  // كمرجع (reference implementation) لباقي الأقسام في المراحل الجاية.
+  // البيانات المعروضة كلها بتتحسب هنا مباشرة من APP.data (بعد ensureExtendedData
+  // اللي بيتنفذ قبل استدعاء الدالة دي من الـ dispatcher في 01_JS_Core_Auth.html)
+  // بدل تقسيمها بين render/bind — أبسط ومفيهاش أي داتا مبدئية وهمية.
+  function renderAccountingDashboard() {
+    var W = DashboardWidgets;
+    var d = APP.data || {};
+    var accs = d.chartOfAccounts || [];
+    var boxes = d.cashBoxes || [];
+    var banks = d.bankAccounts || [];
+    var cheques = d.cheques || [];
+    var fixedAssets = d.fixedAssets || [];
+    var jents = (d.journalEntries || []).filter(function (e) {
+      return !e.deleted_at;
+    });
+
+    var totalCash = boxes.reduce(function (s, b) {
+      return (
+        s +
+        (parseFloat(
+          b.current_balance != null ? b.current_balance : b.opening_balance,
+        ) || 0)
+      );
+    }, 0);
+    var totalBank = banks.reduce(function (s, b) {
+      return (
+        s +
+        (parseFloat(
+          b.current_balance != null ? b.current_balance : b.opening_balance,
+        ) || 0)
+      );
+    }, 0);
+    var pendingCheques = cheques.filter(function (c) {
+      return c.status === "PENDING";
+    });
+    var fixedAssetsBookValue = fixedAssets.reduce(function (s, a) {
+      return s + (parseFloat(a.book_value) || 0);
+    }, 0);
+    var pending = jents.filter(function (e) {
+      return e.status === "DRAFT" || e.status === "مسودة";
+    });
+
+    // ── قيود هذا الشهر مقابل الشهر السابق (لحساب الاتجاه) ──
+    var now = new Date();
+    var thisMonthKey = now.getFullYear() + "-" + now.getMonth();
+    var lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    var lastMonthKey =
+      lastMonthDate.getFullYear() + "-" + lastMonthDate.getMonth();
+    var thisMonthCount = 0,
+      lastMonthCount = 0;
+    jents.forEach(function (e) {
+      var dt = e.date ? new Date(e.date) : null;
+      if (!dt || isNaN(dt)) return;
+      var key = dt.getFullYear() + "-" + dt.getMonth();
+      if (key === thisMonthKey) thisMonthCount++;
+      else if (key === lastMonthKey) lastMonthCount++;
+    });
+    var trend = null;
+    if (lastMonthCount > 0) {
+      var pct = Math.round(
+        ((thisMonthCount - lastMonthCount) / lastMonthCount) * 100,
+      );
+      trend = {
+        dir: pct >= 0 ? "up" : "down",
+        value: Math.abs(pct) + "%",
+        label: "عن الشهر السابق",
+      };
+    }
+
+    var html = W.header({
+      title: "المحاسبة",
+      subtitle: "نظرة عامة على النظام المحاسبي — مركز عمل القسم",
+      icon: {
+        bgIcon: "ti-calculator",
+        bgColor: "var(--accent-soft)",
+        iconColor: "var(--primary)",
+      },
+      lastUpdated: fmtTime(new Date()),
+      onRefresh: "refreshAccountingDashboard()",
+      onHelp: "showAccountingDashboardHelp()",
+      onSettings: "navigate('user-preferences')",
+    });
+
+    // ── 1) KPI Cards ──
+    html += W.kpiGrid([
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-chart-bar",
+          bg: "var(--accent-soft)",
+          color: "var(--primary)",
+        },
+        label: "عدد الحسابات",
+        value: accs.length,
+        unit: "حساب",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-cash",
+          bg: "var(--success-soft)",
+          color: "var(--success-dark)",
+        },
+        label: "رصيد الخزائن",
+        value: formatMoney(totalCash, { decimals: 0, withSymbol: false }),
+        unit: "EGP",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-building-bank",
+          bg: "var(--warning-soft)",
+          color: "var(--warning)",
+        },
+        label: "رصيد البنوك",
+        value: formatMoney(totalBank, { decimals: 0, withSymbol: false }),
+        unit: "EGP",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-wallet",
+          bg: "var(--success-soft)",
+          color: "var(--success-dark)",
+        },
+        label: "عدد الخزائن والحسابات البنكية",
+        value: boxes.length + banks.length,
+        unit: "حساب",
+        onClick: "navigate('cash-boxes')",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-clock-hour-4",
+          bg: "var(--warning-soft)",
+          color: "var(--warning)",
+        },
+        label: "شيكات تحت التحصيل",
+        value: pendingCheques.length,
+        unit: "شيك",
+        onClick: "navigate('banking-transactions')",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-building-factory",
+          bg: "var(--accent-soft)",
+          color: "#B45309",
+        },
+        label: "عدد الأصول الثابتة",
+        value: fixedAssets.length,
+        unit: "أصل",
+        onClick: "navigate('fixed-assets')",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-report-money",
+          bg: "var(--accent-soft)",
+          color: "#B45309",
+        },
+        label: "صافي القيمة الدفترية للأصول",
+        value: formatMoney(fixedAssetsBookValue, {
+          decimals: 0,
+          withSymbol: false,
+        }),
+        unit: "EGP",
+        onClick: "navigate('fixed-assets')",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-file-invoice",
+          bg: "var(--danger-soft)",
+          color: "var(--danger)",
+        },
+        label: "قيود معلقة",
+        value: pending.length,
+        unit: "مسودة",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-notebook",
+          bg: "var(--accent-soft)",
+          color: "var(--primary)",
+        },
+        label: "قيود هذا الشهر",
+        value: thisMonthCount,
+        unit: "قيد",
+        trend: trend,
+      }),
+    ]);
+
+    // ── 2) Charts ──
+    html += '<div class="card-grid two-col" style="margin-top:8px">';
+    html += W.chartWidget({
+      title: "توزيع الحسابات حسب النوع",
+      icon: "ti-chart-pie",
+      type: "pie",
+      data: _accTypeDistribution(accs),
+    });
+    html += W.chartWidget({
+      title: "القيود خلال آخر 6 أشهر",
+      icon: "ti-chart-bar",
+      type: "bar",
+      data: _accMonthlyEntryCounts(jents, 6),
+    });
+    html += "</div>";
+
+    // ── 3) Quick Actions ──
+    html += W.quickActionsWidget({
+      title: "إجراءات سريعة",
+      scope: "accounting",
+      actions: [
+        {
+          id: "je_new",
+          label: "قيد يومية جديد",
+          icon: "ti-notebook",
+          bg: "var(--accent-soft)",
+          color: "var(--primary)",
+          page: "journal-entries",
+        },
+        {
+          id: "coa",
+          label: "دليل الحسابات",
+          icon: "ti-list-tree",
+          bg: "var(--accent-soft)",
+          color: "var(--accent)",
+          page: "chart-of-accounts",
+        },
+        {
+          id: "tb",
+          label: "ميزان المراجعة",
+          icon: "ti-scale",
+          bg: "var(--warning-soft)",
+          color: "var(--warning)",
+          page: "trial-balance",
+        },
+        {
+          id: "gl",
+          label: "الأستاذ العام",
+          icon: "ti-book-2",
+          bg: "var(--success-soft)",
+          color: "var(--success-dark)",
+          page: "general-ledger",
+        },
+        {
+          id: "rv",
+          label: "سند قبض",
+          icon: "ti-receipt",
+          bg: "var(--success-soft)",
+          color: "var(--success-dark)",
+          page: "receipt-vouchers",
+        },
+        {
+          id: "pv",
+          label: "سند صرف",
+          icon: "ti-receipt-2",
+          bg: "var(--danger-soft)",
+          color: "var(--danger)",
+          page: "payment-vouchers",
+        },
+        {
+          id: "bs",
+          label: "الميزانية",
+          icon: "ti-report-money",
+          bg: "var(--accent-soft)",
+          color: "var(--primary)",
+          page: "balance-sheet",
+        },
+        {
+          id: "is",
+          label: "قائمة الدخل",
+          icon: "ti-report-analytics",
+          bg: "var(--accent-soft)",
+          color: "var(--primary)",
+          page: "income-statement",
+        },
+      ],
+    });
+
+    // ── 4) Search داخل القسم ──
+    html += W.searchWidget({
+      id: "ad-search",
+      placeholder: "بحث سريع في الحسابات...",
+      onSearchFn: "accDashboardSearch",
+    });
+
+    // ── 5) Recent Activity + Pending Tasks + Notifications ──
+    html += '<div class="card-grid two-col" style="margin-top:8px">';
+    html += W.activityWidget({
+      title: "آخر القيود",
+      icon: "ti-file-invoice",
+      items: jents
+        .slice(-6)
+        .reverse()
+        .map(function (e) {
+          return {
+            icon: "ti-notebook",
+            iconColor: "var(--primary)",
+            title: e.description || e.ref || "قيد يومية",
+            subtitle:
+              e.status === "DRAFT" || e.status === "مسودة" ? "مسودة" : "مرحّل",
+            time: _fmtDate(e.date),
+            onClick: "navigate('journal-entries')",
+          };
+        }),
+      emptyMessage: "لا توجد قيود بعد",
+    });
+    html += W.notificationWidget({
+      title: "تنبيهات المحاسبة",
+      icon: "ti-bell",
+      items: _accDashboardNotifications(),
+      emptyMessage: "لا توجد تنبيهات محاسبية حالياً",
+    });
+    html += "</div>";
+
+    html += W.tasksWidget({
+      title: "قيود تحتاج مراجعة",
+      icon: "ti-list-check",
+      badge: pending.length || null,
+      items: pending.slice(0, 6).map(function (e) {
+        return {
+          icon: "ti-alert-circle",
+          iconColor: "var(--warning)",
+          title: e.description || e.ref || "قيد مسودة",
+          subtitle: "بتاريخ " + _fmtDate(e.date),
+          onClick: "navigate('journal-entries')",
+        };
+      }),
+      emptyMessage: "لا توجد قيود معلّقة تحتاج مراجعة",
+    });
+
+    // ── 6) Quick Navigation (Recent / Pinned / Favorite) ──
+    html += W.quickNavWidget("accounting");
+
+    return html;
+  }
+
+  /** توزيع الحسابات حسب النوع — بيانات جاهزة لـ pieChart */
+  function _accTypeDistribution(accs) {
+    var typeLabels = {
+      ASSET: "الأصول",
+      LIABILITY: "الخصوم",
+      EQUITY: "حقوق الملكية",
+      REVENUE: "الإيرادات",
+      EXPENSE: "المصروفات",
+    };
+    var typeColors = {
+      ASSET: "#3B82F6",
+      LIABILITY: "#8B5CF6",
+      EQUITY: "#14B8A6",
+      REVENUE: "#22C55E",
+      EXPENSE: "#EF4444",
+    };
+    var counts = { ASSET: 0, LIABILITY: 0, EQUITY: 0, REVENUE: 0, EXPENSE: 0 };
+    accs.forEach(function (a) {
+      if (counts[a.type] !== undefined) counts[a.type]++;
+    });
+    return Object.keys(counts)
+      .filter(function (t) {
+        return counts[t] > 0;
+      })
+      .map(function (t) {
+        return { label: typeLabels[t], value: counts[t], color: typeColors[t] };
+      });
+  }
+
+  /** عدد القيود لكل شهر خلال آخر N شهر — بيانات جاهزة لـ barChart */
+  function _accMonthlyEntryCounts(jents, months) {
+    var now = new Date();
+    var buckets = [];
+    for (var i = months - 1; i >= 0; i--) {
+      var dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      buckets.push({
+        key: dt.getFullYear() + "-" + dt.getMonth(),
+        label:
+          typeof DateEngine !== "undefined"
+            ? DateEngine.monthShort(dt)
+            : dt.toLocaleDateString("ar-EG", { month: "short" }),
+        value: 0,
+      });
+    }
+    jents.forEach(function (e) {
+      var dt = e.date ? new Date(e.date) : null;
+      if (!dt || isNaN(dt)) return;
+      var key = dt.getFullYear() + "-" + dt.getMonth();
+      var b = buckets.find(function (x) {
+        return x.key === key;
+      });
+      if (b) b.value++;
+    });
+    return buckets.map(function (b) {
+      return { label: b.label, value: b.value, color: "var(--primary)" };
+    });
+  }
+
+  /** تنبيهات القسم — فلترة من _buildNotifications العامة على صفحات المحاسبة فقط */
+  function _accDashboardNotifications() {
+    if (typeof _buildNotifications !== "function") return [];
+    var accPages = { cheques: 1, "bank-reconciliation": 1 };
+    return _buildNotifications()
+      .filter(function (n) {
+        return accPages[n.page];
+      })
+      .slice(0, 6)
+      .map(function (n) {
+        return {
+          icon: n.type === "danger" ? "ti-alert-triangle" : "ti-bell",
+          iconColor: n.type === "danger" ? "var(--danger)" : "var(--warning)",
+          title: n.title,
+          subtitle: n.desc,
+          onClick: "navigate('" + n.page + "')",
+        };
+      });
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // §CU  renderCustomersDashboard — لوحة العملاء (Dashboard Framework)
+  // ═════════════════════════════════════════════════════════════
+  function renderCustomersDashboard() {
+    var W = DashboardWidgets;
+    var d = APP.data || {};
+    var customers = d.customers || [];
+    var sInv = (d.saleInvoices || []).filter(function (i) {
+      return !i.deleted_at;
+    });
+
+    var totalSales = sInv.reduce(function (s, i) {
+      return s + (parseFloat(i.net_total) || 0);
+    }, 0);
+    var unpaid = sInv.filter(function (i) {
+      return (
+        i.payment_status === "UNPAID" ||
+        i.payment_status === "غير مدفوع" ||
+        i.payment_status === "PARTIAL" ||
+        i.payment_status === "جزئي"
+      );
+    });
+    var unpaidTotal = unpaid.reduce(function (s, i) {
+      return s + (parseFloat(i.net_total) || 0);
+    }, 0);
+
+    var now = new Date();
+    var thisMonthKey = now.getFullYear() + "-" + now.getMonth();
+    var lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    var lastMonthKey =
+      lastMonthDate.getFullYear() + "-" + lastMonthDate.getMonth();
+    var thisMonthTotal = 0,
+      lastMonthTotal = 0;
+    sInv.forEach(function (i) {
+      var dt = i.date ? new Date(i.date) : null;
+      if (!dt || isNaN(dt)) return;
+      var key = dt.getFullYear() + "-" + dt.getMonth();
+      var val = parseFloat(i.net_total) || 0;
+      if (key === thisMonthKey) thisMonthTotal += val;
+      else if (key === lastMonthKey) lastMonthTotal += val;
+    });
+    var trend = null;
+    if (lastMonthTotal > 0) {
+      var pct = Math.round(
+        ((thisMonthTotal - lastMonthTotal) / lastMonthTotal) * 100,
+      );
+      trend = {
+        dir: pct >= 0 ? "up" : "down",
+        value: Math.abs(pct) + "%",
+        label: "عن الشهر السابق",
+      };
+    }
+
+    var html = W.header({
+      title: "العملاء",
+      subtitle: "نظرة عامة على العملاء والمبيعات — مركز عمل القسم",
+      icon: {
+        bgIcon: "ti-users",
+        bgColor: "var(--accent-soft)",
+        iconColor: "#2563EB",
+      },
+      lastUpdated: fmtTime(new Date()),
+      onRefresh: "refreshCustomersDashboard()",
+      onHelp: "showCustomersDashboardHelp()",
+      onSettings: "navigate('user-preferences')",
+    });
+
+    html += W.kpiGrid([
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-users",
+          bg: "var(--accent-soft)",
+          color: "#2563EB",
+        },
+        label: "عدد العملاء",
+        value: customers.length,
+        unit: "عميل",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-file-invoice",
+          bg: "var(--success-soft)",
+          color: "var(--success-dark)",
+        },
+        label: "إجمالي المبيعات",
+        value: formatMoney(totalSales, { decimals: 0, withSymbol: false }),
+        unit: "EGP",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-alert-circle",
+          bg: "var(--danger-soft)",
+          color: "var(--danger)",
+        },
+        label: "مستحقات غير محصلة",
+        value: formatMoney(unpaidTotal, { decimals: 0, withSymbol: false }),
+        unit: "EGP",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-receipt",
+          bg: "var(--warning-soft)",
+          color: "var(--warning)",
+        },
+        label: "فواتير غير مسددة",
+        value: unpaid.length,
+        unit: "فاتورة",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-cash",
+          bg: "var(--accent-soft)",
+          color: "var(--primary)",
+        },
+        label: "مبيعات هذا الشهر",
+        value: formatMoney(thisMonthTotal, { decimals: 0, withSymbol: false }),
+        unit: "EGP",
+        trend: trend,
+      }),
+    ]);
+
+    html += '<div class="card-grid two-col" style="margin-top:8px">';
+    html += W.chartWidget({
+      title: "أعلى 5 عملاء تعاملاً",
+      icon: "ti-chart-bar",
+      type: "bar",
+      data: _custTopParties(customers, sInv, 5),
+    });
+    html += W.chartWidget({
+      title: "المبيعات خلال آخر 6 أشهر",
+      icon: "ti-chart-line",
+      type: "line",
+      data: _custMonthlyTotals(sInv, 6),
+    });
+    html += "</div>";
+
+    html += W.quickActionsWidget({
+      title: "إجراءات سريعة",
+      scope: "customers",
+      actions: [
+        {
+          id: "new_inv",
+          label: "فاتورة بيع جديدة",
+          icon: "ti-file-invoice",
+          bg: "var(--success-soft)",
+          color: "var(--success-dark)",
+          page: "sale-invoices",
+        },
+        {
+          id: "cust_list",
+          label: "قائمة العملاء",
+          icon: "ti-users",
+          bg: "var(--accent-soft)",
+          color: "#2563EB",
+          page: "customers",
+        },
+        {
+          id: "cust_stmt",
+          label: "كشف حساب عميل",
+          icon: "ti-history",
+          bg: "var(--accent-soft)",
+          color: "var(--accent)",
+          page: "customer_statement",
+        },
+        {
+          id: "sale_ret",
+          label: "مرتجع بيع",
+          icon: "ti-arrow-back-up",
+          bg: "var(--warning-soft)",
+          color: "var(--warning)",
+          page: "sale-returns",
+        },
+        {
+          id: "catalog",
+          label: "إرسال كتالوج",
+          icon: "ti-brand-whatsapp",
+          bg: "#DCFCE7",
+          color: "#16A34A",
+          page: "catalog_send",
+        },
+        {
+          id: "aging",
+          label: "تقرير التقادم (AR)",
+          icon: "ti-clock-exclamation",
+          bg: "var(--danger-soft)",
+          color: "var(--danger)",
+          page: "customer_aging",
+        },
+      ],
+    });
+
+    html += W.searchWidget({
+      id: "cd-search",
+      placeholder: "بحث سريع عن عميل...",
+      onSearchFn: "custDashboardSearch",
+    });
+
+    html += '<div class="card-grid two-col" style="margin-top:8px">';
+    html += W.activityWidget({
+      title: "آخر فواتير البيع",
+      icon: "ti-file-invoice",
+      items: sInv
+        .slice(-6)
+        .reverse()
+        .map(function (i) {
+          return {
+            icon: "ti-file-invoice",
+            iconColor: "#2563EB",
+            title:
+              (i.party || "عميل") +
+              " — " +
+              formatMoney(i.net_total, { decimals: 0, withSymbol: false }) +
+              " EGP",
+            subtitle: i.payment_status || "",
+            time: _fmtDate(i.date),
+            onClick: "navigate('sale-invoices')",
+          };
+        }),
+      emptyMessage: "لا توجد فواتير بيع بعد",
+    });
+    html += W.notificationWidget({
+      title: "تنبيهات العملاء",
+      icon: "ti-bell",
+      items: _custDashboardNotifications(),
+      emptyMessage: "لا توجد تنبيهات حالياً",
+    });
+    html += "</div>";
+
+    html += W.tasksWidget({
+      title: "فواتير تحتاج متابعة تحصيل",
+      icon: "ti-list-check",
+      badge: unpaid.length || null,
+      items: unpaid.slice(0, 6).map(function (i) {
+        return {
+          icon: "ti-alert-circle",
+          iconColor: "var(--warning)",
+          title:
+            (i.party || "عميل") +
+            " — " +
+            formatMoney(i.net_total, { decimals: 0, withSymbol: false }) +
+            " EGP",
+          subtitle: "استحقاق " + _fmtDate(i.due_date || i.date),
+          onClick: "navigate('customer_statement')",
+        };
+      }),
+      emptyMessage: "لا توجد فواتير معلّقة",
+    });
+
+    html += W.quickNavWidget("customers");
+    return html;
+  }
+
+  function _custTopParties(parties, invoices, n) {
+    var totals = {};
+    invoices.forEach(function (i) {
+      var key = i.party_id || i.party || "غير محدد";
+      totals[key] = (totals[key] || 0) + (parseFloat(i.net_total) || 0);
+    });
+    var names = {};
+    parties.forEach(function (c) {
+      names[c.id] = c.name;
+    });
+    var colors = [
+      "#2563EB",
+      "#0EA5E9",
+      "#22C55E",
+      "#F59E0B",
+      "#8B5CF6",
+      "#EF4444",
+    ];
+    return Object.keys(totals)
+      .map(function (k) {
+        return { key: k, label: names[k] || k, value: totals[k] };
+      })
+      .sort(function (a, b) {
+        return b.value - a.value;
+      })
+      .slice(0, n)
+      .map(function (r, idx) {
+        return {
+          label: r.label,
+          value: Math.round(r.value),
+          color: colors[idx % colors.length],
+        };
+      });
+  }
+
+  function _custMonthlyTotals(invoices, months) {
+    var now = new Date();
+    var buckets = [];
+    for (var i = months - 1; i >= 0; i--) {
+      var dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      buckets.push({
+        key: dt.getFullYear() + "-" + dt.getMonth(),
+        label:
+          typeof DateEngine !== "undefined"
+            ? DateEngine.monthShort(dt)
+            : dt.toLocaleDateString("ar-EG", { month: "short" }),
+        value: 0,
+      });
+    }
+    invoices.forEach(function (inv) {
+      var dt = inv.date ? new Date(inv.date) : null;
+      if (!dt || isNaN(dt)) return;
+      var key = dt.getFullYear() + "-" + dt.getMonth();
+      var b = buckets.find(function (x) {
+        return x.key === key;
+      });
+      if (b) b.value += parseFloat(inv.net_total) || 0;
+    });
+    return buckets.map(function (b) {
+      return {
+        label: b.label,
+        value: Math.round(b.value),
+        color: "var(--primary)",
+      };
+    });
+  }
+
+  function _custDashboardNotifications() {
+    if (typeof _buildNotifications !== "function") return [];
+    var custPages = {
+      customer_aging: 1,
+      customer_statement: 1,
+      customers: 1,
+      "sale-invoices": 1,
+    };
+    return _buildNotifications()
+      .filter(function (n) {
+        return custPages[n.page];
+      })
+      .slice(0, 6)
+      .map(function (n) {
+        return {
+          icon: n.type === "danger" ? "ti-alert-triangle" : "ti-bell",
+          iconColor: n.type === "danger" ? "var(--danger)" : "var(--warning)",
+          title: n.title,
+          subtitle: n.desc,
+          onClick: "navigate('" + n.page + "')",
+        };
+      });
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // §SU  renderSuppliersDashboard — لوحة الموردين (Dashboard Framework)
+  // ═════════════════════════════════════════════════════════════
+  function renderSuppliersDashboard() {
+    var W = DashboardWidgets;
+    var d = APP.data || {};
+    var suppliers = d.suppliers || [];
+    var pInv = (d.purchaseInvoices || []).filter(function (i) {
+      return !i.deleted_at;
+    });
+
+    var totalPurchases = pInv.reduce(function (s, i) {
+      return s + (parseFloat(i.net_total) || 0);
+    }, 0);
+    var unpaid = pInv.filter(function (i) {
+      return (
+        i.payment_status === "UNPAID" ||
+        i.payment_status === "غير مدفوع" ||
+        i.payment_status === "PARTIAL" ||
+        i.payment_status === "جزئي"
+      );
+    });
+    var unpaidTotal = unpaid.reduce(function (s, i) {
+      return s + (parseFloat(i.net_total) || 0);
+    }, 0);
+
+    var now = new Date();
+    var thisMonthKey = now.getFullYear() + "-" + now.getMonth();
+    var lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    var lastMonthKey =
+      lastMonthDate.getFullYear() + "-" + lastMonthDate.getMonth();
+    var thisMonthTotal = 0,
+      lastMonthTotal = 0;
+    pInv.forEach(function (i) {
+      var dt = i.date ? new Date(i.date) : null;
+      if (!dt || isNaN(dt)) return;
+      var key = dt.getFullYear() + "-" + dt.getMonth();
+      var val = parseFloat(i.net_total) || 0;
+      if (key === thisMonthKey) thisMonthTotal += val;
+      else if (key === lastMonthKey) lastMonthTotal += val;
+    });
+    var trend = null;
+    if (lastMonthTotal > 0) {
+      var pct = Math.round(
+        ((thisMonthTotal - lastMonthTotal) / lastMonthTotal) * 100,
+      );
+      trend = {
+        dir: pct >= 0 ? "up" : "down",
+        value: Math.abs(pct) + "%",
+        label: "عن الشهر السابق",
+      };
+    }
+
+    var html = W.header({
+      title: "الموردين",
+      subtitle: "نظرة عامة على الموردين والمشتريات — مركز عمل القسم",
+      icon: {
+        bgIcon: "ti-building-community",
+        bgColor: "var(--accent-soft)",
+        iconColor: "#7C3AED",
+      },
+      lastUpdated: fmtTime(new Date()),
+      onRefresh: "refreshSuppliersDashboard()",
+      onHelp: "showSuppliersDashboardHelp()",
+      onSettings: "navigate('user-preferences')",
+    });
+
+    html += W.kpiGrid([
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-building-community",
+          bg: "var(--accent-soft)",
+          color: "#7C3AED",
+        },
+        label: "عدد الموردين",
+        value: suppliers.length,
+        unit: "مورد",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-shopping-cart",
+          bg: "var(--success-soft)",
+          color: "var(--success-dark)",
+        },
+        label: "إجمالي المشتريات",
+        value: formatMoney(totalPurchases, { decimals: 0, withSymbol: false }),
+        unit: "EGP",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-alert-circle",
+          bg: "var(--danger-soft)",
+          color: "var(--danger)",
+        },
+        label: "مستحقات غير مسددة",
+        value: formatMoney(unpaidTotal, { decimals: 0, withSymbol: false }),
+        unit: "EGP",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-receipt",
+          bg: "var(--warning-soft)",
+          color: "var(--warning)",
+        },
+        label: "فواتير غير مسددة",
+        value: unpaid.length,
+        unit: "فاتورة",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-cash",
+          bg: "var(--accent-soft)",
+          color: "var(--primary)",
+        },
+        label: "مشتريات هذا الشهر",
+        value: formatMoney(thisMonthTotal, { decimals: 0, withSymbol: false }),
+        unit: "EGP",
+        trend: trend,
+      }),
+    ]);
+
+    html += '<div class="card-grid two-col" style="margin-top:8px">';
+    html += W.chartWidget({
+      title: "أعلى 5 موردين تعاملاً",
+      icon: "ti-chart-bar",
+      type: "bar",
+      data: _custTopParties(suppliers, pInv, 5),
+    });
+    html += W.chartWidget({
+      title: "المشتريات خلال آخر 6 أشهر",
+      icon: "ti-chart-line",
+      type: "line",
+      data: _custMonthlyTotals(pInv, 6),
+    });
+    html += "</div>";
+
+    html += W.quickActionsWidget({
+      title: "إجراءات سريعة",
+      scope: "suppliers",
+      actions: [
+        {
+          id: "new_po",
+          label: "أمر شراء جديد",
+          icon: "ti-shopping-cart",
+          bg: "var(--success-soft)",
+          color: "var(--success-dark)",
+          page: "purchase-orders",
+        },
+        {
+          id: "new_pinv",
+          label: "فاتورة شراء جديدة",
+          icon: "ti-file-invoice",
+          bg: "var(--accent-soft)",
+          color: "#7C3AED",
+          page: "purchase-invoices",
+        },
+        {
+          id: "sup_list",
+          label: "قائمة الموردين",
+          icon: "ti-building-community",
+          bg: "var(--accent-soft)",
+          color: "#7C3AED",
+          page: "suppliers",
+        },
+        {
+          id: "sup_stmt",
+          label: "كشف حساب مورد",
+          icon: "ti-history",
+          bg: "var(--accent-soft)",
+          color: "var(--accent)",
+          page: "supplier_statement",
+        },
+        {
+          id: "purch_ret",
+          label: "مرتجع شراء",
+          icon: "ti-arrow-back-up",
+          bg: "var(--warning-soft)",
+          color: "var(--warning)",
+          page: "purchase-returns",
+        },
+        {
+          id: "aging",
+          label: "تقرير التقادم (AP)",
+          icon: "ti-clock-exclamation",
+          bg: "var(--danger-soft)",
+          color: "var(--danger)",
+          page: "supplier_aging",
+        },
+      ],
+    });
+
+    html += W.searchWidget({
+      id: "sd-search",
+      placeholder: "بحث سريع عن مورد...",
+      onSearchFn: "suppDashboardSearch",
+    });
+
+    html += '<div class="card-grid two-col" style="margin-top:8px">';
+    html += W.activityWidget({
+      title: "آخر فواتير الشراء",
+      icon: "ti-file-invoice",
+      items: pInv
+        .slice(-6)
+        .reverse()
+        .map(function (i) {
+          return {
+            icon: "ti-file-invoice",
+            iconColor: "#7C3AED",
+            title:
+              (i.party || "مورد") +
+              " — " +
+              formatMoney(i.net_total, { decimals: 0, withSymbol: false }) +
+              " EGP",
+            subtitle: i.payment_status || "",
+            time: _fmtDate(i.date),
+            onClick: "navigate('purchase-invoices')",
+          };
+        }),
+      emptyMessage: "لا توجد فواتير شراء بعد",
+    });
+    html += W.notificationWidget({
+      title: "تنبيهات الموردين",
+      icon: "ti-bell",
+      items: _suppDashboardNotifications(),
+      emptyMessage: "لا توجد تنبيهات حالياً",
+    });
+    html += "</div>";
+
+    html += W.tasksWidget({
+      title: "فواتير تحتاج سداد",
+      icon: "ti-list-check",
+      badge: unpaid.length || null,
+      items: unpaid.slice(0, 6).map(function (i) {
+        return {
+          icon: "ti-alert-circle",
+          iconColor: "var(--warning)",
+          title:
+            (i.party || "مورد") +
+            " — " +
+            formatMoney(i.net_total, { decimals: 0, withSymbol: false }) +
+            " EGP",
+          subtitle: "استحقاق " + _fmtDate(i.due_date || i.date),
+          onClick: "navigate('supplier_statement')",
+        };
+      }),
+      emptyMessage: "لا توجد فواتير معلّقة",
+    });
+
+    html += W.quickNavWidget("suppliers");
+    return html;
+  }
+
+  function _suppDashboardNotifications() {
+    if (typeof _buildNotifications !== "function") return [];
+    var suppPages = {
+      supplier_aging: 1,
+      supplier_statement: 1,
+      suppliers: 1,
+      "purchase-invoices": 1,
+    };
+    return _buildNotifications()
+      .filter(function (n) {
+        return suppPages[n.page];
+      })
+      .slice(0, 6)
+      .map(function (n) {
+        return {
+          icon: n.type === "danger" ? "ti-alert-triangle" : "ti-bell",
+          iconColor: n.type === "danger" ? "var(--danger)" : "var(--warning)",
+          title: n.title,
+          subtitle: n.desc,
+          onClick: "navigate('" + n.page + "')",
+        };
+      });
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // §AD  renderAdminDashboard — لوحة الإدارة (المستخدمون والإعدادات)
+  // ═════════════════════════════════════════════════════════════
+  function renderAdminDashboard() {
+    var W = DashboardWidgets;
+    var d = APP.data || {};
+    var users = d.users || [];
+    var activeUsers = users.filter(function (u) {
+      return u.active === true || u.active === "true" || u.active === 1;
+    });
+    var auditLog = d.auditLog || [];
+    var today = new Date().toDateString();
+    var todayLogs = auditLog.filter(function (l) {
+      return l.timestamp && new Date(l.timestamp).toDateString() === today;
+    });
+
+    var html = W.header({
+      title: "الإدارة",
+      subtitle: "المستخدمون والصلاحيات وإعدادات النظام — مركز عمل القسم",
+      icon: {
+        bgIcon: "ti-settings-2",
+        bgColor: "var(--accent-soft)",
+        iconColor: "#374151",
+      },
+      lastUpdated: fmtTime(new Date()),
+      onRefresh: "refreshAdminDashboard()",
+      onHelp: "showAdminDashboardHelp()",
+      onSettings: "navigate('system_settings')",
+    });
+
+    html += W.kpiGrid([
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-users",
+          bg: "var(--accent-soft)",
+          color: "#5B21B6",
+        },
+        label: "عدد المستخدمين",
+        value: users.length,
+        unit: "مستخدم",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-user-check",
+          bg: "var(--success-soft)",
+          color: "var(--success-dark)",
+        },
+        label: "مستخدمون نشِطون",
+        value: activeUsers.length,
+        unit: "مستخدم",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-history",
+          bg: "var(--accent-soft)",
+          color: "var(--primary)",
+        },
+        label: "عمليات اليوم",
+        value: todayLogs.length,
+        unit: "عملية",
+      }),
+      W.kpiCard({
+        icon: {
+          tiClass: "ti-list-tree",
+          bg: "var(--warning-soft)",
+          color: "var(--warning)",
+        },
+        label: "إجمالي سجل العمليات",
+        value: auditLog.length,
+        unit: "سجل",
+      }),
+    ]);
+
+    html += '<div class="card-grid two-col" style="margin-top:8px">';
+    html += W.chartWidget({
+      title: "توزيع المستخدمين حسب الدور",
+      icon: "ti-chart-pie",
+      type: "pie",
+      data: _adminRoleDistribution(users),
+    });
+    html += W.chartWidget({
+      title: "نشاط النظام خلال آخر 7 أيام",
+      icon: "ti-chart-bar",
+      type: "bar",
+      data: _adminDailyActivity(auditLog, 7),
+    });
+    html += "</div>";
+
+    html += W.quickActionsWidget({
+      title: "إجراءات سريعة",
+      scope: "admin",
+      actions: [
+        {
+          id: "new_user",
+          label: "إضافة مستخدم",
+          icon: "ti-user-plus",
+          bg: "var(--accent-soft)",
+          color: "#5B21B6",
+          page: "users",
+        },
+        {
+          id: "sys_settings",
+          label: "إعدادات النظام",
+          icon: "ti-settings",
+          bg: "var(--accent-soft)",
+          color: "#374151",
+          page: "system_settings",
+        },
+        {
+          id: "user_prefs",
+          label: "تفضيلات المستخدم",
+          icon: "ti-adjustments",
+          bg: "var(--accent-soft)",
+          color: "var(--primary)",
+          page: "user-preferences",
+        },
+        {
+          id: "audit",
+          label: "سجل العمليات",
+          icon: "ti-history",
+          bg: "var(--warning-soft)",
+          color: "var(--warning)",
+          page: "audit_log",
+        },
+        {
+          id: "ai",
+          label: "المساعد الذكي",
+          icon: "ti-robot",
+          bg: "#DCFCE7",
+          color: "#16A34A",
+          page: "ai_assistant",
+        },
+      ],
+    });
+
+    html += W.searchWidget({
+      id: "adm-search",
+      placeholder: "بحث سريع عن مستخدم...",
+      onSearchFn: "adminDashboardSearch",
+    });
+
+    html += '<div class="card-grid two-col" style="margin-top:8px">';
+    html += W.activityWidget({
+      title: "آخر العمليات في النظام",
+      icon: "ti-history",
+      items: auditLog.slice(0, 6).map(function (l) {
+        return {
+          icon: "ti-activity",
+          iconColor: "var(--primary)",
+          title: (l.action || "عملية") + (l.user ? " — " + l.user : ""),
+          subtitle: (l.table ? l.table + " — " : "") + (l.details || ""),
+          time: _fmtDate(l.timestamp),
+          onClick: "navigate('audit_log')",
+        };
+      }),
+      emptyMessage: "لا يوجد سجل عمليات بعد",
+    });
+    html += W.notificationWidget({
+      title: "تنبيهات النظام",
+      icon: "ti-bell",
+      items: _adminDashboardNotifications(),
+      emptyMessage: "لا توجد تنبيهات حالياً",
+    });
+    html += "</div>";
+
+    html += W.quickNavWidget("admin");
+    return html;
+  }
+
+  function _adminRoleDistribution(users) {
+    var counts = {};
+    var colors = [
+      "#5B21B6",
+      "#2563EB",
+      "#0EA5E9",
+      "#22C55E",
+      "#F59E0B",
+      "#EF4444",
+    ];
+    users.forEach(function (u) {
+      var role = u.role || "غير محدد";
+      counts[role] = (counts[role] || 0) + 1;
+    });
+    return Object.keys(counts).map(function (r, idx) {
+      return { label: r, value: counts[r], color: colors[idx % colors.length] };
+    });
+  }
+
+  function _adminDailyActivity(auditLog, days) {
+    var buckets = [];
+    var now = new Date();
+    for (var i = days - 1; i >= 0; i--) {
+      var dt = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      buckets.push({
+        key: dt.toDateString(),
+        label:
+          typeof DateEngine !== "undefined"
+            ? DateEngine.weekdayName(dt)
+            : dt.toLocaleDateString("ar-EG", { weekday: "short" }),
+        value: 0,
+      });
+    }
+    (auditLog || []).forEach(function (l) {
+      if (!l.timestamp) return;
+      var dt = new Date(l.timestamp);
+      if (isNaN(dt)) return;
+      var key = dt.toDateString();
+      var b = buckets.find(function (x) {
+        return x.key === key;
+      });
+      if (b) b.value++;
+    });
+    return buckets.map(function (b) {
+      return { label: b.label, value: b.value, color: "var(--primary)" };
+    });
+  }
+
+  function _adminDashboardNotifications() {
+    if (typeof _buildNotifications !== "function") return [];
+    var adminPages = { users: 1, system_settings: 1, audit_log: 1 };
+    return _buildNotifications()
+      .filter(function (n) {
+        return adminPages[n.page];
+      })
+      .slice(0, 6)
+      .map(function (n) {
+        return {
+          icon: n.type === "danger" ? "ti-alert-triangle" : "ti-bell",
+          iconColor: n.type === "danger" ? "var(--danger)" : "var(--warning)",
+          title: n.title,
+          subtitle: n.desc,
+          onClick: "navigate('" + n.page + "')",
+        };
+      });
+  }
+
+  // ── مساعدات لوحة تحكم البنوك: عقدة تدفّق دورة حياة الأوراق المالية ──
+  // (Banking Module — Notes Lifecycle Flow Diagram)
+  function _bdFlowNode(icon, bg, color, label) {
+    return (
+      '<div style="display:flex;flex-direction:column;align-items:center;gap:6px;min-width:76px">' +
+      '<div style="width:46px;height:46px;border-radius:50%;background:' +
+      bg +
+      ';display:flex;align-items:center;justify-content:center;flex-shrink:0">' +
+      '<i class="ti ' +
+      icon +
+      '" style="font-size:20px;color:' +
+      color +
+      '"></i></div>' +
+      '<div style="font-size:12px;font-weight:600;text-align:center;color:var(--text2);line-height:1.3">' +
+      label +
+      "</div></div>"
+    );
+  }
+  function _bdFlowArrow() {
+    return (
+      '<i class="ti ti-arrow-narrow-left" style="color:var(--border);' +
+      'font-size:20px;flex-shrink:0;align-self:flex-start;margin-top:12px"></i>'
+    );
+  }
+  // بطاقة صغيرة لعرض رقم حركة (الواردة/الصادرة) — قابلة للنقر لفتح شاشة
+  // الشيكات مفلترة تلقائياً على نفس النوع/الحالة.
+  function _bdMiniTile(id, label, color, dataAttrs) {
+    return (
+      '<div class="bd-mini-tile" ' +
+      (dataAttrs || "") +
+      ' style="background:var(--bg2);border-radius:12px;padding:14px 10px;text-align:center;cursor:pointer;transition:box-shadow .15s" ' +
+      "onmouseover=\"this.style.boxShadow='var(--shadow-sm)'\" onmouseout=\"this.style.boxShadow=''\">" +
+      '<div style="font-size:22px;font-weight:800;color:' +
+      (color || "var(--text1)") +
+      '" id="' +
+      id +
+      '">0</div>' +
+      '<div style="font-size:12px;color:var(--text3);margin-top:4px">' +
+      label +
+      "</div></div>"
+    );
+  }
+  // بطاقة وصول سريع (تفتح شاشة الشيكات/دفاتر الشيكات بفلتر جاهز)
+  function _bdQuickCard(icon, color, bg, label, dataAttrs) {
+    return (
+      '<div class="card bd-quick-card" ' +
+      (dataAttrs || "") +
+      ' style="padding:16px;text-align:center;cursor:pointer;transition:box-shadow .15s" ' +
+      "onmouseover=\"this.style.boxShadow='var(--shadow-md)'\" onmouseout=\"this.style.boxShadow=''\">" +
+      '<i class="ti ' +
+      icon +
+      '" style="font-size:22px;color:' +
+      color +
+      ';display:block;margin-bottom:8px"></i>' +
+      '<div style="font-size:13px;font-weight:600">' +
+      label +
+      "</div></div>"
+    );
+  }
+
+  // ── Banking Dashboard — لوحة تحكم البنوك (Banking Module Phase 10) ──
+  function renderBankingDashboard() {
+    var html = _renderPageHeader(
+      "لوحة تحكم البنوك",
+      "نظرة عامة على الحسابات البنكية، الشيكات، التحويلات، والمطابقة",
+      {
+        bgIcon: "ti-building-bank",
+        bgColor: "var(--success-soft)",
+        iconColor: "var(--success-dark)",
+      },
+      '<button class="btn btn-outline" id="bd-refresh-btn"><i class="ti ti-refresh"></i> تحديث</button>',
+    );
+
+    // ── بطاقات إحصائية عامة ──
+    html += '<div class="stat-grid">';
+    html += statCard(
+      iconBadge(
+        "ti-building-bank",
+        "var(--success-soft)",
+        "var(--success-dark)",
+      ),
+      "إجمالي أرصدة الحسابات البنكية",
+      '<span id="bd-stat-total-balance">0</span>',
+      "EGP",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-file-dollar", "var(--warning-soft)", "var(--warning)"),
+      "شيكات تحت التحصيل",
+      '<span id="bd-stat-pending-cheques">0</span>',
+      "شيك",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-alert-triangle", "var(--danger-soft)", "var(--danger)"),
+      "شيكات متأخرة عن الاستحقاق",
+      '<span id="bd-stat-overdue-cheques">0</span>',
+      "شيك",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-clock", "var(--accent-soft)", "var(--primary)"),
+      "مستحقة خلال 7 أيام",
+      '<span id="bd-stat-due-soon-cheques">0</span>',
+      "شيك",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-transfer", "var(--success-soft)", "var(--success-dark)"),
+      "تحويلات معتمدة هذا الشهر",
+      '<span id="bd-stat-transfers-month">0</span>',
+      "سند",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-clipboard-check", "var(--danger-soft)", "var(--danger)"),
+      "مطابقات معتمدة بفرق",
+      '<span id="bd-stat-recon-diff">0</span>',
+      "جلسة",
+      "",
+    );
+    html += "</div>";
+
+    // ── روابط سريعة ──
+    html +=
+      '<div class="card-grid" style="display:grid;margin-top:16px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px">';
+    [
+      ["banks", "ti-building", "البنوك"],
+      ["bank-accounts", "ti-credit-card", "الحسابات البنكية"],
+      ["cheques", "ti-file-dollar", "الشيكات"],
+      ["transfer-vouchers", "ti-transfer", "سندات التحويل"],
+      ["bank-reconciliation", "ti-clipboard-check", "المطابقة البنكية"],
+    ].forEach(function (nav) {
+      html +=
+        '<div class="card" data-acc-nav="' +
+        nav[0] +
+        '" style="padding:16px;text-align:center;cursor:pointer;transition:box-shadow .15s">' +
+        '<i class="ti ' +
+        nav[1] +
+        '" style="font-size:22px;color:var(--success-dark);display:block;margin-bottom:8px"></i>' +
+        '<div style="font-size:13px;font-weight:600">' +
+        nav[2] +
+        "</div></div>";
+    });
+    html += "</div>";
+
+    // ══════════════════════════════════════════════════════════════
+    // دورة حياة الأوراق المالية — الشيكات الواردة والصادرة
+    // ══════════════════════════════════════════════════════════════
+    html += '<div class="card-grid two-col" style="margin-top:24px">';
+
+    // ── لوحة الأوراق الواردة (شيكات استلمناها من عملاء/أطراف أخرى) ──
+    html += '<div class="card">';
+    html +=
+      '<h4 style="margin-bottom:16px;display:flex;align-items:center;gap:8px">' +
+      '<i class="ti ti-arrow-bar-to-left" style="color:var(--primary)"></i> الأوراق الواردة</h4>';
+    html +=
+      '<div style="display:flex;align-items:flex-start;gap:2px;overflow-x:auto;padding-bottom:4px">';
+    html += _bdFlowNode(
+      "ti-file-plus",
+      "var(--accent-soft)",
+      "var(--primary)",
+      "استلام الشيك",
+    );
+    html += _bdFlowArrow();
+    html += _bdFlowNode(
+      "ti-clock",
+      "var(--warning-soft)",
+      "var(--warning)",
+      "تحت التحصيل",
+    );
+    html += _bdFlowArrow();
+    html += _bdFlowNode(
+      "ti-check",
+      "var(--success-soft)",
+      "var(--success-dark)",
+      "تم التحصيل",
+    );
+    html += "</div>";
+    html +=
+      '<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border);font-size:12px;color:var(--text3);display:flex;align-items:center;gap:6px">' +
+      '<i class="ti ti-alert-triangle" style="color:var(--danger)"></i> ' +
+      "في حالة الارتداد: يمكن إعادة الإيداع، استبدال الشيك، أو إلغاؤه</div>";
+    html += "</div>";
+
+    // ── لوحة الأوراق الصادرة (شيكاتنا المحررة لموردين/أطراف أخرى) ──
+    html += '<div class="card">';
+    html +=
+      '<h4 style="margin-bottom:16px;display:flex;align-items:center;gap:8px">' +
+      '<i class="ti ti-arrow-bar-to-right" style="color:var(--purple)"></i> الأوراق الصادرة</h4>';
+    html +=
+      '<div style="display:flex;align-items:flex-start;gap:2px;overflow-x:auto;padding-bottom:4px">';
+    html += _bdFlowNode(
+      "ti-edit",
+      "var(--purple-soft)",
+      "var(--purple)",
+      "تحرير الشيك",
+    );
+    html += _bdFlowArrow();
+    html += _bdFlowNode(
+      "ti-hourglass",
+      "var(--warning-soft)",
+      "var(--warning)",
+      "تحت الصرف",
+    );
+    html += _bdFlowArrow();
+    html += _bdFlowNode(
+      "ti-check",
+      "var(--success-soft)",
+      "var(--success-dark)",
+      "تم الصرف",
+    );
+    html += "</div>";
+    html +=
+      '<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border);font-size:12px;color:var(--text3);display:flex;align-items:center;gap:6px">' +
+      '<i class="ti ti-alert-triangle" style="color:var(--danger)"></i> ' +
+      "في حالة الارتداد: يمكن إعادة الإيداع، استبدال الشيك، أو إلغاؤه</div>";
+    html += "</div>";
+
+    html += "</div>"; // end card-grid two-col (flow)
+
+    // ══════════════════════════════════════════════════════════════
+    // حركة الأوراق المالية — إحصائيات مفصّلة لكل نوع
+    // ══════════════════════════════════════════════════════════════
+    html += '<div class="card-grid two-col" style="margin-top:16px">';
+
+    html += '<div class="card">';
+    html += '<h4 style="margin-bottom:14px">حركة الأوراق الواردة</h4>';
+    html +=
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:10px">';
+    html += _bdMiniTile(
+      "bd-in-received",
+      "الأوراق المستلمة",
+      "var(--text1)",
+      'data-chq-nav data-type="INCOMING"',
+    );
+    html += _bdMiniTile(
+      "bd-in-pending",
+      "تحت التحصيل",
+      "var(--warning)",
+      'data-chq-nav data-type="INCOMING" data-status="PENDING" data-label="واردة — تحت التحصيل"',
+    );
+    html += _bdMiniTile(
+      "bd-in-collected",
+      "تم تحصيلها",
+      "var(--success-dark)",
+      'data-chq-nav data-type="INCOMING" data-status="COLLECTED" data-label="واردة — تم تحصيلها"',
+    );
+    html += _bdMiniTile(
+      "bd-in-bounced",
+      "الشيكات المرتدة",
+      "var(--danger)",
+      'data-chq-nav data-type="INCOMING" data-status="BOUNCED" data-label="واردة — مرتدة"',
+    );
+    html += _bdMiniTile(
+      "bd-in-cancelled",
+      "الشيكات الملغاة",
+      "var(--text3)",
+      'data-chq-nav data-type="INCOMING" data-status="CANCELLED" data-label="واردة — ملغاة"',
+    );
+    html += _bdMiniTile(
+      "bd-in-replaced",
+      "المستبدلة",
+      "var(--teal)",
+      'data-chq-nav data-type="INCOMING" data-status="REPLACED" data-label="واردة — تم استبدالها"',
+    );
+    html += "</div></div>";
+
+    html += '<div class="card">';
+    html += '<h4 style="margin-bottom:14px">حركة الأوراق الصادرة</h4>';
+    html +=
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:10px">';
+    html += _bdMiniTile(
+      "bd-out-issued",
+      "الأوراق المحررة",
+      "var(--text1)",
+      'data-chq-nav data-type="OUTGOING"',
+    );
+    html += _bdMiniTile(
+      "bd-out-pending",
+      "تحت الصرف",
+      "var(--warning)",
+      'data-chq-nav data-type="OUTGOING" data-status="PENDING" data-label="صادرة — تحت الصرف"',
+    );
+    html += _bdMiniTile(
+      "bd-out-collected",
+      "الأوراق المصروفة",
+      "var(--success-dark)",
+      'data-chq-nav data-type="OUTGOING" data-status="COLLECTED" data-label="صادرة — تم صرفها"',
+    );
+    html += _bdMiniTile(
+      "bd-out-bounced",
+      "الأوراق المرتدة",
+      "var(--danger)",
+      'data-chq-nav data-type="OUTGOING" data-status="BOUNCED" data-label="صادرة — مرتدة"',
+    );
+    html += _bdMiniTile(
+      "bd-out-cancelled",
+      "الأوراق الملغاة",
+      "var(--text3)",
+      'data-chq-nav data-type="OUTGOING" data-status="CANCELLED" data-label="صادرة — ملغاة"',
+    );
+    html += _bdMiniTile(
+      "bd-out-replaced",
+      "المستبدلة",
+      "var(--teal)",
+      'data-chq-nav data-type="OUTGOING" data-status="REPLACED" data-label="صادرة — تم استبدالها"',
+    );
+    html += "</div></div>";
+
+    html += "</div>"; // end card-grid two-col (movement stats)
+
+    // ══════════════════════════════════════════════════════════════
+    // الوصول السريع — روابط مباشرة لأهم شاشات الأوراق المالية
+    // ══════════════════════════════════════════════════════════════
+    html += '<h4 style="margin:24px 0 12px">الوصول السريع للأوراق المالية</h4>';
+    html +=
+      '<div class="card-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px">';
+    html += _bdQuickCard(
+      "ti-clock-hour-4",
+      "var(--warning)",
+      "",
+      "أوراق مستحقة التحصيل",
+      'data-chq-nav data-type="INCOMING" data-status="PENDING" data-label="واردة — تحت التحصيل"',
+    );
+    html += _bdQuickCard(
+      "ti-send",
+      "var(--warning)",
+      "",
+      "أوراق مستحقة السداد",
+      'data-chq-nav data-type="OUTGOING" data-status="PENDING" data-label="صادرة — تحت الصرف"',
+    );
+    html += _bdQuickCard(
+      "ti-folder-download",
+      "var(--primary)",
+      "",
+      "حافظة الشيكات الواردة",
+      'data-chq-nav data-type="INCOMING"',
+    );
+    html += _bdQuickCard(
+      "ti-folder-up",
+      "var(--purple)",
+      "",
+      "حافظة الشيكات الصادرة",
+      'data-chq-nav data-type="OUTGOING"',
+    );
+    html += _bdQuickCard(
+      "ti-alert-triangle",
+      "var(--danger)",
+      "",
+      "حافظة الشيكات المرتدة",
+      'data-chq-nav data-status="BOUNCED" data-label="الشيكات المرتدة"',
+    );
+    html += _bdQuickCard(
+      "ti-file-invoice",
+      "var(--success-dark)",
+      "",
+      "دفاتر الشيكات",
+      'data-acc-nav="cheque-books"',
+    );
+    html += "</div>";
+
+    // ── حالة الحسابات البنكية + شيكات مستحقة قريباً + آخر التحويلات ──
+    html += '<div class="card" style="margin-top:24px">';
+    html +=
+      '<h4 style="margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="ti ti-building-bank" style="color:var(--success-dark)"></i> حالة الحسابات البنكية</h4>';
+    html += '<div id="bd-accounts-table">' + _loadingInline() + "</div>";
+    html += "</div>";
+
+    html += '<div class="card-grid two-col" style="margin-top:16px">';
+    html += '<div class="card">';
+    html +=
+      '<h4 style="margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="ti ti-clock" style="color:var(--warning)"></i> شيكات مستحقة قريباً</h4>';
+    html += '<div id="bd-due-cheques">' + _loadingInline() + "</div>";
+    html += "</div>";
+    html += '<div class="card">';
+    html +=
+      '<h4 style="margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="ti ti-transfer" style="color:var(--success-dark)"></i> آخر التحويلات البنكية</h4>';
+    html += '<div id="bd-recent-transfers">' + _loadingInline() + "</div>";
+    html += "</div>";
+    html += "</div>";
+
+    return html;
+  }
+</script>

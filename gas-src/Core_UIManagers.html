@@ -1,0 +1,1187 @@
+<script>
+  // ════════════════════════════════════════════════════════════════
+  // Core_UIManagers.html — [REFACTOR-P7] نُقلت من 02_JS_UI_Shell.html
+  // (نقل نصي بحت لدوال Toast/Modal/Drawer/Dropdown/Sidebar المتناثرة،
+  // صفر تغيير في المنطق أو أسماء الدوال — كل الاستدعاءات القديمة
+  // فضلت تعمل زي ما هي لأن كل ملفات Index.html بتتحمّل في Global
+  // Scope واحد). راجع تقرير Architecture Audit 2026-07-03 — المرحلة 7.
+  // ════════════════════════════════════════════════════════════════
+
+  // ════════════════════════════════════════════════════════════════
+  // [ARCH-AUDIT-2026-07-17] initSearchableIdPanel — توحيد منطق فتح/غلق
+  // الـ Searchable Dropdown (كلاسات os-id-*) اللي كان مكرر Byte-Identical
+  // في 3 أماكن: 05_JS_Production.html (bindPOItemDropdown +
+  // bindPOItemDropdownEdit) و06_JS_Catalog_Stock.html (bindItemDropdown).
+  // صفر تغيير في السلوك — نفس الكلاسات، نفس التوقيت (50ms focus delay).
+  // ════════════════════════════════════════════════════════════════
+  function initSearchableIdPanel(trigger, panel, searchEl) {
+    function openPanel() {
+      panel.classList.add("os-id-open");
+      trigger.classList.add("os-id-active");
+      if (searchEl)
+        setTimeout(function () {
+          searchEl.focus();
+        }, 50);
+    }
+    function closePanel() {
+      panel.classList.remove("os-id-open");
+      trigger.classList.remove("os-id-active");
+    }
+    return { openPanel: openPanel, closePanel: closePanel };
+  }
+
+  function toggleNotifDropdown() {
+    var dd = document.getElementById("notif-dropdown");
+    var bd = document.getElementById("notif-backdrop");
+    if (!dd) return;
+    var isOpen = dd.classList.contains("open");
+    if (isOpen) {
+      closeNotifDropdown();
+    } else {
+      dd.classList.add("open");
+      if (bd) bd.classList.add("show");
+      _renderNotifList();
+    }
+  }
+
+  function closeNotifDropdown() {
+    var dd = document.getElementById("notif-dropdown");
+    var bd = document.getElementById("notif-backdrop");
+    if (dd) dd.classList.remove("open");
+    if (bd) bd.classList.remove("show");
+  }
+
+  function _closeAllDropdowns() {
+    document.querySelectorAll(".nav-grp-toggle").forEach(function (t) {
+      var gId = t.id.replace("-toggle", "");
+      var m = document.getElementById(gId + "-menu");
+      if (m) m.classList.remove("open");
+      t.classList.remove("open", "has-active");
+    });
+    document
+      .querySelectorAll(".nav-item.active, .nav-sub-item.active")
+      .forEach(function (x) {
+        x.classList.remove("active");
+      });
+  }
+
+  function openSidebar() {
+    var sb = document.getElementById("main-sidebar");
+    var bd = document.getElementById("sidebar-backdrop");
+    var btn = document.getElementById("sidebar-toggle");
+    if (sb) sb.classList.add("open");
+    if (bd) bd.classList.add("visible");
+    if (btn) btn.classList.add("is-open"); // ← hamburger → X + يتحرك مع السايدبار
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeSidebar() {
+    var sb = document.getElementById("main-sidebar");
+    var bd = document.getElementById("sidebar-backdrop");
+    var btn = document.getElementById("sidebar-toggle");
+    if (sb) sb.classList.remove("open");
+    if (bd) bd.classList.remove("visible");
+    if (btn) btn.classList.remove("is-open"); // ← X → hamburger
+    document.body.style.overflow = "";
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // [SIDEBAR-COLLAPSE] طي/فتح السايدبار (نمط ERP احترافي — ديسكتوب)
+  // - الحالة بتتحفظ في localStorage وترجع تلقائياً بعد أي تحديث/لوجين.
+  // - شغالة بس فوق 860px (Desktop). تحت كده السايدبار بيرجع لنظام
+  //   الـ Drawer الأصلي زي ما هو من غير أي تغيير في منطقه.
+  // - صفر تعديل على دوال أو منطق التنقل الحالي — تعتمد بالكامل على
+  //   متغير الـ CSS ‎--sidebar-w‎ اللي أصلاً بيتحكم في المحتوى/الشريط
+  //   العلوي/الـ Drawers، فكل حاجة بتتوسّع تلقائياً بنفس الحركة.
+  // ════════════════════════════════════════════════════════════════
+  var SIDEBAR_COLLAPSE_KEY = "moo_sidebar_collapsed";
+
+  function _isSidebarDesktopViewport() {
+    return window.innerWidth > 860;
+  }
+
+  function _getSidebarCollapsedPref() {
+    try {
+      return localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === "1";
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function _setSidebarCollapsedPref(collapsed) {
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSE_KEY, collapsed ? "1" : "0");
+    } catch (e) {}
+  }
+
+  // بيطبّق الحالة على الـ DOM فعليًا. save=false يُستخدم وقت المزامنة
+  // مع تغيير حجم الشاشة عشان منكتبش نفس القيمة في localStorage تاني.
+  function applySidebarCollapsed(collapsed, save) {
+    var sb = document.getElementById("main-sidebar");
+    var layout = document.querySelector(".app-layout");
+    var btn = document.getElementById("sidebar-collapse-btn");
+    if (!sb) return;
+
+    if (collapsed) {
+      sb.classList.add("collapsed");
+      if (layout) layout.classList.add("sidebar-collapsed");
+      // نضبط المتغير على documentElement مش بس .app-layout، عشان أي
+      // عنصر بيتحط على document.body مباشرة (Drawers/Modals اللي بتحسب
+      // مساحتها بناءً على --sidebar-w) يتوسّع هو كمان تلقائيًا ومنسيبش
+      // مساحة بيضاء فاضية بين السايدبار المطوي وبين هذه العناصر.
+      if (_isSidebarDesktopViewport()) {
+        document.documentElement.style.setProperty("--sidebar-w", "68px");
+      }
+    } else {
+      sb.classList.remove("collapsed");
+      if (layout) layout.classList.remove("sidebar-collapsed");
+      document.documentElement.style.removeProperty("--sidebar-w");
+    }
+    if (btn) {
+      btn.classList.toggle("is-collapsed", collapsed);
+      btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      btn.title = collapsed
+        ? I18N.t("UI_SIDEBAR_OPEN")
+        : I18N.t("UI_SIDEBAR_COLLAPSE");
+      btn.setAttribute(
+        "aria-label",
+        collapsed ? I18N.t("UI_SIDEBAR_OPEN") : I18N.t("UI_SIDEBAR_COLLAPSE"),
+      );
+    }
+    if (save !== false) _setSidebarCollapsedPref(collapsed);
+  }
+
+  function toggleSidebarCollapse() {
+    if (!_isSidebarDesktopViewport()) return; // على الموبايل مفيش طي — Drawer بس
+    var sb = document.getElementById("main-sidebar");
+    var isCollapsed = !!(sb && sb.classList.contains("collapsed"));
+    applySidebarCollapsed(!isCollapsed);
+  }
+
+  // بيتنادى مرة واحدة بعد أول renderLayout() — يرجّع آخر حالة محفوظة
+  function _initSidebarCollapseState() {
+    var wantsCollapsed = _getSidebarCollapsedPref();
+    if (wantsCollapsed && _isSidebarDesktopViewport()) {
+      applySidebarCollapsed(true, false);
+    }
+  }
+
+  // بيزامن حالة الطي مع تغيير حجم الشاشة (Desktop ⇄ Mobile) عشان
+  // العرض المطوي (68px) ميتسربش لنظام الـ Drawer على الموبايل
+  function _syncSidebarCollapseWithViewport() {
+    var sb = document.getElementById("main-sidebar");
+    if (!sb) return;
+    if (_isSidebarDesktopViewport()) {
+      if (_getSidebarCollapsedPref()) applySidebarCollapsed(true, false);
+    } else {
+      // على الموبايل لازم نشيل كلاس collapsed ونمسح المتغير --sidebar-w
+      // المضبوط يدويًا (من غير ما نلمس التفضيل المحفوظ) عشان الـ Drawer
+      // يرجع يستخدم القيمة الأصلية اللي بتحددها الـ media query بتاعته
+      sb.classList.remove("collapsed");
+      var layout = document.querySelector(".app-layout");
+      if (layout) layout.classList.remove("sidebar-collapsed");
+      document.documentElement.style.removeProperty("--sidebar-w");
+    }
+  }
+
+  // [NO-TOAST-OVER-MODAL-2026-07-28] حل جذري: أي modal/drawer مفتوح
+  // (openStyledDrawer أو openModal القديم) بيخلي #ai-fab بـ display:none،
+  // وده كان يخلي _positionBubble تحسب مكان الأيقونة كـ (0,0) (لأن
+  // getBoundingClientRect بيرجّع أصفار لعنصر display:none)، فالتوست
+  // كان بيظهر في أعلى يسار الشاشة فوق المودال نفسه — رغم إن z-index
+  // بابل التوست (99995) مصمم أصلاً "يبقى فوق أي overlay أو modal".
+  // الحل الجذري مش تصحيح مكان الظهور، لكن منع الظهور فوق أي مودال/دروار
+  // خالص: أي توست بيتطلب وقت ما فيه مودال/دروار مفتوح بيتأجل لحد ما
+  // يقفل (_flushDeferredToasts بتتنادى من closeStyledDrawer/closeModal)،
+  // فمفيش أي رسالة أو إشعار يظهر فوق أي شاشة منسدلة إطلاقًا.
+  var _deferredToastQueue = [];
+  function _isModalOrDrawerOpen() {
+    return !!(
+      document.getElementById("edit-drawer") ||
+      document.getElementById("drawer-backdrop") ||
+      document.getElementById("modal-overlay") ||
+      document.querySelector(".modal-overlay")
+    );
+  }
+  function _flushDeferredToasts() {
+    if (!_deferredToastQueue.length) return;
+    if (_isModalOrDrawerOpen()) return; // لسه فيه مودال/دروار تاني مفتوح
+    var pending = _deferredToastQueue;
+    _deferredToastQueue = [];
+    pending.forEach(function (it) {
+      _enqueueToast(it.msg, it.type, it.duration, it.urgent, it.entryId);
+    });
+  }
+
+  function _enqueueToast(msg, type, duration, urgent, entryId) {
+    type = type || "info";
+    // [NO-TOAST-OVER-MODAL-2026-07-28] فيه مودال/دروار مفتوح دلوقتي —
+    // أجّل الرسالة لحد ما يقفل بدل ما تظهر فوقه. رسائل "loading" بس
+    // مُستبعدة من التأجيل لأنها مرتبطة بعملية شغالة فعليًا (زي رفع صورة
+    // داخل نفس المودال) ومفيش قيمة من تأجيلها لحد ما يقفل المودال.
+    if (type !== "loading" && _isModalOrDrawerOpen()) {
+      _deferredToastQueue.push({
+        msg: msg,
+        type: type,
+        duration: duration,
+        urgent: urgent,
+        entryId: entryId,
+      });
+      return;
+    }
+    // مدة الإشعار: افتراضي 5000ms، الحد الأقصى 8000ms
+    var _DEFAULT_DURATIONS = {
+      error: 6000,
+      warning: 5000,
+      success: 4500,
+      info: 5000,
+    };
+    // [TOAST-LOADING-2026-07] loading = ثابت بدون مؤقّت (بيقفل فقط عبر
+    // finishLoadingToast عند انتهاء العملية فعليًا) — لا يخضع لسقف 8000ms.
+    duration =
+      type === "loading"
+        ? Infinity
+        : Math.min(duration || _DEFAULT_DURATIONS[type] || 5000, 8000);
+    var now = Date.now();
+
+    // [TOAST-LOADING-2026-07] رسائل التحميل لا تدخل في منطق dedup/merge
+    // العادي (المبني على مؤقّتات ثابتة) — هي مؤقتة بطبيعتها ولازم يكون
+    // فيه واحدة بس شغّالة في نفس اللحظة. لو فيه loading toast معروض
+    // حاليًا أو مُجدوَل بالفعل، حدّث نصه في مكانه بدل ما تضيف نسخة تانية
+    // تقف في الطابور وتأخّر ظهور رسالة النتيجة.
+    if (type === "loading") {
+      if (_activeToastType === "loading") {
+        var bubbleNow = _ensureBubble();
+        var textEl = bubbleNow.querySelector(".fab-bubble-text");
+        if (textEl) textEl.textContent = msg;
+        return;
+      }
+      var queuedLoading = _toastQueue.find(function (it) {
+        return it.type === "loading";
+      });
+      if (queuedLoading) {
+        queuedLoading.msg = msg;
+        return;
+      }
+    }
+
+    // لو urgent (خطأ حرج) — امسح كل ما هو أقل أولوية وضعه أولاً
+    if (urgent) {
+      _toastQueue = _toastQueue.filter(function (it) {
+        return _TOAST_PRIORITY[it.type] >= _TOAST_PRIORITY.error;
+      });
+    }
+
+    // ① منع التكرار: لو نفس الرسالة (نفس النص + النوع) ظهرت/مُجدولة
+    //    خلال _DEDUP_WINDOW_MS الأخيرة — لا نُسقطها بصمت (كان ده الخطأ:
+    // لو مسحت صنفين ورا بعض بنص رسالة عام زي "تم حذف الصنف "، الرسالة
+    //    التانية كانت بتتجاهل تمامًا من غير أي أثر، فحاسس إن العملية
+    //    التانية "ماظهرتش"). دلوقتي بدل الإسقاط الصامت، بنزوّد عداد ونعرض
+    //    نفس الرسالة تانية بعلامة (×N) — يفرّق بين "نداء مكرر بالغلط"
+    //    (اللي المستخدم مش هيلاحظ فرق) و"فعل شرعي اتكرر" (هيشوف ×2 كدليل).
+    var dupInQueue = _toastQueue.find(function (it) {
+      return it.msg === msg && it.type === type;
+    });
+    if (dupInQueue) {
+      dupInQueue.count = (dupInQueue.count || 1) + 1;
+      dupInQueue.msg = _mergeToastMsg(dupInQueue, msg);
+      if (entryId) dupInQueue.entryId = entryId; // خُد أحدث ربط بالإشعار
+      _sortToastQueue();
+      return;
+    }
+    if (
+      _lastShownToast &&
+      _lastShownToast.msg === msg &&
+      _lastShownToast.type === type &&
+      now - _lastShownToast.at < _DEDUP_WINDOW_MS
+    ) {
+      // [BUGFIX-SILENT-DUP] كان بيرجع من غير ما يعمل حاجة (الرسالة التانية
+      // بتضيع نهائيًا). دلوقتي بنعرض توست جديد بعلامة العدد التراكمي بدل
+      // الإسقاط الكامل، عشان كل عملية حقيقية تاخد أثر مرئي.
+      _lastShownToast.count = (_lastShownToast.count || 1) + 1;
+      _toastQueue.push({
+        msg: _mergeToastMsg(_lastShownToast, msg),
+        type: type,
+        duration: duration,
+        groupKey: null,
+        count: _lastShownToast.count,
+        enqueuedAt: now,
+        entryId: entryId,
+      });
+      _sortToastQueue();
+      _bumpUnreadBadge();
+      _processToastQueue();
+      return;
+    }
+
+    // ② دمج الإشعارات المتشابهة من نفس "العائلة" (نفس الـ groupKey)
+    var groupKey = _toastGroupKey(msg, type);
+    if (groupKey) {
+      var sameGroup = _toastQueue.find(function (it) {
+        return it.groupKey === groupKey;
+      });
+      if (sameGroup) {
+        sameGroup.count = (sameGroup.count || 1) + 1;
+        sameGroup.msg = _mergeToastMsg(sameGroup, msg);
+        if (entryId) sameGroup.entryId = entryId;
+        _sortToastQueue();
+        return;
+      }
+    }
+
+    _toastQueue.push({
+      msg: msg,
+      type: type,
+      duration: duration,
+      groupKey: groupKey,
+      count: 1,
+      enqueuedAt: now,
+      entryId: entryId,
+    });
+
+    _sortToastQueue();
+    _bumpUnreadBadge();
+    _processToastQueue();
+  }
+
+  function _sortToastQueue() {
+    _toastQueue = _toastQueue
+      .map(function (it, idx) {
+        it._idx = idx;
+        return it;
+      })
+      .sort(function (a, b) {
+        var pa = _TOAST_PRIORITY[a.type] || 0;
+        var pb = _TOAST_PRIORITY[b.type] || 0;
+        if (pa !== pb) return pb - pa; // الأعلى أولوية أولاً
+        return a._idx - b._idx; // ثبات الترتيب
+      });
+  }
+
+  function _toastGroupKey(msg, type) {
+    if (type === "info" || type === "success") {
+      // مثال: " تم حفظ الصنف" + " تم حفظ الصنف" → نفس المجموعة
+      return type + "::" + msg.replace(/[\d٠-٩]+/g, "#");
+    }
+    return null; // الأخطاء/التحذيرات لا تُدمج — كل واحدة مهمة
+  }
+
+  function _mergeToastMsg(item, newMsg) {
+    var base = newMsg.replace(/\s*\(×\d+\)\s*$/, "");
+    return base + " (×" + item.count + ")";
+  }
+
+  function _processToastQueue() {
+    if (_toastBusy || _toastQueue.length === 0) return;
+    _toastBusy = true;
+    var item = _toastQueue.shift();
+    _lastShownToast = { msg: item.msg, type: item.type, count: item.count || 1, at: Date.now() };
+    _showToastImmediate(item.msg, item.type, item.duration, function () {
+      _toastBusy = false;
+      _consumeUnreadBadge();
+      // فاصل قصير 150ms بين الرسايل يريح العين
+      setTimeout(_processToastQueue, 150);
+    }, item.entryId);
+  }
+
+  function _setAIFabAboveToast(active) {
+    // مُعطَّل: الـ fab لا يتحرك — الـ bubble وحده يظهر/يختفي
+  }
+
+  function _toastFallbackMsgs() {
+    return {
+      error: I18N.t("UI_TOAST_ERROR_FALLBACK"),
+      warning: I18N.t("UI_TOAST_WARNING_FALLBACK"),
+      success: I18N.t("UI_TOAST_SUCCESS_FALLBACK"),
+      info: I18N.t("UI_TOAST_INFO_FALLBACK"),
+    };
+  }
+
+  function showToast(msg, type, duration, urgent, entryId) {
+    type = type || "info";
+    // [FIX] أي استدعاء لـ showToast برسالة فاضية/undefined (زي e.message
+    // اللي بيرجع فاضي أحيانًا من google.script.run، أو r.message مفقودة من
+    // رد الباك إند) كان بيطلّع فقاعة فاضية بصوت بس من غير نص — فحسّها
+    // المستخدم "صوت من غير رسالة". دلوقتي أي رسالة فاضية بتاخد نص افتراضي
+    // واضح حسب نوعها، فمفيش أي حالة الفقاعة تظهر فاضية.
+    if (!msg || !String(msg).trim()) {
+      msg = _toastFallbackMsgs()[type] || _toastFallbackMsgs().info;
+    }
+    // §AS — تشغيل صوت حسب نوع الإشعار
+    if (typeof AS !== "undefined") {
+      try {
+        AS._onToastType(type || "info", msg);
+      } catch (e) {}
+    }
+    // [NOTIF-TOAST-LINK] entryId (لو موصول من NotificationEngine) بيربط
+    // الفقاعة دي بسجل موحّد في Notification Center — الضغط عليها بينقل
+    // المستخدم لمكان الحدث بدل ما تكون مجرد رسالة عابرة.
+    _enqueueToast(msg, type, duration, urgent, entryId);
+  }
+
+  // [TOAST-LOADING-2026-07] finishLoadingToast — الاستخدام المتوقع:
+  //   showToast("جاري الحفظ...", "loading");
+  //   callServer(..., function (res) {
+  //     finishLoadingToast(res.success ? "تم الحفظ بنجاح" : res.message,
+  //                         res.success ? "success" : "error");
+  //   });
+  // بتقفل إشعار التحميل النشط فورًا (بدل ما تستنى مؤقّت ثابت زي أي إشعار
+  // عادي) وبعدها تعرض رسالة النتيجة كإشعار طبيعي بالطابور — عشان
+  // "جاري الحفظ..." يفضل ظاهر بالظبط لحد ما العملية تخلّص فعليًا، مش
+  // لحد ما مؤقّت وهمي يخلّص.
+  function finishLoadingToast(msg, type) {
+    // لو فيه loading toast لسه في الطابور ماظهرش بعد (نادر لكن ممكن لو
+    // العملية خلصت بسرعة قبل ما الطابور يوصله)، امسحه بدل ما نستنى دوره
+    if (_toastQueue.length) {
+      _toastQueue = _toastQueue.filter(function (it) {
+        return it.type !== "loading";
+      });
+    }
+    if (_activeToastType === "loading" && typeof _activeToastDismiss === "function") {
+      _activeToastDismiss();
+    }
+    if (msg) showToast(msg, type);
+  }
+
+  // إغلاق إشعار التحميل بدون عرض رسالة نتيجة بعده (مثلاً لو المستخدم لغى العملية)
+  function dismissLoadingToast() {
+    finishLoadingToast(null);
+  }
+
+  // [SESSION-END-CLEAR-TOASTS] تقفل أي فقاعة توست ظاهرة دلوقتي فورًا،
+  // ومسح أي رسايل تانية مستنية في الطابور — بتتنادى قبل إنهاء الجلسة
+  // (تسجيل الخروج / انتهاء الجلسة تلقائيًا) عشان مفيش رسالة قديمة تفضل
+  // معلّقة على الشاشة بعد ما المستخدم يطلع بره النظام.
+  function dismissAllToasts() {
+    _toastQueue = [];
+    if (typeof _activeToastDismiss === "function") {
+      _activeToastDismiss();
+    }
+    var bubble = document.getElementById("ai-fab-bubble") || null;
+    if (!bubble && typeof _ensureBubble === "function") {
+      // ماتنشئش bubble جديدة لو مفيش أي حاجة ظاهرة أصلاً
+      bubble = null;
+    }
+    if (bubble) {
+      bubble.style.animation = "none";
+      bubble.style.display = "none";
+    }
+    _activeToastType = null;
+    _activeToastDismiss = null;
+  }
+
+  function _showToastImmediate(msg, type, duration, onDone, entryId) {
+    type = type || "info";
+    // مدة الإشعار: افتراضي حسب النوع، الحد الأقصى 8000ms
+    var _DEFAULT_DURATIONS = {
+      error: 6000,
+      warning: 5000,
+      success: 4500,
+      info: 5000,
+    };
+    duration =
+      type === "loading"
+        ? Infinity
+        : Math.min(duration || _DEFAULT_DURATIONS[type] || 5000, 8000);
+
+    var icons = { success: "", error: "", warning: "", info: "ℹ️", loading: "⏳" };
+    var icon = icons[type] || "ℹ️";
+
+    // أوقف أي timer متبقي
+    if (_aiFabToastTimer) {
+      clearTimeout(_aiFabToastTimer);
+      _aiFabToastTimer = null;
+    }
+    if (_fabMsgTimer) {
+      clearTimeout(_fabMsgTimer);
+      _fabMsgTimer = null;
+    }
+    // [FIX-UI] لو فيه تايمر إخفاء معلّق من _closeSaveAnim (مؤقت الحفظ) لازم
+    // نلغيه هنا، وإلا هيقفل رسالة التوست دي بعد 300ms بدون أي شرط
+    if (typeof _saveAnim !== "undefined" && _saveAnim && _saveAnim.hideTimer) {
+      clearTimeout(_saveAnim.hideTimer);
+      _saveAnim.hideTimer = null;
+    }
+
+    var seq = ++_aiFabToastSeq;
+    var bubble = _ensureBubble();
+
+    // أوقف animation قديم وأخفِ فوراً
+    bubble.style.animation = "none";
+    bubble.style.display = "none";
+    bubble.offsetHeight; // reflow
+
+    // اكتب المحتوى وحدّد النوع للتلوين
+    bubble.setAttribute("data-type", type);
+    // [A11Y] Screen Reader: خطأ/تحذير بيتقاطع فورًا (assertive)، باقي
+    // الأنواع بتتقال بعد ما القارئ يخلص اللي هو فيه (polite) عشان
+    // ميوقفش القراءة الحالية فجأة على رسالة أقل أهمية.
+    bubble.setAttribute("role", type === "error" || type === "warning" ? "alert" : "status");
+    bubble.setAttribute("aria-live", type === "error" || type === "warning" ? "assertive" : "polite");
+    bubble.setAttribute("aria-atomic", "true");
+    // [NOTIF-TOAST-INTERACTIVE] الفقاعة كلها قابلة للضغط لو مرتبطة بإشعار
+    // (entryId من NotificationEngine) — الضغط بيحدّدها كمقروءة وينقل
+    // المستخدم لمكان الحدث (أو ينفّذ الإجراء المخصص لها). لو مفيش entryId
+    // (توست نظامي قديم بدون سياق)، الفقاعة تفضل غير تفاعلية زي ما كانت.
+    var _interactive = !!entryId && type !== "loading";
+    bubble.setAttribute("data-interactive", _interactive ? "true" : "false");
+    if (_interactive) {
+      bubble.setAttribute("tabindex", "0");
+      bubble.setAttribute("role", "button");
+      bubble.setAttribute("aria-label", msg + " — فتح التفاصيل");
+    } else {
+      bubble.removeAttribute("tabindex");
+    }
+    bubble.innerHTML =
+      '<span class="fab-bubble-stem"></span>' +
+      '<button class="fab-bubble-close" aria-label="' +
+      I18N.t("BTN_CLOSE") +
+      '"></button>' +
+      '<span class="fab-bubble-icon">' +
+      icon +
+      "</span>" +
+      '<span class="fab-bubble-text">' +
+      msg +
+      "</span>" +
+      '<span class="fab-bubble-progress"><span class="fab-bubble-progress-bar"></span></span>';
+
+    // [FIX-UI] الروبوت ثابت — نعرض الـ bubble مباشرة بدون تأخير
+    bubble.style.visibility = "hidden";
+    bubble.style.display = "block";
+    var bW = Math.min(300, window.innerWidth - 32);
+    bubble.style.width = bW + "px";
+    bubble.offsetHeight;
+    _positionBubble(bubble);
+    bubble.style.visibility = "";
+    bubble.style.animation =
+      "fabBubbleIn 0.38s cubic-bezier(0.34,1.4,0.64,1) forwards";
+
+    // ── progress bar animation ──
+    // [TOAST-LOADING-2026-07] loading بدون شريط تقدّم (مفيش مدة معروفة مسبقًا)
+    var progressBar = bubble.querySelector(".fab-bubble-progress-bar");
+    if (progressBar) {
+      if (isFinite(duration)) {
+        progressBar.style.transition = "none";
+        progressBar.style.width = "100%";
+        bubble.offsetHeight; // reflow
+        progressBar.style.transition = "width " + duration + "ms linear";
+        progressBar.style.width = "0%";
+      } else {
+        progressBar.style.transition = "none";
+        progressBar.style.width = "100%";
+      }
+    }
+
+    // ── دالة الإغلاق الفعلية ──
+    function _dismissBubble() {
+      if (seq !== _aiFabToastSeq) return;
+      if (_aiFabToastTimer) {
+        clearTimeout(_aiFabToastTimer);
+        _aiFabToastTimer = null;
+      }
+      bubble.style.animation =
+        "fabBubbleOut 0.28s cubic-bezier(0.55,0,1,0.8) forwards";
+      setTimeout(function () {
+        if (seq !== _aiFabToastSeq) return;
+        bubble.style.display = "none";
+        _aiFabToastTimer = null;
+        // نظّف event listeners
+        bubble.removeEventListener("mouseenter", _onHoverIn);
+        bubble.removeEventListener("mouseleave", _onHoverOut);
+        document.removeEventListener("keydown", _onEscKey);
+        // [TOAST-LOADING-2026-07] فضّي متابعة الإشعار النشط عند إغلاقه فعليًا
+        if (_activeToastDismiss === _dismissBubble) {
+          _activeToastType = null;
+          _activeToastDismiss = null;
+        }
+        if (typeof onDone === "function") onDone();
+      }, 300);
+    }
+
+    // [TOAST-LOADING-2026-07] سجّل الإشعار الحالي كـ "نشط" عشان
+    // finishLoadingToast/إعادة استخدام نفس الفقاعة تقدر تلاقيه
+    _activeToastType = type;
+    _activeToastDismiss = _dismissBubble;
+
+    // ── زر الإغلاق الفوري (يقفل الفقاعة فقط — لا يمسّ الإشعار في المركز) ──
+    var closeBtn = bubble.querySelector(".fab-bubble-close");
+    if (closeBtn) {
+      closeBtn.setAttribute("aria-label", I18N.t("BTN_CLOSE"));
+      closeBtn.onclick = function (e) {
+        e.stopPropagation();
+        _dismissBubble();
+      };
+    }
+
+    // [NOTIF-TOAST-INTERACTIVE] الضغط على أي مكان في الفقاعة (عدا زر
+    // الإغلاق أعلاه، اللي بيوقف propagation) — يفتح الإشعار المرتبط عبر
+    // نقطة موحّدة واحدة (NotificationEngine.openEntry): تحديد كمقروء،
+    // تنفيذ onOpen المخصصة لو موجودة، أو التنقّل لصفحته مع احترام
+    // الصلاحيات. إغلاق الفقاعة بعدها فورًا — الإشعار نفسه يفضل محفوظ.
+    // [FIX] الفقاعة عنصر واحد مُعاد استخدامه بين كل رسالة (singleton
+    // #ai-fab-bubble) — لازم نستخدم .onclick/.onkeydown (تعيين مباشر بيدوس
+    // على القديم) مش addEventListener (كانت هتكدّس مستمعين قدام بعض مع كل
+    // رسالة جديدة وتفتح نفس الإشعار عدة مرات بالغلط).
+    if (_interactive) {
+      bubble.style.cursor = "pointer";
+      bubble.onclick = function () {
+        if (typeof NotificationEngine !== "undefined") {
+          NotificationEngine.openEntry(entryId);
+        }
+        _dismissBubble();
+      };
+      bubble.onkeydown = function (e) {
+        if (e.key === "Enter" || e.key === " " || e.keyCode === 13 || e.keyCode === 32) {
+          e.preventDefault();
+          bubble.onclick();
+        }
+      };
+    } else {
+      bubble.style.cursor = "";
+      bubble.onclick = null;
+      bubble.onkeydown = null;
+    }
+
+    // [A11Y] Escape يقفل الإشعار الظاهر حالياً — أي مكان في الصفحة،
+    // بشرط إن مفيش عنصر تاني (Modal/Drawer) بيستخدم Escape لنفسه أصلاً
+    // (فحص data-notif-block كـ إشارة إن فيه حاجة تانية أولى بالتعامل معها)
+    function _onEscKey(e) {
+      if (e.key !== "Escape" && e.keyCode !== 27) return;
+      if (document.querySelector(".modal-overlay, .drawer-backdrop")) return;
+      _dismissBubble();
+    }
+    document.addEventListener("keydown", _onEscKey);
+
+    // ── Hover Pause / Resume ──
+    // [TOAST-LOADING-2026-07] loading بدون مدة (Infinity) — الـ hover pause
+    // مالوش معنى هنا لأن أصلاً مفيش مؤقّت اختفاء تلقائي يُستأنف
+    var _remainingMs = duration;
+    var _hoverStartAt = null;
+    var _isPaused = false;
+
+    function _onHoverIn() {
+      if (_isPaused || seq !== _aiFabToastSeq || !isFinite(duration)) return;
+      _isPaused = true;
+      _hoverStartAt = Date.now();
+      if (_aiFabToastTimer) {
+        clearTimeout(_aiFabToastTimer);
+        _aiFabToastTimer = null;
+      }
+      // أوقف الـ progress bar
+      if (progressBar) {
+        var computed = window.getComputedStyle(progressBar);
+        var currentWidth = computed.width;
+        var parentWidth =
+          bubble.querySelector(".fab-bubble-progress").offsetWidth || bW;
+        progressBar.style.transition = "none";
+        progressBar.style.width = currentWidth;
+        _remainingMs = Math.round(
+          _remainingMs * (parseFloat(currentWidth) / parentWidth),
+        );
+      }
+      bubble.setAttribute("data-paused", "true");
+    }
+
+    function _onHoverOut() {
+      if (!_isPaused || seq !== _aiFabToastSeq) return;
+      _isPaused = false;
+      bubble.removeAttribute("data-paused");
+      // استأنف الـ progress bar
+      if (progressBar) {
+        progressBar.style.transition = "width " + _remainingMs + "ms linear";
+        progressBar.style.width = "0%";
+      }
+      _aiFabToastTimer = setTimeout(_dismissBubble, _remainingMs);
+    }
+
+    bubble.addEventListener("mouseenter", _onHoverIn);
+    bubble.addEventListener("mouseleave", _onHoverOut);
+
+    // ── Timer الاختفاء التلقائي ──
+    // [TOAST-LOADING-2026-07] loading (duration=Infinity) ما بتتقفلش
+    // بمؤقّت إطلاقًا — لازم استدعاء صريح لـ finishLoadingToast/dismissLoadingToast
+    if (isFinite(duration)) {
+      _aiFabToastTimer = setTimeout(_dismissBubble, duration);
+    }
+  }
+
+  // [SELECTION-ENGINE] renderSearchDropdown/renderWarehouseDropdown
+  // (نظام wh-dropdown القديم) اتشالوا نهائيًا — كانوا نظام اختيار موازٍ
+  // خاص بيه (بيبني HTML/سلوك خاص بنفسه بدل استخدام AppSelect)، ومفيش
+  // أي استدعاء ليهم متبقي في المشروع. أي فلتر مخازن جديد يستخدم
+  // AppSelect.create()/upgrade() مباشرة زي أي select تاني في النظام.
+
+  function openStyledDrawer(opts) {
+    opts = opts || {};
+    window._sdCloseGuard = null; // [ITEM-MASTER-P6] تصفير أي Guard قديم من شاشة سابقة
+    closeModal();
+
+    // ── fields: auto-body builder ─────────────────────────────
+    if (opts.fields && opts.fields.length && !opts.body) {
+      var _fieldsHtml = '<div class="form-grid">';
+      opts.fields.forEach(function (f) {
+        var fType = f.type || "text";
+        var fVal =
+          f.value !== undefined && f.value !== null ? String(f.value) : "";
+        var fPlaceholder = f.placeholder || "";
+        var fRequired = f.required ? " required" : "";
+        _fieldsHtml += '<div class="field' + (f.full ? " full" : "") + '">';
+        _fieldsHtml +=
+          "<label>" + (f.label || f.id) + (f.required ? " *" : "") + "</label>";
+        if (fType === "select") {
+          _fieldsHtml +=
+            '<select class="input" id="' + f.id + '"' + fRequired + ">";
+          (f.options || []).forEach(function (o) {
+            var oVal = typeof o === "object" ? String(o.value) : String(o);
+            var oLabel = typeof o === "object" ? o.label : o;
+            var sel = oVal === fVal || oLabel === fVal ? " selected" : "";
+            _fieldsHtml +=
+              '<option value="' +
+              esc(oVal) +
+              '"' +
+              sel +
+              ">" +
+              esc(oLabel) +
+              "</option>";
+          });
+          _fieldsHtml += "</select>";
+        } else if (fType === "datalist") {
+          var dlId = f.id + "-dl";
+          _fieldsHtml +=
+            '<input class="input" id="' +
+            f.id +
+            '" list="' +
+            dlId +
+            '" value="' +
+            esc(fVal) +
+            '" placeholder="' +
+            esc(fPlaceholder) +
+            '"' +
+            fRequired +
+            ">";
+          _fieldsHtml += '<datalist id="' + dlId + '">';
+          (f.options || []).forEach(function (o) {
+            _fieldsHtml +=
+              '<option value="' +
+              esc(typeof o === "object" ? o.value : o) +
+              '">';
+          });
+          _fieldsHtml += "</datalist>";
+        } else if (fType === "textarea") {
+          _fieldsHtml +=
+            '<textarea class="input" id="' +
+            f.id +
+            '" rows="3" placeholder="' +
+            esc(fPlaceholder) +
+            '"' +
+            fRequired +
+            ">" +
+            esc(fVal) +
+            "</textarea>";
+        } else {
+          _fieldsHtml +=
+            '<input class="input" id="' +
+            f.id +
+            '" type="' +
+            fType +
+            '" value="' +
+            esc(fVal) +
+            '" placeholder="' +
+            esc(fPlaceholder) +
+            '"' +
+            fRequired +
+            ">";
+        }
+        _fieldsHtml += "</div>";
+      });
+      _fieldsHtml += "</div>";
+      opts.body = '<div class="modal-body">' + _fieldsHtml + "</div>";
+    }
+    if (opts.onSave && !opts.footer) {
+      opts.footer =
+        '<button class="btn btn-outline" onclick="closeStyledDrawer()">' +
+        I18N.t("BTN_CANCEL") +
+        "</button>" +
+        '<button class="btn btn-primary" id="__sd-fields-save-btn"><i class="ti ti-device-floppy"></i> ' +
+        I18N.t("BTN_SAVE") +
+        "</button>";
+    }
+
+    closeDrawer(true);
+    // [FIX-MOBILE] إغلاق السايدبار قبل فتح الـ Drawer عشان ميغطيش المحتوى
+    if (window.innerWidth <= 860) closeSidebar();
+
+    var colorKey = opts.color || "blue";
+    var color = DRAWER_COLORS[colorKey] || DRAWER_COLORS.blue;
+    var width = opts.width || 860;
+
+    // إخفاء FAB
+    var fab = document.getElementById("ai-fab");
+    if (fab) fab.style.display = "none";
+
+    // Backdrop
+    var bg = document.createElement("div");
+    bg.id = "drawer-backdrop";
+    bg.className = "drawer-backdrop";
+    bg.onclick = function () {
+      closeStyledDrawer(opts.onClose);
+    };
+    document.body.appendChild(bg);
+
+    // Drawer wrapper
+    var drawer = document.createElement("div");
+    drawer.id = "edit-drawer";
+    drawer.className = "edit-drawer";
+
+    // fromLeft: true — يفتح الـ drawer من أقصى اليسار بدون spacer الـ sidebar
+    var _fromLeft = !!opts.fromLeft;
+
+    // [FIX-MOBILE] نحط العرض كـ CSS variable بدل inline style
+    // عشان media queries تقدر تغلب عليه على الموبايل
+    drawer.style.setProperty("--sd-width", width + "px");
+    if (_fromLeft) {
+      // من أقصى اليسار: عرض ثابت = الـ drawer نفسه بس
+      drawer.style.cssText =
+        "--sd-width:" + width + "px; width:" + width + "px; left:0";
+    } else {
+      drawer.style.cssText =
+        "--sd-width:" +
+        width +
+        "px; width:min(calc(var(--sidebar-w) + " +
+        width +
+        "px),100vw)";
+    }
+
+    // Spacer (sidebar area) — [FIX-MOBILE] مش محتاجينه على موبايل
+    var spacer = document.createElement("div");
+    spacer.id = "edit-drawer-spacer";
+    if (_fromLeft) {
+      // من اليسار: لا نحتاج spacer
+      spacer.style.cssText = "display:none";
+    } else if (window.innerWidth > 860) {
+      spacer.style.cssText =
+        "flex:0 1 var(--sidebar-w);min-width:0;height:100%";
+    } else {
+      spacer.style.cssText = "display:none";
+    }
+    drawer.appendChild(spacer);
+
+    // Inner panel
+    var inner = document.createElement("div");
+    inner.className = "edit-drawer-inner sd-inner";
+    // [FIX-MOBILE] استخدام CSS var بدل inline max-width عشان media queries تشتغل
+    inner.style.cssText =
+      "--sd-inner-max:" +
+      width +
+      "px; max-width:var(--sd-inner-max," +
+      width +
+      "px)";
+
+    var iconHtml = opts.icon
+      ? '<div class="sd-header-icon"><i class="ti ' + opts.icon + '"></i></div>'
+      : "";
+
+    var footerHtml = opts.footer
+      ? '<div class="sd-footer">' + opts.footer + "</div>"
+      : "";
+
+    // [PERF] نبني الهيدر فوراً ونحط placeholder للبودي
+    // الـ drawer يظهر على الشاشة مع الـ animation فوراً
+    // وبعدين نحشو المحتوى الثقيل في الـ frame التاني
+    inner.innerHTML =
+      '<div class="sd-header" style="background:' +
+      color.grad +
+      '">' +
+      iconHtml +
+      '<div class="sd-header-text">' +
+      "<h2>" +
+      (opts.title || "") +
+      "</h2>" +
+      (opts.subtitle ? "<p>" + opts.subtitle + "</p>" : "") +
+      "</div>" +
+      '<button class="sd-close" onclick="closeStyledDrawer()" title="' +
+      I18N.t("BTN_CLOSE") +
+      '">' +
+      '<i class="ti ti-x"></i>' +
+      "</button>" +
+      "</div>" +
+      '<div class="sd-body' +
+      (opts.confirmBody ? " sd-confirm-body" : "") +
+      '" id="__sd-body-placeholder">' +
+      // spinner خفيف يظهر لحظة ريش المحتوى
+      '<div style="display:flex;align-items:center;justify-content:center;padding:48px 0;opacity:.4">' +
+      '<i class="ti ti-loader-2" style="font-size:28px;animation:spin 0.8s linear infinite"></i>' +
+      "</div>" +
+      "</div>" +
+      footerHtml;
+
+    drawer.appendChild(inner);
+    // نضيف الـ drawer للـ DOM أولاً عشان الـ animation تبدأ فوراً
+    document.body.appendChild(drawer);
+    // [FIX-AUDIT] console.log توقيت كان بيشتغل تلقائي في كل فتح drawer — اتشال
+    // لأنه بقايا تطوير بتسرّب معلومات تنفيذية في console المتصفح بالإنتاج.
+
+    // في الـ frame التاني نحشو المحتوى الحقيقي
+    requestAnimationFrame(function () {
+      var bodySlot = document.getElementById("__sd-body-placeholder");
+      if (bodySlot) {
+        bodySlot.removeAttribute("id");
+        bodySlot.innerHTML = opts.body || "";
+        // [FIX-AUDIT] console.log توقيت اتشال لنفس السبب أعلاه.
+      }
+      // حماية تلقائية بعد ما المحتوى يظهر
+      autoProtectTextNumberInputs(inner);
+      // تفعيل custom selects
+      initCustomSelects(bodySlot || inner);
+      // callback بعد ما المحتوى جاهز
+
+      // ── [VF] ربط أحداث التحقق التلقائي لحقول fields ──────────────
+      if (typeof VF !== "undefined" && opts.fields && opts.fields.length) {
+        var _vfConfig = [];
+        opts.fields.forEach(function (f) {
+          var _rules = {};
+          if (f.required) _rules.required = true;
+          if (f.type === "number") _rules.type = "number";
+          else if (f.type === "select" || f.type === "datalist")
+            _rules.type = "select";
+          else _rules.type = "text";
+          _rules.label = (f.label || f.id || "")
+            .replace(/ \*/g, "")
+            .replace(/<[^>]*>/g, "")
+            .trim();
+          _vfConfig.push({ fieldId: f.id, rules: _rules });
+          VF.bind(f.id, _rules);
+        });
+        // حفظ الـ config على الـ drawer لاستخدامه في onSave
+        inner._vfConfig = _vfConfig;
+      }
+      // ──────────────────────────────────────────────────────────────────
+
+      // ── fields: onSave binding ────────────────────────────────
+      if (typeof opts.onSave === "function") {
+        var _saveBtn = document.getElementById("__sd-fields-save-btn");
+        if (_saveBtn) {
+          _saveBtn.addEventListener("click", function () {
+            // ── [VF] التحقق الموحّد قبل الحفظ ──────────────────────
+            if (typeof VF !== "undefined" && inner._vfConfig) {
+              if (!VF.quickSave(inner._vfConfig)) return;
+            }
+            // ─────────────────────────────────────────────────────────
+            var vals = {};
+            (opts.fields || []).forEach(function (f) {
+              var el = document.getElementById(f.id);
+              if (el) vals[f.id] = el.value;
+            });
+            opts.onSave(vals);
+          });
+        }
+      }
+
+      if (typeof opts.onReady === "function") opts.onReady(inner);
+    });
+
+    drawer._escHandler = function (e) {
+      if (e.key === "Escape") closeStyledDrawer(opts.onClose);
+    };
+    document.addEventListener("keydown", drawer._escHandler);
+  }
+
+  function closeStyledDrawer(onClose) {
+    // [ITEM-MASTER-P6] Hook عام اختياري: أي شاشة تقدر تسجّل
+    // window._sdCloseGuard لمنع الإغلاق المباشر (مثلاً لعرض تأكيد "هناك
+    // تعديلات غير محفوظة"). افتراضيًا مش موجود فمفيش أي تغيير في سلوك
+    // أي شاشة تانية. الـ Guard لازم يرجّع false عشان يوقف الإغلاق، وبعدين
+    // هو المسؤول عن استدعاء closeStyledDrawer() تاني بنفسه بعد التأكيد.
+    if (typeof window._sdCloseGuard === "function") {
+      if (window._sdCloseGuard(onClose) === false) return;
+    }
+    window._sdCloseGuard = null;
+    var fab = document.getElementById("ai-fab");
+    if (fab) fab.style.display = "";
+    var drawer = document.getElementById("edit-drawer");
+    var bg = document.getElementById("drawer-backdrop");
+
+    // [FIX-BACKDROP-BLOCK] أوقف pointer-events فوراً
+    if (bg) bg.style.pointerEvents = "none";
+
+    if (drawer) {
+      if (drawer._escHandler)
+        document.removeEventListener("keydown", drawer._escHandler);
+      drawer.classList.add("drawer-closing");
+      setTimeout(function () {
+        if (drawer && drawer.parentNode) drawer.remove();
+        // [NO-TOAST-OVER-MODAL-2026-07-28] الدروار قفل فعليًا (اتشال من
+        // الـ DOM) — لو فيه رسائل أُجّلت أثناء ما كان مفتوح، اعرضها دلوقتي
+        _flushDeferredToasts();
+      }, 200); // match 0.18s animation
+    } else {
+      _flushDeferredToasts();
+    }
+    if (bg) {
+      bg.style.transition = "opacity .18s ease";
+      bg.style.opacity = "0";
+      setTimeout(function () {
+        if (bg && bg.parentNode) bg.remove();
+      }, 190);
+    }
+    if (typeof onClose === "function") onClose();
+  }
+
+  function openDrawer(html, widthPx) {
+    closeDrawer(true); // فوري بدون animation لو فيه قديم
+    // [FIX-MOBILE] إغلاق السايدبار قبل فتح الـ Drawer على موبايل
+    if (window.innerWidth <= 860) closeSidebar();
+
+    // إخفاء زرار المساعد الذكي
+    var fab = document.getElementById("ai-fab");
+    if (fab) fab.style.display = "none";
+
+    // Backdrop
+    var bg = document.createElement("div");
+    bg.className = "drawer-backdrop";
+    bg.id = "drawer-backdrop";
+    bg.onclick = closeDrawer;
+    document.body.appendChild(bg);
+
+    // Drawer panel
+    var drawer = document.createElement("div");
+    drawer.className = "edit-drawer";
+    drawer.id = "edit-drawer";
+    if (widthPx === "full") {
+      // [FULL-WIDTH] الدرج ياخد الشاشة كاملة، والمساحة الداخلية تملأ كل ما تبقى بعد السايدبار
+      drawer.style.cssText = "width:100vw";
+    } else if (widthPx) {
+      // [FIX-MOBILE] inline style بـ CSS variable عشان media queries تقدر تغلب على الموبايل
+      drawer.style.cssText =
+        "--sd-width:" +
+        widthPx +
+        "px; width:min(calc(var(--sidebar-w) + " +
+        widthPx +
+        "px), 100vw)";
+    }
+
+    // نلف المحتوى في edit-drawer-inner عشان يبدأ بعد الـ sidebar
+    var inner = document.createElement("div");
+    inner.className = "edit-drawer-inner";
+    // [FIX-MOBILE] بدل inline max-width نستخدم CSS variable عشان media queries تشتغل
+    if (widthPx === "full") {
+      inner.style.cssText = "max-width:none";
+    } else if (widthPx)
+      inner.style.cssText =
+        "--sd-inner-max:" +
+        widthPx +
+        "px; max-width:var(--sd-inner-max," +
+        widthPx +
+        "px)";
+
+    // [PERF] الـ drawer يظهر فوراً مع spinner خفيف
+    // والمحتوى يتحشى في الـ frame التاني عشان الـ animation تبدأ فوراً
+    inner.innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:center;' +
+      'padding:48px 0;height:100%;opacity:.4">' +
+      '<i class="ti ti-loader-2" style="font-size:28px;animation:spin 0.8s linear infinite"></i>' +
+      "</div>";
+    inner.setAttribute("data-pending-html", "1");
+
+    drawer.appendChild(inner);
+    // نضيف للـ DOM أولاً عشان الـ animation تبدأ
+    document.body.appendChild(drawer);
+
+    // في الـ frame التاني نحشو المحتوى الحقيقي
+    requestAnimationFrame(function () {
+      inner.removeAttribute("data-pending-html");
+      inner.innerHTML = html;
+      // حماية تلقائية لأي حقل هاتف/كود/SKU/Barcode داخل هذا الدرج
+      autoProtectTextNumberInputs(inner);
+      // [SELECTION-ENGINE] openDrawer نظام عام تاني بيتصدّى له عدد كبير
+      // من الشاشات (openItemModal، openWarehouseModal، openUserModal...)
+      // بجانب openStyledDrawer — لازم يستفيد من نفس التوحيد.
+      initCustomSelects(inner);
+    });
+
+    // ESC to close
+    drawer._escHandler = function (e) {
+      if (e.key === "Escape") closeDrawer();
+    };
+    document.addEventListener("keydown", drawer._escHandler);
+  }
+
+  function renderModalBox(opts) {
+    opts = opts || {};
+    var headerClass =
+      "modal-header" + (opts.color ? " header-accent " + opts.color : "");
+    var iconClass = "modal-icon" + (opts.iconClass ? " " + opts.iconClass : "");
+    var closeFn = opts.closeFn || "closeModal()";
+
+    var html = '<div class="modal-box">';
+    html += '<div class="' + headerClass + '">';
+    html += '<div class="modal-header-left">';
+    if (opts.icon) {
+      html +=
+        '<div class="' +
+        iconClass +
+        '"' +
+        (opts.iconStyle ? ' style="' + opts.iconStyle + '"' : "") +
+        '><i class="ti ' +
+        opts.icon +
+        '"></i></div>';
+    }
+    html += "<div><h2>" + (opts.title || "") + "</h2>";
+    if (opts.subtitle) {
+      html += '<div class="modal-header-sub">' + opts.subtitle + "</div>";
+    }
+    html += "</div></div>";
+    html +=
+      '<button class="modal-close" onclick="' +
+      closeFn +
+      '"><i class="ti ti-x"></i></button>';
+    html += "</div>";
+    html += '<div class="modal-body">' + (opts.body || "") + "</div>";
+    if (opts.footer) {
+      html += '<div class="modal-actions">' + opts.footer + "</div>";
+    }
+    html += "</div>";
+    return html;
+  }
+
+  function closeDrawer(immediate) {
+    var drawer = document.getElementById("edit-drawer");
+    var bg = document.getElementById("drawer-backdrop");
+    if (!drawer && !bg) return;
+
+    // إعادة ظهور زرار المساعد الذكي
+    var fab = document.getElementById("ai-fab");
+    if (fab) fab.style.display = "";
+
+    // [FIX-BACKDROP-BLOCK] أوقف pointer-events فوراً عشان الـ backdrop
+    // ميبلوكش الكليكات أثناء animation الإغلاق
+    if (bg) bg.style.pointerEvents = "none";
+
+    if (immediate) {
+      if (drawer) drawer.remove();
+      if (bg) bg.remove();
+      // [NO-TOAST-OVER-MODAL-2026-07-28]
+      if (typeof _flushDeferredToasts === "function") _flushDeferredToasts();
+      return;
+    }
+
+    // Animate out — match 0.18s optimized animation
+    if (drawer) {
+      if (drawer._escHandler)
+        document.removeEventListener("keydown", drawer._escHandler);
+      drawer.classList.add("drawer-closing");
+      setTimeout(function () {
+        if (drawer && drawer.parentNode) drawer.remove();
+        // [NO-TOAST-OVER-MODAL-2026-07-28]
+        if (typeof _flushDeferredToasts === "function") _flushDeferredToasts();
+      }, 200);
+    }
+    if (bg) {
+      bg.style.transition = "opacity .18s ease";
+      bg.style.opacity = "0";
+      setTimeout(function () {
+        if (bg && bg.parentNode) bg.remove();
+      }, 190);
+    }
+  }
+</script>

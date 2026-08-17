@@ -1,0 +1,3853 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════
+  // Templates_07.html — جزء من Templates.html الأصلي (تقسيم آلي نصي بحت، 2026-07-04)
+  // النطاق: renderShippingCompanyModal → renderPartyMovements (Shipping Modals + Parties)
+  // راجع Architecture Audit 2026-07-03، المرحلة 5 — تقسيم بحسب الحجم،
+  // على حدود دوال كاملة فقط (لا قطع لأي دالة في نص). تحقق برمجيًا:
+  // التركيب النهائي لكل الأجزاء الـ10 مطابق 100% لمحتوى Templates.html
+  // القديم حرفيًا (نفس الترتيب، بدون فقد أو تكرار).
+  // يُحمَّل بالترتيب عبر <script> في Index.html مع باقي الأجزاء.
+  // ═══════════════════════════════════════════════════════════════
+  function renderShippingCompanyModal(c) {
+    c = c || {};
+    var isEdit = !!c.id;
+    var accent = "#9A3412";
+    var sectionHd = function (icon, label) {
+      return (
+        '<div style="display:flex;align-items:center;gap:8px;margin:20px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border)">' +
+        '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;background:#FFF7ED">' +
+        '<i class="ti ' +
+        icon +
+        '" style="font-size:14px;color:' +
+        accent +
+        '"></i></span>' +
+        '<span style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:0.5px;text-transform:uppercase">' +
+        label +
+        "</span></div>"
+      );
+    };
+    var fieldWrap = function (label, input, hint) {
+      return (
+        '<div class="form-group" style="margin-bottom:14px">' +
+        '<label style="display:block;font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px">' +
+        label +
+        "</label>" +
+        input +
+        (hint
+          ? '<div style="font-size:11px;color:var(--text3);margin-top:4px">' +
+            hint +
+            "</div>"
+          : "") +
+        "</div>"
+      );
+    };
+    var inp = function (id, val, ph, extra) {
+      return (
+        '<input class="input" id="' +
+        id +
+        '" value="' +
+        esc(val) +
+        '" placeholder="' +
+        esc(ph) +
+        '" ' +
+        (extra || "") +
+        ' style="height:40px;border-radius:10px;font-size:13px">'
+      );
+    };
+    var sel = function (id, options, currentVal, extra) {
+      var opts = options
+        .map(function (o) {
+          return (
+            '<option value="' +
+            esc(o.value) +
+            '"' +
+            (String(o.value) === String(currentVal) ? " selected" : "") +
+            ">" +
+            esc(o.label) +
+            "</option>"
+          );
+        })
+        .join("");
+      return (
+        '<select class="input" id="' +
+        id +
+        '" ' +
+        (extra || "") +
+        ' style="height:40px;border-radius:10px;font-size:13px">' +
+        opts +
+        "</select>"
+      );
+    };
+
+    var accounts =
+      (typeof APP !== "undefined" && APP.data && APP.data.chartOfAccounts) ||
+      [];
+    var areas = c.service_areas || [];
+    var tiers = c.pricing_tiers || [];
+
+    var govCheckboxes = EGYPT_GOVERNORATES.map(function (g) {
+      var checked = areas.indexOf(g) !== -1 ? " checked" : "";
+      return (
+        '<label style="display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 0;cursor:pointer">' +
+        '<input type="checkbox" class="shco-gov-cb" value="' +
+        esc(g) +
+        '"' +
+        checked +
+        "> " +
+        esc(g) +
+        "</label>"
+      );
+    }).join("");
+
+    var costingMethodOptions = [
+      { value: "fixed", label: "مبلغ ثابت" },
+      { value: "by_weight", label: "حسب الوزن" },
+      { value: "by_volume", label: "حسب الحجم" },
+      { value: "by_distance", label: "حسب المسافة" },
+      { value: "by_invoice_value", label: "حسب قيمة الفاتورة" },
+      { value: "tiers", label: "شرائح أسعار" },
+    ];
+
+    return (
+      '<div class="modal-box" style="max-width:640px;width:100%;border-radius:20px;overflow:hidden">' +
+      '<div style="background:linear-gradient(135deg,#FFF7ED 0%,#FFEDD5 100%);padding:22px 24px 18px;border-bottom:1px solid #FED7AA;position:relative">' +
+      '<div style="display:flex;align-items:center;gap:14px">' +
+      '<div style="width:48px;height:48px;border-radius:14px;background:#fff;box-shadow:0 2px 12px rgba(154,52,18,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">' +
+      '<i class="ti ti-building-warehouse" style="font-size:22px;color:' +
+      accent +
+      '"></i></div>' +
+      "<div>" +
+      '<h2 style="font-size:17px;font-weight:800;color:#431407;margin:0 0 3px">' +
+      (isEdit ? "تعديل شركة شحن" : "شركة شحن جديدة") +
+      "</h2>" +
+      '<p style="font-size:12px;color:#9A3412;margin:0">' +
+      (isEdit
+        ? "تعديل بيانات: " + esc(c.name || "")
+        : "إضافة شركة شحن جديدة للنظام") +
+      "</p>" +
+      "</div></div>" +
+      '<button onclick="closeDrawer()" style="position:absolute;top:16px;left:16px;width:32px;height:32px;border-radius:50%;border:none;background:rgba(255,255,255,.7);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;color:#9A3412">' +
+      '<i class="ti ti-x"></i></button>' +
+      "</div>" +
+      '<div class="modal-body" style="padding:8px 24px 20px;max-height:70vh;overflow-y:auto">' +
+      '<input type="hidden" id="shco-modal-id" value="' +
+      esc(c.id || "") +
+      '">' +
+      sectionHd("ti-building-store", "البيانات الأساسية") +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      fieldWrap(
+        "كود الشركة",
+        inp("shco-modal-code", c.code || "", "مثال: SH-01"),
+        "",
+      ) +
+      fieldWrap(
+        'اسم الشركة <span style="color:var(--danger)">*</span>',
+        inp("shco-modal-name", c.name || "", "اسم شركة الشحن"),
+        "",
+      ) +
+      "</div>" +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      fieldWrap(
+        "نوع الشحن",
+        sel(
+          "shco-modal-type",
+          [
+            { value: "internal", label: "داخلي" },
+            { value: "external", label: "خارجي" },
+            { value: "international", label: "دولي" },
+          ],
+          c.shipping_type || "external",
+        ),
+        "",
+      ) +
+      fieldWrap(
+        '<i class="ti ti-toggle-right" style="font-size:11px"></i> الحالة',
+        sel(
+          "shco-modal-active",
+          [
+            { value: "true", label: "نشط" },
+            { value: "false", label: "موقوف" },
+          ],
+          c.active === false || c.active === "false" ? "false" : "true",
+        ),
+        "",
+      ) +
+      "</div>" +
+      fieldWrap(
+        '<i class="ti ti-photo" style="font-size:11px"></i> رابط الشعار (اختياري)',
+        inp("shco-modal-logo", c.logo_url || "", "https://...", 'dir="ltr"'),
+        "",
+      ) +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      fieldWrap(
+        '<i class="ti ti-phone" style="font-size:11px"></i> رقم الهاتف',
+        inp("shco-modal-phone", c.phone || "", "01xxxxxxxxx", 'dir="ltr"'),
+        "",
+      ) +
+      fieldWrap(
+        '<i class="ti ti-mail" style="font-size:11px"></i> البريد الإلكتروني',
+        inp(
+          "shco-modal-email",
+          c.email || "",
+          "example@domain.com",
+          'dir="ltr"',
+        ),
+        "",
+      ) +
+      "</div>" +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      fieldWrap(
+        '<i class="ti ti-world" style="font-size:11px"></i> الموقع الإلكتروني',
+        inp("shco-modal-website", c.website || "", "https://...", 'dir="ltr"'),
+        "",
+      ) +
+      fieldWrap(
+        '<i class="ti ti-user" style="font-size:11px"></i> الشخص المسؤول',
+        inp("shco-modal-contact", c.contact_person || "", "اسم المسؤول"),
+        "",
+      ) +
+      "</div>" +
+      fieldWrap(
+        '<i class="ti ti-map-pin" style="font-size:11px"></i> عنوان الشركة',
+        inp("shco-modal-address", c.address || "", "المدينة، الحي، الشارع"),
+        "",
+      ) +
+      sectionHd("ti-book-2", "الربط المحاسبي") +
+      renderFinancialAccountSelector(
+        "shco-modal-supplier-account",
+        c.supplier_account_id || "",
+        accounts,
+        {
+          label: "حساب المورد / الدائن لشركة الشحن",
+          hint: "يُستخدم عند تسجيل مديونية شركة الشحن في النظام",
+          filter: function (a) {
+            return !a.type || a.type === "LIABILITY" || a.type === "NONE";
+          },
+        },
+      ) +
+      renderFinancialAccountSelector(
+        "shco-modal-expense-account",
+        c.expense_account_id || "",
+        accounts,
+        {
+          label: "حساب مصروف الشحن",
+          hint: "يُستخدم في قيد تحميل تكلفة الشحن على الشركة",
+          filter: function (a) {
+            return !a.type || a.type === "EXPENSE" || a.type === "NONE";
+          },
+        },
+      ) +
+      renderFinancialAccountSelector(
+        "shco-modal-vat-account",
+        c.vat_account_id || "",
+        accounts,
+        {
+          label: "حساب ضريبة القيمة المضافة (اختياري)",
+          hint: "اتركه فارغاً لو شركة الشحن لا تخضع لضريبة القيمة المضافة",
+          filter: function (a) {
+            return (
+              !a.type ||
+              a.type === "ASSET" ||
+              a.type === "LIABILITY" ||
+              a.type === "NONE"
+            );
+          },
+        },
+      ) +
+      fieldWrap(
+        '<i class="ti ti-stack-2" style="font-size:11px"></i> مركز التكلفة الافتراضي',
+        inp(
+          "shco-modal-cost-center",
+          c.cost_center || "",
+          "مثال: قسم الشحن والتوصيل",
+        ),
+        "حقل نصي حر — لا يوجد بالنظام حالياً جدول مراكز تكلفة مستقل",
+      ) +
+      sectionHd("ti-settings", "إعدادات الشحن") +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">' +
+      fieldWrap(
+        "مدة التوصيل المتوقعة (يوم)",
+        inp(
+          "shco-modal-delivery-days",
+          c.expected_delivery_days || "",
+          "0",
+          'type="number" min="0"',
+        ),
+        "",
+      ) +
+      fieldWrap(
+        "الحد الأقصى للوزن (كجم)",
+        inp(
+          "shco-modal-max-weight",
+          c.max_weight_kg || "",
+          "0",
+          'type="number" min="0" step="0.01"',
+        ),
+        "",
+      ) +
+      fieldWrap(
+        "الحد الأقصى للحجم (م³)",
+        inp(
+          "shco-modal-max-volume",
+          c.max_volume_m3 || "",
+          "0",
+          'type="number" min="0" step="0.01"',
+        ),
+        "",
+      ) +
+      "</div>" +
+      fieldWrap(
+        '<i class="ti ti-coin" style="font-size:11px"></i> العملات المدعومة',
+        inp(
+          "shco-modal-currencies",
+          c.supported_currencies || "EGP",
+          "مفصولة بفاصلة: EGP,USD",
+        ),
+        "اكتب أكواد العملات مفصولة بفاصلة",
+      ) +
+      sectionHd("ti-map", "المحافظات أو المناطق المخدومة") +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;max-height:160px;overflow-y:auto;padding:10px;background:var(--surface2);border-radius:10px;margin-bottom:6px" id="shco-gov-list">' +
+      govCheckboxes +
+      "</div>" +
+      '<div style="font-size:11px;color:var(--text3);margin-bottom:4px">اتركها كلها بدون تحديد لاعتبار الشركة خادمة لكل الجمهورية</div>' +
+      sectionHd("ti-calculator", "طريقة احتساب تكلفة الشحن") +
+      fieldWrap(
+        "طريقة الاحتساب",
+        sel(
+          "shco-modal-costing-method",
+          costingMethodOptions,
+          c.costing_method || "fixed",
+          'onchange="_toggleShippingCostingFields()"',
+        ),
+        "",
+      ) +
+      '<div id="shco-costing-fields">' +
+      _renderShippingCostingFields(c) +
+      "</div>" +
+      sectionHd("ti-notes", "ملاحظات") +
+      '<div class="form-group" style="margin-bottom:4px">' +
+      '<textarea class="input" id="shco-modal-notes" rows="2" placeholder="أي ملاحظات إضافية..." style="border-radius:10px;font-size:13px;resize:vertical;min-height:70px">' +
+      esc(c.notes || "") +
+      "</textarea></div>" +
+      "</div>" +
+      '<div style="padding:14px 24px;background:var(--bg-alt,#f8fafc);border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;align-items:center">' +
+      '<button class="btn" onclick="closeDrawer()" style="height:38px;padding:0 18px;border-radius:10px;font-size:13px">إلغاء</button>' +
+      '<button class="btn btn-primary" onclick="saveShippingCompanyFromModal()" style="height:38px;padding:0 20px;border-radius:10px;font-size:13px;font-weight:700;gap:8px;background:linear-gradient(135deg,#EA580C,#C2410C);border-color:#C2410C">' +
+      '<i class="ti ' +
+      (isEdit ? "ti-device-floppy" : "ti-truck") +
+      '"></i>' +
+      (isEdit ? "حفظ التعديلات" : "إضافة شركة الشحن") +
+      "</button></div>" +
+      "</div>"
+    );
+  }
+
+  // ── حقول تتغير حسب طريقة احتساب التكلفة ────────────────────────
+  function _renderShippingCostingFields(c) {
+    c = c || {};
+    var method = c.costing_method || "fixed";
+    var box = function (id, label, val) {
+      return (
+        '<div class="form-group" style="margin-bottom:10px">' +
+        '<label style="display:block;font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px">' +
+        label +
+        "</label>" +
+        '<input class="input" id="' +
+        id +
+        '" type="number" min="0" step="0.01" value="' +
+        esc(val || "") +
+        '" placeholder="0" style="height:40px;border-radius:10px;font-size:13px">' +
+        "</div>"
+      );
+    };
+    var html = "";
+    if (method === "fixed")
+      html += box(
+        "shco-modal-fixed-cost",
+        "المبلغ الثابت لكل شحنة",
+        c.fixed_cost,
+      );
+    if (method === "by_weight")
+      html += box(
+        "shco-modal-cost-per-kg",
+        "التكلفة لكل كيلوجرام",
+        c.cost_per_kg,
+      );
+    if (method === "by_volume")
+      html += box(
+        "shco-modal-cost-per-m3",
+        "التكلفة لكل متر مكعب",
+        c.cost_per_m3,
+      );
+    if (method === "by_distance")
+      html += box(
+        "shco-modal-cost-per-km",
+        "التكلفة لكل كيلومتر",
+        c.cost_per_km,
+      );
+    if (method === "by_invoice_value")
+      html += box(
+        "shco-modal-cost-pct",
+        "النسبة % من قيمة الفاتورة",
+        c.cost_percentage,
+      );
+    if (method === "tiers")
+      html += _renderShippingTiersEditor(c.pricing_tiers || []);
+    return html;
+  }
+
+  function _renderShippingTiersEditor(tiers) {
+    var rowsHtml = (tiers || [])
+      .map(function (t, idx) {
+        return _shippingTierRowHtml(idx, t.from, t.to, t.cost);
+      })
+      .join("");
+    return (
+      '<div id="shco-tiers-wrap">' +
+      '<div style="font-size:11px;color:var(--text3);margin-bottom:8px">حدد شرائح الوزن (أو القيمة) وتكلفة كل شريحة</div>' +
+      '<div id="shco-tiers-list">' +
+      (rowsHtml || _shippingTierRowHtml(0, "", "", "")) +
+      "</div>" +
+      '<button type="button" class="btn btn-outline btn-sm" onclick="_addShippingTierRow()" style="margin-top:6px"><i class="ti ti-plus"></i> إضافة شريحة</button>' +
+      "</div>"
+    );
+  }
+
+  function _shippingTierRowHtml(idx, from, to, cost) {
+    return (
+      '<div class="shco-tier-row" data-idx="' +
+      idx +
+      '" style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;margin-bottom:6px;align-items:center">' +
+      '<input class="input shco-tier-from" type="number" min="0" step="0.01" placeholder="من" value="' +
+      esc(from || "") +
+      '" style="height:36px;border-radius:8px;font-size:12px">' +
+      '<input class="input shco-tier-to" type="number" min="0" step="0.01" placeholder="إلى" value="' +
+      esc(to || "") +
+      '" style="height:36px;border-radius:8px;font-size:12px">' +
+      '<input class="input shco-tier-cost" type="number" min="0" step="0.01" placeholder="التكلفة" value="' +
+      esc(cost || "") +
+      '" style="height:36px;border-radius:8px;font-size:12px">' +
+      '<button type="button" class="btn btn-icon btn-delete" onclick="_removeShippingTierRow(this)"><i class="ti ti-x"></i></button>' +
+      "</div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §renderViewShippingCompanyModal — عرض تفاصيل شركة شحن (قراءة فقط)
+  // ─────────────────────────────────────────────────────────────
+  function renderViewShippingCompanyModal(c) {
+    var typeMeta =
+      SHIPPING_TYPE_LABELS[c.shipping_type] || SHIPPING_TYPE_LABELS.external;
+    var accounts =
+      (typeof APP !== "undefined" && APP.data && APP.data.chartOfAccounts) ||
+      [];
+    var findAccName = function (id) {
+      if (!id) return "—";
+      var a = accounts.find(function (x) {
+        return x.id === id;
+      });
+      return a ? (a.code ? "[" + a.code + "] " : "") + a.name : id;
+    };
+    var infoRow = function (label, val) {
+      return (
+        '<div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border);font-size:13px">' +
+        '<span style="color:var(--text3)">' +
+        label +
+        '</span><span style="font-weight:600">' +
+        val +
+        "</span></div>"
+      );
+    };
+    var areas = c.service_areas || [];
+    return (
+      '<div class="modal-box" style="max-width:480px;width:100%;border-radius:20px;overflow:hidden">' +
+      '<div style="background:linear-gradient(135deg,#FFF7ED 0%,#FFEDD5 100%);padding:20px 24px;border-bottom:1px solid #FED7AA">' +
+      '<div><h2 style="font-size:16px;font-weight:800;color:#431407;margin:0">' +
+      esc(c.name || "") +
+      "</h2>" +
+      '<div class="modal-header-sub">بيانات وإعدادات شركة الشحن</div></div>' +
+      "</div>" +
+      '<div class="modal-body" style="padding:14px 24px 20px;max-height:65vh;overflow-y:auto">' +
+      infoRow("الكود", esc(c.code || "—")) +
+      infoRow(
+        "النوع",
+        '<span class="badge" style="background:' +
+          typeMeta.bg +
+          ";color:" +
+          typeMeta.color +
+          '">' +
+          typeMeta.label +
+          "</span>",
+      ) +
+      infoRow("الهاتف", esc(c.phone || "—")) +
+      infoRow("البريد", esc(c.email || "—")) +
+      infoRow("الشخص المسؤول", esc(c.contact_person || "—")) +
+      infoRow(
+        "مدة التوصيل المتوقعة",
+        (c.expected_delivery_days || "—") + " يوم",
+      ) +
+      infoRow("حساب المورد/الدائن", esc(findAccName(c.supplier_account_id))) +
+      infoRow("حساب مصروف الشحن", esc(findAccName(c.expense_account_id))) +
+      infoRow("حساب الضريبة", esc(findAccName(c.vat_account_id))) +
+      infoRow("مركز التكلفة", esc(c.cost_center || "—")) +
+      infoRow(
+        "طريقة التسعير",
+        SHIPPING_COSTING_LABELS[c.costing_method] || "—",
+      ) +
+      infoRow(
+        "المناطق المخدومة",
+        areas.length ? esc(areas.join("، ")) : "كل الجمهورية",
+      ) +
+      (c.notes
+        ? '<div style="margin-top:10px;font-size:12px;color:var(--text3)">' +
+          esc(c.notes) +
+          "</div>"
+        : "") +
+      "</div></div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §renderSuppliers — شاشة الموردين
+  // ─────────────────────────────────────────────────────────────
+  function renderSuppliers() {
+    var suppliers = (APP.data.suppliers || []).slice().reverse();
+    var total = suppliers.length;
+    var withPhone = suppliers.filter(function (s) {
+      return s.phone;
+    }).length;
+    var totalPayable = suppliers.reduce(function (sum, s) {
+      var b = Number(s.balance || 0);
+      return sum + (b > 0 ? b : 0);
+    }, 0);
+    var withCategory = suppliers.filter(function (s) {
+      return s.category_id;
+    }).length;
+    var statsHtml =
+      '<div class="stat-grid" style="margin-bottom:20px">' +
+      statCard(
+        iconBadge("ti-building-store", "var(--orange-soft)", "var(--orange)"),
+        "إجمالي الموردين",
+        total,
+        "مورد",
+        "var(--warning-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-cash", "var(--danger-soft)", "var(--danger)"),
+        "إجمالي المستحق",
+        '<span class="sensitive-balance">' +
+          (typeof formatMoney === "function"
+            ? formatMoney(totalPayable, { decimals: 0 })
+            : totalPayable.toLocaleString("en-US")) +
+          "</span>",
+        "للموردين",
+        "var(--danger-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-phone", "var(--success-soft)", "var(--success)"),
+        "لديهم رقم هاتف",
+        withPhone,
+        "مورد",
+        "var(--success-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-tags", "var(--warning-soft)", "var(--warning)"),
+        "مصنّفون",
+        withCategory,
+        "من إجمالي " + total,
+        "var(--warning-soft)",
+      ) +
+      "</div>";
+
+    var filterHtml =
+      '<div class="card" style="margin-bottom:16px"><div class="search-bar">' +
+      '<select class="input" id="sup-category-filter" style="max-width:260px" onchange="filterSuppliersTable()"><option value="">كل التصنيفات</option></select>' +
+      "</div></div>";
+
+    // [COLUMN-ENGINE] جدول الموردين انتقل لمحرك الأعمدة الديناميكي —
+    // راجع _suppliersRegisterColumns / _renderSuppliersTableCE في
+    // 10_JS_Settings_Search_Parties.html. نفس أسلوب هجرة جدول العملاء
+    // بالضبط.
+    var tableHtml =
+      '<div class="card"><div id="suppliers-ce-container"></div></div>';
+
+    return (
+      '<div class="page-header">' +
+      '<div><h1 style="display:flex;align-items:center;gap:10px">' +
+      iconBadge(
+        "ti-building-factory-2",
+        "var(--orange-soft)",
+        "var(--orange)",
+      ) +
+      "<span>إدارة الموردين</span></h1>" +
+      "<p>سجل بيانات الموردين وأرصدتهم وبيانات التواصل</p></div>" +
+      '<div class="header-actions">' +
+      withPermission(
+        '<button class="btn btn-primary" id="btn-new-supplier">+ مورد جديد</button>',
+        "addSupplier",
+      ) +
+      "</div></div>" +
+      statsHtml +
+      filterHtml +
+      tableHtml
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // FinancialAccountSelector — Shared Component
+  // الاستخدام: renderFinancialAccountSelector(fieldId, currentAccountId, accounts, opts)
+  // opts: { required, label, hint, filter }
+  //   filter: function(account) → bool (لتصفية أنواع معينة فقط)
+  // ─────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // _faSortAccountsHierarchical — يرتّب أي قائمة حسابات مسطّحة بالترتيب
+  // الهرمي الحقيقي (كل أب يتبعه كل أبنائه بالترتيب، وهكذا بالعمق) بدل
+  // الترتيب الأبجدي بالكود فقط، اعتماداً على parent_id — نفس فكرة
+  // getAccountTree() في الباك إند لكن بدون استدعاء سيرفر إضافي، لأن
+  // المنسدلة عندها بالفعل كل الحسابات محمّلة مسبقاً (_pcData.accounts).
+  // الحسابات اليتيمة (parent_id مفقود أو مش موجود ضمن نفس القائمة) تُعتبر
+  // جذوراً وتترتّب بالكود زي باقي الجذور.
+  // ─────────────────────────────────────────────────────────────
+  function _faSortAccountsHierarchical(list) {
+    var byId = {};
+    (list || []).forEach(function (a) {
+      byId[a.id] = a;
+    });
+    var childrenOf = {};
+    (list || []).forEach(function (a) {
+      var pid = a.parent_id && byId[a.parent_id] ? a.parent_id : "__root__";
+      if (!childrenOf[pid]) childrenOf[pid] = [];
+      childrenOf[pid].push(a);
+    });
+    Object.keys(childrenOf).forEach(function (pid) {
+      childrenOf[pid].sort(function (a, b) {
+        return String(a.code || "").localeCompare(String(b.code || ""), "en", {
+          numeric: true,
+        });
+      });
+    });
+    var ordered = [];
+    var visited = {}; // [FAS-TREE-SAFETY] حماية من حلقة لا نهائية لو حصل parent_id دائري بالخطأ
+    function walk(pid) {
+      (childrenOf[pid] || []).forEach(function (a) {
+        if (visited[a.id]) return;
+        visited[a.id] = true;
+        ordered.push(a);
+        walk(a.id);
+      });
+    }
+    walk("__root__");
+    return ordered;
+  }
+
+  function renderFinancialAccountSelector(
+    fieldId,
+    currentAccountId,
+    accounts,
+    opts,
+  ) {
+    opts = opts || {};
+    // [FIX] كان يستخدم `||` فيتجاهل تمرير label/hint فاضية عمدًا (لإخفاء
+    // العنوان الداخلي عند وجود Label خارجي بديل، زي شاشة ثوابت الحسابات)
+    // ويرجع النص الافتراضي بدل الفاضي. التحقق بـ undefined يحترم "" الصريحة.
+    var label =
+      opts.label !== undefined
+        ? opts.label
+        : "الحساب المرتبط في دليل الحسابات";
+    var hint =
+      opts.hint !== undefined ? opts.hint : "اختر الحساب من دليل الحسابات";
+    var required = opts.required
+      ? ' <span style="color:var(--danger)">*</span>'
+      : "";
+    var filterFn = typeof opts.filter === "function" ? opts.filter : null;
+
+    // [ACCOUNTING-LOOKUP-UNIFY] وضع Lazy Loading حقيقي — اختياري (opts.lazy)
+    // بدل تحميل كل الحسابات في المتصفح، نعرض فقط الحساب المختار حالياً
+    // (لو موجود)، والباقي يتحمّل من السيرفر أثناء الكتابة في حقل البحث
+    // عبر searchAccountsLookup (راجع initFinancialAccountSearcher أدناه).
+    if (opts.lazy) {
+      var curAcc = (accounts || []).find(function (a) {
+        return String(a.id) === String(currentAccountId);
+      });
+      var curOption = curAcc
+        ? '<option value="' +
+          esc(curAcc.id) +
+          '" selected>' +
+          esc(
+            (curAcc.code ? "[" + curAcc.code + "] " : "") + (curAcc.name || ""),
+          ) +
+          "</option>"
+        : currentAccountId
+          ? '<option value="' +
+            esc(currentAccountId) +
+            '" selected>' +
+            esc(opts.currentAccountLabel || currentAccountId) +
+            "</option>"
+          : "";
+      var clearBtnLazy = ""; // [FAS-COMBO-2026-08-08] الحذف بقى جوه بانل الدروب داون نفسه (initFinancialAccountSearcher) بدل رابط منفصل تحت الحقل
+      return (
+        '<div class="form-group" style="margin-bottom:' +
+        (label ? "14px" : "0") +
+        '">' +
+        (label
+          ? '<label style="display:block;font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px">' +
+            '<i class="ti ti-book-2" style="font-size:11px;margin-left:4px"></i>' +
+            label +
+            required +
+            "</label>"
+          : "") +
+        '<select class="input fas-select" id="' +
+        fieldId +
+        '" data-lazy="1" data-expected-type="' +
+        esc(opts.expectedType || "") +
+        '" ' +
+        'style="height:40px;border-radius:10px;font-size:13px;direction:rtl">' +
+        '<option value="">— اكتب للبحث في دليل الحسابات —</option>' +
+        curOption +
+        "</select>" +
+        clearBtnLazy +
+        (hint
+          ? '<div style="font-size:11px;color:var(--text3);margin-top:4px"><i class="ti ti-info-circle" style="font-size:10px"></i> ' +
+            hint +
+            "</div>"
+          : "") +
+        "</div>"
+      );
+    }
+
+    // فلترة الحسابات: نعرض فقط الحسابات الفرعية (is_parent = false أو فارغة)
+    var leafAccounts = (accounts || []).filter(function (a) {
+      if (
+        a.is_active === false ||
+        a.is_active === "FALSE" ||
+        a.is_active === "false"
+      )
+        return false;
+      if (filterFn && !filterFn(a)) return false;
+      return true;
+    });
+
+    // [FAS-TREE-ORDER-2026-08-08] ترتيب هرمي حقيقي بدل الترتيب الأبجدي
+    // بالكود فقط — كل أب متبوع مباشرة بكل أبنائه (بالعمق)، مطابقةً لبند
+    // "المنسدلة تجيب بيانات الشجرة كاملة بالترتيب الهرمي".
+    leafAccounts = _faSortAccountsHierarchical(leafAccounts);
+
+    // بناء خيارات القائمة مع تمييز الحسابات الأب بصرياً
+    var options = leafAccounts
+      .map(function (a) {
+        var isParent =
+          a.is_parent === true ||
+          a.is_parent === "TRUE" ||
+          a.is_parent === "true";
+        var indent = "";
+        var lvl = parseInt(a.level || 1, 10);
+        for (var i = 1; i < lvl; i++) indent += "\u00a0\u00a0\u00a0";
+        var label_txt =
+          indent + (a.code ? "[" + a.code + "] " : "") + (a.name || "");
+        var selected =
+          String(a.id) === String(currentAccountId) ? " selected" : "";
+        var disabled = isParent
+          ? ' disabled style="color:var(--text3);font-weight:700"'
+          : "";
+        return (
+          '<option value="' +
+          esc(a.id) +
+          '"' +
+          selected +
+          disabled +
+          ">" +
+          esc(label_txt) +
+          "</option>"
+        );
+      })
+      .join("");
+
+    var clearBtn = ""; // [FAS-COMBO-2026-08-08] الحذف بقى جوه بانل الدروب داون نفسه (initFinancialAccountSearcher) بدل رابط منفصل تحت الحقل
+
+    return (
+      '<div class="form-group" style="margin-bottom:14px">' +
+      '<label style="display:block;font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px">' +
+      '<i class="ti ti-book-2" style="font-size:11px;margin-left:4px"></i>' +
+      label +
+      required +
+      "</label>" +
+      '<select class="input fas-select" id="' +
+      fieldId +
+      '" ' +
+      'style="height:40px;border-radius:10px;font-size:13px;direction:rtl">' +
+      '<option value="">— اختر من دليل الحسابات —</option>' +
+      options +
+      "</select>" +
+      clearBtn +
+      (hint
+        ? '<div style="font-size:11px;color:var(--text3);margin-top:4px"><i class="ti ti-info-circle" style="font-size:10px"></i> ' +
+          hint +
+          "</div>"
+        : "") +
+      // حقل بحث داخل select
+      "</div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // initFinancialAccountSearcher — يُفعَّل بعد render الـ modal
+  // [FAS-COMBO-2026-08-08] إعادة بناء كاملة: قبل كده كان بيضيف حقل بحث
+  // ثابت الظهور فوق الـ <select> + رابط "مسح الاختيار" تحته — يعني 3
+  // عناصر واقفة على الشاشة طول الوقت لكل حساب (زي ما ظهر في شاشة "ثوابت
+  // الحسابات" اللي فيها عشرات الحقول). دلوقتي: عنصر واحد بس ظاهر (زي أي
+  // select عادي بيعرض القيمة المختارة)، ولما تدوس عليه يفتح بانل عائم
+  // فيه خانة البحث + قائمة النتائج + خيار "مسح الاختيار" — كل حاجة جوّه
+  // البانل مش واقفة على الشاشة طول الوقت. الـ <select> الأصلي بيفضل
+  // موجود مخفي عشان أي كود تاني بيقرأ .value / بيسمع change يفضل شغال
+  // من غير تعديل في أي مكان تاني بالسيستم.
+  // ─────────────────────────────────────────────────────────────
+  function initFinancialAccountSearcher(containerId) {
+    var container = document.getElementById(containerId);
+    if (!container) return;
+    container.querySelectorAll("select.fas-select").forEach(function (sel) {
+      if (sel._fasInit) return;
+      sel._fasInit = true;
+
+      var isLazy = sel.dataset.lazy === "1";
+      var expectedType = sel.dataset.expectedType || null;
+      var placeholderTxt = isLazy
+        ? "— اكتب للبحث في دليل الحسابات —"
+        : "— اختر من دليل الحسابات —";
+
+      // حفظ الخيارات الأصلية (وضع غير Lazy بس — Lazy بيجيب من السيرفر)
+      var allOptions = isLazy
+        ? null
+        : Array.from(sel.options)
+            .filter(function (o) {
+              return o.value !== "";
+            })
+            .map(function (o) {
+              return {
+                value: o.value,
+                text: o.text,
+                disabled: o.disabled,
+              };
+            });
+
+      // إخفاء الـ select الأصلي — يفضل شغال في الـ DOM (value/change) بس
+      // مش ظاهر بصريًا، الواجهة الجديدة بتاخد مكانه بالظبط.
+      sel.style.cssText += ";position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;overflow:hidden";
+
+      var wrap = document.createElement("div");
+      wrap.className = "fas-combo";
+
+      var curOpt = sel.options[sel.selectedIndex];
+      var curLabel =
+        curOpt && curOpt.value ? curOpt.text : placeholderTxt;
+
+      wrap.innerHTML =
+        '<button type="button" class="fas-combo-trigger">' +
+        '<span class="fas-combo-trigger-label"></span>' +
+        '<i class="ti ti-chevron-down"></i>' +
+        "</button>" +
+        '<div class="fas-combo-panel" style="display:none">' +
+        '<div class="fas-combo-search-wrap">' +
+        '<div class="fas-combo-search-inner">' +
+        '<i class="ti ti-search"></i>' +
+        '<input type="text" class="fas-combo-search" placeholder="' +
+        (isLazy ? "ابحث بالكود أو الاسم (٢ حرف على الأقل)…" : "ابحث في دليل الحسابات…") +
+        '" />' +
+        "</div>" +
+        '<button type="button" class="fas-combo-clear" title="مسح الاختيار">' +
+        '<i class="ti ti-trash"></i></button>' +
+        "</div>" +
+        '<div class="fas-combo-list"></div>' +
+        "</div>";
+
+      sel.parentNode.insertBefore(wrap, sel);
+
+      var trigger = wrap.querySelector(".fas-combo-trigger");
+      var triggerLabel = wrap.querySelector(".fas-combo-trigger-label");
+      var panel = wrap.querySelector(".fas-combo-panel");
+      var searchBox = wrap.querySelector(".fas-combo-search");
+      var clearBtn = wrap.querySelector(".fas-combo-clear");
+      var list = wrap.querySelector(".fas-combo-list");
+
+      function setTriggerLabel() {
+        var o = sel.options[sel.selectedIndex];
+        var hasVal = o && o.value;
+        triggerLabel.textContent = hasVal ? o.text : placeholderTxt;
+        trigger.classList.toggle("is-placeholder", !hasVal);
+        clearBtn.classList.toggle("is-visible", !!hasVal);
+      }
+
+      function closePanel() {
+        panel.style.display = "none";
+        trigger.classList.remove("open");
+      }
+
+      function openPanel() {
+        // بانل واحد مفتوح بس في نفس الوقت في كل الصفحة
+        document.querySelectorAll(".fas-combo-panel").forEach(function (p) {
+          if (p !== panel) p.style.display = "none";
+        });
+        document.querySelectorAll(".fas-combo-trigger.open").forEach(function (t) {
+          if (t !== trigger) t.classList.remove("open");
+        });
+        panel.style.display = "block";
+        trigger.classList.add("open");
+        searchBox.value = "";
+        searchBox.focus();
+        if (isLazy) {
+          list.innerHTML =
+            '<div class="fas-combo-empty">اكتب حرفين على الأقل للبحث</div>';
+        } else {
+          renderList(allOptions);
+        }
+      }
+
+      function selectValue(value, text) {
+        sel.value = value;
+        setTriggerLabel();
+        closePanel();
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+
+      function renderList(opts) {
+        if (!opts || !opts.length) {
+          list.innerHTML = '<div class="fas-combo-empty">لا توجد نتائج</div>';
+          return;
+        }
+        list.innerHTML = "";
+        opts.forEach(function (o) {
+          var row = document.createElement("div");
+          row.className =
+            "fas-combo-option" + (o.disabled ? " is-disabled" : "");
+          row.textContent = o.text;
+          if (String(o.value) === String(sel.value))
+            row.classList.add("is-selected");
+          if (!o.disabled) {
+            row.addEventListener("click", function () {
+              selectValue(o.value, o.text);
+            });
+          }
+          list.appendChild(row);
+        });
+      }
+
+      trigger.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (panel.style.display === "block") closePanel();
+        else openPanel();
+      });
+
+      clearBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        selectValue("", "");
+      });
+
+      document.addEventListener("click", function (e) {
+        if (!wrap.contains(e.target)) closePanel();
+      });
+      wrap.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") closePanel();
+      });
+
+      if (isLazy) {
+        var debounceTimer = null;
+        searchBox.addEventListener("input", function () {
+          var q = searchBox.value.trim();
+          if (debounceTimer) clearTimeout(debounceTimer);
+          if (q.length < 2) {
+            list.innerHTML =
+              '<div class="fas-combo-empty">اكتب حرفين على الأقل للبحث</div>';
+            return;
+          }
+          debounceTimer = setTimeout(function () {
+            list.innerHTML = '<div class="fas-combo-empty">جاري البحث…</div>';
+            _gsr(
+              "searchAccountsLookup",
+              [
+                q,
+                expectedType,
+                typeof APP !== "undefined" && APP.currentUser
+                  ? APP.currentUser.username
+                  : null,
+                typeof SESSION !== "undefined" && SESSION
+                  ? SESSION.token
+                  : null,
+                30,
+              ],
+              {
+                rawResponse: true,
+                onSuccess: function (r) {
+                  var results = (r.data && r.data.results) || [];
+                  // نحدّث خيارات الـ select الأصلي الخفي (يفضل مصدر
+                  // الحقيقة للـ value) بنفس النتائج
+                  var curVal = sel.value;
+                  sel.innerHTML = "";
+                  var placeholderOpt = document.createElement("option");
+                  placeholderOpt.value = "";
+                  placeholderOpt.text = placeholderTxt;
+                  sel.appendChild(placeholderOpt);
+                  var mapped = results.map(function (a) {
+                    var opt = document.createElement("option");
+                    opt.value = a.id;
+                    opt.text =
+                      (a.code ? "[" + a.code + "] " : "") + (a.name || "");
+                    if (String(a.id) === String(curVal)) opt.selected = true;
+                    sel.appendChild(opt);
+                    return { value: a.id, text: opt.text, disabled: false };
+                  });
+                  renderList(mapped);
+                },
+                onError: function (r) {
+                  list.innerHTML =
+                    '<div class="fas-combo-empty">تعذّر البحث الآن</div>';
+                  console.warn("[FAS] searchAccountsLookup failed:", r.message);
+                },
+              },
+            );
+          }, 300);
+        });
+      } else {
+        searchBox.addEventListener("input", function () {
+          var q = searchBox.value.trim().toLowerCase();
+          var filtered = !q
+            ? allOptions
+            : allOptions.filter(function (o) {
+                return o.text.toLowerCase().includes(q);
+              });
+          renderList(filtered);
+        });
+      }
+
+      setTriggerLabel();
+    });
+  }
+
+  // ── §BP-P5 — قشرة تبويب "بيانات إضافية" العامة (عميل/مورد) ──────────────
+  // مستوحاة من شاشة X-MAN المرجعية (بيانات الحساب + بيانات إضافية). مشتركة
+  // بين renderCustomerModal/renderSupplierModal بدل تكرار نفس الحقول —
+  // نفس أسلوب _renderPartyAddressesTab/_renderPartyDocumentsTab أعلاه.
+  function _renderPartyExtraTab(prefix, p, partyType) {
+    p = p || {};
+    var accentColor = prefix === "sup" ? "#C2410C" : "#2563EB";
+    var badgeSoft =
+      prefix === "sup" ? "var(--orange-soft)" : "var(--accent-soft)";
+    var isEdit = !!p.id;
+    var sHd = function (icon, label) {
+      return (
+        '<div style="display:flex;align-items:center;gap:8px;margin:20px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border)">' +
+        '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;background:' +
+        badgeSoft +
+        '"><i class="ti ' +
+        icon +
+        '" style="font-size:14px;color:' +
+        accentColor +
+        '"></i></span>' +
+        '<span style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:0.5px;text-transform:uppercase">' +
+        label +
+        "</span></div>"
+      );
+    };
+    var fWrap = function (label, input, hint) {
+      return (
+        '<div class="form-group" style="margin-bottom:14px">' +
+        '<label style="display:block;font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px">' +
+        label +
+        "</label>" +
+        input +
+        (hint
+          ? '<div style="font-size:11px;color:var(--text3);margin-top:4px">' +
+            hint +
+            "</div>"
+          : "") +
+        "</div>"
+      );
+    };
+    var txt = function (id, val, ph) {
+      return (
+        '<input class="input" id="' +
+        id +
+        '" value="' +
+        esc(val || "") +
+        '" placeholder="' +
+        esc(ph || "") +
+        '" style="height:40px;border-radius:10px;font-size:13px">'
+      );
+    };
+    var num = function (id, val, ph) {
+      return (
+        '<input class="input" id="' +
+        id +
+        '" type="number" step="0.01" dir="ltr" value="' +
+        esc(val || "") +
+        '" placeholder="' +
+        esc(ph || "") +
+        '" style="height:40px;border-radius:10px;font-size:13px">'
+      );
+    };
+    // شركة الشحن الافتراضية — من كيان ShippingCompanies (Code_22_Shipping.gs)
+    var shippingCos =
+      (typeof APP !== "undefined" && APP.data && APP.data.shippingCompanies) ||
+      [];
+    var shipSel =
+      '<select class="input" id="' +
+      prefix +
+      '-modal-shipping-company" style="height:40px;border-radius:10px;font-size:13px">' +
+      '<option value="">بدون شركة شحن افتراضية</option>' +
+      shippingCos
+        .map(function (co) {
+          return (
+            '<option value="' +
+            esc(co.id) +
+            '" ' +
+            (String(p.default_shipping_company_id || "") === String(co.id)
+              ? "selected"
+              : "") +
+            ">" +
+            esc(co.name || "") +
+            "</option>"
+          );
+        })
+        .join("") +
+      "</select>";
+    // مساعد صفوف toggle (يتوافق مع كلاس .toggle/.toggle-track الموجود بالفعل)
+    var toggleRow = function (id, label, checked, hint, extraOnChange) {
+      return (
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">' +
+        '<div><div style="font-size:13px;font-weight:600;color:var(--text1)">' +
+        label +
+        "</div>" +
+        (hint
+          ? '<div style="font-size:11px;color:var(--text3);margin-top:2px">' +
+            hint +
+            "</div>"
+          : "") +
+        "</div>" +
+        '<label class="ddc-toggle" style="margin:0;flex-shrink:0">' +
+        '<input type="checkbox" id="' +
+        id +
+        '"' +
+        (checked ? " checked" : "") +
+        (extraOnChange ? ' onchange="' + extraOnChange + '"' : "") +
+        ">" +
+        '<span class="ddc-toggle-slider"></span>' +
+        "</label></div>"
+      );
+    };
+    var dualHint = p.dual_party_id
+      ? "مربوط حاليًا بسجل " +
+        (partyType === "supplier" ? "عميل" : "مورد") +
+        " رقم " +
+        esc(p.dual_party_id)
+      : "عند التفعيل والحفظ يمكنك إنشاء/ربط سجل مقابل تلقائيًا من الزر بالأسفل";
+    return (
+      sHd("ti-sitemap", "التصنيف والربط المحاسبي الإضافي") +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      fWrap(
+        '<i class="ti ti-target-arrow" style="font-size:11px"></i> مركز التكلفة',
+        txt(
+          prefix + "-modal-cost-center",
+          p.cost_center,
+          "اسم مركز التكلفة (اختياري)",
+        ),
+        "",
+      ) +
+      fWrap(
+        '<i class="ti ti-truck-delivery" style="font-size:11px"></i> شركة الشحن الافتراضية',
+        shipSel,
+        "",
+      ) +
+      "</div>" +
+      sHd("ti-adjustments", "خيارات وسياسات التعامل") +
+      '<div style="margin-bottom:8px">' +
+      toggleRow(
+        prefix + "-modal-dual-party",
+        "يتعامل كـ عميل ومورد في نفس الوقت",
+        !!p.is_dual_party,
+        dualHint,
+      ) +
+      (isEdit && !p.dual_party_id
+        ? '<div style="padding:6px 0 10px;text-align:left">' +
+          '<button type="button" class="btn" onclick="linkPartyDualRoleNow(\'' +
+          prefix +
+          "', '" +
+          esc(p.id) +
+          '\')" style="height:32px;padding:0 14px;border-radius:8px;font-size:12px;font-weight:700">' +
+          '<i class="ti ti-link"></i> إنشاء/ربط السجل المقابل الآن</button></div>'
+        : "") +
+      toggleRow(
+        prefix + "-modal-has-inv-seq",
+        "له مسلسل فواتير خاص",
+        !!p.has_custom_invoice_sequence,
+        "بادئة + عداد مستقل يُستخدم في ترقيم الفواتير المطبوعة بدل المسلسل العام",
+        "document.getElementById('" +
+          prefix +
+          "-inv-seq-fields').style.display=this.checked?'grid':'none'",
+      ) +
+      '<div id="' +
+      prefix +
+      '-inv-seq-fields" style="display:' +
+      (p.has_custom_invoice_sequence ? "grid" : "none") +
+      ';grid-template-columns:1fr 1fr;gap:12px;padding:10px 0">' +
+      fWrap(
+        "بادئة الترقيم",
+        txt(
+          prefix + "-modal-inv-seq-prefix",
+          p.invoice_sequence_prefix,
+          "مثال: C-312-",
+        ),
+        "",
+      ) +
+      fWrap(
+        "الرقم التالي",
+        num(prefix + "-modal-inv-seq-next", p.invoice_sequence_next || 1, "1"),
+        "",
+      ) +
+      "</div>" +
+      toggleRow(
+        prefix + "-modal-loyalty-enabled",
+        "يتعامل بنقاط الولاء",
+        !!p.loyalty_enabled,
+        "",
+        "document.getElementById('" +
+          prefix +
+          "-loyalty-fields').style.display=this.checked?'block':'none'",
+      ) +
+      '<div id="' +
+      prefix +
+      '-loyalty-fields" style="display:' +
+      (p.loyalty_enabled ? "block" : "none") +
+      ';padding:10px 0">' +
+      fWrap(
+        "رصيد النقاط الحالي",
+        num(prefix + "-modal-loyalty-points", p.loyalty_points || 0, "0"),
+        "",
+      ) +
+      "</div>" +
+      toggleRow(
+        prefix + "-modal-blacklisted",
+        "Black List (قائمة سوداء)",
+        !!p.is_blacklisted,
+        "لو مفعّل، لن يمكن إنشاء فواتير بيع/شراء جديدة مع هذا الطرف",
+      ) +
+      "</div>" +
+      sHd("ti-shield-check", "بيانات إضافية وضمان") +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      fWrap(
+        '<i class="ti ti-building-factory-2" style="font-size:11px"></i> جهة العمل',
+        txt(prefix + "-modal-employer", p.employer, "اسم جهة العمل (اختياري)"),
+        "",
+      ) +
+      fWrap(
+        '<i class="ti ti-file-text" style="font-size:11px"></i> رقم الصفحة',
+        txt(
+          prefix + "-modal-ledger-page",
+          p.ledger_page_number,
+          "رقم صفحة دفتر الأستاذ الورقي (إن وُجد)",
+        ),
+        "",
+      ) +
+      "</div>" +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      fWrap(
+        '<i class="ti ti-user-shield" style="font-size:11px"></i> الضامن الأول',
+        txt(
+          prefix + "-modal-guarantor1",
+          p.guarantor1,
+          "اسم/بيانات الضامن الأول",
+        ),
+        "",
+      ) +
+      fWrap(
+        '<i class="ti ti-user-shield" style="font-size:11px"></i> الضامن الثاني',
+        txt(
+          prefix + "-modal-guarantor2",
+          p.guarantor2,
+          "اسم/بيانات الضامن الثاني",
+        ),
+        "",
+      ) +
+      "</div>"
+    );
+  }
+
+  // renderCustomerModal — نموذج إضافة/تعديل عميل
+  // ─────────────────────────────────────────────────────────────
+  // §BP-P2 — شريط تبويبات عام لمودالات الأطراف (عميل/مورد). prefix يميّز
+  // نسخة العميل عن نسخة المورد حتى لو اتفتحوا (نظريًا) في نفس الصفحة.
+  // [REDESIGN-2] السكة القديمة (أزرار تابات بتخفي/تظهر panels) بقت:
+  // كارت معاينة حي (اسم/كود/حالة بتتحدث لحظيًا) + شريط نسبة اكتمال
+  // البيانات + سكة تنقّل مرقمة تشتغل بمنطق scroll-spy بدل الإخفاء/الإظهار
+  // (الفورم كله بقى في سكرول واحد — راجع _partyTabPanel/_switchPartyTab/
+  // _initPartyModalExtras تحت). الحقول والدوال المولّدة للمحتوى نفسها
+  // ما اتغيّرتش، الفرق كله في الغلاف والتفاعل.
+  // [REDESIGN-3] الرِّيل الرأسي القديم (كارت معاينة + قائمة تابات عمودية +
+  // scroll-spy) بقى: شريط علوي واحد فيه (1) أفاتار دائري قابل للنقر لإدخال
+  // رابط صورة الطرف + اسم/كود/حالة مصغّرين، و(2) صف تابات أفقي تحته. كل
+  // تابة بتضهر قسمها فقط (display:none/flex classic) بدل ما تكون كل
+  // الأقسام ظاهرة في سكرول واحد. راجع _switchPartyTab تحت لمنطق الإخفاء.
+  function _partyTabsBar(prefix, tabs, accent, party) {
+    party = party || {};
+    var isSup = prefix === "sup";
+    var initial = (party.name || "").trim().charAt(0) || (isSup ? "م" : "ع");
+    var statusActive = (party.status || "نشط") === "نشط";
+    var hasImage = !!(party.image_url || "").trim();
+    var navItems = tabs
+      .map(function (t, idx) {
+        return (
+          '<div class="party-navitem" data-party-tab="' +
+          prefix +
+          "-" +
+          t.id +
+          '" onclick="_switchPartyTab(\'' +
+          prefix +
+          "', '" +
+          t.id +
+          '\')" style="display:flex;align-items:center;gap:7px;padding:9px 14px;border-radius:10px 10px 0 0;font-size:12.5px;font-weight:700;cursor:pointer;transition:.15s;white-space:nowrap;flex-shrink:0;border-bottom:2px solid ' +
+          (idx === 0 ? accent.fg : "transparent") +
+          ";background:" +
+          (idx === 0 ? accent.bg : "transparent") +
+          ";color:" +
+          (idx === 0 ? accent.fg : "var(--text3)") +
+          '">' +
+          '<i class="ti ' +
+          t.icon +
+          '" style="font-size:15px"></i><span>' +
+          t.label +
+          "</span>" +
+          "</div>"
+        );
+      })
+      .join("");
+    return (
+      '<div class="party-tabsbar" style="display:flex;flex-direction:column;flex-shrink:0;background:var(--surface2);border-radius:12px;overflow:hidden">' +
+      // ── [REDESIGN-4] شريط علوي واحد: أفاتار مصغّر + صف التابات على
+      // نفس المستوى الأفقي — كارت المعاينة (اسم/كود/حالة/نسبة اكتمال)
+      // اتشال بالكامل بناءً على طلب توحيد الهيدر، وسبنا الصورة بس.
+      '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--border)">' +
+      '<div id="' +
+      prefix +
+      '-preview-avatar" onclick="_togglePartyImageInput(\'' +
+      prefix +
+      '\')" data-has-image="' +
+      (hasImage ? "1" : "0") +
+      '" title="اضغط لإضافة/تعديل رابط صورة ' +
+      (isSup ? "المورد" : "العميل") +
+      '" style="width:38px;height:38px;border-radius:50%;flex-shrink:0;cursor:pointer;background:' +
+      (hasImage
+        ? "var(--surface3,var(--surface)) center/cover no-repeat url(&quot;" +
+          esc(party.image_url) +
+          "&quot;)"
+        : accent.bg) +
+      ";color:" +
+      accent.fg +
+      ';display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;border:2px solid var(--border);position:relative" onmouseover="this.style.opacity=0.85" onmouseout="this.style.opacity=1">' +
+      (hasImage
+        ? ""
+        : '<i class="ti ti-user" style="font-size:17px;opacity:.85"></i>') +
+      '<span style="position:absolute;bottom:-2px;left:-2px;width:14px;height:14px;border-radius:50%;background:' +
+      accent.fg +
+      ';color:#fff;display:flex;align-items:center;justify-content:center;border:1.5px solid var(--surface2)"><i class="ti ti-camera" style="font-size:8px"></i></span>' +
+      "</div>" +
+      '<input type="hidden" id="' +
+      prefix +
+      '-modal-image-url" value="' +
+      esc(party.image_url || "") +
+      '">' +
+      // ── صف التابات على نفس مستوى الأفاتار ──
+      '<div class="party-navlist" style="display:flex;gap:2px;overflow-x:auto;flex:1;min-width:0">' +
+      navItems +
+      "</div>" +
+      "</div>" +
+      // ── [IN-APP-INPUT] صف إدخال رابط الصورة — مخفي افتراضيًا، بيظهر
+      // بالنقر على الأفاتار بدل أي popup من المتصفح (prompt/alert) —
+      // مكوّن HTML عادي جوه المودال نفسه، صف مستقل بعرض كامل تحت شريط
+      // المعاينة. راجع _togglePartyImageInput/_applyPartyImageInput/
+      // _clearPartyImageInput تحت.
+      '<div id="' +
+      prefix +
+      '-image-input-row" style="display:none;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface3,var(--surface))">' +
+      '<i class="ti ti-link" style="font-size:14px;color:var(--text3);flex-shrink:0"></i>' +
+      '<input type="text" id="' +
+      prefix +
+      '-image-input" placeholder="رابط صورة ' +
+      (isSup ? "المورد" : "العميل") +
+      ' (https://...)" value="' +
+      esc(party.image_url || "") +
+      '" dir="ltr" style="flex:1;height:32px;border-radius:8px;font-size:12px;padding:0 10px;background:var(--surface,var(--surface2));border:1px solid var(--border);color:var(--text1)" onkeydown="if(event.key===\'Enter\'){_applyPartyImageInput(\'' +
+      prefix +
+      "')}if(event.key==='Escape'){_togglePartyImageInput('" +
+      prefix +
+      "')}\">" +
+      '<button type="button" onclick="_applyPartyImageInput(\'' +
+      prefix +
+      '\')" title="تطبيق" style="width:28px;height:28px;border-radius:8px;border:none;background:' +
+      accent.bg +
+      ";color:" +
+      accent.fg +
+      ';cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="ti ti-check" style="font-size:14px"></i></button>' +
+      '<button type="button" onclick="_clearPartyImageInput(\'' +
+      prefix +
+      '\')" title="إزالة الصورة" style="width:28px;height:28px;border-radius:8px;border:none;background:var(--surface2,var(--surface));color:var(--danger);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="ti ti-trash" style="font-size:13px"></i></button>' +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  // [STATUS-SWITCH] سويتش (swipe) مضغوط للحالة نشط/موقوف — بيتحط جنب
+  // حقل الاسم مباشرة (نفس صف الكود/الاسم) بدل شيك بوكس تحت مع التصنيف.
+  // بيرجّع نفس id الشيك بوكس القديم (prefix + "-modal-status") فحفظ
+  // البيانات في 10_JS_Settings_Search_Parties.html مبيتغيّرش.
+  function _partyStatusSwitch(prefix, checked, accent) {
+    return (
+      '<div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding-bottom:9px">' +
+      '<label style="position:relative;display:inline-flex;align-items:center;width:44px;height:24px;cursor:pointer;flex-shrink:0" title="نشط / موقوف">' +
+      '<input type="checkbox" id="' +
+      prefix +
+      '-modal-status" ' +
+      (checked ? "checked" : "") +
+      ' style="opacity:0;width:0;height:0;position:absolute" onchange="_togglePartyStatusSwitch(\'' +
+      prefix +
+      "', this, '" +
+      accent +
+      "')\">" +
+      '<span id="' +
+      prefix +
+      '-modal-status-track" style="position:absolute;inset:0;border-radius:24px;background:' +
+      (checked ? accent : "var(--surface3)") +
+      ';transition:background .2s"></span>' +
+      '<span id="' +
+      prefix +
+      '-modal-status-knob" style="position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .2s;transform:translateX(' +
+      (checked ? "18px" : "0") +
+      ')"></span>' +
+      "</label>" +
+      '<span id="' +
+      prefix +
+      '-modal-status-label" style="font-size:10.5px;font-weight:700;color:var(--text3)">' +
+      (checked ? "نشط" : "موقوف") +
+      "</span>" +
+      "</div>"
+    );
+  }
+
+  function _togglePartyStatusSwitch(prefix, el, accent) {
+    var track = document.getElementById(prefix + "-modal-status-track");
+    var knob = document.getElementById(prefix + "-modal-status-knob");
+    var label = document.getElementById(prefix + "-modal-status-label");
+    var checked = el.checked;
+    if (track) track.style.background = checked ? accent : "var(--surface3)";
+    if (knob)
+      knob.style.transform = "translateX(" + (checked ? "18px" : "0") + ")";
+    if (label) label.textContent = checked ? "نشط" : "موقوف";
+  }
+
+  function _partyTabPanel(prefix, id, isFirst, contentHtml) {
+    // [REDESIGN-3] رجعنا لمنطق التابات الكلاسيكي: القسم النشط بس ظاهر
+    // (display:flex)، الباقي display:none — isFirst بيتحكم في القسم
+    // الظاهر افتراضيًا (أول تابة) عند فتح المودال.
+    return (
+      '<div class="party-tab-panel" data-party-panel="' +
+      prefix +
+      "-" +
+      id +
+      '" style="display:' +
+      (isFirst ? "block" : "none") +
+      '">' +
+      contentHtml +
+      "</div>"
+    );
+  }
+
+  // بيتنفذ لما المستخدم يدوس على تابة أفقية — يخفي كل الأقسام غير القسم
+  // المطلوب (بدل السكرول القديم)، يلوّن التابة النشطة، ويفعّل نفس منطق
+  // lazy-load العناوين/المستندات لو دي أول مرة يوصل لهم فيها.
+  function _switchPartyTab(prefix, tabId) {
+    document
+      .querySelectorAll('[data-party-panel^="' + prefix + '-"]')
+      .forEach(function (p) {
+        p.style.display =
+          p.getAttribute("data-party-panel") === prefix + "-" + tabId
+            ? "block"
+            : "none";
+      });
+    _setPartyActiveNav(prefix, tabId);
+    if (tabId === "addresses" && typeof loadPartyAddressesList === "function") {
+      var wrap = document.getElementById(prefix + "-addr-wrap");
+      if (wrap && !wrap.getAttribute("data-loaded")) {
+        wrap.setAttribute("data-loaded", "1");
+        loadPartyAddressesList(
+          prefix,
+          wrap.getAttribute("data-party-id"),
+          wrap.getAttribute("data-party-type"),
+        );
+      }
+    }
+    if (tabId === "documents" && typeof loadPartyDocumentsList === "function") {
+      var docWrap = document.getElementById(prefix + "-doc-wrap");
+      if (docWrap && !docWrap.getAttribute("data-loaded")) {
+        docWrap.setAttribute("data-loaded", "1");
+        loadPartyDocumentsList(
+          prefix,
+          docWrap.getAttribute("data-party-id"),
+          docWrap.getAttribute("data-party-type"),
+        );
+      }
+    }
+  }
+
+  // يلوّن التابة الأفقية النشطة فقط (خلفية + لون + خط تحتها).
+  function _setPartyActiveNav(prefix, tabId) {
+    var accent =
+      prefix === "sup"
+        ? { bg: "var(--orange-soft,rgba(249,115,22,.14))", fg: "#C2410C" }
+        : { bg: "var(--accent-soft,rgba(59,130,246,.14))", fg: "#2563EB" };
+    document
+      .querySelectorAll('[data-party-tab^="' + prefix + '-"]')
+      .forEach(function (b) {
+        var active = b.getAttribute("data-party-tab") === prefix + "-" + tabId;
+        b.style.background = active ? accent.bg : "transparent";
+        b.style.color = active ? accent.fg : "var(--text3)";
+        b.style.borderBottomColor = active ? accent.fg : "transparent";
+      });
+  }
+
+  // [AVATAR-LINK] مدخل رابط صورة العميل/المورد — بديل بسيط لرفع ملف فعلي.
+  // [NO-BROWSER-POPUP] كان بيستخدم window.prompt (نافذة منبثقة من المتصفح
+  // نفسه) — دلوقتي بقى صف إدخال HTML عادي جوه المودال (راجع markup
+  // "${prefix}-image-input-row" في _partyTabsBar فوق)، بيظهر/يختفي بالنقر
+  // على الأفاتار من غير أي popup خارج الصفحة.
+  function _togglePartyImageInput(prefix) {
+    var row = document.getElementById(prefix + "-image-input-row");
+    if (!row) return;
+    var showing = row.style.display !== "none";
+    row.style.display = showing ? "none" : "flex";
+    if (!showing) {
+      var input = document.getElementById(prefix + "-image-input");
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    }
+  }
+
+  function _applyPartyImageInput(prefix) {
+    var input = document.getElementById(prefix + "-image-input");
+    var url = ((input && input.value) || "").trim();
+    _setPartyImage(prefix, url);
+    var row = document.getElementById(prefix + "-image-input-row");
+    if (row) row.style.display = "none";
+  }
+
+  function _clearPartyImageInput(prefix) {
+    var input = document.getElementById(prefix + "-image-input");
+    if (input) input.value = "";
+    _setPartyImage(prefix, "");
+    var row = document.getElementById(prefix + "-image-input-row");
+    if (row) row.style.display = "none";
+  }
+
+  // يخزّن الرابط في الحقل المخفي ويحدّث شكل الأفاتار الدائري فورًا (صورة
+  // الخلفية لو فيه رابط، أو أيقونة رجل لو فاضي) + شريط الاكتمال. مستقلة
+  // عن أي تفاعل UI — بتُستدعى من _applyPartyImageInput/_clearPartyImageInput.
+  function _setPartyImage(prefix, url) {
+    var hidden = document.getElementById(prefix + "-modal-image-url");
+    if (hidden) hidden.value = url;
+    var avatar = document.getElementById(prefix + "-preview-avatar");
+    if (avatar) {
+      var accent =
+        prefix === "sup"
+          ? { bg: "var(--orange-soft,rgba(249,115,22,.14))", fg: "#C2410C" }
+          : { bg: "var(--accent-soft,rgba(59,130,246,.14))", fg: "#2563EB" };
+      if (url) {
+        avatar.style.background =
+          'var(--surface3,var(--surface)) center/cover no-repeat url("' +
+          url.replace(/"/g, "&quot;") +
+          '")';
+        avatar.innerHTML =
+          '<span style="position:absolute;bottom:-2px;left:-2px;width:16px;height:16px;border-radius:50%;background:' +
+          accent.fg +
+          ';color:#fff;display:flex;align-items:center;justify-content:center;border:1.5px solid var(--surface2)"><i class="ti ti-camera" style="font-size:9px"></i></span>';
+        avatar.setAttribute("data-has-image", "1");
+      } else {
+        avatar.style.background = accent.bg;
+        avatar.innerHTML =
+          '<i class="ti ti-user" style="font-size:20px;opacity:.85"></i>' +
+          '<span style="position:absolute;bottom:-2px;left:-2px;width:16px;height:16px;border-radius:50%;background:' +
+          accent.fg +
+          ';color:#fff;display:flex;align-items:center;justify-content:center;border:1.5px solid var(--surface2)"><i class="ti ti-camera" style="font-size:9px"></i></span>';
+        avatar.setAttribute("data-has-image", "0");
+      }
+    }
+    if (typeof _updatePartyCompletion === "function")
+      _updatePartyCompletion(prefix);
+  }
+
+  // يربط: (1) كارت المعاينة الحي بحقول الاسم/الكود/الحالة، (2) شريط
+  // نسبة اكتمال البيانات بكل الحقول الظاهرة.
+  // [DATA-LOADING-ENGINE / المرحلة 10 — 2026-07-29] اتشال منها نداء
+  // loadPartyAddressesList/loadPartyDocumentsList الفوري — كان بيحصل مع
+  // كل فتح مودال (تعديل عميل/مورد) بغض النظر عن التابة النشطة فعليًا،
+  // يعني نداءَي سيرفر زيادة (getPartyAddresses + getPartyDocuments) حتى
+  // لو المستخدم فاتح على تابة "أساسية" ومكملّش على العناوين/المستندات
+  // خالص. التابة الأولى الظاهرة افتراضيًا هي "أساسية" دايمًا (راجع
+  // isFirst في _partyTabPanel) فمفيش داعٍ لأي تحميل فوري هنا — منطق
+  // الـ lazy-load-أول-مرة-بس الموجود فعلاً جوه _switchPartyTab كافٍ
+  // ومتفعّل تلقائيًا وقت ما المستخدم يدوس فعليًا على تابة العناوين أو
+  // المستندات. بتتنادى من نقاط فتح المودال الأربعة (إضافة/تعديل عميل،
+  // إضافة/تعديل مورد) في 10_JS_Settings_Search_Parties.html بعد ما
+  // الـ HTML يتحقن في الـ drawer.
+  function _initPartyModalExtras(prefix) {
+    var scrollBox = document.querySelector(
+      '.party-form-scroll[data-party-prefix="' + prefix + '"]',
+    );
+    if (!scrollBox) return;
+    _bindPartyPreview(prefix);
+  }
+
+  function _bindPartyPreview(prefix) {
+    var isSup = prefix === "sup";
+    var nameEl = document.getElementById(prefix + "-modal-name");
+    var codeEl = document.getElementById(prefix + "-modal-code");
+    var statusEl = document.getElementById(prefix + "-modal-status");
+    var previewName = document.getElementById(prefix + "-preview-name");
+    var previewCode = document.getElementById(prefix + "-preview-code");
+    var previewAvatar = document.getElementById(prefix + "-preview-avatar");
+    var previewStatus = document.getElementById(prefix + "-preview-status");
+    function syncName() {
+      var v = ((nameEl && nameEl.value) || "").trim();
+      if (previewName) {
+        previewName.textContent =
+          v || (isSup ? "اسم المورد..." : "اسم العميل...");
+        previewName.style.color = v ? "var(--text1)" : "var(--text3)";
+      }
+      // [AVATAR-LINK] الأفاتار بقى أيقونة رجل ثابتة أو صورة (مش حرف أول
+      // من الاسم) — شكله بيتحدّث بس من _promptPartyImage، فمفيش أي لمس
+      // له هنا لما الاسم يتغيّر.
+    }
+    function syncCode() {
+      if (previewCode)
+        previewCode.textContent =
+          "الكود: " + (((codeEl && codeEl.value) || "").trim() || "—");
+    }
+    function syncStatus() {
+      if (!statusEl || !previewStatus) return;
+      var active = statusEl.checked;
+      previewStatus.textContent = active ? "نشط" : "موقوف";
+      previewStatus.style.background = active
+        ? "var(--green-soft,rgba(34,197,94,.14))"
+        : "var(--surface3,var(--surface))";
+      previewStatus.style.color = active
+        ? "var(--green,#16a34a)"
+        : "var(--text3)";
+    }
+    if (nameEl)
+      nameEl.addEventListener("input", function () {
+        syncName();
+        _updatePartyCompletion(prefix);
+      });
+    if (codeEl)
+      codeEl.addEventListener("input", function () {
+        syncCode();
+        _updatePartyCompletion(prefix);
+      });
+    if (statusEl) statusEl.addEventListener("change", syncStatus);
+    var scrollBox = document.querySelector(
+      '.party-form-scroll[data-party-prefix="' + prefix + '"]',
+    );
+    if (scrollBox) {
+      scrollBox.addEventListener("input", function () {
+        _updatePartyCompletion(prefix);
+      });
+      scrollBox.addEventListener("change", function () {
+        _updatePartyCompletion(prefix);
+      });
+    }
+    _updatePartyCompletion(prefix);
+  }
+
+  // نسبة تقريبية بس (حقول نصية/رقمية/select ظاهرة مليانة ÷ الإجمالي) —
+  // مقصودة كمؤشر إرشادي للمستخدم أثناء التعبئة، مش رقم تحقق (validation)
+  // رسمي؛ التحقق الفعلي للحقول الإلزامية فاضل زي ما هو في VF.bind.
+  function _updatePartyCompletion(prefix) {
+    var scrollBox = document.querySelector(
+      '.party-form-scroll[data-party-prefix="' + prefix + '"]',
+    );
+    if (!scrollBox) return;
+    var fields = scrollBox.querySelectorAll("input, select, textarea");
+    var total = 0,
+      filled = 0;
+    fields.forEach(function (f) {
+      if (f.type === "checkbox" || f.type === "radio" || f.type === "hidden")
+        return;
+      total++;
+      if ((f.value || "").toString().trim() !== "") filled++;
+    });
+    var pct = total ? Math.round((filled / total) * 100) : 0;
+    var label = document.getElementById(prefix + "-completion-label");
+    var fill = document.getElementById(prefix + "-completion-fill");
+    if (label) label.textContent = pct + "%";
+    if (fill) fill.style.width = pct + "%";
+  }
+
+  // ── §BP-P3 — قشرة تبويب "الاتصال والعناوين" العامة (عميل/مورد) ──────────
+  // [MERGE-CONTACT-ADDR] بيانات الاتصال (contactHTML) بقت قسم أول في نفس
+  // التبويب. [NO-SAVE-FIRST] partyId فارغ (سجل جديد لسه ما اتحفظش) لم يعد
+  // يمنع إضافة عناوين — بيتخزّنوا محليًا (pending) في المتصفح، وبيتبعتوا
+  // للسيرفر تلقائيًا فور نجاح حفظ العميل/المورد نفسه (شوف
+  // _flushPendingPartyExtras في 10_JS_Settings_Search_Parties.html).
+  function _renderPartyAddressesTab(prefix, partyId, partyType, contactHTML) {
+    var accentColor = prefix === "sup" ? "#C2410C" : "#2563EB";
+    // [FIX-THEME] بدل اللونين الثابتين (#FFF7ED/#EFF6FF) نستخدم متغيرات
+    // الوضع الداكن المعرّفة فعليًا (--orange-soft/--accent-soft) بدل قيم
+    // hex ثابتة فاتحة بس، بنفس أسلوب sectionHd() في renderCustomerModal.
+    var badgeSoft =
+      prefix === "sup" ? "var(--orange-soft)" : "var(--accent-soft)";
+    return (
+      (contactHTML || "") +
+      '<div style="display:flex;align-items:center;gap:8px;margin:20px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border)">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;background:' +
+      badgeSoft +
+      '"><i class="ti ti-map-pin" style="font-size:14px;color:' +
+      accentColor +
+      '"></i></span>' +
+      '<span style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:0.5px;text-transform:uppercase">العناوين</span>' +
+      "</div>" +
+      (!partyId
+        ? '<div style="font-size:11px;color:var(--text3);margin:-6px 0 10px;display:flex;align-items:center;gap:5px"><i class="ti ti-info-circle" style="font-size:12px"></i> العناوين اللي هتضيفها هنا هتتحفظ تلقائيًا مع ' +
+          (partyType === "supplier" ? "المورد" : "العميل") +
+          " لحظة الضغط على زر الحفظ</div>"
+        : "") +
+      '<div id="' +
+      prefix +
+      '-addr-wrap" data-party-id="' +
+      esc(partyId) +
+      '" data-party-type="' +
+      partyType +
+      '">' +
+      '<div style="display:flex;justify-content:flex-end;align-items:center;margin-bottom:12px">' +
+      '<button type="button" onclick="openPartyAddressForm(\'' +
+      prefix +
+      '\')" style="height:30px;padding:0 12px;border-radius:8px;font-size:12px;font-weight:700;border:1px solid ' +
+      accentColor +
+      ";color:" +
+      accentColor +
+      // [FIX-THEME] background:#fff ثابت → var(--surface) بيتبع الوضع الليلي
+      ';background:var(--surface);cursor:pointer;display:flex;align-items:center;gap:4px">' +
+      '<i class="ti ti-plus"></i> إضافة عنوان</button>' +
+      "</div>" +
+      '<div id="' +
+      prefix +
+      '-addr-list" style="min-height:40px">' +
+      '<div style="text-align:center;padding:20px;color:var(--text3);font-size:12px">جارِ التحميل...</div>' +
+      "</div>" +
+      '<div id="' +
+      prefix +
+      // [FIX-THEME] var(--bg-alt,#f8fafc) — متغيّر غير معرّف، دايمًا فاتح. بدّلناه var(--surface2)
+      '-addr-form" style="display:none;margin-top:14px;padding:14px;background:var(--surface2);border:1px solid var(--border);border-radius:12px"></div>' +
+      "</div>"
+    );
+  }
+
+  // ── §BP-P5 — قشرة تبويب "مستندات" العامة (عميل/مورد) ────────────────────
+  // [NO-SAVE-FIRST] partyId فارغ ⇐ سجل جديد لسه ما اتحفظش — الملفات
+  // بتتخزّن محليًا (base64 في المتصفح) وبترفع فعليًا على Drive وتتسجّل في
+  // الشيت تلقائيًا فور نجاح حفظ العميل/المورد (_flushPendingPartyExtras).
+  function _renderPartyDocumentsTab(prefix, partyId, partyType, partyCode, partyName) {
+    var accentColor = prefix === "sup" ? "#C2410C" : "#2563EB";
+    // [FIX-THEME] نفس إصلاح _renderPartyAddressesTab أعلاه
+    var badgeSoft =
+      prefix === "sup" ? "var(--orange-soft)" : "var(--accent-soft)";
+    return (
+      '<div id="' +
+      prefix +
+      '-doc-wrap" data-party-id="' +
+      esc(partyId) +
+      '" data-party-type="' +
+      partyType +
+      '" data-party-code="' +
+      esc(partyCode || "") +
+      '" data-party-name="' +
+      esc(partyName || "") +
+      '">' +
+      (!partyId
+        ? '<div style="font-size:11px;color:var(--text3);margin:0 0 10px;display:flex;align-items:center;gap:5px"><i class="ti ti-info-circle" style="font-size:12px"></i> المستندات هترفع فعليًا على Drive تلقائيًا بعد حفظ ' +
+          (partyType === "supplier" ? "المورد" : "العميل") +
+          " مباشرة</div>"
+        : "") +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border)">' +
+      '<span style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;display:flex;align-items:center;gap:8px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;background:' +
+      badgeSoft +
+      '"><i class="ti ti-files" style="font-size:14px;color:' +
+      accentColor +
+      '"></i></span>المستندات</span>' +
+      '<button type="button" onclick="openPartyDocumentForm(\'' +
+      prefix +
+      '\')" style="height:30px;padding:0 12px;border-radius:8px;font-size:12px;font-weight:700;border:1px solid ' +
+      accentColor +
+      ";color:" +
+      accentColor +
+      ';background:var(--surface);cursor:pointer;display:flex;align-items:center;gap:4px">' +
+      '<i class="ti ti-plus"></i> رفع مستند</button>' +
+      "</div>" +
+      '<div id="' +
+      prefix +
+      '-doc-list" style="min-height:40px">' +
+      '<div style="text-align:center;padding:20px;color:var(--text3);font-size:12px">جارِ التحميل...</div>' +
+      "</div>" +
+      '<div id="' +
+      prefix +
+      '-doc-form" style="display:none;margin-top:14px;padding:14px;background:var(--surface2);border:1px solid var(--border);border-radius:12px"></div>' +
+      "</div>"
+    );
+  }
+
+  function renderCustomerModal(c) {
+    c = c || {};
+    var isEdit = !!c.id;
+    var accentBlue = "#2563EB";
+    var sectionHd = function (icon, label) {
+      return (
+        '<div style="display:flex;align-items:center;gap:8px;margin:4px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border)">' +
+        '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;background:var(--accent-soft,#EFF6FF)">' +
+        '<i class="ti ' +
+        icon +
+        '" style="font-size:14px;color:' +
+        accentBlue +
+        '"></i></span>' +
+        '<span style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:0.5px;text-transform:uppercase">' +
+        label +
+        "</span></div>"
+      );
+    };
+    var fieldWrap = function (label, input, hint) {
+      return (
+        '<div class="form-group" style="margin-bottom:14px">' +
+        '<label style="display:block;font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px">' +
+        label +
+        "</label>" +
+        input +
+        (hint
+          ? '<div style="font-size:11px;color:var(--text3);margin-top:4px">' +
+            hint +
+            "</div>"
+          : "") +
+        "</div>"
+      );
+    };
+    var inp = function (id, val, ph, extra) {
+      return (
+        '<input class="input" id="' +
+        id +
+        '" value="' +
+        val +
+        '" placeholder="' +
+        ph +
+        '" ' +
+        (extra || "") +
+        ' style="height:40px;border-radius:10px;font-size:13px">'
+      );
+    };
+    var sel = function (id, options, current) {
+      var opts = options
+        .map(function (o) {
+          return (
+            '<option value="' +
+            o +
+            '" ' +
+            (current === o ? "selected" : "") +
+            ">" +
+            o +
+            "</option>"
+          );
+        })
+        .join("");
+      return (
+        '<select class="input" id="' +
+        id +
+        '" style="height:40px;border-radius:10px;font-size:13px">' +
+        opts +
+        "</select>"
+      );
+    };
+    // [MERGE-CONTACT-ADDR] بيانات الاتصال بقت قسم أول داخل تبويب "الاتصال
+    // والعناوين" المدموج بدل تبويب منفصل — نفس الحقول القديمة بالظبط.
+    var contactFieldsHTML =
+      sectionHd("ti-phone", "بيانات الاتصال") +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      '<div class="form-group" style="margin-bottom:14px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">' +
+      '<label style="font-size:12px;font-weight:700;color:var(--text2)"><i class="ti ti-phone" style="font-size:11px"></i> رقم الهاتف</label>' +
+      '<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:11px;font-weight:600;color:#16a34a">' +
+      '<input type="checkbox" id="cust-modal-phone-whatsapp" ' +
+      (c.phone_whatsapp === false ? "" : "checked") +
+      ' style="width:14px;height:14px;cursor:pointer;accent-color:#16a34a">' +
+      '<i class="ti ti-brand-whatsapp" style="font-size:13px"></i> داعم واتساب' +
+      "</label>" +
+      "</div>" +
+      inp("cust-modal-phone", esc(c.phone || ""), "01xxxxxxxxx", 'dir="ltr"') +
+      '<div style="font-size:11px;color:var(--text3);margin-top:4px">لو التفعيل متشال، الرقم مش هيتربط تلقائيًا برسائل واتساب الواردة</div>' +
+      "</div>" +
+      fieldWrap(
+        '<i class="ti ti-phone-plus" style="font-size:11px"></i> هاتف إضافي',
+        inp(
+          "cust-modal-phone2",
+          esc(c.phone2 || ""),
+          "01xxxxxxxxx",
+          'dir="ltr"',
+        ),
+        "",
+      ) +
+      "</div>" +
+      fieldWrap(
+        '<i class="ti ti-mail" style="font-size:11px"></i> البريد الإلكتروني',
+        inp(
+          "cust-modal-email",
+          esc(c.email || ""),
+          "example@domain.com",
+          'dir="ltr"',
+        ),
+        "",
+      ) +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      fieldWrap(
+        '<i class="ti ti-world" style="font-size:11px"></i> الموقع الإلكتروني',
+        inp(
+          "cust-modal-website",
+          esc(c.website || ""),
+          "https://...",
+          'dir="ltr"',
+        ),
+        "",
+      ) +
+      fieldWrap(
+        '<i class="ti ti-fax" style="font-size:11px"></i> الفاكس',
+        inp("cust-modal-fax", esc(c.fax || ""), "رقم الفاكس", 'dir="ltr"'),
+        "",
+      ) +
+      "</div>" +
+      sectionHd("ti-address-book", "شخص الاتصال") +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      fieldWrap(
+        '<i class="ti ti-user" style="font-size:11px"></i> شخص الاتصال الرئيسي',
+        inp("cust-modal-contact-person", esc(c.contact_person || ""), "الاسم"),
+        "",
+      ) +
+      fieldWrap(
+        '<i class="ti ti-phone" style="font-size:11px"></i> هاتف شخص الاتصال',
+        inp(
+          "cust-modal-contact-phone",
+          esc(c.contact_phone || ""),
+          "01xxxxxxxxx",
+          'dir="ltr"',
+        ),
+        "",
+      ) +
+      "</div>" +
+      fieldWrap(
+        '<i class="ti ti-briefcase" style="font-size:11px"></i> المسمى الوظيفي',
+        inp(
+          "cust-modal-contact-title",
+          esc(c.contact_job_title || ""),
+          "مثال: مدير المشتريات",
+        ),
+        "",
+      );
+    return (
+      '<div class="modal-box" style="width:100%;height:100%;overflow:hidden;display:flex;flex-direction:column">' +
+      // ── Header ── [FIX-THEME] كان بألوان hex ثابتة (فاتحة بس) مش بتتغيّر
+      // مع الدارك مود ومختلفة عن هيدرز باقي الشاشات (openStyledDrawer/DRAWER_COLORS)
+      '<div style="background:linear-gradient(135deg,#1d4ed8,#0ea5e9);padding:22px 24px 18px;position:relative;flex-shrink:0">' +
+      '<div style="display:flex;align-items:center;gap:14px">' +
+      '<div style="width:48px;height:48px;border-radius:14px;background:rgba(255,255,255,.22);box-shadow:0 2px 12px rgba(0,0,0,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">' +
+      '<i class="ti ' +
+      (isEdit ? "ti-user-edit" : "ti-user-plus") +
+      '" style="font-size:22px;color:#fff"></i></div>' +
+      "<div>" +
+      '<h2 style="font-size:17px;font-weight:800;color:#fff;margin:0 0 3px">' +
+      (isEdit ? "تعديل عميل" : "عميل جديد") +
+      "</h2>" +
+      '<p style="font-size:12px;color:rgba(255,255,255,.78);margin:0">' +
+      (isEdit
+        ? "تعديل بيانات: " + esc(c.name || "")
+        : "إضافة عميل جديد للنظام") +
+      "</p>" +
+      "</div></div>" +
+      '<button onclick="closeDrawer()" style="position:absolute;top:16px;left:16px;width:32px;height:32px;border-radius:10px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.18);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;transition:background .2s" onmouseover="this.style.background=&apos;rgba(255,255,255,.32)&apos;" onmouseout="this.style.background=&apos;rgba(255,255,255,.18)&apos;">' +
+      '<i class="ti ti-x"></i></button>' +
+      "</div>" +
+      // ── Body ──
+      '<div class="modal-body" style="padding:14px 20px 20px;flex:1;overflow:hidden;display:flex;flex-direction:column;gap:12px">' +
+      '<input type="hidden" id="cust-modal-id" value="' +
+      esc(c.id || "") +
+      '">' +
+      _partyTabsBar(
+        "cust",
+        [
+          { id: "basic", icon: "ti-id-badge-2", label: "أساسية" },
+          { id: "finance", icon: "ti-book-2", label: "مالية" },
+          // [MERGE-CONTACT-ADDR] "الاتصال" اتدمج جوه تبويب "العناوين" —
+          // بيانات الاتصال (هاتف/إيميل/شخص اتصال) بقت أول قسم في نفس
+          // التبويب بدل ما تكون تبويب منفصل، لتقليل عدد التبويبات.
+          { id: "addresses", icon: "ti-map-pin", label: "الاتصال والعناوين" }, // §BP-P3
+          { id: "extra", icon: "ti-adjustments", label: "بيانات إضافية" }, // §BP-P5
+          { id: "documents", icon: "ti-files", label: "مستندات" }, // §BP-P5
+          { id: "notes", icon: "ti-notes", label: "ملاحظات" },
+        ],
+        { bg: "var(--accent-soft,rgba(59,130,246,.14))", fg: "#2563EB" },
+        c,
+      ) +
+      // [REDESIGN-2] عمود السكرول الواحد اللي بيلف كل الأقسام (بدل شريط
+      // تابات يخفي/يظهر) — data-party-prefix بيربطه بـ _initPartyModalExtras
+      // (scroll-spy + كارت المعاينة + شريط الاكتمال).
+      '<div class="party-form-scroll" data-party-prefix="cust" style="flex:1;min-width:0;overflow-y:auto;padding-inline-end:4px">' +
+      // ── تبويب: البيانات الأساسية ──
+
+      _partyTabPanel(
+        "cust",
+        "basic",
+        true,
+        sectionHd("ti-id-badge-2", "البيانات الأساسية") +
+          // [REORDER] الكود بقى أول حقل (هوية العميل) قبل الاسم، وعمود الاسم
+          // بقى الأعرض. باقي الأقسام بقت: الهوية → التصنيف والحالة → المسؤول
+          // → الرصيد الافتتاحي (آخر حاجة، لأنه حقل إعداد لمرة واحدة فقط).
+          '<div style="display:grid;grid-template-columns:1fr 2fr auto;gap:12px;align-items:end">' +
+          // [CODE-REQUIRED] الكود بقى إلزاميًا وأساسيًا (فريد) لكل عميل —
+          // نفس مبدأ كود الصنف بالظبط. مينفعش يتكرر بين عميلين.
+          fieldWrap(
+            '<i class="ti ti-barcode" style="font-size:11px"></i> الكود <span style="color:var(--danger)">*</span>',
+            inp(
+              "cust-modal-code",
+              esc(c.code || ""),
+              "كود العميل (إلزامي وفريد)",
+            ),
+            "",
+          ) +
+          fieldWrap(
+            'اسم العميل <span style="color:var(--danger)">*</span>',
+            inp(
+              "cust-modal-name",
+              esc(c.name || ""),
+              "الاسم الكامل للعميل أو الشركة",
+            ),
+            "",
+          ) +
+          // [STATUS-INLINE] الحالة اتنقلت جنب اسم العميل مباشرة كسويتش
+          // (swipe) بدل الشيك بوكس اللي كان تحت مع التصنيف.
+          _partyStatusSwitch(
+            "cust",
+            (c.status || "نشط") === "نشط",
+            accentBlue,
+          ) +
+          "</div>" +
+          // [OPENING-BALANCE] رصيد افتتاحي — يظهر فقط عند إضافة عميل جديد
+          // (isEdit=false). بيُرحَّل بتاريخ اليوم افتراضيًا، أو بالتاريخ
+          // المُختار من حقل "بتاريخ" المجاور (لو المستخدم غيّره) عبر
+          // postPartyOpeningBalance فور نجاح addCustomer (راجع
+          // saveCustomerFromModal في 10_JS_Settings_Search_Parties.html).
+          // [REORDER-2] نُقل تحت صف الكود/الاسم مباشرة — حقل إعداد لمرة
+          // واحدة، لكن بناءً على طلب توحيد الشكل بقى ثاني صف في التبويب.
+          (isEdit
+            ? ""
+            : '<div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">' +
+              fieldWrap(
+                '<i class="ti ti-cash" style="font-size:11px"></i> الرصيد الافتتاحي',
+                inp(
+                  "cust-modal-opening-balance",
+                  "",
+                  "0 = بدون رصيد افتتاحي، سالب = رصيد دائن (دفعة مقدمة)",
+                  // [FIX-ISSUE-OB-1] كان min="0" يمنع إدخال رصيد دائن (عميل
+                  // دفع مقدمًا) من الأساس — postPartyOpeningBalance بقى
+                  // يدعم القيمة السالبة ويعكس اتجاه القيد تلقائيًا.
+                  'type="number" step="0.01" dir="ltr"',
+                ),
+                "مبلغ مديونية العميل قبل استخدام النظام (سالب = رصيد دائن له) — يُسجَّل كقيد رصيد افتتاحي في الأستاذ العام بالتاريخ المحدد يمين الحقل",
+              ) +
+              fieldWrap(
+                '<i class="ti ti-calendar" style="font-size:11px"></i> بتاريخ',
+                inp(
+                  "cust-modal-opening-balance-date",
+                  new Date().toISOString().split("T")[0],
+                  "",
+                  'type="date" dir="ltr"',
+                ),
+                "",
+              ) +
+              "</div>") +
+          // [NEW-FIELDS] بيانات موجودة في الأنظمة الكبرى (Odoo/SAP B1) —
+          // نوع الكيان، رقم قومي/سجل تجاري (يتبعوا الهوية مباشرة)
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+          fieldWrap(
+            '<i class="ti ti-building-community" style="font-size:11px"></i> نوع الكيان',
+            sel(
+              "cust-modal-entity-type",
+              ["فرد", "شركة"],
+              c.entity_type || "فرد",
+            ),
+            "",
+          ) +
+          fieldWrap(
+            '<i class="ti ti-id" style="font-size:11px"></i> الرقم القومي / السجل التجاري',
+            inp(
+              "cust-modal-national-id",
+              esc(c.national_id || ""),
+              "رقم قومي (فرد) أو رقم سجل تجاري (شركة)",
+            ),
+            "",
+          ) +
+          "</div>" +
+          // §CAT-P1 — تصنيف هرمي (Code_28_PartyCategories.gs) — عند الاختيار
+          // تُملأ تلقائيًا الحقول المالية في تبويب "مالية" (قابلة للتعديل)
+          // [FIELD-CLEANUP] حقل "المجموعة" النصي الحر اتشال من هنا — بديله
+          // الفعلي هو حقل التصنيف الهرمي (تصنيف العميل) اللي بيتحكم فعليًا
+          // في الحقول المالية (حد الائتمان، مهلة السداد...). البيانات القديمة
+          // في عمود group_name في الشيت متلمسوش (fallback في _updateParty).
+          // [STATUS-INLINE] الحالة اتنقلت جنب اسم العميل فوق — تصنيف
+          // العميل بقى وحده بعرض كامل.
+          fieldWrap(
+            '<i class="ti ti-sitemap" style="font-size:11px"></i> تصنيف العميل',
+            renderPartyCategoryFieldRawHTML(
+              "customer",
+              c.category_id || "",
+              "cust-modal-category",
+            ),
+            "عند الاختيار تُملأ الحقول المالية (حد الائتمان، مهلة السداد...) تلقائيًا من إعدادات التصنيف",
+          ) +
+          fieldWrap(
+            '<i class="ti ti-user-star" style="font-size:11px"></i> مندوب المبيعات المسؤول',
+            inp(
+              "cust-modal-sales-rep",
+              esc(c.sales_rep || ""),
+              "اسم مندوب المبيعات (اختياري)",
+            ),
+            "",
+          ),
+      ) +
+      // ── تبويب: مالية وضريبية ──
+      _partyTabPanel(
+        "cust",
+        "finance",
+        false,
+        // [REORDER] الشروط التجارية والائتمان بقت أول قسم في التبويب (أكتر
+        // حاجة بيرجع لها فريق المبيعات) — وحد الائتمان اندمج جوّاها بدل ما
+        // يكون قسم مستقل لحقل واحد بس.
+        sectionHd("ti-file-percent", "الشروط التجارية والائتمان") +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+          // [MD-04 FIX] حد الائتمان — الحقل كان موجودًا بالكامل في الباك إند والمنطق
+          // (فحص عند فاتورة بيع آجلة) لكن بدون أي حقل إدخال في الواجهة، فكان يستحيل
+          // ضبطه فعليًا من شاشة العملاء العادية (فقط عبر مساعد الذكاء الاصطناعي).
+          fieldWrap(
+            '<i class="ti ti-credit-card" style="font-size:11px"></i> الحد الأقصى للآجل (ج.م)',
+            inp(
+              "cust-modal-credit-limit",
+              esc(c.credit_limit || ""),
+              "0 = بدون حد",
+              'type="number" min="0" step="0.01" dir="ltr"',
+            ),
+            "يُطبَّق فقط على فواتير البيع الآجلة — اتركه فارغًا أو صفرًا لعدم تقييد العميل",
+          ) +
+          fieldWrap(
+            '<i class="ti ti-calendar-due" style="font-size:11px"></i> مهلة السداد (يوم)',
+            inp(
+              "cust-modal-payment-terms",
+              esc(c.payment_terms_days || ""),
+              "0",
+              'type="number" min="0" step="1" dir="ltr"',
+            ),
+            "صافي X يوم — للاسترشاد الحالي فقط",
+          ) +
+          "</div>" +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+          fieldWrap(
+            '<i class="ti ti-discount-2" style="font-size:11px"></i> نسبة خصم افتراضية %',
+            inp(
+              "cust-modal-discount-percent",
+              esc(c.discount_percent || ""),
+              "0",
+              'type="number" min="0" max="100" step="0.1" dir="ltr"',
+            ),
+            "غير مُطبَّق تلقائيًا على الفواتير حاليًا",
+          ) +
+          fieldWrap(
+            '<i class="ti ti-credit-card-pay" style="font-size:11px"></i> طريقة الدفع الافتراضية',
+            sel(
+              "cust-modal-payment-method",
+              [
+                "",
+                "كاش",
+                "آجل",
+                "تحويل بنكي",
+                "فيزا",
+                "محفظة إلكترونية",
+                "شيك",
+              ],
+              c.default_payment_method || "",
+            ),
+            "",
+          ) +
+          "</div>" +
+          fieldWrap(
+            '<i class="ti ti-tags" style="font-size:11px"></i> قائمة الأسعار الافتراضية',
+            inp(
+              "cust-modal-price-list",
+              esc(c.default_price_list || ""),
+              "اسم قائمة الأسعار (اختياري)",
+            ),
+            "",
+          ) +
+          // [REORDER] البيانات الضريبية بقت تاني قسم (بعد الشروط التجارية
+          // مباشرة).
+          sectionHd("ti-file-invoice", "البيانات الضريبية") +
+          fieldWrap(
+            '<i class="ti ti-receipt-tax" style="font-size:11px"></i> الرقم الضريبي',
+            inp(
+              "cust-modal-tax",
+              esc(c.tax_number || ""),
+              "الرقم الضريبي (اختياري)",
+              'dir="ltr"',
+            ),
+            "اتركه فارغاً إن لم يكن لديه رقم ضريبي",
+          ) +
+          // [ADDRESS-CLEANUP] حقل "عنوان الفاتورة (مختصر)" اتشال بالكامل —
+          // العنوان بقى بيُدار حصريًا من تبويب "الاتصال والعناوين" (عناوين
+          // متعددة: شحن/فواتير...). c.address (العمود القديم) مبيتلمسش في
+          // الباك إند لأي سجلات قديمة، بس الحقل مش بيظهر تاني في الفورم.
+          // الربط المحاسبي
+          sectionHd("ti-book-2", "الربط المحاسبي") +
+          renderFinancialAccountSelector(
+            "cust-modal-account-id",
+            c.account_id || "",
+            typeof APP !== "undefined" && APP.data && APP.data.chartOfAccounts
+              ? APP.data.chartOfAccounts
+              : [],
+            {
+              // [PERF-FIX] وضع Lazy — بدل بناء <option> لكل حساب في دليل
+              // الحسابات بالكامل (مئات الحسابات أحيانًا) بشكل متزامن عند كل
+              // فتح للمودال، نعرض فقط الحساب المختار حاليًا (لو موجود)،
+              // والباقي يُجلَب من السيرفر أثناء الكتابة في حقل البحث
+              // (initFinancialAccountSearcher + searchAccountsLookup —
+              // نفس الآلية المستخدمة بالفعل في شاشات أخرى). هذا هو السبب
+              // الجذري لتأخر فتح شاشة إضافة/تعديل عميل مع كبر دليل الحسابات.
+              lazy: true,
+              expectedType: "ASSET",
+              // [ACC-REQUIRED] كل حقل مرتبط بدليل الحسابات بقى إلزامي
+              // ومختار مبدئيًا بحساب افتراضي (راجع _applyDefaultPartyAccount
+              // في 10_JS_Settings_Search_Parties.html) — بدل ما يتُرك فارغًا
+              // كـ fallback على الحساب العام.
+              required: true,
+              label: "حساب الذمم المدينة الخاص بالعميل",
+              hint: "مختار مبدئيًا بحساب الذمم المدينة العام من إعدادات الحسابات — يمكنك تغييره لحساب خاص بهذا العميل",
+              filter: function (a) {
+                return !a.type || a.type === "ASSET" || a.type === "NONE";
+              },
+            },
+          ) +
+          // §BP-P4 — بيانات بنكية
+          sectionHd("ti-building-bank", "البيانات البنكية") +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+          fieldWrap(
+            '<i class="ti ti-building-bank" style="font-size:11px"></i> اسم البنك',
+            inp("cust-modal-bank-name", esc(c.bank_name || ""), "اسم البنك"),
+            "",
+          ) +
+          fieldWrap(
+            '<i class="ti ti-credit-card" style="font-size:11px"></i> رقم الحساب البنكي',
+            inp(
+              "cust-modal-bank-account",
+              esc(c.bank_account_number || ""),
+              "رقم الحساب",
+              'dir="ltr"',
+            ),
+            "",
+          ) +
+          "</div>" +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+          fieldWrap(
+            "IBAN",
+            inp(
+              "cust-modal-iban",
+              esc(c.iban || ""),
+              "EGxx xxxx ...",
+              'dir="ltr"',
+            ),
+            "",
+          ) +
+          fieldWrap(
+            "SWIFT / BIC",
+            inp(
+              "cust-modal-swift",
+              esc(c.swift_code || ""),
+              "XXXXXXXX",
+              'dir="ltr"',
+            ),
+            "",
+          ) +
+          "</div>",
+      ) +
+      // ── تبويب: الاتصال والعناوين (مدموج — §BP-P3 + MERGE-CONTACT-ADDR) ──
+      _partyTabPanel(
+        "cust",
+        "addresses",
+        false,
+        _renderPartyAddressesTab(
+          "cust",
+          c.id || "",
+          "customer",
+          contactFieldsHTML,
+        ),
+      ) +
+      // ── تبويب: بيانات إضافية (§BP-P5) ──
+      _partyTabPanel(
+        "cust",
+        "extra",
+        false,
+        _renderPartyExtraTab("cust", c, "customer"),
+      ) +
+      // ── تبويب: مستندات (§BP-P5) ──
+      _partyTabPanel(
+        "cust",
+        "documents",
+        false,
+        _renderPartyDocumentsTab("cust", c.id || "", "customer", c.code || "", c.name || ""),
+      ) +
+      // ── تبويب: ملاحظات ──
+      _partyTabPanel(
+        "cust",
+        "notes",
+        false,
+        sectionHd("ti-notes", "ملاحظات") +
+          '<div class="form-group" style="margin-bottom:4px">' +
+          '<textarea class="input" id="cust-modal-notes" rows="4" placeholder="أي ملاحظات إضافية عن العميل..." style="border-radius:10px;font-size:13px;resize:vertical;min-height:90px">' +
+          esc(c.notes || "") +
+          "</textarea></div>",
+      ) +
+      "</div>" + // /panels-wrapper
+      "</div>" + // /modal-body
+      // ── Footer ── [FIX-THEME] var(--bg-alt,#f8fafc) — متغيّر --bg-alt
+      // غير معرّف في أي مكان بالمشروع فكان دايمًا فاتح؛ بدّلناه var(--surface2)
+      '<div style="padding:14px 24px;background:var(--surface2);border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;align-items:center">' +
+      '<button class="btn" onclick="closeDrawer()" style="height:38px;padding:0 18px;border-radius:10px;font-size:13px">إلغاء</button>' +
+      '<button class="btn btn-primary" onclick="saveCustomerFromModal()" style="height:38px;padding:0 20px;border-radius:10px;font-size:13px;font-weight:700;gap:8px">' +
+      '<i class="ti ' +
+      (isEdit ? "ti-device-floppy" : "ti-user-plus") +
+      '"></i>' +
+      (isEdit ? "حفظ التعديلات" : "إضافة العميل") +
+      "</button></div>" +
+      "</div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // renderSupplierModal — نموذج إضافة/تعديل مورد
+  // ─────────────────────────────────────────────────────────────
+  function renderSupplierModal(s) {
+    s = s || {};
+    var isEdit = !!s.id;
+    var accentOrange = "#C2410C";
+    var sectionHd = function (icon, label) {
+      return (
+        '<div style="display:flex;align-items:center;gap:8px;margin:20px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border)">' +
+        '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;background:var(--orange-soft,#FFF7ED)">' +
+        '<i class="ti ' +
+        icon +
+        '" style="font-size:14px;color:' +
+        accentOrange +
+        '"></i></span>' +
+        '<span style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:0.5px;text-transform:uppercase">' +
+        label +
+        "</span></div>"
+      );
+    };
+    var fieldWrap = function (label, input, hint) {
+      return (
+        '<div class="form-group" style="margin-bottom:14px">' +
+        '<label style="display:block;font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px">' +
+        label +
+        "</label>" +
+        input +
+        (hint
+          ? '<div style="font-size:11px;color:var(--text3);margin-top:4px">' +
+            hint +
+            "</div>"
+          : "") +
+        "</div>"
+      );
+    };
+    var inp = function (id, val, ph, extra) {
+      return (
+        '<input class="input" id="' +
+        id +
+        '" value="' +
+        val +
+        '" placeholder="' +
+        ph +
+        '" ' +
+        (extra || "") +
+        ' style="height:40px;border-radius:10px;font-size:13px">'
+      );
+    };
+    var sel = function (id, options, current) {
+      var opts = options
+        .map(function (o) {
+          return (
+            '<option value="' +
+            o +
+            '" ' +
+            (current === o ? "selected" : "") +
+            ">" +
+            o +
+            "</option>"
+          );
+        })
+        .join("");
+      return (
+        '<select class="input" id="' +
+        id +
+        '" style="height:40px;border-radius:10px;font-size:13px">' +
+        opts +
+        "</select>"
+      );
+    };
+    // [MERGE-CONTACT-ADDR] نفس فكرة نموذج العميل — بيانات الاتصال بقت قسم
+    // أول جوه تبويب "الاتصال والعناوين" المدموج.
+    var contactFieldsHTML =
+      sectionHd("ti-phone", "بيانات الاتصال") +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      fieldWrap(
+        '<i class="ti ti-phone" style="font-size:11px"></i> رقم الهاتف',
+        inp("sup-modal-phone", esc(s.phone || ""), "01xxxxxxxxx", 'dir="ltr"'),
+        "",
+      ) +
+      fieldWrap(
+        '<i class="ti ti-phone-plus" style="font-size:11px"></i> هاتف إضافي',
+        inp(
+          "sup-modal-phone2",
+          esc(s.phone2 || ""),
+          "01xxxxxxxxx",
+          'dir="ltr"',
+        ),
+        "",
+      ) +
+      "</div>" +
+      fieldWrap(
+        '<i class="ti ti-mail" style="font-size:11px"></i> البريد الإلكتروني',
+        inp(
+          "sup-modal-email",
+          esc(s.email || ""),
+          "example@domain.com",
+          'dir="ltr"',
+        ),
+        "",
+      ) +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      fieldWrap(
+        '<i class="ti ti-world" style="font-size:11px"></i> الموقع الإلكتروني',
+        inp(
+          "sup-modal-website",
+          esc(s.website || ""),
+          "https://...",
+          'dir="ltr"',
+        ),
+        "",
+      ) +
+      fieldWrap(
+        '<i class="ti ti-fax" style="font-size:11px"></i> الفاكس',
+        inp("sup-modal-fax", esc(s.fax || ""), "رقم الفاكس", 'dir="ltr"'),
+        "",
+      ) +
+      "</div>" +
+      sectionHd("ti-address-book", "شخص الاتصال") +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      fieldWrap(
+        '<i class="ti ti-user" style="font-size:11px"></i> شخص الاتصال الرئيسي',
+        inp("sup-modal-contact-person", esc(s.contact_person || ""), "الاسم"),
+        "",
+      ) +
+      fieldWrap(
+        '<i class="ti ti-briefcase" style="font-size:11px"></i> المسمى الوظيفي',
+        inp(
+          "sup-modal-contact-title",
+          esc(s.contact_job_title || ""),
+          "مثال: مسؤول المبيعات",
+        ),
+        "",
+      ) +
+      "</div>";
+    return (
+      '<div class="modal-box" style="width:100%;height:100%;overflow:hidden;display:flex;flex-direction:column">' +
+      // ── Header ── [FIX-THEME] نفس توحيد الألوان اللي اتعمل في نموذج العميل
+      '<div style="background:linear-gradient(135deg,#9a3412,#fb923c);padding:22px 24px 18px;position:relative;flex-shrink:0">' +
+      '<div style="display:flex;align-items:center;gap:14px">' +
+      '<div style="width:48px;height:48px;border-radius:14px;background:rgba(255,255,255,.22);box-shadow:0 2px 12px rgba(0,0,0,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">' +
+      '<i class="ti ' +
+      (isEdit ? "ti-building-factory-2" : "ti-building-factory-2") +
+      '" style="font-size:22px;color:#fff"></i></div>' +
+      "<div>" +
+      '<h2 style="font-size:17px;font-weight:800;color:#fff;margin:0 0 3px">' +
+      (isEdit ? "تعديل مورد" : "مورد جديد") +
+      "</h2>" +
+      '<p style="font-size:12px;color:rgba(255,255,255,.78);margin:0">' +
+      (isEdit
+        ? "تعديل بيانات: " + esc(s.name || "")
+        : "إضافة مورد جديد للنظام") +
+      "</p>" +
+      "</div></div>" +
+      '<button onclick="closeDrawer()" style="position:absolute;top:16px;left:16px;width:32px;height:32px;border-radius:10px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.18);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;transition:background .2s" onmouseover="this.style.background=&apos;rgba(255,255,255,.32)&apos;" onmouseout="this.style.background=&apos;rgba(255,255,255,.18)&apos;">' +
+      '<i class="ti ti-x"></i></button>' +
+      "</div>" +
+      // ── Body ──
+      '<div class="modal-body" style="padding:14px 20px 20px;flex:1;overflow:hidden;display:flex;flex-direction:column;gap:12px">' +
+      '<input type="hidden" id="sup-modal-id" value="' +
+      esc(s.id || "") +
+      '">' +
+      _partyTabsBar(
+        "sup",
+        [
+          { id: "basic", icon: "ti-building-store", label: "أساسية" },
+          { id: "finance", icon: "ti-book-2", label: "مالية" },
+          // [MERGE-CONTACT-ADDR] نفس دمج نموذج العميل — الاتصال بقى قسم
+          // أول جوه تبويب العناوين بدل تبويب مستقل.
+          { id: "addresses", icon: "ti-map-pin", label: "الاتصال والعناوين" }, // §BP-P3
+          { id: "extra", icon: "ti-adjustments", label: "بيانات إضافية" }, // §BP-P5
+          { id: "documents", icon: "ti-files", label: "مستندات" }, // §BP-P5
+          { id: "notes", icon: "ti-notes", label: "ملاحظات" },
+        ],
+        { bg: "var(--orange-soft,rgba(249,115,22,.14))", fg: "#C2410C" },
+        s,
+      ) +
+      // [REDESIGN-2] نفس عمود العميل — data-party-prefix="sup".
+      '<div class="party-form-scroll" data-party-prefix="sup" style="flex:1;min-width:0;overflow-y:auto;padding-inline-end:4px">' +
+      // ── تبويب: البيانات الأساسية ──
+      _partyTabPanel(
+        "sup",
+        "basic",
+        true,
+        sectionHd("ti-building-store", "البيانات الأساسية") +
+          // [PARITY-CUST] نفس ترتيب وحقول شاشة العملاء تمامًا: كود + اسم،
+          // نوع الكيان/الرقم القومي، التصنيف والحالة جنب بعض، مسؤول
+          // المتابعة، ثم الرصيد الافتتاحي آخر حاجة (للمورد الجديد فقط).
+          // مبدأ العمل هو المختلف فقط: كود المورد بيتربط بذمم دائنة (AP)
+          // بدل مدينة (AR)، ومندوب المبيعات بقى مسؤول مشتريات.
+          '<div style="display:grid;grid-template-columns:1fr 2fr auto;gap:12px;align-items:end">' +
+          fieldWrap(
+            '<i class="ti ti-barcode" style="font-size:11px"></i> الكود <span style="color:var(--danger)">*</span>',
+            inp(
+              "sup-modal-code",
+              esc(s.code || ""),
+              "كود المورد (إلزامي وفريد)",
+            ),
+            "",
+          ) +
+          fieldWrap(
+            'اسم المورد <span style="color:var(--danger)">*</span>',
+            inp(
+              "sup-modal-name",
+              esc(s.name || ""),
+              "الاسم الكامل للمورد أو الشركة",
+            ),
+            "",
+          ) +
+          // [STATUS-INLINE] الحالة اتنقلت جنب اسم المورد مباشرة كسويتش
+          // (swipe) بدل الشيك بوكس اللي كان تحت مع التصنيف.
+          _partyStatusSwitch(
+            "sup",
+            (s.status || "نشط") === "نشط",
+            accentOrange,
+          ) +
+          "</div>" +
+          // [PARITY-CUST] رصيد افتتاحي — نفس حقل العميل بالظبط، يظهر فقط
+          // عند إضافة مورد جديد. بيُرحَّل عبر postPartyOpeningBalance بنفس
+          // آلية العميل (party_type: "supplier" مدعوم بالفعل في الباك إند).
+          // [REORDER-2] نُقل تحت صف الكود/الاسم مباشرة.
+          (isEdit
+            ? ""
+            : '<div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">' +
+              fieldWrap(
+                '<i class="ti ti-cash" style="font-size:11px"></i> الرصيد الافتتاحي',
+                inp(
+                  "sup-modal-opening-balance",
+                  "",
+                  "0 = بدون رصيد افتتاحي، سالب = رصيد مدين (مستحق لنا)",
+                  // [FIX-ISSUE-OB-1] راجع نفس ملاحظة حقل العميل أعلاه.
+                  'type="number" step="0.01" dir="ltr"',
+                ),
+                "مبلغ مديونية النظام لهذا المورد قبل استخدام النظام (سالب = له مستحق لدينا) — يُسجَّل كقيد رصيد افتتاحي في الأستاذ العام بالتاريخ المحدد يمين الحقل",
+              ) +
+              fieldWrap(
+                '<i class="ti ti-calendar" style="font-size:11px"></i> بتاريخ',
+                inp(
+                  "sup-modal-opening-balance-date",
+                  new Date().toISOString().split("T")[0],
+                  "",
+                  'type="date" dir="ltr"',
+                ),
+                "",
+              ) +
+              "</div>") +
+          // [NEW-FIELDS] بيانات موجودة في الأنظمة الكبرى (Odoo/SAP B1) —
+          // نوع الكيان، رقم قومي/سجل تجاري (يتبعوا الهوية مباشرة)
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+          fieldWrap(
+            '<i class="ti ti-building-community" style="font-size:11px"></i> نوع الكيان',
+            sel(
+              "sup-modal-entity-type",
+              ["فرد", "شركة"],
+              s.entity_type || "شركة",
+            ),
+            "",
+          ) +
+          fieldWrap(
+            '<i class="ti ti-id" style="font-size:11px"></i> الرقم القومي / السجل التجاري',
+            inp(
+              "sup-modal-national-id",
+              esc(s.national_id || ""),
+              "رقم قومي (فرد) أو رقم سجل تجاري (شركة)",
+            ),
+            "",
+          ) +
+          "</div>" +
+          // [STATUS-INLINE] الحالة اتنقلت جنب اسم المورد فوق — تصنيف
+          // المورد بقى وحده بعرض كامل.
+          // §CAT-P1 — تصنيف هرمي (Code_28_PartyCategories.gs)
+          fieldWrap(
+            '<i class="ti ti-sitemap" style="font-size:11px"></i> تصنيف المورد',
+            renderPartyCategoryFieldRawHTML(
+              "supplier",
+              s.category_id || "",
+              "sup-modal-category",
+            ),
+            'عند الاختيار تُملأ الحقول المالية في تبويب "مالية" تلقائيًا من إعدادات التصنيف',
+          ) +
+          // [PARITY-CUST] حقل "المجموعة" النصي الحر اتشال من هنا مطابقةً
+          // لشاشة العميل — بديله الفعلي هو حقل التصنيف الهرمي أعلاه.
+          // البيانات القديمة في عمود group_name بالشيت متلمسوش (fallback
+          // في _updateParty لو الحقل مش مُرسَل من الواجهة).
+          fieldWrap(
+            '<i class="ti ti-user-star" style="font-size:11px"></i> مسؤول المشتريات المتابع',
+            inp(
+              "sup-modal-purchase-rep",
+              esc(s.purchase_rep || ""),
+              "اسم مسؤول المشتريات (اختياري)",
+            ),
+            "",
+          ),
+      ) +
+      // ── تبويب: مالية وضريبية ──
+      _partyTabPanel(
+        "sup",
+        "finance",
+        false,
+        // [REORDER] الشروط التجارية بقت أول قسم (نفس منطق شاشة العملاء)
+        sectionHd("ti-file-percent", "الشروط التجارية") +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+          fieldWrap(
+            '<i class="ti ti-calendar-due" style="font-size:11px"></i> مهلة السداد (يوم)',
+            inp(
+              "sup-modal-payment-terms",
+              esc(s.payment_terms_days || ""),
+              "0",
+              'type="number" min="0" step="1" dir="ltr"',
+            ),
+            "صافي X يوم — للاسترشاد الحالي فقط",
+          ) +
+          fieldWrap(
+            '<i class="ti ti-discount-2" style="font-size:11px"></i> نسبة خصم افتراضية %',
+            inp(
+              "sup-modal-discount-percent",
+              esc(s.discount_percent || ""),
+              "0",
+              'type="number" min="0" max="100" step="0.1" dir="ltr"',
+            ),
+            "غير مُطبَّق تلقائيًا على الفواتير حاليًا",
+          ) +
+          "</div>" +
+          fieldWrap(
+            '<i class="ti ti-credit-card-pay" style="font-size:11px"></i> طريقة الدفع الافتراضية',
+            sel(
+              "sup-modal-payment-method",
+              [
+                "",
+                "كاش",
+                "آجل",
+                "تحويل بنكي",
+                "فيزا",
+                "محفظة إلكترونية",
+                "شيك",
+              ],
+              s.default_payment_method || "",
+            ),
+            "",
+          ) +
+          fieldWrap(
+            '<i class="ti ti-tags" style="font-size:11px"></i> قائمة الأسعار الافتراضية',
+            inp(
+              "sup-modal-price-list",
+              esc(s.default_price_list || ""),
+              "اسم قائمة الأسعار (اختياري)",
+            ),
+            "",
+          ) +
+          // [REORDER] البيانات الضريبية بقت تاني قسم.
+          sectionHd("ti-file-invoice", "البيانات الضريبية") +
+          fieldWrap(
+            '<i class="ti ti-receipt-tax" style="font-size:11px"></i> الرقم الضريبي',
+            inp(
+              "sup-modal-tax",
+              esc(s.tax_number || ""),
+              "الرقم الضريبي (اختياري)",
+              'dir="ltr"',
+            ),
+            "اتركه فارغاً إن لم يكن لديه رقم ضريبي",
+          ) +
+          // [ADDRESS-CLEANUP] حقل "عنوان الفاتورة (مختصر)" اتشال بالكامل —
+          // العنوان بقى بيُدار حصريًا من تبويب "الاتصال والعناوين".
+          // الربط المحاسبي
+          sectionHd("ti-book-2", "الربط المحاسبي") +
+          renderFinancialAccountSelector(
+            "sup-modal-account-id",
+            s.account_id || "",
+            typeof APP !== "undefined" && APP.data && APP.data.chartOfAccounts
+              ? APP.data.chartOfAccounts
+              : [],
+            {
+              // [PERF-FIX] راجع نفس ملاحظة renderCustomerModal أعلاه —
+              // نفس السبب الجذري لتأخر فتح شاشة إضافة/تعديل مورد.
+              lazy: true,
+              expectedType: "LIABILITY",
+              // [ACC-REQUIRED] راجع نفس ملاحظة renderCustomerModal أعلاه
+              required: true,
+              label: "حساب الذمم الدائنة الخاص بالمورد",
+              hint: "مختار مبدئيًا بحساب الذمم الدائنة العام من إعدادات الحسابات — يمكنك تغييره لحساب خاص بهذا المورد",
+              filter: function (a) {
+                return !a.type || a.type === "LIABILITY" || a.type === "NONE";
+              },
+            },
+          ) +
+          // §BP-P4 — بيانات بنكية
+          sectionHd("ti-building-bank", "البيانات البنكية") +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+          fieldWrap(
+            '<i class="ti ti-building-bank" style="font-size:11px"></i> اسم البنك',
+            inp("sup-modal-bank-name", esc(s.bank_name || ""), "اسم البنك"),
+            "",
+          ) +
+          fieldWrap(
+            '<i class="ti ti-credit-card" style="font-size:11px"></i> رقم الحساب البنكي',
+            inp(
+              "sup-modal-bank-account",
+              esc(s.bank_account_number || ""),
+              "رقم الحساب",
+              'dir="ltr"',
+            ),
+            "",
+          ) +
+          "</div>" +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+          fieldWrap(
+            "IBAN",
+            inp(
+              "sup-modal-iban",
+              esc(s.iban || ""),
+              "EGxx xxxx ...",
+              'dir="ltr"',
+            ),
+            "",
+          ) +
+          fieldWrap(
+            "SWIFT / BIC",
+            inp(
+              "sup-modal-swift",
+              esc(s.swift_code || ""),
+              "XXXXXXXX",
+              'dir="ltr"',
+            ),
+            "",
+          ) +
+          "</div>",
+      ) +
+      // ── تبويب: الاتصال والعناوين (مدموج — §BP-P3 + MERGE-CONTACT-ADDR) ──
+      _partyTabPanel(
+        "sup",
+        "addresses",
+        false,
+        _renderPartyAddressesTab(
+          "sup",
+          s.id || "",
+          "supplier",
+          contactFieldsHTML,
+        ),
+      ) +
+      // ── تبويب: بيانات إضافية (§BP-P5) ──
+      _partyTabPanel(
+        "sup",
+        "extra",
+        false,
+        _renderPartyExtraTab("sup", s, "supplier"),
+      ) +
+      // ── تبويب: مستندات (§BP-P5) ──
+      _partyTabPanel(
+        "sup",
+        "documents",
+        false,
+        _renderPartyDocumentsTab("sup", s.id || "", "supplier", s.code || "", s.name || ""),
+      ) +
+      // ── تبويب: ملاحظات ──
+      _partyTabPanel(
+        "sup",
+        "notes",
+        false,
+        sectionHd("ti-notes", "ملاحظات") +
+          '<div class="form-group" style="margin-bottom:4px">' +
+          '<textarea class="input" id="sup-modal-notes" rows="4" placeholder="أي ملاحظات إضافية عن المورد..." style="border-radius:10px;font-size:13px;resize:vertical;min-height:90px">' +
+          esc(s.notes || "") +
+          "</textarea></div>",
+      ) +
+      "</div>" + // /panels-wrapper
+      "</div>" + // /modal-body
+      // ── Footer ── [FIX-THEME] var(--bg-alt,#f8fafc) — متغيّر --bg-alt
+      // غير معرّف في أي مكان بالمشروع فكان دايمًا فاتح؛ بدّلناه var(--surface2)
+      '<div style="padding:14px 24px;background:var(--surface2);border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;align-items:center">' +
+      '<button class="btn" onclick="closeDrawer()" style="height:38px;padding:0 18px;border-radius:10px;font-size:13px">إلغاء</button>' +
+      '<button class="btn btn-primary" onclick="saveSupplierFromModal()" style="height:38px;padding:0 20px;border-radius:10px;font-size:13px;font-weight:700;gap:8px;background:linear-gradient(135deg,#EA580C,#C2410C);border-color:#C2410C">' +
+      '<i class="ti ' +
+      (isEdit ? "ti-device-floppy" : "ti-building-factory-2") +
+      '"></i>' +
+      (isEdit ? "حفظ التعديلات" : "إضافة المورد") +
+      "</button></div>" +
+      "</div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // renderViewCustomerModal — عرض تفاصيل عميل
+  // ─────────────────────────────────────────────────────────────
+  function renderViewCustomerModal(c) {
+    var balance = Number(c.balance || 0);
+    var balanceColor =
+      balance > 0
+        ? "var(--success)"
+        : balance < 0
+          ? "var(--danger)"
+          : "var(--text2)";
+    var field = function (label, val, extra) {
+      return val
+        ? '<div style="display:flex;flex-direction:column;gap:2px">' +
+            '<span style="font-size:11px;color:var(--text3);font-weight:600">' +
+            label +
+            "</span>" +
+            '<span style="font-size:14px;color:var(--text);' +
+            (extra || "") +
+            '">' +
+            val +
+            "</span>" +
+            "</div>"
+        : "";
+    };
+    return (
+      '<div class="modal-box" style="max-width:460px;width:90vw">' +
+      '<div class="modal-header">' +
+      '<div class="modal-header-left">' +
+      '<div style="width:44px;height:44px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;flex-shrink:0">' +
+      (c.name ? c.name[0] : "ع") +
+      "</div>" +
+      "<div><h2>" +
+      esc(c.name || "—") +
+      '</h2><div class="modal-header-sub" style="direction:ltr">' +
+      esc(c.id || "") +
+      "</div></div>" +
+      "</div>" +
+      '<button class="modal-close" onclick="closeDrawer()"><i class="ti ti-x"></i></button>' +
+      "</div>" +
+      '<div class="modal-body">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">' +
+      field(
+        "الهاتف",
+        c.phone
+          ? '<a href="tel:' +
+              esc(c.phone) +
+              '" style="color:var(--accent)">' +
+              esc(c.phone) +
+              "</a>"
+          : null,
+      ) +
+      field(
+        "البريد الإلكتروني",
+        c.email
+          ? '<a href="mailto:' +
+              esc(c.email) +
+              '" style="color:var(--accent);font-size:12px">' +
+              esc(c.email) +
+              "</a>"
+          : null,
+      ) +
+      field("الرقم الضريبي", c.tax_number) +
+      field(
+        "التصنيف",
+        c.category_id
+          ? typeof _partyCategoryBadgeHtml === "function"
+            ? _partyCategoryBadgeHtml("customer", c.category_id)
+            : null
+          : null,
+      ) +
+      // ── [إصلاح P2] الرصيد الآن: (1) يُنسَّق عبر formatMoney() المركزية
+      // (يحترم تفضيل currency الفعلي بدل "ج.م" مفروضة يدويًا)، و(2) يحمل
+      // class="sensitive-balance" فيستفيد تلقائيًا من تفضيل hide_balances
+      // (البنية التحتية لهذا أُضيفت في Style.html + PreferenceService._applyToUI)
+      '<div style="display:flex;flex-direction:column;gap:2px">' +
+      '<span style="font-size:11px;color:var(--text3);font-weight:600">الرصيد</span>' +
+      '<span class="sensitive-balance" style="font-size:14px;font-weight:700;color:' +
+      balanceColor +
+      '">' +
+      (typeof formatMoney === "function"
+        ? formatMoney(balance, { decimals: 0 })
+        : NumberEngine.currency(balance)) +
+      "</span></div>" +
+      "</div>" +
+      (c.address
+        ? '<div style="margin-bottom:12px;padding:10px;background:var(--surface2);border-radius:8px"><span style="font-size:11px;color:var(--text3);font-weight:600">العنوان</span><br><span style="font-size:13px">' +
+          esc(c.address) +
+          "</span></div>"
+        : "") +
+      (c.notes
+        ? '<div style="margin-bottom:12px;padding:10px;background:var(--surface2);border-radius:8px"><span style="font-size:11px;color:var(--text3);font-weight:600">ملاحظات</span><br><span style="font-size:13px">' +
+          esc(c.notes) +
+          "</span></div>"
+        : "") +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">' +
+      '<button class="btn" onclick="closeDrawer()">إغلاق</button>' +
+      (c.phone
+        ? '<a class="btn btn-outline" href="https://wa.me/' +
+          esc(String(c.phone).replace(/[^0-9]/g, "")) +
+          '" target="_blank" style="display:flex;align-items:center;gap:6px;color:#16a34a;border-color:#16a34a"><i class="ti ti-brand-whatsapp" style="font-size:14px"></i>واتساب</a>'
+        : "") +
+      '<button class="btn btn-outline" onclick="closeDrawer();openPartyMovements(\'' +
+      esc(c.id) +
+      '\', \'customer\')" style="display:flex;align-items:center;gap:6px"><i class="ti ti-history" style="font-size:14px;color:#2563EB"></i>كشف الحركات</button>' +
+      withPermission(
+        '<button class="btn btn-primary" onclick="closeDrawer();editCustomer(\'' +
+          esc(c.id) +
+          "')\"> تعديل</button>",
+        "updateCustomer",
+      ) +
+      "</div></div></div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // renderViewSupplierModal — عرض تفاصيل مورد
+  // ─────────────────────────────────────────────────────────────
+  function renderViewSupplierModal(s) {
+    var balance = Number(s.balance || 0);
+    var balanceColor =
+      balance > 0
+        ? "var(--success)"
+        : balance < 0
+          ? "var(--danger)"
+          : "var(--text2)";
+    var field = function (label, val, extra) {
+      return val
+        ? '<div style="display:flex;flex-direction:column;gap:2px">' +
+            '<span style="font-size:11px;color:var(--text3);font-weight:600">' +
+            label +
+            "</span>" +
+            '<span style="font-size:14px;color:var(--text);' +
+            (extra || "") +
+            '">' +
+            val +
+            "</span>" +
+            "</div>"
+        : "";
+    };
+    return (
+      '<div class="modal-box" style="max-width:460px;width:90vw">' +
+      '<div class="modal-header">' +
+      '<div class="modal-header-left">' +
+      '<div style="width:44px;height:44px;border-radius:50%;background:#9A3412;color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;flex-shrink:0">' +
+      (s.name ? s.name[0] : "م") +
+      "</div>" +
+      "<div><h2>" +
+      esc(s.name || "—") +
+      '</h2><div class="modal-header-sub" style="direction:ltr">' +
+      esc(s.id || "") +
+      "</div></div>" +
+      "</div>" +
+      '<button class="modal-close" onclick="closeDrawer()"><i class="ti ti-x"></i></button>' +
+      "</div>" +
+      '<div class="modal-body">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">' +
+      field(
+        "الهاتف",
+        s.phone
+          ? '<a href="tel:' +
+              esc(s.phone) +
+              '" style="color:var(--accent)">' +
+              esc(s.phone) +
+              "</a>"
+          : null,
+      ) +
+      field(
+        "البريد الإلكتروني",
+        s.email
+          ? '<a href="mailto:' +
+              esc(s.email) +
+              '" style="color:var(--accent);font-size:12px">' +
+              esc(s.email) +
+              "</a>"
+          : null,
+      ) +
+      field("الرقم الضريبي", s.tax_number) +
+      field(
+        "التصنيف",
+        s.category_id
+          ? typeof _partyCategoryBadgeHtml === "function"
+            ? _partyCategoryBadgeHtml("supplier", s.category_id)
+            : null
+          : null,
+      ) +
+      // ── [إصلاح P2] نفس التعديل المُطبَّق في renderViewCustomerModal
+      '<div style="display:flex;flex-direction:column;gap:2px">' +
+      '<span style="font-size:11px;color:var(--text3);font-weight:600">الرصيد</span>' +
+      '<span class="sensitive-balance" style="font-size:14px;font-weight:700;color:' +
+      balanceColor +
+      '">' +
+      (typeof formatMoney === "function"
+        ? formatMoney(balance, { decimals: 0 })
+        : NumberEngine.currency(balance)) +
+      "</span></div>" +
+      "</div>" +
+      (s.address
+        ? '<div style="margin-bottom:12px;padding:10px;background:var(--surface2);border-radius:8px"><span style="font-size:11px;color:var(--text3);font-weight:600">العنوان</span><br><span style="font-size:13px">' +
+          esc(s.address) +
+          "</span></div>"
+        : "") +
+      (s.notes
+        ? '<div style="margin-bottom:12px;padding:10px;background:var(--surface2);border-radius:8px"><span style="font-size:11px;color:var(--text3);font-weight:600">ملاحظات</span><br><span style="font-size:13px">' +
+          esc(s.notes) +
+          "</span></div>"
+        : "") +
+      '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">' +
+      '<button class="btn" onclick="closeDrawer()">إغلاق</button>' +
+      (s.phone
+        ? '<a class="btn btn-outline" href="https://wa.me/' +
+          esc(String(s.phone).replace(/[^0-9]/g, "")) +
+          '" target="_blank" style="display:flex;align-items:center;gap:6px;color:#16a34a;border-color:#16a34a"><i class="ti ti-brand-whatsapp" style="font-size:14px"></i>واتساب</a>'
+        : "") +
+      '<button class="btn btn-outline" onclick="closeDrawer();openPartyMovements(\'' +
+      esc(s.id) +
+      '\', \'supplier\')" style="display:flex;align-items:center;gap:6px"><i class="ti ti-history" style="font-size:14px;color:#9A3412"></i>كشف الحركات</button>' +
+      withPermission(
+        '<button class="btn btn-primary" onclick="closeDrawer();editSupplier(\'' +
+          esc(s.id) +
+          "')\"> تعديل</button>",
+        "updateSupplier",
+      ) +
+      "</div></div></div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §renderPartyMovements — Analytics Dashboard v3 للعميل / المورد
+  // ─────────────────────────────────────────────────────────────
+  /**
+   * renderPartyMovements(partyId, partyType, data)
+   *   partyId   — معرّف الطرف
+   *   partyType — "customer" | "supplier"
+   *   data      — { party, movements, stats } من السيرفر
+   *
+   *   v3: لوحة تحليلات احترافية — Hero + KPIs + Charts + Top Items + Timeline
+   */
+  function renderPartyMovements(partyId, partyType, data) {
+    var isCustomer = partyType !== "supplier";
+    var party = data.party || {};
+    var movements = data.movements || [];
+    var stats = data.stats || {};
+    var tc = stats.typeCounts || {};
+    var totalTx = stats.total || 0;
+
+    function itemInfo(item_id, txObj) {
+      if (txObj && txObj._item_code) {
+        return { code: txObj._item_code, name: txObj._item_name || "" };
+      }
+      var obj = (APP.data.items || []).find(function (i) {
+        return i.id === item_id;
+      });
+      if (!obj) return { code: item_id || "\u2014", name: "" };
+      return { code: obj.code || obj.id, name: obj.name || "" };
+    }
+
+    // فلترة TRANSFER — تحويلات المخازن لا علاقة لها بالعميل/المورد
+    movements = movements.filter(function (tx) {
+      return tx.type !== "TRANSFER";
+    });
+    // إعادة حساب الإجماليات بعد الفلترة
+    totalTx = movements.length;
+    // إعادة بناء typeCounts بدون TRANSFER
+    tc = {};
+    movements.forEach(function (tx) {
+      tc[tx.type] = (tc[tx.type] || 0) + 1;
+    });
+    stats.total = totalTx;
+    stats.typeCounts = tc;
+
+    var typeMap = {
+      IN: {
+        label: "\u0648\u0627\u0631\u062f",
+        icon: "ti-arrow-bar-down",
+        color: "success",
+        hex: "#10B981",
+        bg: "#ECFDF5",
+        dotClass: "in",
+      },
+      OUT: {
+        label: "\u0635\u0627\u062f\u0631",
+        icon: "ti-arrow-bar-up",
+        color: "danger",
+        hex: "#EF4444",
+        bg: "#FEF2F2",
+        dotClass: "out",
+      },
+      DISPATCH: {
+        label: "\u0635\u0631\u0641 \u0645\u0635\u0646\u0639",
+        icon: "ti-building-factory-2",
+        color: "warning",
+        hex: "#D97706",
+        bg: "#FFFBEB",
+        dotClass: "other",
+      },
+      FG_IN: {
+        label: "\u0627\u0633\u062a\u0644\u0627\u0645 \u062a\u0627\u0645",
+        icon: "ti-circle-check",
+        color: "teal",
+        hex: "#0D9488",
+        bg: "#F0FDFA",
+        dotClass: "in",
+      },
+      FACTORY_RETURN: {
+        label: "\u0645\u0631\u062a\u062c\u0639 \u0645\u0635\u0646\u0639",
+        icon: "ti-rotate-clockwise-2",
+        color: "orange",
+        hex: "#EA580C",
+        bg: "#FFF7ED",
+        dotClass: "other",
+      },
+    };
+
+    function txBadge(type) {
+      var t = typeMap[type] || {
+        label: type || "\u2014",
+        icon: "ti-activity",
+        color: "primary",
+      };
+      return (
+        "<span class=\'tx-badge tx-badge-" +
+        t.color +
+        "\' style=\'display:inline-flex;align-items:center;gap:4px\'><i class=\'ti " +
+        t.icon +
+        "\' style=\'font-size:12px\'></i>" +
+        esc(t.label) +
+        "</span>"
+      );
+    }
+
+    // Hero
+    var partyInitial = (party.name || (isCustomer ? "\u0639" : "\u0645"))[0];
+    var heroColor = isCustomer ? "#2563EB" : "#9A3412";
+    var lastDateStr = stats.lastDate ? fmtDate(stats.lastDate) : "\u2014";
+    var firstDateStr = stats.firstDate ? fmtDate(stats.firstDate) : "\u2014";
+
+    var heroHtml =
+      "<div class=\'pa-hero\' style=\'background:linear-gradient(135deg," +
+      heroColor +
+      " 0%," +
+      (isCustomer ? "#1d4ed8" : "#7C2D12") +
+      " 100%)\'>" +
+      "<div class=\'pa-hero-avatar\'>" +
+      esc(partyInitial) +
+      "</div>" +
+      "<div style=\'flex:1;min-width:0\'><div class=\'pa-hero-name\'>" +
+      esc(party.name || "\u2014") +
+      "</div>" +
+      "<div class=\'pa-hero-meta\'>" +
+      (party.phone
+        ? "<span><i class=\'ti ti-phone\'></i>" + esc(party.phone) + "</span>"
+        : "") +
+      (party.email
+        ? "<span><i class=\'ti ti-mail\'></i>" + esc(party.email) + "</span>"
+        : "") +
+      (party.address
+        ? "<span><i class=\'ti ti-map-pin\'></i>" +
+          esc(party.address) +
+          "</span>"
+        : "") +
+      "<span><i class=\'ti ti-calendar-event\'></i>\u0623\u0648\u0644 \u062d\u0631\u0643\u0629: " +
+      firstDateStr +
+      "</span>" +
+      "<span><i class=\'ti ti-clock\'></i>\u0622\u062e\u0631 \u062d\u0631\u0643\u0629: " +
+      lastDateStr +
+      "</span>" +
+      "</div></div>" +
+      "<div class=\'pa-hero-actions\'>" +
+      "<button class=\'pa-hero-btn\' onclick=\'exportPartyMovements()\'><i class=\'ti ti-download\'></i>\u062a\u0635\u062f\u064a\u0631 CSV</button>" +
+      // [BANKING-INTEGRATION — المرحلة 11] رابط سريع لشيكات هذا العميل/المورد
+      // من موديول البنوك (APP.data.cheques، مرتبطة بـ party_id/party_type) —
+      // بدون أي نداء سيرفر إضافي، ونفس صلاحية شاشة الشيكات نفسها.
+      (typeof canDo === "function" && canDo("viewCheques")
+        ? "<button class=\'pa-hero-btn\' onclick=\'openPartyCheques(\"" +
+          String(party.id || "").replace(/"/g, "\'") +
+          '","' +
+          (isCustomer ? "CUSTOMER" : "SUPPLIER") +
+          '","' +
+          (party.name || "").replace(/"/g, "\'") +
+          "\")\'><i class=\'ti ti-receipt-2\'></i>\u0634\u064a\u0643\u0627\u062a \u0647\u0630\u0627 \u0627\u0644\u0637\u0631\u0641</button>"
+        : "") +
+      (isCustomer &&
+      typeof WA_CONFIG !== "undefined" &&
+      WA_CONFIG.isEnabled() &&
+      typeof canDo === "function" &&
+      canDo("sendWhatsapp")
+        ? "<button class=\'pa-hero-btn\' style=\'background:rgba(37,211,102,.22);color:#fff\' onclick=\'WA_MODAL.open({" +
+          'category:"statement_message",customer_name:"' +
+          (party.name || "").replace(/"/g, "\'") +
+          '",phone:"' +
+          (party.phone || "").replace(/"/g, "\'") +
+          '",customer_id:"' +
+          (party.id || "").replace(/"/g, "\'") +
+          '",source_type:"statement",source_id:"' +
+          (party.id || "").replace(/"/g, "\'") +
+          '",context_data:{customer_name:"' +
+          (party.name || "").replace(/"/g, "\'") +
+          "\"}})\'>\u0648\u0627\u062a\u0633\u0627\u0628</button>"
+        : "") +
+      "<button class=\'pa-hero-btn\' onclick=\'typeof closeModal===\"function\" ? closeModal() : null\'><i class=\'ti ti-x\'></i></button>" +
+      "</div></div>";
+
+    // KPI — labels مخصصة حسب نوع الطرف
+    var inQty = 0,
+      outQty = 0,
+      returnQty = 0;
+    movements.forEach(function (tx) {
+      var q = Number(tx.quantity || 0);
+      if (tx.type === "IN" || tx.type === "FG_IN") inQty += q;
+      else if (tx.type === "OUT" || tx.type === "DISPATCH") outQty += q;
+      else if (tx.type === "FACTORY_RETURN") returnQty += q;
+    });
+    // المورد: وارد=استلام بضاعة | صادر=مرتجع مورد
+    // العميل: صادر=بيع | وارد=مرتجع عميل
+    var inLabel = isCustomer
+      ? "\u0645\u0631\u062a\u062c\u0639 \u0639\u0645\u064a\u0644"
+      : "\u0627\u0633\u062a\u0644\u0627\u0645 \u0645\u0648\u0631\u062f";
+    var outLabel = isCustomer
+      ? "\u0645\u0628\u064a\u0639\u0627\u062a"
+      : "\u0645\u0631\u062a\u062c\u0639 \u0645\u0648\u0631\u062f";
+    var inIcon = isCustomer ? "ti-arrow-back-up" : "ti-arrow-bar-down";
+    var outIcon = isCustomer ? "ti-shopping-cart" : "ti-arrow-back-up";
+    function kpiCard(cls, icon, label, value, sub) {
+      return (
+        "<div class=\'pa-kpi-card " +
+        cls +
+        "\'><div class=\'pa-kpi-icon\'><i class=\'ti " +
+        icon +
+        "\'></i></div><div class=\'pa-kpi-label\'>" +
+        label +
+        "</div><div class=\'pa-kpi-value\'>" +
+        value +
+        "</div><div class=\'pa-kpi-sub\'>" +
+        sub +
+        "</div></div>"
+      );
+    }
+    var kpiHtml =
+      "<div class=\'pa-kpi-grid\'>" +
+      kpiCard(
+        "total",
+        "ti-history",
+        "\u0625\u062c\u0645\u0627\u0644\u064a \u0627\u0644\u062d\u0631\u0643\u0627\u062a",
+        totalTx,
+        (stats.warehouseCount || 0) +
+          " \u0645\u062e\u0632\u0646 \u0645\u062a\u0639\u0627\u0645\u0644",
+      ) +
+      kpiCard(
+        "in",
+        inIcon,
+        inLabel,
+        (tc.IN || 0) + (tc.FG_IN ? "+" + tc.FG_IN : ""),
+        inQty.toLocaleString("en-US", {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0,
+        }) + " \u0648\u062d\u062f\u0629",
+      ) +
+      kpiCard(
+        "out",
+        outIcon,
+        outLabel,
+        (tc.OUT || 0) + (tc.DISPATCH ? "+" + tc.DISPATCH : ""),
+        outQty.toLocaleString("en-US", {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0,
+        }) + " \u0648\u062d\u062f\u0629",
+      ) +
+      kpiCard(
+        "trans",
+        "ti-rotate-clockwise-2",
+        "\u0645\u0631\u062a\u062c\u0639 \u0645\u0635\u0646\u0639",
+        tc.FACTORY_RETURN || 0,
+        returnQty.toLocaleString("en-US", {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0,
+        }) + " \u0648\u062d\u062f\u0629",
+      ) +
+      "</div>";
+
+    // Bar Chart
+    var monthBuckets = {};
+    movements.forEach(function (tx) {
+      if (!tx.date) return;
+      var d = new Date(tx.date);
+      var key =
+        d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+      if (!monthBuckets[key]) monthBuckets[key] = { in: 0, out: 0 };
+      if (tx.type === "IN" || tx.type === "FG_IN")
+        monthBuckets[key].in += Number(tx.quantity || 0);
+      else if (tx.type === "OUT" || tx.type === "DISPATCH")
+        monthBuckets[key].out += Number(tx.quantity || 0);
+    });
+    var monthKeys = Object.keys(monthBuckets).sort().slice(-8);
+    var maxVal = 1;
+    monthKeys.forEach(function (k) {
+      var t = monthBuckets[k].in + monthBuckets[k].out;
+      if (t > maxVal) maxVal = t;
+    });
+
+    var chartHtml = "";
+    if (monthKeys.length > 0) {
+      var arabicMonths = [
+        "\u064a\u0646\u0627\u064a\u0631",
+        "\u0641\u0628\u0631\u0627\u064a\u0631",
+        "\u0645\u0627\u0631\u0633",
+        "\u0623\u0628\u0631\u064a\u0644",
+        "\u0645\u0627\u064a\u0648",
+        "\u064a\u0648\u0646\u064a\u0648",
+        "\u064a\u0648\u0644\u064a\u0648",
+        "\u0623\u063a\u0633\u0637\u0633",
+        "\u0633\u0628\u062a\u0645\u0628\u0631",
+        "\u0623\u0643\u062a\u0648\u0628\u0631",
+        "\u0646\u0648\u0641\u0645\u0628\u0631",
+        "\u062f\u064a\u0633\u0645\u0628\u0631",
+      ];
+      var svgW = 560,
+        svgH = 130,
+        padL = 8,
+        padR = 8,
+        padT = 8,
+        padB = 28;
+      var n = monthKeys.length;
+      var barW = Math.max(6, Math.floor((svgW - padL - padR) / (n * 3)));
+      var groupW = barW * 2 + 3;
+      var groupGap = Math.floor(
+        (svgW - padL - padR - n * groupW) / Math.max(n - 1, 1),
+      );
+      var chartAreaH = svgH - padT - padB;
+      var bars = "",
+        xLabels = "",
+        gridLines = "";
+      for (var gi = 1; gi <= 4; gi++) {
+        var gy = padT + chartAreaH - (chartAreaH * gi) / 4;
+        gridLines +=
+          "<line x1=\'8\' y1=\'" +
+          gy +
+          "\' x2=\'552\' y2=\'" +
+          gy +
+          "\' stroke=\'var(--border)\' stroke-width=\'1\' stroke-dasharray=\'4,4\'/>";
+      }
+      monthKeys.forEach(function (k, i) {
+        var d = monthBuckets[k];
+        var inH = Math.max(2, (d.in / maxVal) * chartAreaH);
+        var outH = Math.max(2, (d.out / maxVal) * chartAreaH);
+        var x = padL + i * (groupW + groupGap);
+        bars +=
+          "<rect x=\'" +
+          x +
+          "\' y=\'" +
+          (padT + chartAreaH - inH) +
+          "\' width=\'" +
+          barW +
+          "\' height=\'" +
+          inH +
+          "\' rx=\'3\' fill=\'#10B981\' opacity=\'.85\'></rect>";
+        bars +=
+          "<rect x=\'" +
+          (x + barW + 2) +
+          "\' y=\'" +
+          (padT + chartAreaH - outH) +
+          "\' width=\'" +
+          barW +
+          "\' height=\'" +
+          outH +
+          "\' rx=\'3\' fill=\'#EF4444\' opacity=\'.85\'></rect>";
+        var parts = k.split("-");
+        var mLabel = arabicMonths[parseInt(parts[1], 10) - 1] || parts[1];
+        xLabels +=
+          "<text x=\'" +
+          (x + groupW / 2) +
+          "\' y=\'" +
+          (svgH - 6) +
+          "\' text-anchor=\'middle\' font-size=\'9\' fill=\'var(--text3)\' font-family=\'IBM Plex Sans Arabic,sans-serif\'>" +
+          mLabel +
+          "</text>";
+      });
+      chartHtml =
+        "<div class=\'pa-chart-card\'>" +
+        "<div class=\'pa-chart-title\'><i class=\'ti ti-chart-bar\' style=\'color:var(--accent)\'></i>\u0646\u0634\u0627\u0637 \u0627\u0644\u062d\u0631\u0643\u0627\u062a \u0627\u0644\u0634\u0647\u0631\u064a</div>" +
+        "<div class=\'pa-chart-sub\'>\u0645\u0642\u0627\u0631\u0646\u0629 \u0627\u0644\u0643\u0645\u064a\u0627\u062a \u0627\u0644\u0648\u0627\u0631\u062f\u0629 \u0648\u0627\u0644\u0635\u0627\u062f\u0631\u0629 \u0634\u0647\u0631\u064a\u0627\u064b</div>" +
+        "<div class=\'pa-chart-wrap\'><svg class=\'pa-chart-svg\' viewBox=\'0 0 560 130\' xmlns=\'http://www.w3.org/2000/svg\'>" +
+        gridLines +
+        bars +
+        xLabels +
+        "</svg></div>" +
+        "<div class=\'pa-chart-legend\'>" +
+        "<div class=\'pa-chart-legend-item\'><div class=\'pa-chart-legend-dot\' style=\'background:#10B981\'></div>\u0648\u0627\u0631\u062f / \u0627\u0633\u062a\u0644\u0627\u0645</div>" +
+        "<div class=\'pa-chart-legend-item\'><div class=\'pa-chart-legend-dot\' style=\'background:#EF4444\'></div>\u0635\u0627\u062f\u0631 / \u0635\u0631\u0641</div>" +
+        "</div></div>";
+    } else {
+      // [CONSISTENCY] نفس رسالة اللا-بيانات المستخدمة في كارت "أكثر
+      // الأصناف حركة" و"توزيع المخازن" — قبل كده الكارت كان يختفي تمامًا
+      // بدون أي تفسير لو الطرف لسه مفيهوش حركات (عميل/مورد جديد).
+      chartHtml =
+        "<div class=\'pa-chart-card\'>" +
+        "<div class=\'pa-chart-title\'><i class=\'ti ti-chart-bar\' style=\'color:var(--accent)\'></i>\u0646\u0634\u0627\u0637 \u0627\u0644\u062d\u0631\u0643\u0627\u062a \u0627\u0644\u0634\u0647\u0631\u064a</div>" +
+        "<div style=\'text-align:center;padding:24px;color:var(--text3);font-size:12px\'>\u0644\u0627 \u062a\u0648\u062c\u062f \u062d\u0631\u0643\u0627\u062a \u0645\u0633\u062c\u0644\u0629 \u0628\u0639\u062f</div>" +
+        "</div>";
+    }
+
+    // Top Items
+    var itemAgg = {};
+    movements.forEach(function (tx) {
+      var inf = itemInfo(tx.item_id, tx);
+      var k = inf.code;
+      if (!itemAgg[k]) itemAgg[k] = { code: inf.code, name: inf.name, qty: 0 };
+      itemAgg[k].qty += Number(tx.quantity || 0);
+    });
+    var topItems = Object.keys(itemAgg)
+      .map(function (k) {
+        return itemAgg[k];
+      })
+      .sort(function (a, b) {
+        return b.qty - a.qty;
+      })
+      .slice(0, 7);
+    var maxItemQty = topItems.length ? topItems[0].qty : 1;
+    var rankClasses = ["gold", "silver", "bronze"];
+    var itemsHtml =
+      "<div class=\'pa-items-card\'><div class=\'pa-section-title\'><i class=\'ti ti-package\'></i>\u0623\u0643\u062b\u0631 \u0627\u0644\u0623\u0635\u0646\u0627\u0641 \u062d\u0631\u0643\u0629</div>";
+    if (topItems.length) {
+      topItems.forEach(function (item, idx) {
+        var pct = Math.round((item.qty / maxItemQty) * 100);
+        itemsHtml +=
+          "<div class=\'pa-item-row\'><div class=\'pa-item-rank " +
+          (rankClasses[idx] || "") +
+          "\'>" +
+          (idx + 1) +
+          "</div><span class=\'pa-item-code\'>" +
+          esc(item.code) +
+          "</span><span class=\'pa-item-name\' title=\'" +
+          esc(item.name) +
+          "\'>" +
+          esc(item.name || "\u2014") +
+          "</span><div class=\'pa-item-bar-wrap\'><div class=\'pa-item-bar-fill\' style=\'width:" +
+          pct +
+          "%\'></div></div><span class=\'pa-item-qty\'>" +
+          item.qty.toLocaleString("en-US", {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0,
+          }) +
+          "</span></div>";
+      });
+    } else {
+      itemsHtml +=
+        "<div style=\'text-align:center;padding:20px;color:var(--text3);font-size:12px\'>\u0644\u0627 \u062a\u0648\u062c\u062f \u0623\u0635\u0646\u0627\u0641</div>";
+    }
+    itemsHtml += "</div>";
+
+    // Warehouse
+    var whAgg = {};
+    movements.forEach(function (tx) {
+      [tx.from_warehouse, tx.to_warehouse].forEach(function (w) {
+        if (w) whAgg[w] = (whAgg[w] || 0) + 1;
+      });
+    });
+    var whList = Object.keys(whAgg)
+      .map(function (k) {
+        return { name: k, count: whAgg[k] };
+      })
+      .sort(function (a, b) {
+        return b.count - a.count;
+      })
+      .slice(0, 6);
+    var maxWhCount = whList.length ? whList[0].count : 1;
+    var whHtml =
+      "<div class=\'pa-items-card\'><div class=\'pa-section-title\'><i class=\'ti ti-building-warehouse\'></i>\u062a\u0648\u0632\u064a\u0639 \u0627\u0644\u0645\u062e\u0627\u0632\u0646</div>";
+    whList.forEach(function (wh) {
+      var pct = Math.round((wh.count / maxWhCount) * 100);
+      var pctTotal = totalTx ? Math.round((wh.count / totalTx) * 100) : 0;
+      whHtml +=
+        "<div class=\'pa-wh-row\'><div class=\'pa-wh-icon\'><i class=\'ti ti-building-warehouse\'></i></div><span class=\'pa-wh-name\'>" +
+        esc(wh.name) +
+        "</span><div class=\'pa-wh-bar-wrap\'><div class=\'pa-wh-bar-fill\' style=\'width:" +
+        pct +
+        "%\'></div></div><span class=\'pa-wh-pct\'>" +
+        pctTotal +
+        "%</span></div>";
+    });
+    if (!whList.length)
+      whHtml +=
+        "<div style=\'text-align:center;padding:20px;color:var(--text3);font-size:12px\'>\u0644\u0627 \u062a\u0648\u062c\u062f \u0628\u064a\u0627\u0646\u0627\u062a</div>";
+    whHtml += "</div>";
+
+    // Donut
+    var typeColors = {
+      IN: "#10B981",
+      OUT: "#EF4444",
+      DISPATCH: "#D97706",
+      FG_IN: "#0D9488",
+      FACTORY_RETURN: "#EA580C",
+    };
+    // labels مخصصة حسب العميل/المورد
+    var typeNames = isCustomer
+      ? {
+          IN: "\u0645\u0631\u062a\u062c\u0639 \u0639\u0645\u064a\u0644",
+          OUT: "\u0645\u0628\u064a\u0639\u0627\u062a",
+          DISPATCH: "\u0635\u0631\u0641 \u0645\u0635\u0646\u0639",
+          FG_IN: "\u0627\u0633\u062a\u0644\u0627\u0645 \u062a\u0627\u0645",
+          FACTORY_RETURN:
+            "\u0645\u0631\u062a\u062c\u0639 \u0645\u0635\u0646\u0639",
+        }
+      : {
+          IN: "\u0627\u0633\u062a\u0644\u0627\u0645 \u0645\u0648\u0631\u062f",
+          OUT: "\u0645\u0631\u062a\u062c\u0639 \u0645\u0648\u0631\u062f",
+          DISPATCH: "\u0635\u0631\u0641 \u0645\u0635\u0646\u0639",
+          FG_IN: "\u0627\u0633\u062a\u0644\u0627\u0645 \u062a\u0627\u0645",
+          FACTORY_RETURN:
+            "\u0645\u0631\u062a\u062c\u0639 \u0645\u0635\u0646\u0639",
+        };
+    var activeTypes = Object.keys(tc).filter(function (t) {
+      return tc[t] > 0;
+    });
+    var donutR = 38,
+      donutCx = 45,
+      donutCy = 45,
+      donutStroke = 12;
+    var donutCirc = 2 * Math.PI * donutR;
+    var donutPaths = "",
+      legendRows = "",
+      cumulative = 0;
+    activeTypes.forEach(function (t) {
+      var frac = totalTx ? tc[t] / totalTx : 0;
+      var dash = frac * donutCirc;
+      var offset = donutCirc - cumulative * donutCirc;
+      var col = typeColors[t] || "#94a3b8";
+      donutPaths +=
+        "<circle cx=\'" +
+        donutCx +
+        "\' cy=\'" +
+        donutCy +
+        "\' r=\'" +
+        donutR +
+        "\' fill=\'none\' stroke=\'" +
+        col +
+        "\' stroke-width=\'" +
+        donutStroke +
+        "\' stroke-dasharray=\'" +
+        dash +
+        " " +
+        (donutCirc - dash) +
+        "\' stroke-dashoffset=\'" +
+        offset +
+        "\' transform=\'rotate(-90 " +
+        donutCx +
+        " " +
+        donutCy +
+        ")\'></circle>";
+      cumulative += frac;
+      legendRows +=
+        "<div class=\'pa-donut-leg-row\'><div class=\'pa-donut-leg-dot\' style=\'background:" +
+        col +
+        "\'></div><span class=\'pa-donut-leg-label\'>" +
+        (typeNames[t] || t) +
+        "</span><span class=\'pa-donut-leg-val\'>" +
+        tc[t] +
+        "</span><span class=\'pa-donut-leg-pct\'>(" +
+        Math.round(frac * 100) +
+        "%)</span></div>";
+    });
+    var donutHtml =
+      "<div class=\'pa-items-card\'><div class=\'pa-section-title\'><i class=\'ti ti-chart-donut-3\'></i>\u062a\u0648\u0632\u064a\u0639 \u0623\u0646\u0648\u0627\u0639 \u0627\u0644\u062d\u0631\u0643\u0627\u062a</div><div class=\'pa-donut-wrap\'><svg width=\'90\' height=\'90\' viewBox=\'0 0 90 90\' style=\'flex-shrink:0\'><circle cx=\'45\' cy=\'45\' r=\'38\' fill=\'none\' stroke=\'var(--surface2)\' stroke-width=\'12\'></circle>" +
+      donutPaths +
+      "<text x=\'45\' y=\'49\' text-anchor=\'middle\' font-size=\'13\' font-weight=\'800\' fill=\'var(--text1)\' font-family=\'IBM Plex Sans Arabic,sans-serif\'>" +
+      totalTx +
+      "</text><text x=\'45\' y=\'60\' text-anchor=\'middle\' font-size=\'7\' fill=\'var(--text3)\' font-family=\'IBM Plex Sans Arabic,sans-serif\'>\u062d\u0631\u0643\u0629</text></svg><div class=\'pa-donut-legend\'>" +
+      legendRows +
+      "</div></div></div>";
+
+    // Tabs
+    var tabsHtml =
+      "<div class=\'pa-tabs\'>" +
+      "<button class=\'pa-tab active\' id=\'pa-tab-overview\' onclick=\'_paSwitch(\"overview\")\'><i class=\'ti ti-chart-bar\'></i>\u0644\u0648\u062d\u0629 \u0627\u0644\u062a\u062d\u0644\u064a\u0644\u0627\u062a</button>" +
+      "<button class=\'pa-tab\' id=\'pa-tab-table\' onclick=\'_paSwitch(\"table\")\'><i class=\'ti ti-table\'></i>\u062c\u062f\u0648\u0644 \u0627\u0644\u062d\u0631\u0643\u0627\u062a<span style=\'background:var(--accent);color:#fff;border-radius:20px;padding:1px 8px;font-size:10px;margin-right:4px\'>" +
+      totalTx +
+      "</span></button>" +
+      "</div>";
+
+    // Table panel
+    var existingTypes2 = activeTypes;
+    var typeFilterBtns =
+      "<button class=\'pm-type-btn active\' data-pmfilter=\'\'  onclick=\'_pmFilter(this)\'>\u0627\u0644\u0643\u0644 <span style=\'opacity:.6;font-weight:400\'>(" +
+      totalTx +
+      ")</span></button>" +
+      existingTypes2
+        .map(function (t) {
+          var info = typeMap[t] || { label: t };
+          return (
+            "<button class=\'pm-type-btn\' data-pmfilter=\'" +
+            esc(t) +
+            "\' onclick=\'_pmFilter(this)\'>" +
+            esc(info.label) +
+            " <span style=\'opacity:.6;font-weight:400\'>(" +
+            (tc[t] || 0) +
+            ")</span></button>"
+          );
+        })
+        .join("");
+
+    function buildRows(txGroups) {
+      if (!txGroups.length) return "";
+      return txGroups
+        .map(function (grp) {
+          var first = grp.items[0];
+          var isMulti = grp.items.length > 1;
+          var dateObj = first.date ? new Date(first.date) : null;
+          var dateStr = dateObj ? fmtDate(dateObj) : "\u2014";
+          var timeStr = dateObj ? fmtTime(dateObj) : "\u2014";
+          var totalQty = grp.items.reduce(function (s, t) {
+            return s + Number(t.quantity || 0);
+          }, 0);
+          var refCell = grp.isPermit
+            ? "<div style=\'display:flex;flex-direction:column;gap:1px\'><span class=\'mono\' style=\'color:var(--success);font-weight:700;font-size:13px\'>" +
+              esc(grp.key) +
+              "</span>" +
+              (isMulti
+                ? "<span style=\'color:var(--accent);font-size:10px;font-weight:600\'>" +
+                  grp.items.length +
+                  " \u0623\u0635\u0646\u0627\u0641</span>"
+                : "<span class=\'mono\' style=\'color:var(--text3);font-size:10px\'>" +
+                  esc(first.id || "") +
+                  "</span>") +
+              "</div>"
+            : "<span class=\'mono\' style=\'color:var(--text3);font-size:11px\'>" +
+              esc(first.id || "\u2014") +
+              "</span>";
+          var _seenCodes = {},
+            _codes = [];
+          grp.items.forEach(function (t) {
+            var inf = itemInfo(t.item_id, t);
+            if (!_seenCodes[inf.code]) {
+              _seenCodes[inf.code] = true;
+              _codes.push({ code: inf.code, name: inf.name });
+            }
+          });
+          var itemsCell =
+            "<div style=\'display:flex;flex-wrap:wrap;gap:4px\'>" +
+            _codes
+              .map(function (c) {
+                return (
+                  "<span title=\'" +
+                  esc(c.name) +
+                  "\' style=\'display:inline-block;background:#EFF6FF;color:#1D4ED8;border:1px solid #BFDBFE;border-radius:5px;padding:2px 8px;font-size:12px;font-weight:700;font-family:var(--font-mono);white-space:nowrap\'>" +
+                  esc(c.code) +
+                  "</span>"
+                );
+              })
+              .join("") +
+            "</div>";
+          var wh =
+            first.type === "IN" ||
+            first.type === "FG_IN" ||
+            first.type === "FACTORY_RETURN"
+              ? first.to_warehouse || "\u2014"
+              : first.type === "OUT" || first.type === "DISPATCH"
+                ? first.from_warehouse || "\u2014"
+                : (first.from_warehouse || "\u2014") +
+                  (first.to_warehouse ? " \u2190 " + first.to_warehouse : "");
+          var safeKey = esc(grp.key).replace(/[^a-zA-Z0-9]/g, "_");
+          var expandBtn = isMulti
+            ? "<button id=\'pm-expand-btn-" +
+              safeKey +
+              "\' class=\'btn btn-xs\' style=\'background:var(--bg2);border:1px solid var(--border);color:var(--text2);width:28px;height:28px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:6px\' onclick=\"_pmToggleExpand(\'" +
+              esc(grp.key) +
+              "')\"><i class=\'ti ti-chevron-down\' style=\'font-size:13px\'></i></button>"
+            : "";
+          var notesHtml = first.notes
+            ? "<span style=\'font-size:11px;color:var(--text3);margin-top:2px;display:block\'>" +
+              esc(first.notes) +
+              "</span>"
+            : "";
+          var mainRow =
+            "<tr data-pmkey=\'" +
+            esc(grp.key) +
+            "\' data-pmtype=\'" +
+            esc(first.type || "") +
+            "\' data-pmsearch=\'" +
+            esc(
+              (
+                (grp.key || "") +
+                " " +
+                (first.id || "") +
+                " " +
+                _codes
+                  .map(function (c) {
+                    return c.code + " " + c.name;
+                  })
+                  .join(" ") +
+                " " +
+                (first.notes || "") +
+                " " +
+                (first.user || "")
+              ).toLowerCase(),
+            ) +
+            "\'>" +
+            "<td>" +
+            refCell +
+            "</td><td style=\'font-size:13px;font-weight:600;color:var(--text1)\'>" +
+            dateStr +
+            "</td><td style=\'font-size:12px;color:var(--text3);font-family:var(--font-mono)\'>" +
+            timeStr +
+            "</td><td>" +
+            txBadge(first.type) +
+            "</td><td>" +
+            itemsCell +
+            "</td>" +
+            "<td style=\'text-align:center\'><span style=\'font-weight:800;font-size:15px;background:var(--surface2);border-radius:8px;padding:2px 10px;display:inline-block;font-family:var(--font-mono)\'>" +
+            totalQty +
+            "</span></td>" +
+            "<td><span style=\'font-size:12px;color:var(--text2);display:flex;align-items:center;gap:4px\'><i class=\'ti ti-building-warehouse\' style=\'font-size:12px;color:var(--text3)\'></i>" +
+            esc(wh) +
+            "</span>" +
+            notesHtml +
+            "</td>" +
+            "<td>" +
+            esc(first.user || "\u2014") +
+            "</td><td style=\'text-align:center\'>" +
+            expandBtn +
+            "</td></tr>";
+          var expandRow = "";
+          if (isMulti) {
+            var innerRows = grp.items
+              .map(function (t) {
+                var inf = itemInfo(t.item_id, t);
+                return (
+                  "<tr style=\'background:var(--surface2)\'><td style=\'padding:8px 12px\'><span class=\'mono\' style=\'font-size:11px;color:var(--text3)\'>" +
+                  esc(t.id || "") +
+                  "</span></td><td style=\'padding:8px 12px\' colspan=\'2\'><span class=\'mono\' style=\'font-weight:700;font-size:13px;color:var(--text1)\'>" +
+                  esc(inf.code) +
+                  "</span>" +
+                  (inf.name
+                    ? "<span style=\'font-size:11px;color:var(--text3);display:block\'>" +
+                      esc(inf.name) +
+                      "</span>"
+                    : "") +
+                  "</td><td style=\'padding:8px 12px\'>" +
+                  txBadge(t.type) +
+                  "</td><td style=\'padding:8px 12px;font-weight:700;font-family:var(--font-mono)\'>" +
+                  Number(t.quantity || 0) +
+                  "</td><td style=\'padding:8px 12px;font-size:12px;color:var(--text3)\'>" +
+                  esc(t.color || "\u2014") +
+                  "</td><td style=\'padding:8px 12px\' colspan=\'3\'>" +
+                  esc(t.notes || "") +
+                  "</td></tr>"
+                );
+              })
+              .join("");
+            expandRow =
+              "<tr id=\'pm-expand-" +
+              safeKey +
+              "\' class=\'pm-expand-row\' style=\'display:none\'><td colspan=\'9\'><div class=\'pm-expand-inner\'><table style=\'width:100%;border-collapse:collapse\'><thead><tr style=\'background:var(--bg2)\'><th style=\'padding:6px 12px;font-size:11px;color:var(--text3);font-weight:700\'>\u0627\u0644\u0645\u0639\u0631\u0651\u0641</th><th style=\'padding:6px 12px;font-size:11px;color:var(--text3);font-weight:700\' colspan=\'2\'>\u0627\u0644\u0635\u0646\u0641</th><th style=\'padding:6px 12px;font-size:11px;color:var(--text3);font-weight:700\'>\u0627\u0644\u0646\u0648\u0639</th><th style=\'padding:6px 12px;font-size:11px;color:var(--text3);font-weight:700\'>\u0627\u0644\u0643\u0645\u064a\u0629</th><th style=\'padding:6px 12px;font-size:11px;color:var(--text3);font-weight:700\'>\u0627\u0644\u0644\u0648\u0646</th><th style=\'padding:6px 12px;font-size:11px;color:var(--text3);font-weight:700\' colspan=\'3\'>\u0627\u0644\u0645\u0644\u0627\u062d\u0638\u0627\u062a</th></tr></thead><tbody>" +
+              innerRows +
+              "</tbody></table></div></td></tr>";
+          }
+          return mainRow + expandRow;
+        })
+        .join("");
+    }
+
+    // group movements
+    var groups = [],
+      permitMap2 = {};
+    movements.forEach(function (tx) {
+      var _txRef = tx.ref == null ? "" : String(tx.ref);
+      var key = _txRef.trim() ? _txRef.trim() : null;
+      if (key) {
+        if (permitMap2.hasOwnProperty(key)) {
+          groups[permitMap2[key]].items.push(tx);
+        } else {
+          permitMap2[key] = groups.length;
+          groups.push({ key: key, isPermit: true, items: [tx] });
+        }
+      } else {
+        groups.push({ key: tx.id, isPermit: false, items: [tx] });
+      }
+    });
+
+    var rowsHtml = buildRows(groups);
+
+    var waTimelineHtml =
+      isCustomer && typeof renderCustomerWaTimelineCard === "function"
+        ? renderCustomerWaTimelineCard(partyId)
+        : "";
+
+    var overviewPanel =
+      "<div id=\'pa-panel-overview\'>" +
+      kpiHtml +
+      chartHtml +
+      "<div class=\'pa-two-col\'>" +
+      donutHtml +
+      whHtml +
+      "</div>" +
+      itemsHtml +
+      waTimelineHtml +
+      "</div>";
+    var tablePanel =
+      "<div id=\'pa-panel-table\' style=\'display:none\'><div class=\'card\' style=\'padding:0;overflow:hidden\'>" +
+      "<div class=\'pm-filter-bar\'><div class=\'pm-search-wrap\'><i class=\'ti ti-search pm-search-icon\'></i><input class=\'input\' id=\'pm-search-input\' placeholder=\'\u0628\u062d\u062b \u0628\u0631\u0642\u0645 \u0627\u0644\u0633\u0646\u062f\u060c \u0643\u0648\u062f \u0627\u0644\u0635\u0646\u0641\u060c \u0627\u0644\u0645\u0633\u062a\u062e\u062f\u0645\u060c \u0627\u0644\u0645\u0644\u0627\u062d\u0638\u0627\u062a...\' oninput=\'_pmSearch(this.value)\'></div>" +
+      "<div class=\'pm-type-filters\'>" +
+      typeFilterBtns +
+      "</div>" +
+      "<span id=\'pm-count-badge\' style=\'font-size:12px;color:var(--text3);background:var(--bg);border:1px solid var(--border);padding:4px 10px;border-radius:20px;font-weight:600;white-space:nowrap\'>" +
+      totalTx +
+      " \u062d\u0631\u0643\u0629</span></div>" +
+      "<div class=\'pm-table-wrap\'><table><thead><tr>" +
+      "<th style=\'width:150px\'>\u0631\u0642\u0645 \u0627\u0644\u0633\u0646\u062f</th><th style=\'width:100px\'>\u0627\u0644\u062a\u0627\u0631\u064a\u062e</th><th style=\'width:70px\'>\u0627\u0644\u0648\u0642\u062a</th><th style=\'width:110px\'>\u0627\u0644\u0646\u0648\u0639</th><th>\u0627\u0644\u0623\u0635\u0646\u0627\u0641</th><th style=\'width:80px;text-align:center\'>\u0627\u0644\u0643\u0645\u064a\u0629</th><th style=\'width:150px\'>\u0627\u0644\u0645\u062e\u0632\u0646 / \u0627\u0644\u0645\u0644\u0627\u062d\u0638\u0627\u062a</th><th style=\'width:110px\'>\u0628\u0648\u0627\u0633\u0637\u0629</th><th style=\'width:50px;text-align:center\'></th>" +
+      "</tr></thead><tbody id=\'pm-tbody\'>" +
+      (rowsHtml ||
+        "<tr><td colspan=\'9\' class=\'pm-empty\'><div class=\'pm-empty-icon\'>\ud83d\udccb</div><p>\u0644\u0627 \u062a\u0648\u062c\u062f \u062d\u0631\u0643\u0627\u062a \u0645\u0633\u062c\u0644\u0629 \u0644\u0647\u0630\u0627 \u0627\u0644\u0637\u0631\u0641</p></td></tr>") +
+      "</tbody></table></div>" +
+      "<div style=\'padding:10px 16px;border-top:1px solid var(--border);background:var(--surface2);display:flex;align-items:center;justify-content:space-between\'><span style=\'font-size:12px;color:var(--text3)\'>\u0625\u062c\u0645\u0627\u0644\u064a " +
+      totalTx +
+      " \u062d\u0631\u0643\u0629 \u0645\u062e\u0632\u0646\u064a\u0629</span>" +
+      (stats.firstDate
+        ? "<span style=\'font-size:12px;color:var(--text3)\'>\u0645\u0646 " +
+          fmtDate(stats.firstDate) +
+          " \u062d\u062a\u0649 " +
+          fmtDate(stats.lastDate) +
+          "</span>"
+        : "") +
+      "</div></div></div>";
+
+    return (
+      "<div style=\'width:100%\'>" +
+      heroHtml +
+      tabsHtml +
+      overviewPanel +
+      tablePanel +
+      "</div>"
+    );
+  }
+</script>

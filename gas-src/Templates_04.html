@@ -1,0 +1,1638 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════
+  // Templates_04.html — جزء من Templates.html الأصلي (تقسيم آلي نصي بحت، 2026-07-04)
+  // النطاق: renderDispatch → renderShipping (Dispatch + Shipping)
+  // راجع Architecture Audit 2026-07-03، المرحلة 5 — تقسيم بحسب الحجم،
+  // على حدود دوال كاملة فقط (لا قطع لأي دالة في نص). تحقق برمجيًا:
+  // التركيب النهائي لكل الأجزاء الـ10 مطابق 100% لمحتوى Templates.html
+  // القديم حرفيًا (نفس الترتيب، بدون فقد أو تكرار).
+  // يُحمَّل بالترتيب عبر <script> في Index.html مع باقي الأجزاء.
+  // ═══════════════════════════════════════════════════════════════
+  function renderDispatch() {
+    var openPOs = APP.data.productionOrders.filter(function (o) {
+      return o.status === "pending" || o.status === "inprogress";
+    });
+
+    var poCards = openPOs
+      .map(function (o) {
+        var it = APP.data.items.find(function (i) {
+          return i.id === o.product_id;
+        });
+        var itemName = it ? it.name : o.product_id || "";
+        var itemCode = it ? it.code || it.id : "";
+
+        // ── حساب الأصناف المصروفة مسبقاً على هذا الأمر ──
+        var dispatchedCount = (APP.data.transactions || []).filter(
+          function (t) {
+            return t.type === "DISPATCH" && t.production_order_id === o.id;
+          },
+        ).length;
+
+        var statusColor = o.status === "inprogress" ? "#f59e0b" : "#6366f1";
+        var statusLabel = o.status === "inprogress" ? "قيد التصنيع" : "معلق";
+        return (
+          '<div class="po-card po-card-h" data-po-id="' +
+          esc(o.id) +
+          '" onclick="selectDispatchPO(\'' +
+          esc(o.id) +
+          "')\">" +
+          '<div class="po-card-h-bar" style="background:' +
+          statusColor +
+          '"></div>' +
+          '<div class="po-card-h-head">' +
+          '<span class="po-card-h-id" style="color:var(--accent)">' +
+          esc(o.id) +
+          "</span>" +
+          '<span class="po-card-h-badge" style="background:' +
+          statusColor +
+          "22;color:" +
+          statusColor +
+          '">' +
+          statusLabel +
+          "</span>" +
+          "</div>" +
+          '<div class="po-card-h-name">' +
+          esc(itemName) +
+          "</div>" +
+          '<div class="po-card-h-meta">' +
+          '<span class="po-card-h-code">' +
+          esc(itemCode) +
+          "</span>" +
+          (o.patron_number
+            ? '<span class="po-card-h-patron">باترون <b>' +
+              esc(o.patron_number) +
+              "</b></span>"
+            : "") +
+          "</div></div>"
+        );
+      })
+      .join("");
+
+    var whOpts = (APP.data.warehouses || [])
+      .filter(function (w) {
+        // إخفاء مخازن المنتج التام من شاشة الصرف للمصنع
+        return w.type !== "تامة" && w.code !== "FG";
+      })
+      .map(function (w) {
+        return (
+          '<option value="' +
+          esc(w.id) +
+          '">' +
+          esc(w.name) +
+          (w.code ? " (" + esc(w.code) + ")" : "") +
+          "</option>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div class="page-header"><div><h1 style="display:flex;align-items:center;gap:10px"><span style="display:inline-flex;align-items:center;justify-content:center;background:#EFF6FF;border-radius:10px;padding:8px;flex-shrink:0"><i class="ti ti-upload" style="font-size:22px;color:#1E40AF" aria-hidden="true"></i></span><span>صرف للمصنع</span></h1><p>صرف خامات ومواد للإنتاج</p></div></div>' +
+      '<div style="display:flex;flex-direction:column;gap:20px">' +
+      // ── صف أوامر الإنتاج (أفقي) ──────────────────────
+      "<div>" +
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:12px">① اختر أمر الإنتاج</div>' +
+      '<input type="hidden" id="disp-po">' +
+      (openPOs.length
+        ? '<div class="po-cards-row" id="po-cards-wrap">' + poCards + "</div>"
+        : '<div style="text-align:center;padding:40px 20px;background:var(--surface2);border-radius:12px;color:var(--text3)"><div style="font-weight:600">لا توجد أوامر إنتاج مفتوحة</div></div>') +
+      "</div>" +
+      // ── النموذج (كامل العرض) ───────────────────
+      "<div>" +
+      // ② المخزن + ③ رقم المرجع — جنب بعض
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">' +
+      // المخزن
+      '<div style="display:flex;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:10px 14px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:var(--accent);border-radius:8px;flex-shrink:0">' +
+      '<i class="ti ti-building-warehouse" style="font-size:14px;color:#fff"></i>' +
+      "</span>" +
+      '<div style="flex:1;min-width:0">' +
+      '<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">② مخزن الصرف</div>' +
+      '<select class="input" id="disp-wh" style="width:100%;padding:5px 8px;font-size:12px;font-weight:600;border-radius:7px"><option value="">— اختر المخزن —</option>' +
+      whOpts +
+      "</select>" +
+      "</div>" +
+      "</div>" +
+      // رقم المرجع
+      '<div style="display:flex;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:10px 14px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#7c3aed;border-radius:8px;flex-shrink:0">' +
+      '<i class="ti ti-hash" style="font-size:14px;color:#fff"></i>' +
+      "</span>" +
+      '<div style="flex:1;min-width:0">' +
+      '<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">③ رقم المرجع <span style="font-weight:500;font-size:9px">(اختياري)</span></div>' +
+      '<input class="input" type="text" id="disp-ref" placeholder="REF-001 ..." style="width:100%;padding:5px 8px;font-size:12px;font-weight:600;border-radius:7px;font-family:var(--font-mono,monospace)">' +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // ④  جدول الأصناف
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:12px">④ الأصناف المصروفة</div>' +
+      '<div style="background:var(--surface2);border-radius:14px;padding:20px;border:1px solid var(--border)">' +
+      // جدول الأصناف — thead ثابت + tbody قابل للتمرير بعد 3 صفوف
+      '<div style="margin-bottom:14px;border-radius:10px;border:1px solid var(--border);overflow:hidden">' +
+      '<table style="width:100%;border-collapse:collapse;table-layout:fixed" id="disp-items-table">' +
+      "<colgroup>" +
+      '<col style="width:10%">' +
+      '<col style="width:34%">' +
+      '<col style="width:30%">' +
+      '<col style="width:16%">' +
+      '<col style="width:10%">' +
+      "</colgroup>" +
+      '<thead><tr style="background:var(--surface3);border-bottom:2px solid var(--border)">' +
+      '<th style="text-align:center;padding:9px 6px;font-size:11px;font-weight:700;color:var(--text3)">#</th>' +
+      '<th style="text-align:right;padding:9px 12px;font-size:11px;font-weight:700;color:var(--text3)">الصنف</th>' +
+      '<th style="text-align:right;padding:9px 12px;font-size:11px;font-weight:700;color:var(--text3)">اللون</th>' +
+      '<th style="text-align:center;padding:9px 10px;font-size:11px;font-weight:700;color:var(--text3)">الكمية</th>' +
+      "" +
+      "</tr></thead>" +
+      '<tbody id="disp-rows"></tbody>' +
+      "</table>" +
+      "</div>" +
+      // زر إضافة صف — inline أسفل الجدول
+      '<div style="border-top:1.5px dashed var(--border);padding:5px 10px">' +
+      '<button type="button" onclick="dispAddRow()" style="background:none;border:none;cursor:pointer;display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:var(--accent);padding:2px 4px;border-radius:5px;font-family:var(--font-main);transition:opacity .15s;opacity:.8" ' +
+      "onmouseover=\"this.style.opacity='1'\" onmouseout=\"this.style.opacity='.8'\">" +
+      '<i class="ti ti-plus" style="font-size:13px" aria-hidden="true"></i> إضافة صنف' +
+      "</button>" +
+      "</div>" +
+      // ملاحظات + رفع صورة — جنب بعض
+      '<div style="display:grid;grid-template-columns:1fr 160px;gap:12px;margin-bottom:16px;align-items:start">' +
+      // ملاحظات
+      "<div>" +
+      '<label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px">ملاحظات</label>' +
+      '<textarea class="input" id="disp-notes" rows="3" placeholder="ملاحظات إضافية..." style="width:100%;resize:none;font-family:var(--font-main);height:80px"></textarea>' +
+      "</div>" +
+      // رفع صورة
+      "<div>" +
+      '<label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px"><i class="ti ti-photo" style="font-size:12px;margin-left:3px"></i>صورة <span style="font-size:10px;font-weight:500;color:var(--text3)">(Drive)</span></label>' +
+      '<input type="file" id="disp-img-input" accept="image/*" style="display:none">' +
+      // Zone — يُخفى بعد اختيار صورة
+      '<div id="disp-img-zone" onclick="document.getElementById(\'disp-img-input\').click()" ' +
+      'style="border:2px dashed var(--border);border-radius:10px;height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;transition:all .15s;background:var(--surface3)" ' +
+      "onmouseover=\"this.style.borderColor='var(--accent)';this.style.background='rgba(37,99,235,.04)'\" " +
+      "onmouseout=\"this.style.borderColor='var(--border)';this.style.background='var(--surface3)'\">" +
+      '<i class="ti ti-cloud-upload" style="font-size:20px;color:var(--text3)"></i>' +
+      '<span id="disp-img-label" style="font-size:11px;color:var(--text3)">اضغط للإرفاق</span>' +
+      "</div>" +
+      // Preview — يظهر بعد الاختيار
+      '<div id="disp-img-preview" style="display:none;position:relative">' +
+      '<img id="disp-img-thumb" style="width:100%;height:80px;object-fit:cover;border-radius:10px;border:1px solid var(--border);display:block">' +
+      '<button type="button" onclick="dispClearImage()" style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,.6);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0">' +
+      '<i class="ti ti-x" style="font-size:11px;color:#fff"></i>' +
+      "</button>" +
+      '<div id="disp-img-upload-status" style="margin-top:4px;font-size:10px;color:var(--text3);text-align:center"></div>' +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // ملخص + زر الصرف
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:rgba(37,99,235,.06);border-radius:10px;border:1.5px solid rgba(37,99,235,.15);margin-bottom:14px" id="disp-summary">' +
+      '<span style="font-size:13px;color:var(--text2)">إجمالي الأصناف: <b id="disp-total-items" style="color:var(--accent)">0</b></span>' +
+      '<span style="font-size:13px;color:var(--text2)">إجمالي الكميات: <b id="disp-total-qty" style="color:var(--accent)">0</b></span>' +
+      "</div>" +
+      '<button class="btn btn-primary" id="btn-disp" style="width:100%;padding:14px;font-size:15px;font-weight:700;border-radius:10px;display:flex;align-items:center;justify-content:center;gap:8px">' +
+      '<i class="ti ti-upload" style="font-size:18px"></i> صرف للمصنع' +
+      "</button>" +
+      "</div></div>" + // end card + col
+      "</div>" // end grid
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ↩️  مرتجع من المصنع — نسخة متعددة الأصناف (مثل renderDispatch)
+  // ══════════════════════════════════════════════════════════════════════
+  function renderFactoryReturn() {
+    var openPOs = APP.data.productionOrders.filter(function (o) {
+      return o.status === "pending" || o.status === "inprogress";
+    });
+
+    var poCards = openPOs
+      .map(function (o) {
+        var it = APP.data.items.find(function (i) {
+          return i.id === o.product_id;
+        });
+        var itemName = it ? it.name : o.product_id || "";
+        var itemCode = it ? it.code || it.id : "";
+        var statusColor = o.status === "inprogress" ? "#f59e0b" : "#6366f1";
+        var statusLabel = o.status === "inprogress" ? "قيد التصنيع" : "معلق";
+        return (
+          '<div class="po-card fr-po-card po-card-h" data-po-id="' +
+          esc(o.id) +
+          '" onclick="selectFactoryReturnPO(\'' +
+          esc(o.id) +
+          "')\">" +
+          '<div class="po-card-h-bar" style="background:' +
+          statusColor +
+          '"></div>' +
+          '<div class="po-card-h-head">' +
+          '<span class="po-card-h-id" style="color:#f97316">' +
+          esc(o.id) +
+          "</span>" +
+          '<span class="po-card-h-badge" style="background:' +
+          statusColor +
+          "22;color:" +
+          statusColor +
+          '">' +
+          statusLabel +
+          "</span>" +
+          "</div>" +
+          '<div class="po-card-h-name">' +
+          esc(itemName) +
+          "</div>" +
+          '<div class="po-card-h-meta">' +
+          '<span class="po-card-h-code">' +
+          esc(itemCode) +
+          "</span>" +
+          (o.patron_number
+            ? '<span class="po-card-h-patron">باترون <b>' +
+              esc(o.patron_number) +
+              "</b></span>"
+            : "") +
+          "</div></div>"
+        );
+      })
+      .join("");
+
+    var whOpts = (APP.data.warehouses || [])
+      .filter(function (w) {
+        // إخفاء مخازن المنتج التام من شاشة المرتجع من المصنع
+        return w.type !== "تامة" && w.code !== "FG";
+      })
+      .map(function (w) {
+        return (
+          '<option value="' +
+          esc(w.id) +
+          '">' +
+          esc(w.name) +
+          (w.code ? " (" + esc(w.code) + ")" : "") +
+          "</option>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div class="page-header"><div><h1 style="display:flex;align-items:center;gap:10px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;background:#FFF7ED;border-radius:10px;padding:8px;flex-shrink:0">' +
+      '<i class="ti ti-arrow-back-up" style="font-size:22px;color:#C2410C" aria-hidden="true"></i></span>' +
+      "<span>مرتجع من المصنع</span></h1>" +
+      "<p>إعادة خامات أو مواد مرتجعة من المصنع إلى المخزن</p></div>" +
+      '<div style="display:flex;align-items:center;gap:8px;background:rgba(249,115,22,.1);border:1.5px solid #f97316;border-radius:10px;padding:8px 14px">' +
+      '<i class="ti ti-alert-triangle" style="font-size:18px;color:#f97316"></i>' +
+      '<span style="font-size:12px;font-weight:700;color:#f97316">يزيد الرصيد في المخزن المستهدف</span>' +
+      "</div></div>" +
+      // ── الشبكة الرئيسية: عمودان ──────────────────────────────────────
+      '<div style="display:flex;flex-direction:column;gap:20px">' +
+      // ── صف أوامر الإنتاج (أفقي) ──────────────────────────────────
+      "<div>" +
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:12px">① اختر أمر الإنتاج</div>' +
+      '<input type="hidden" id="fr-po">' +
+      (openPOs.length
+        ? '<div class="po-cards-row" id="fr-po-cards-wrap">' +
+          poCards +
+          "</div>"
+        : '<div style="text-align:center;padding:40px 20px;background:var(--surface2);border-radius:12px;color:var(--text3)">' +
+          "" +
+          '<div style="font-weight:600">لا توجد أوامر إنتاج مفتوحة</div></div>') +
+      "</div>" +
+      // ── النموذج (كامل العرض) ────────────────────────────────────
+      "<div>" +
+      // المخزن + رقم المرجع — جنب بعض
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">' +
+      // المخزن
+      '<div style="display:flex;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:10px 14px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#f97316;border-radius:8px;flex-shrink:0">' +
+      '<i class="ti ti-building-warehouse" style="font-size:14px;color:#fff"></i>' +
+      "</span>" +
+      '<div style="flex:1;min-width:0">' +
+      '<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">② مخزن الإرجاع</div>' +
+      '<select class="input" id="fr-wh" style="width:100%;padding:5px 8px;font-size:12px;font-weight:600;border-radius:7px"><option value="">— اختر المخزن —</option>' +
+      whOpts +
+      "</select>" +
+      "</div></div>" +
+      // رقم المرجع
+      '<div style="display:flex;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:10px 14px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#7c3aed;border-radius:8px;flex-shrink:0">' +
+      '<i class="ti ti-hash" style="font-size:14px;color:#fff"></i>' +
+      "</span>" +
+      '<div style="flex:1;min-width:0">' +
+      '<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">③ رقم المرجع <span style="font-weight:500;font-size:9px">(اختياري)</span></div>' +
+      '<input class="input" type="text" id="fr-ref" placeholder="REF-001 ..." style="width:100%;padding:5px 8px;font-size:12px;font-weight:600;border-radius:7px;font-family:var(--font-mono,monospace)">' +
+      "</div></div></div>" +
+      // ④ جدول الأصناف
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:12px">④ الأصناف المرتجعة</div>' +
+      '<div style="background:var(--surface2);border-radius:14px;padding:20px;border:1px solid var(--border)">' +
+      '<div style="margin-bottom:14px;border-radius:10px;border:1px solid var(--border);overflow:hidden">' +
+      '<table style="width:100%;border-collapse:collapse;table-layout:fixed" id="fr-items-table">' +
+      "<colgroup>" +
+      '<col style="width:10%">' +
+      '<col style="width:34%">' +
+      '<col style="width:30%">' +
+      '<col style="width:16%">' +
+      '<col style="width:10%">' +
+      "</colgroup>" +
+      '<thead><tr style="background:var(--surface3);border-bottom:2px solid var(--border)">' +
+      '<th style="text-align:center;padding:9px 6px;font-size:11px;font-weight:700;color:var(--text3)">#</th>' +
+      '<th style="text-align:right;padding:9px 12px;font-size:11px;font-weight:700;color:var(--text3)">الصنف</th>' +
+      '<th style="text-align:right;padding:9px 12px;font-size:11px;font-weight:700;color:var(--text3)">اللون</th>' +
+      '<th style="text-align:center;padding:9px 10px;font-size:11px;font-weight:700;color:var(--text3)">الكمية</th>' +
+      "" +
+      "</tr></thead>" +
+      '<tbody id="fr-rows"></tbody>' +
+      "</table></div>" +
+      // زر إضافة صف
+      '<div style="border-top:1.5px dashed var(--border);padding:5px 10px">' +
+      '<button type="button" onclick="frAddRow()" style="background:none;border:none;cursor:pointer;display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:#f97316;padding:2px 4px;border-radius:5px;font-family:var(--font-main);transition:opacity .15s;opacity:.8" ' +
+      "onmouseover=\"this.style.opacity='1'\" onmouseout=\"this.style.opacity='.8'\">" +
+      '<i class="ti ti-plus" style="font-size:13px" aria-hidden="true"></i> إضافة صنف' +
+      "</button></div>" +
+      // ملاحظات + رفع صورة
+      '<div style="display:grid;grid-template-columns:1fr 160px;gap:12px;margin-bottom:16px;align-items:start">' +
+      "<div>" +
+      '<label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px">سبب الإرجاع / ملاحظات</label>' +
+      '<textarea class="input" id="fr-notes" rows="3" placeholder="سبب إرجاع المواد من المصنع..." style="width:100%;resize:none;font-family:var(--font-main);height:80px"></textarea>' +
+      "</div>" +
+      // رفع صورة
+      "<div>" +
+      '<label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px"><i class="ti ti-photo" style="font-size:12px;margin-left:3px"></i>صورة <span style="font-size:10px;font-weight:500;color:var(--text3)">(Drive)</span></label>' +
+      '<input type="file" id="fr-img-input" accept="image/*" style="display:none">' +
+      '<div id="fr-img-zone" onclick="document.getElementById(\'fr-img-input\').click()" ' +
+      'style="border:2px dashed var(--border);border-radius:10px;height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;transition:all .15s;background:var(--surface3)" ' +
+      "onmouseover=\"this.style.borderColor='#f97316';this.style.background='rgba(249,115,22,.04)'\" " +
+      "onmouseout=\"this.style.borderColor='var(--border)';this.style.background='var(--surface3)'\">" +
+      '<i class="ti ti-cloud-upload" style="font-size:20px;color:var(--text3)"></i>' +
+      '<span id="fr-img-label" style="font-size:11px;color:var(--text3)">اضغط للإرفاق</span>' +
+      "</div>" +
+      '<div id="fr-img-preview" style="display:none;position:relative">' +
+      '<img id="fr-img-thumb" style="width:100%;height:80px;object-fit:cover;border-radius:10px;border:1px solid var(--border);display:block">' +
+      '<button type="button" onclick="frClearImage()" style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,.6);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0">' +
+      '<i class="ti ti-x" style="font-size:11px;color:#fff"></i>' +
+      "</button>" +
+      '<div id="fr-img-upload-status" style="margin-top:4px;font-size:10px;color:var(--text3);text-align:center"></div>' +
+      "</div></div></div>" +
+      // ملخص + زر الإرجاع
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:rgba(249,115,22,.06);border-radius:10px;border:1.5px solid rgba(249,115,22,.2);margin-bottom:14px" id="fr-summary">' +
+      '<span style="font-size:13px;color:var(--text2)">إجمالي الأصناف: <b id="fr-total-items" style="color:#f97316">0</b></span>' +
+      '<span style="font-size:13px;color:var(--text2)">إجمالي الكميات: <b id="fr-total-qty" style="color:#f97316">0</b></span>' +
+      "</div>" +
+      '<button class="btn" id="btn-fr" style="width:100%;padding:14px;font-size:15px;font-weight:700;border-radius:10px;display:flex;align-items:center;justify-content:center;gap:8px;background:#f97316;color:#fff;border:none;cursor:pointer">' +
+      '<i class="ti ti-arrow-back-up" style="font-size:18px"></i> تسجيل المرتجع من المصنع' +
+      "</button></div></div>" +
+      "</div>"
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // استلام منتج تام — نسخة متعددة الأصناف (مثل renderDispatch)
+  // ══════════════════════════════════════════════════════════════════════
+  function renderFgReceive() {
+    var d = APP.data;
+
+    // أوامر الإنتاج قيد التصنيع
+    var activePOs = (d.productionOrders || []).filter(function (o) {
+      return o.status === "inprogress";
+    });
+
+    // مخازن المنتجات التامة
+    var fgWarehouses = (d.warehouses || []).filter(function (w) {
+      return String(w.type || "")
+        .trim()
+        .startsWith("تام");
+    });
+    var whOpts = fgWarehouses
+      .map(function (w) {
+        return (
+          '<option value="' + esc(w.name) + '">' + esc(w.name) + "</option>"
+        );
+      })
+      .join("");
+    if (!whOpts)
+      whOpts = '<option value="المنتجات التامة">المنتجات التامة</option>';
+
+    // بطاقات أوامر الإنتاج النشطة
+    var poCards = activePOs
+      .map(function (o) {
+        var it = d.items.find(function (i) {
+          return i.id === o.product_id;
+        });
+        var itemName = it ? it.name : o.product_id || "";
+        var itemCode = it ? it.code || it.id : "";
+        return (
+          '<div class="fg-po-card po-card-h" data-po-id="' +
+          esc(o.id) +
+          '" onclick="selectFgPO(\'' +
+          esc(o.id) +
+          "')\">" +
+          '<div class="po-card-h-bar" style="background:#22c55e"></div>' +
+          '<div class="po-card-h-head">' +
+          '<span class="po-card-h-id" style="color:#22c55e">' +
+          esc(o.id) +
+          "</span>" +
+          '<span class="po-card-h-badge" style="background:#22c55e22;color:#22c55e">قيد التصنيع</span>' +
+          "</div>" +
+          '<div class="po-card-h-name">' +
+          esc(itemName) +
+          "</div>" +
+          '<div class="po-card-h-meta">' +
+          '<span class="po-card-h-code">' +
+          esc(itemCode) +
+          "</span>" +
+          (o.patron_number
+            ? '<span class="po-card-h-patron">باترون <b>' +
+              esc(o.patron_number) +
+              "</b></span>"
+            : "") +
+          "</div></div>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div class="page-header"><div><h1 style="display:flex;align-items:center;gap:10px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;background:#ECFDF5;border-radius:10px;padding:8px;flex-shrink:0">' +
+      '<i class="ti ti-package-import" style="font-size:22px;color:#047857" aria-hidden="true"></i></span>' +
+      "<span>استلام منتج تام</span></h1>" +
+      "<p>استلام المنتجات التامة وتسجيل الكميات</p></div></div>" +
+      // ── الشبكة الرئيسية ───────────────────────────────────────────────
+      '<div style="display:flex;flex-direction:column;gap:20px">' +
+      // ── صف أوامر الإنتاج قيد التصنيع (أفقي) ────────────────────────
+      "<div>" +
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:12px">① أوامر قيد التصنيع</div>' +
+      '<input type="hidden" id="fg-po-ref">' +
+      (activePOs.length
+        ? '<div class="po-cards-row">' + poCards + "</div>"
+        : '<div style="text-align:center;padding:32px 20px;background:var(--surface2);border-radius:12px;color:var(--text3);font-size:13px">' +
+          '<i class="ti ti-clipboard-list" style="font-size:28px;margin-bottom:6px;display:block;color:var(--text3)"></i>لا توجد أوامر قيد التصنيع حالياً</div>') +
+      "</div>" +
+      // ── النموذج (كامل العرض) ────────────────────────────────────
+      "<div>" +
+      // المستودع + رقم مرجع — جنب بعض
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">' +
+      // المستودع
+      '<div style="display:flex;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:10px 14px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#047857;border-radius:8px;flex-shrink:0">' +
+      '<i class="ti ti-building-warehouse" style="font-size:14px;color:#fff"></i>' +
+      "</span>" +
+      '<div style="flex:1;min-width:0">' +
+      '<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">② مستودع الاستلام</div>' +
+      '<select class="input" id="fg-to" style="width:100%;padding:5px 8px;font-size:12px;font-weight:600;border-radius:7px">' +
+      whOpts +
+      "</select></div></div>" +
+      // رقم المرجع
+      '<div style="display:flex;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:10px 14px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#7c3aed;border-radius:8px;flex-shrink:0">' +
+      '<i class="ti ti-hash" style="font-size:14px;color:#fff"></i>' +
+      "</span>" +
+      '<div style="flex:1;min-width:0">' +
+      '<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">③ رقم المرجع <span style="font-weight:500;font-size:9px">(اختياري)</span></div>' +
+      '<input class="input" type="text" id="fg-ref" placeholder="REF-001 ..." style="width:100%;padding:5px 8px;font-size:12px;font-weight:600;border-radius:7px;font-family:var(--font-mono,monospace)">' +
+      "</div></div></div>" +
+      // ④ جدول الأصناف
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:12px">④ الأصناف المستلمة</div>' +
+      '<div style="background:var(--surface2);border-radius:14px;padding:20px;border:1px solid var(--border)">' +
+      '<div style="margin-bottom:14px;border-radius:10px;border:1px solid var(--border);overflow:hidden">' +
+      '<table style="width:100%;border-collapse:collapse;table-layout:fixed" id="fg-items-table">' +
+      "<colgroup>" +
+      '<col style="width:10%">' +
+      '<col style="width:34%">' +
+      '<col style="width:30%">' +
+      '<col style="width:16%">' +
+      '<col style="width:10%">' +
+      "</colgroup>" +
+      '<thead><tr style="background:var(--surface3);border-bottom:2px solid var(--border)">' +
+      '<th style="text-align:center;padding:9px 6px;font-size:11px;font-weight:700;color:var(--text3)">#</th>' +
+      '<th style="text-align:right;padding:9px 12px;font-size:11px;font-weight:700;color:var(--text3)">المنتج التام</th>' +
+      '<th style="text-align:right;padding:9px 12px;font-size:11px;font-weight:700;color:var(--text3)">اللون</th>' +
+      '<th style="text-align:center;padding:9px 10px;font-size:11px;font-weight:700;color:var(--text3)">الكمية</th>' +
+      "" +
+      "</tr></thead>" +
+      '<tbody id="fg-rows"></tbody>' +
+      "</table></div>" +
+      // زر إضافة صف
+      '<div style="border-top:1.5px dashed var(--border);padding:5px 10px">' +
+      '<button type="button" onclick="fgAddRow()" style="background:none;border:none;cursor:pointer;display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:#047857;padding:2px 4px;border-radius:5px;font-family:var(--font-main);transition:opacity .15s;opacity:.8" ' +
+      "onmouseover=\"this.style.opacity='1'\" onmouseout=\"this.style.opacity='.8'\">" +
+      '<i class="ti ti-plus" style="font-size:13px" aria-hidden="true"></i> إضافة صنف' +
+      "</button></div>" +
+      // ملاحظات + رفع صورة
+      '<div style="display:grid;grid-template-columns:1fr 160px;gap:12px;margin-bottom:16px;align-items:start">' +
+      "<div>" +
+      '<label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px">ملاحظات</label>' +
+      '<textarea class="input" id="fg-notes" rows="3" placeholder="ملاحظات الاستلام..." style="width:100%;resize:none;font-family:var(--font-main);height:80px"></textarea>' +
+      "</div>" +
+      "<div>" +
+      '<label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px"><i class="ti ti-photo" style="font-size:12px;margin-left:3px"></i>صورة <span style="font-size:10px;font-weight:500;color:var(--text3)">(Drive)</span></label>' +
+      '<input type="file" id="fg-img-input" accept="image/*" style="display:none">' +
+      '<div id="fg-img-zone" onclick="document.getElementById(\'fg-img-input\').click()" ' +
+      'style="border:2px dashed var(--border);border-radius:10px;height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;transition:all .15s;background:var(--surface3)" ' +
+      "onmouseover=\"this.style.borderColor='#047857';this.style.background='rgba(4,120,87,.04)'\" " +
+      "onmouseout=\"this.style.borderColor='var(--border)';this.style.background='var(--surface3)'\">" +
+      '<i class="ti ti-cloud-upload" style="font-size:20px;color:var(--text3)"></i>' +
+      '<span id="fg-img-label" style="font-size:11px;color:var(--text3)">اضغط للإرفاق</span>' +
+      "</div>" +
+      '<div id="fg-img-preview" style="display:none;position:relative">' +
+      '<img id="fg-img-thumb" style="width:100%;height:80px;object-fit:cover;border-radius:10px;border:1px solid var(--border);display:block">' +
+      '<button type="button" onclick="fgClearImage()" style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,.6);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0">' +
+      '<i class="ti ti-x" style="font-size:11px;color:#fff"></i>' +
+      "</button>" +
+      '<div id="fg-img-upload-status" style="margin-top:4px;font-size:10px;color:var(--text3);text-align:center"></div>' +
+      "</div></div></div>" +
+      // ملخص + زر الاستلام
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:rgba(4,120,87,.06);border-radius:10px;border:1.5px solid rgba(4,120,87,.18);margin-bottom:14px" id="fg-summary">' +
+      '<span style="font-size:13px;color:var(--text2)">إجمالي الأصناف: <b id="fg-total-items" style="color:#047857">0</b></span>' +
+      '<span style="font-size:13px;color:var(--text2)">إجمالي الكميات: <b id="fg-total-qty" style="color:#047857">0</b></span>' +
+      "</div>" +
+      '<button class="btn btn-success" id="btn-fg" style="width:100%;padding:14px;font-size:15px;font-weight:700;border-radius:10px;display:flex;align-items:center;justify-content:center;gap:8px">' +
+      '<i class="ti ti-package-import" style="font-size:18px"></i> استلام منتج تام' +
+      "</button></div></div>" +
+      "</div>"
+    );
+  }
+  // ============================================================
+  // بيان القص — Cutting Statement Page (v2)
+  // ============================================================
+  function renderCuttingStatement() {
+    var d = APP.data;
+
+    var openPOs = (d.productionOrders || []).filter(function (o) {
+      return o.status === "pending" || o.status === "inprogress";
+    });
+
+    var poCards = openPOs
+      .map(function (o) {
+        var it = d.items.find(function (i) {
+          return i.id === o.product_id;
+        });
+        var itemName = it ? it.name : o.product_id || "";
+        var itemCode = it ? it.code || it.id : "";
+        var statusColor = o.status === "inprogress" ? "#f59e0b" : "#6366f1";
+        var statusLabel = o.status === "inprogress" ? "قيد التصنيع" : "معلق";
+        return (
+          '<div class="po-card po-card-h" data-po-id="' +
+          esc(o.id) +
+          '" onclick="selectCuttingPO(&apos;' +
+          esc(o.id) +
+          '&apos;)"">' +
+          '<div class="po-card-h-bar" style="background:' +
+          statusColor +
+          '"></div>' +
+          '<div class="po-card-h-head">' +
+          '<span class="po-card-h-id" style="color:var(--accent)">' +
+          esc(o.id) +
+          "</span>" +
+          '<span class="po-card-h-badge" style="background:' +
+          statusColor +
+          "22;color:" +
+          statusColor +
+          '">' +
+          statusLabel +
+          "</span>" +
+          "</div>" +
+          '<div class="po-card-h-name">' +
+          esc(itemName) +
+          "</div>" +
+          '<div class="po-card-h-meta">' +
+          '<span class="po-card-h-code">' +
+          esc(itemCode) +
+          "</span>" +
+          (o.patron_number
+            ? '<span class="po-card-h-patron">باترون <b>' +
+              esc(o.patron_number) +
+              "</b></span>"
+            : "") +
+          "</div></div>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div class="page-header"><div><h1 style="display:flex;align-items:center;gap:10px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#FFE4E8,#FFF1F2);border-radius:10px;padding:8px;flex-shrink:0;box-shadow:0 4px 12px -4px rgba(159,18,57,.35)">' +
+      '<i class="ti ti-cut" style="font-size:22px;color:#9F1239" aria-hidden="true"></i></span>' +
+      "<span>بيان القص</span></h1><p>تسجيل بيانات القص بالألوان والمتراج الفعلي</p></div>" +
+      '<button class="btn btn-ghost" id="cs-print-btn" style="gap:6px"><i class="ti ti-printer" style="font-size:16px" aria-hidden="true"></i> طباعة</button>' +
+      '<span id="cs-export-btn-wrap"></span>' +
+      "</div>" +
+      '<div style="display:flex;flex-direction:column;gap:20px">' +
+      // ── ① أوامر الإنتاج ──────────────────────────────────
+      "<div>" +
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:12px">① اختر أمر الإنتاج</div>' +
+      '<input type="hidden" id="cs-po">' +
+      (openPOs.length
+        ? '<div class="po-cards-row" id="cs-po-cards-wrap">' +
+          poCards +
+          "</div>"
+        : '<div style="text-align:center;padding:40px 20px;background:var(--surface2);border-radius:12px;color:var(--text3)"><div style="font-weight:600">لا توجد أوامر إنتاج مفتوحة</div></div>') +
+      "</div>" +
+      // ── المحتوى ────────────────────────────────────────────
+      '<div id="cs-content" style="display:none;animation:csContentIn .35s ease both">' +
+      // ② معلومات الأمر
+      '<div style="background:var(--surface2);border-radius:14px;padding:16px 20px;border:1px solid var(--border)">' +
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:12px">② معلومات الأمر</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:14px">' +
+      '<div style="display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#EEF2FF;border-radius:7px;flex-shrink:0"><i class="ti ti-shirt" style="font-size:13px;color:#4338CA"></i></span>' +
+      '<div><div style="font-size:10px;color:var(--text3);margin-bottom:2px">المنتج</div><div id="cs-product-name" style="font-weight:700;font-size:13px;color:var(--text)">—</div></div></div>' +
+      '<div style="display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#ECFEFF;border-radius:7px;flex-shrink:0"><i class="ti ti-barcode" style="font-size:13px;color:#0E7490"></i></span>' +
+      '<div><div style="font-size:10px;color:var(--text3);margin-bottom:2px">كود الصنف</div><div id="cs-barcode" style="font-weight:700;font-size:13px;color:var(--text);font-family:var(--font-mono,monospace)">—</div></div></div>' +
+      '<div style="display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#F5F3FF;border-radius:7px;flex-shrink:0"><i class="ti ti-template" style="font-size:13px;color:#6D28D9"></i></span>' +
+      '<div><div style="font-size:10px;color:var(--text3);margin-bottom:2px">رقم الباترون</div><div id="cs-patron" style="font-weight:700;font-size:13px;color:var(--text)">—</div></div></div>' +
+      '<div style="display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#FFF7ED;border-radius:7px;flex-shrink:0"><i class="ti ti-calendar-event" style="font-size:13px;color:#C2410C"></i></span>' +
+      '<div><div style="font-size:10px;color:var(--text3);margin-bottom:2px">تاريخ الأمر</div><div id="cs-order-date" style="font-weight:700;font-size:13px;color:var(--text)">—</div></div></div>' +
+      "</div>" +
+      // ③ جدول القص (لون × مقاس)
+      '<div style="background:var(--surface2);border-radius:14px;padding:20px;border:1px solid var(--border);margin-top:14px">' +
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:14px">③ جدول القص بالألوان والمقاسات</div>' +
+      '<div id="cs-matrix-wrap">' +
+      '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:13px">' +
+      '<i class="ti ti-info-circle" style="font-size:24px;display:block;margin-bottom:8px;opacity:.5"></i>' +
+      "اختر أمر الإنتاج لتحميل جدول القص</div>" +
+      "</div>" +
+      '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:14px">' +
+      '<div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;background:#EFF6FF;border-radius:9px;flex-shrink:0"><i class="ti ti-scissors" style="font-size:17px;color:#2563EB"></i></span>' +
+      '<div><div style="font-size:10px;color:var(--text3);margin-bottom:2px">إجمالي القطع</div><div id="cs-sum-cut" style="font-size:20px;font-weight:800;color:var(--accent);line-height:1.1">0</div></div></div>' +
+      '<div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid rgba(5,150,105,.25);border-radius:10px;padding:12px 14px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;background:#ECFDF5;border-radius:9px;flex-shrink:0"><i class="ti ti-checkbox" style="font-size:17px;color:#059669"></i></span>' +
+      '<div><div style="font-size:10px;color:var(--text3);margin-bottom:2px">الكمية المطلوبة</div><div id="cs-sum-target" style="font-size:20px;font-weight:800;color:var(--success);line-height:1.1">—</div></div></div>' +
+      "</div></div>" +
+      // ④ المتراج الفعلي
+      '<div style="background:var(--surface2);border-radius:14px;padding:20px;border:1px solid var(--border);margin-top:14px">' +
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:14px">④ المتراج الفعلي</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">' +
+      '<div style="display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#F0FDF4;border-radius:7px;flex-shrink:0"><i class="ti ti-leaf" style="font-size:13px;color:#16A34A"></i></span>' +
+      '<div style="flex:1;min-width:0"><div style="font-size:10px;font-weight:700;color:var(--text3);margin-bottom:3px">متراج جلد (م)</div>' +
+      '<input class="input cs-meter-input" id="cs-m-leather" type="number" min="0" step="0.01" value="0" style="width:100%;padding:4px 8px;font-size:12px;font-weight:600;border-radius:6px"></div></div>' +
+      '<div style="display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#EFF6FF;border-radius:7px;flex-shrink:0"><i class="ti ti-layers-subtract" style="font-size:13px;color:#2563EB"></i></span>' +
+      '<div style="flex:1;min-width:0"><div style="font-size:10px;font-weight:700;color:var(--text3);margin-bottom:3px">متراج بطانة (م)</div>' +
+      '<input class="input cs-meter-input" id="cs-m-lining" type="number" min="0" step="0.01" value="0" style="width:100%;padding:4px 8px;font-size:12px;font-weight:600;border-radius:6px"></div></div>' +
+      '<div style="display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#F5F3FF;border-radius:7px;flex-shrink:0"><i class="ti ti-stack-2" style="font-size:13px;color:#6D28D9"></i></span>' +
+      '<div style="flex:1;min-width:0"><div style="font-size:10px;font-weight:700;color:var(--text3);margin-bottom:3px">متراج تطعيم (م)</div>' +
+      '<input class="input cs-meter-input" id="cs-m-interlining" type="number" min="0" step="0.01" value="0" style="width:100%;padding:4px 8px;font-size:12px;font-weight:600;border-radius:6px"></div></div>' +
+      '<div style="display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
+      '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#FFF7ED;border-radius:7px;flex-shrink:0"><i class="ti ti-arrow-autofit-width" style="font-size:13px;color:#C2410C"></i></span>' +
+      '<div style="flex:1;min-width:0"><div style="font-size:10px;font-weight:700;color:var(--text3);margin-bottom:3px">متراج كم (م)</div>' +
+      '<input class="input cs-meter-input" id="cs-m-sleeve" type="number" min="0" step="0.01" value="0" style="width:100%;padding:4px 8px;font-size:12px;font-weight:600;border-radius:6px"></div></div>' +
+      "</div>" +
+      '<div style="margin-top:12px;padding:11px 14px;background:rgba(37,99,235,.06);border-radius:9px;border:1.5px solid rgba(37,99,235,.15);display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--text2)">' +
+      '<i class="ti ti-sum" aria-hidden="true"></i> إجمالي المتراج: <b id="cs-meters-total" style="color:var(--accent);font-size:15px">0.00 م</b>' +
+      "</div></div>" +
+      // ⑤ ملاحظات وحفظ
+      '<div style="background:var(--surface2);border-radius:14px;padding:20px;border:1px solid var(--border);margin-top:14px">' +
+      '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:14px">⑤ ملاحظات وحفظ</div>' +
+      '<div style="margin-bottom:14px">' +
+      '<label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px"><i class="ti ti-note" style="font-size:12px;margin-left:3px"></i> ملاحظات القص</label>' +
+      '<textarea class="input" id="cs-notes" rows="3" placeholder="أي ملاحظات إضافية على القص..." style="width:100%;resize:none;font-family:var(--font-main);height:80px"></textarea>' +
+      "</div>" +
+      '<button class="btn btn-primary" id="cs-save-btn" style="width:100%;padding:14px;font-size:15px;font-weight:700;border-radius:10px;display:flex;align-items:center;justify-content:center;gap:8px">' +
+      '<i class="ti ti-device-floppy" style="font-size:18px"></i> حفظ بيان القص' +
+      "</button></div>" +
+      "</div>" + // end cs-content
+      "</div>" // end flex col
+    );
+  }
+  function renderProductionReports() {
+    var d = APP.data;
+    var orders = d.productionOrders || [];
+    var txAll = d.transactions || [];
+    var items = d.items || [];
+
+    // ══════════════════════════════════════════════
+    // §1  إحصائيات عامة
+    // ══════════════════════════════════════════════
+    var total = orders.length;
+    var done = orders.filter(function (o) {
+      return o.status === "done";
+    }).length;
+    var inprog = orders.filter(function (o) {
+      return o.status === "inprogress";
+    }).length;
+    var pending = orders.filter(function (o) {
+      return o.status === "pending";
+    }).length;
+    var cancelled = orders.filter(function (o) {
+      return o.status === "cancelled";
+    }).length;
+
+    // ══════════════════════════════════════════════
+    // §2  فهرس الحركات حسب ref (= poId)
+    // ══════════════════════════════════════════════
+    var txByPO = {}; // { poId: { dispatch:[], return:[], fgIn:[] } }
+    txAll.forEach(function (t) {
+      var ref = String(t.ref || "").trim();
+      if (!ref) return;
+      if (!txByPO[ref]) txByPO[ref] = { dispatch: [], ret: [], fgIn: [] };
+      if (t.type === "DISPATCH") txByPO[ref].dispatch.push(t);
+      if (t.type === "FACTORY_RETURN") txByPO[ref].ret.push(t);
+      if (t.type === "FG_IN") txByPO[ref].fgIn.push(t);
+    });
+
+    // ══════════════════════════════════════════════
+    // §3  بناء تقرير تفصيلي لكل أمر إنتاج
+    // ══════════════════════════════════════════════
+    var poReports = orders
+      .filter(function (o) {
+        return o.status !== "cancelled";
+      })
+      .map(function (po) {
+        var poTx = txByPO[po.id] || { dispatch: [], ret: [], fgIn: [] };
+
+        // ── الخامات المصروفة (DISPATCH) ──
+        var dispatchedItems = {};
+        poTx.dispatch.forEach(function (t) {
+          var key = String(t.item_id) + "||" + String(t.color || "");
+          if (!dispatchedItems[key]) {
+            dispatchedItems[key] = {
+              item_id: t.item_id,
+              color: t.color || "",
+              qty: 0,
+              name: "",
+            };
+            var it = items.find(function (x) {
+              return String(x.id) === String(t.item_id);
+            });
+            if (it) dispatchedItems[key].name = it.name;
+          }
+          dispatchedItems[key].qty += Number(t.quantity || 0);
+        });
+
+        // ── المرتجعات (FACTORY_RETURN) ──
+        var returnedItems = {};
+        poTx.ret.forEach(function (t) {
+          var key = String(t.item_id) + "||" + String(t.color || "");
+          if (!returnedItems[key]) returnedItems[key] = 0;
+          returnedItems[key] += Number(t.quantity || 0);
+        });
+
+        // ── الاستهلاك الفعلي = صرف - مرتجع ──
+        var netConsumption = [];
+        Object.keys(dispatchedItems).forEach(function (key) {
+          var d = dispatchedItems[key];
+          var ret = returnedItems[key] || 0;
+          var net = d.qty - ret;
+          netConsumption.push({
+            item_id: d.item_id,
+            name: d.name,
+            color: d.color,
+            dispatched: d.qty,
+            returned: ret,
+            net: net,
+          });
+        });
+
+        // ── بيان القص من notes ──
+        var cuttingData = null;
+        try {
+          var notesStr = String(po.notes || "").trim();
+          if (notesStr.startsWith("{")) cuttingData = JSON.parse(notesStr);
+        } catch (e) {}
+
+        var fabricUsed = Number(po.fabric_meters || 0);
+        var liningUsed = Number(po.lining_meters || 0);
+        var plannedQty = Number(po.quantity || 0);
+
+        // من بيان القص
+        var actualFabric = 0;
+        var totalPieces = 0;
+        var wastePercent = 0;
+        if (cuttingData) {
+          actualFabric = Number(
+            cuttingData.fabric_meters || cuttingData.total_meters || 0,
+          );
+          totalPieces = Number(cuttingData.total_pieces || plannedQty);
+          if (actualFabric > 0 && totalPieces > 0) {
+            // الهالك = (قماش مُنفَّذ - قماش مُنتج بالنسبة للقطع) / الكل
+            var theoreticalFabric = (actualFabric / totalPieces) * totalPieces;
+            // نسبة الهالك = (المستخدم - المتوقع أن ينتج) / المستخدم
+            // بما أن النسبة تُحسب من بيانات القص ذاتها
+            wastePercent = cuttingData.waste_percent
+              ? Number(cuttingData.waste_percent)
+              : actualFabric > 0 && po.fabric_meters > 0
+                ? Math.max(
+                    0,
+                    ((actualFabric - po.fabric_meters) / actualFabric) * 100,
+                  )
+                : 0;
+          }
+        }
+
+        // ── المنتج التام المستلم ──
+        var fgQty = poTx.fgIn.reduce(function (a, t) {
+          return a + Number(t.quantity || 0);
+        }, 0);
+
+        // ── تكلفة الوحدة ──
+        // مجموع تكلفة الخامات المستهلكة فعلياً ÷ الكمية المستلمة
+        var rawMaterialCost = 0;
+        netConsumption.forEach(function (nc) {
+          var it = items.find(function (x) {
+            return String(x.id) === String(nc.item_id);
+          });
+          if (it) rawMaterialCost += nc.net * Number(it.cost_price || 0);
+        });
+        var unitCost = fgQty > 0 ? rawMaterialCost / fgQty : 0;
+
+        return {
+          po: po,
+          netConsumption: netConsumption,
+          cuttingData: cuttingData,
+          fabricUsed: fabricUsed,
+          actualFabric: actualFabric,
+          liningUsed: liningUsed,
+          wastePercent: wastePercent,
+          plannedQty: plannedQty,
+          fgQty: fgQty,
+          rawMaterialCost: rawMaterialCost,
+          unitCost: unitCost,
+          dispatchCount: poTx.dispatch.length,
+          retCount: poTx.ret.length,
+        };
+      });
+
+    // ══════════════════════════════════════════════
+    // §4  ملخص إجمالي
+    // ══════════════════════════════════════════════
+    var totalFgQty = poReports.reduce(function (a, r) {
+      return a + r.fgQty;
+    }, 0);
+    var totalRawCost = poReports.reduce(function (a, r) {
+      return a + r.rawMaterialCost;
+    }, 0);
+    var avgWaste = poReports.filter(function (r) {
+      return r.wastePercent > 0;
+    });
+    var avgWastePct = avgWaste.length
+      ? avgWaste.reduce(function (a, r) {
+          return a + r.wastePercent;
+        }, 0) / avgWaste.length
+      : 0;
+
+    // ══════════════════════════════════════════════
+    // §5  HTML
+    // ══════════════════════════════════════════════
+
+    // جدول الأوامر التفصيلي
+    var poRows = poReports
+      .map(function (r, i) {
+        var po = r.po;
+        var productItem = items.find(function (x) {
+          return String(x.id) === String(po.product_id);
+        });
+        var productName = productItem ? productItem.name : po.product_id || "—";
+
+        var statusMeta = {
+          done: {
+            label: "مكتمل",
+            color: "var(--success)",
+            bg: "var(--success-soft)",
+          },
+          inprogress: {
+            label: "جاري",
+            color: "var(--warning)",
+            bg: "var(--warning-soft)",
+          },
+          pending: {
+            label: "معلق",
+            color: "var(--text3)",
+            bg: "var(--surface2)",
+          },
+        };
+        var sm = statusMeta[po.status] || statusMeta.pending;
+
+        var unitCostStr =
+          r.unitCost > 0
+            ? "ج " + r.unitCost.toFixed(0)
+            : '<span style="color:var(--text3)">—</span>';
+
+        var wasteBadge =
+          r.wastePercent > 0
+            ? '<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:' +
+              (r.wastePercent > 15
+                ? "var(--danger-soft);color:var(--danger)"
+                : r.wastePercent > 8
+                  ? "var(--warning-soft);color:var(--warning)"
+                  : "var(--success-soft);color:var(--success)") +
+              '">' +
+              NumberEngine.decimal(r.wastePercent, 1) +
+              "%</span>"
+            : '<span style="color:var(--text3);font-size:12px">—</span>';
+
+        var fgBadge =
+          r.fgQty > 0
+            ? '<b style="color:var(--success)">' + r.fgQty + "</b>"
+            : '<span style="color:var(--text3)">—</span>';
+
+        // صفوف الاستهلاك المطوية
+        var consumptionRows = r.netConsumption
+          .map(function (nc) {
+            var netStyle =
+              nc.net > 0 ? "color:var(--text1)" : "color:var(--danger)";
+            return (
+              '<tr style="background:var(--surface2);font-size:12px">' +
+              '<td style="padding:6px 12px 6px 24px;color:var(--text3)">↳</td>' +
+              '<td style="padding:6px 12px" colspan="2">' +
+              '<span style="font-size:11px;color:var(--text2)">' +
+              esc(nc.name || nc.item_id) +
+              "</span>" +
+              (nc.color
+                ? ' <span style="font-size:10px;color:var(--text3)">(' +
+                  esc(nc.color) +
+                  ")</span>"
+                : "") +
+              "</td>" +
+              '<td style="padding:6px 12px;text-align:center;font-size:12px">' +
+              '<span title="صرف"> ' +
+              nc.dispatched +
+              "</span>" +
+              (nc.returned > 0
+                ? ' <span title="مرتجع" style="color:var(--success)">↩ ' +
+                  nc.returned +
+                  "</span>"
+                : "") +
+              "</td>" +
+              '<td style="padding:6px 12px;text-align:center;font-weight:700;' +
+              netStyle +
+              '">' +
+              nc.net +
+              "</td>" +
+              '<td colspan="3"></td>' +
+              "</tr>"
+            );
+          })
+          .join("");
+
+        var toggleId = "po-det-" + i;
+
+        return (
+          '<tr style="border-bottom:1px solid var(--border);cursor:pointer" onclick="document.getElementById(\'' +
+          toggleId +
+          "').style.display=document.getElementById('" +
+          toggleId +
+          "').style.display==='none'?'contents':' none'\">" +
+          '<td style="padding:10px 14px;font-family:var(--font-mono);font-size:12px;color:var(--accent)">' +
+          esc(po.id) +
+          "</td>" +
+          '<td style="padding:10px 14px">' +
+          '<div style="font-weight:600;font-size:13px">' +
+          esc(productName) +
+          "</div>" +
+          (po.patron_number
+            ? '<div style="font-size:11px;color:var(--text3)">باترون: ' +
+              esc(po.patron_number) +
+              "</div>"
+            : "") +
+          "</td>" +
+          '<td style="padding:10px 14px;text-align:center">' +
+          '<span style="font-size:11px;font-weight:700;padding:2px 10px;border-radius:20px;background:' +
+          sm.bg +
+          ";color:" +
+          sm.color +
+          '">' +
+          sm.label +
+          "</span>" +
+          "</td>" +
+          '<td style="padding:10px 14px;text-align:center">' +
+          r.plannedQty +
+          "</td>" +
+          '<td style="padding:10px 14px;text-align:center">' +
+          fgBadge +
+          "</td>" +
+          '<td style="padding:10px 14px;text-align:center">' +
+          wasteBadge +
+          "</td>" +
+          '<td style="padding:10px 14px;text-align:center;font-weight:700;color:var(--warning)">' +
+          unitCostStr +
+          "</td>" +
+          '<td style="padding:10px 14px;text-align:center;font-size:11px;color:var(--text3)">' +
+          (r.dispatchCount ? "" + r.dispatchCount : "") +
+          (r.retCount ? " ↩" + r.retCount : "") +
+          "</td>" +
+          "</tr>" +
+          (r.netConsumption.length
+            ? '<tr id="' +
+              toggleId +
+              '" style="display:none"><td colspan="8" style="padding:0"><table style="width:100%;border-collapse:collapse">' +
+              consumptionRows +
+              "</table></td></tr>"
+            : "")
+        );
+      })
+      .join("");
+
+    return `
+    <div class="page-header">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:24px"></span>
+        <div>
+          <h1 style="font-size:22px;margin:0">تقارير الإنتاج</h1>
+          <p style="margin:2px 0 0;color:var(--text3);font-size:13px">تحليل شامل لدورة الإنتاج — من الخامات حتى تكلفة الوحدة</p>
+        </div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="renderPage('production_reports')"><span style="display:inline-flex;align-items:center;gap:5px"><i class="ti ti-refresh" style="font-size:15px" aria-hidden="true"></i> تحديث</span></button>
+    </div>
+
+    <!-- إحصائيات الأوامر -->
+    <div class="stat-grid" style="margin-bottom:20px">
+      ${statCard(iconBadge("ti-building-factory-2", "var(--accent-soft)", "var(--primary)"), "إجمالي الأوامر", total, "أمر", "var(--accent-soft)")}
+      ${statCard(iconBadge("ti-circle-check", "var(--success-soft)", "var(--success)"), "مكتملة", done, "أمر", "var(--success-soft)")}
+      ${statCard("▶️", "قيد التنفيذ", inprog, "أمر", "var(--warning-soft)")}
+      ${statCard("⏳", "معلقة", pending, "أمر", "var(--surface2)")}
+      ${statCard(iconBadge("ti-package", "var(--teal-soft)", "var(--teal)"), "إجمالي المنتج", totalFgQty, "قطعة", "var(--teal-soft,var(--accent-soft))")}
+    </div>
+
+    <!-- ملخص التكلفة والهالك -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:20px">
+
+      <div class="card" style="text-align:center;padding:20px">
+        <div style="font-size:13px;color:var(--text3);margin-bottom:6px"> إجمالي تكلفة الخامات</div>
+        <div style="font-size:28px;font-weight:800;color:var(--warning)">
+          ${formatMoney(totalRawCost, { decimals: 0 })}
+        </div>
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">لجميع أوامر الإنتاج</div>
+      </div>
+
+      <div class="card" style="text-align:center;padding:20px">
+        <div style="font-size:13px;color:var(--text3);margin-bottom:6px"> متوسط نسبة الهالك</div>
+        <div style="font-size:28px;font-weight:800;color:${avgWastePct > 15 ? "var(--danger)" : avgWastePct > 8 ? "var(--warning)" : "var(--success)"}">
+          ${NumberEngine.decimal(avgWastePct, 1)}%
+        </div>
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">
+          ${avgWastePct > 15 ? " نسبة عالية — راجع عملية القص" : avgWastePct > 8 ? "متوسط — يمكن تحسينه" : " نسبة جيدة"}
+        </div>
+      </div>
+
+      <div class="card" style="text-align:center;padding:20px">
+        <div style="font-size:13px;color:var(--text3);margin-bottom:6px"> متوسط تكلفة الوحدة</div>
+        <div style="font-size:28px;font-weight:800;color:var(--accent)">
+          ج ${totalFgQty > 0 ? (totalRawCost / totalFgQty).toFixed(0) : "—"}
+        </div>
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">تكلفة الخامات فقط / قطعة</div>
+      </div>
+
+    </div>
+
+    <!-- جدول تفصيل الأوامر -->
+    <div class="card">
+      <div style="font-weight:700;font-size:15px;margin-bottom:16px;display:flex;align-items:center;gap:8px">
+        <span></span> تفصيل أوامر الإنتاج
+        <span style="font-size:12px;font-weight:400;color:var(--text3)">— اضغط على أي صف لعرض تفاصيل الاستهلاك</span>
+      </div>
+
+      ${
+        poReports.length === 0
+          ? '<div class="empty-state"><p>لا توجد أوامر إنتاج</p></div>'
+          : `<div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead>
+              <tr style="background:var(--surface2);font-size:12px;color:var(--text3)">
+                <th style="padding:10px 14px;text-align:right;font-weight:600">رقم الأمر</th>
+                <th style="padding:10px 14px;text-align:right;font-weight:600">المنتج</th>
+                <th style="padding:10px 14px;text-align:center;font-weight:600">الحالة</th>
+                <th style="padding:10px 14px;text-align:center;font-weight:600">مخطط</th>
+                <th style="padding:10px 14px;text-align:center;font-weight:600">منتج فعلي</th>
+                <th style="padding:10px 14px;text-align:center;font-weight:600">هالك </th>
+                <th style="padding:10px 14px;text-align:center;font-weight:600">تكلفة/قطعة</th>
+                <th style="padding:10px 14px;text-align:center;font-weight:600">الحركات</th>
+              </tr>
+            </thead>
+            <tbody>${poRows}</tbody>
+          </table>
+        </div>`
+      }
+    </div>
+
+    <!-- مفتاح الهالك -->
+    <div style="margin-top:12px;padding:12px 16px;background:var(--surface2);border-radius:var(--radius);font-size:12px;color:var(--text3);display:flex;gap:20px;flex-wrap:wrap">
+      <span> <b style="color:var(--success)">أقل من 8%</b> — ممتاز</span>
+      <span> <b style="color:var(--warning)">8% – 15%</b> — مقبول</span>
+      <span> <b style="color:var(--danger)">أكثر من 15%</b> — يحتاج مراجعة</span>
+      <span style="margin-right:auto;color:var(--text3)"> تكلفة الوحدة = (خامات مستهلكة فعلياً) ÷ كمية المنتج التام المستلمة</span>
+    </div>
+  `;
+  }
+  function renderCatalog() {
+    var items = APP.data.items || [];
+    var groups = APP.data.groups || [];
+
+    // بناء قائمة المجموعات للفلتر — [GROUP-HIERARCHY P6] عرض هرمي موحّد
+    var groupOpts = hierGroupOptionsHtml(groups, { includeEmpty: false });
+
+    return (
+      '<div class="page-header">' +
+      "<div><h1 style='display:flex;align-items:center;gap:10px'>" +
+      iconBadge("ti-book", "var(--accent-soft)", "var(--primary)") +
+      "<span>دليل الأكواد</span></h1><p>مرجع شامل لجميع الأصناف مع المخزون الحالي</p></div>" +
+      '<div class="header-actions">' +
+      '<button class="btn btn-outline" id="cat-view-toggle" title="تبديل العرض">⊞ عرض كروت</button>' +
+      '<button class="btn btn-outline" id="cat-print-btn"> طباعة</button>' +
+      '<button class="btn btn-primary" id="cat-export-btn"> تصدير CSV</button>' +
+      "</div></div>" +
+      // شريط الإحصائيات السريعة
+      '<div id="cat-stats-bar" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap"></div>' +
+      // شريط البحث والفلاتر
+      '<div class="card" style="margin-bottom:16px">' +
+      '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">' +
+      '<div class="search-input-wrap" style="flex:1;min-width:200px">' +
+      '<span class="s-icon"></span>' +
+      '<input class="input" id="cat-search" placeholder="ابحث بالكود أو الاسم أو الوصف...">' +
+      "</div>" +
+      '<select class="input" id="cat-filter-group" style="width:auto;min-width:140px">' +
+      '<option value="">كل المجموعات</option>' +
+      groupOpts +
+      "</select>" +
+      '<select class="input" id="cat-filter-prefix" style="width:auto">' +
+      '<option value="">كل الأنواع</option>' +
+      '<option value="M"> خامات</option>' +
+      '<option value="A"> اكسسوارات</option>' +
+      '<option value="FG"> تامة</option>' +
+      "</select>" +
+      '<select class="input" id="cat-filter-stock" style="width:auto">' +
+      '<option value="">كل الحالات</option>' +
+      '<option value="available"> متاح</option>' +
+      '<option value="low"> منخفض</option>' +
+      '<option value="out"> نفد</option>' +
+      "</select>" +
+      '<span id="cat-count" style="color:var(--text3);font-size:12px;white-space:nowrap;padding:0 4px">' +
+      items.length +
+      " صنف</span>" +
+      "</div></div>" +
+      // منطقة المحتوى
+      '<div id="catalog-content"></div>'
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // المخزن الحالي
+  // ══════════════════════════════════════════════════════════════
+  function renderCurrentStock() {
+    var items = APP.data.items || [];
+    var groups = APP.data.groups || [];
+    var warehouses = APP.data.warehouses || [];
+    var warehouseOpts = warehouses
+      .map(function (w) {
+        return (
+          '<option value="' +
+          esc(w.id) +
+          '">' +
+          esc(w.name) +
+          (w.code ? " (" + esc(w.code) + ")" : "") +
+          "</option>"
+        );
+      })
+      .join("");
+    // خيارات المجموعات — [GROUP-HIERARCHY P6] عرض هرمي موحّد
+    var groupOpts = hierGroupOptionsHtml(groups, { includeEmpty: false });
+
+    // خيارات الألوان
+    var allColors = APP.data.colors || [];
+    var colorNames = [];
+    allColors.forEach(function (c) {
+      if (c.name && colorNames.indexOf(c.name) === -1) colorNames.push(c.name);
+    });
+    items.forEach(function (item) {
+      var clrs = item.colors_json || [];
+      if (!Array.isArray(clrs)) {
+        try {
+          clrs = JSON.parse(clrs);
+        } catch (e) {
+          clrs = [];
+        }
+      }
+      clrs.forEach(function (c) {
+        var n = typeof c === "object" ? c.name || "" : String(c);
+        if (n && colorNames.indexOf(n) === -1) colorNames.push(n);
+      });
+    });
+    // خيارات المخازن
+    var warehouses = APP.data.warehouses || [];
+    var warehouseOpts = warehouses
+      .map(function (w) {
+        return (
+          '<option value="' +
+          esc(w.id) +
+          '">' +
+          esc(w.name) +
+          (w.code ? " (" + esc(w.code) + ")" : "") +
+          "</option>"
+        );
+      })
+      .join("");
+    var colorOpts =
+      '<option value="">كل الألوان</option>' +
+      colorNames
+        .map(function (n) {
+          return '<option value="' + esc(n) + '">' + esc(n) + "</option>";
+        })
+        .join("");
+
+    return (
+      // ── رأس الصفحة ──
+      '<div class="page-header" style="flex-wrap:wrap;gap:10px">' +
+      '<div style="display:flex;align-items:center;gap:10px">' +
+      iconBadge(
+        "ti-building-warehouse",
+        "var(--accent-soft)",
+        "var(--primary)",
+      ) +
+      '<div><h1 style="font-size:22px;margin:0">المخزن الحالي</h1>' +
+      '<p style="margin:2px 0 0;color:var(--text3);font-size:13px">دليل الأكواد الشامل مع الرصيد التفصيلي</p></div>' +
+      "</div>" +
+      '<div class="header-actions">' +
+      '<button class="btn btn-outline" id="cs-view-toggle" title="تبديل عرض" style="display:flex;align-items:center;gap:6px"><i class="ti ti-layout-grid" style="font-size:14px"></i> عرض كروت</button>' +
+      '<button class="btn btn-outline" id="cs-color-toggle" title="تفصيل بالألوان" style="display:flex;align-items:center;gap:6px"><i class="ti ti-palette" style="font-size:14px"></i> تفصيل بالألوان</button>' +
+      '<button class="btn btn-outline" id="cs-print-btn" style="display:flex;align-items:center;gap:6px"><i class="ti ti-printer" style="font-size:14px"></i> طباعة</button>' +
+      '<button class="btn btn-primary" id="cs-export-btn" style="display:flex;align-items:center;gap:6px"><i class="ti ti-file-export" style="font-size:14px"></i> تصدير CSV</button>' +
+      "</div></div>" +
+      // ── شريط الإحصائيات السريعة ──
+      '<div id="cs-stats-bar" style="margin-bottom:16px"></div>' +
+      // ── شريط البحث والفلاتر ──
+      '<div class="card" style="margin-bottom:16px">' +
+      '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">' +
+      '<div class="search-input-wrap" style="flex:1;min-width:200px">' +
+      '<span class="s-icon"><i class="ti ti-search" aria-hidden="true"></i></span>' +
+      '<input class="input" id="cs-search" placeholder="ابحث بالكود أو الاسم أو الوصف...">' +
+      "</div>" +
+      // [SELECTION-ENGINE] كانت هنا ~80 سطر من dropdown يدوي (onclick inline
+      // مكرر مرتين حرفيًا لكل من المخزن/المجموعة) — بديلها الآن select عادي
+      // بيترقّى بـ AppSelect.upgrade() من 06_JS_Catalog_Stock.html، فمفيش أي
+      // تكرار ولا فرق شكل/سلوك بين المكونين (راجع تقرير الجرد).
+      '<select class="input" id="cs-filter-warehouse">' +
+      '<option value="">كل المخازن</option>' +
+      warehouseOpts +
+      "</select>" +
+      '<select class="input" id="cs-filter-group">' +
+      '<option value="">كل المجموعات</option>' +
+      groupOpts +
+      "</select>" +
+      '<select class="input" id="cs-filter-stock" style="width:auto">' +
+      '<option value="">كل الحالات</option>' +
+      '<option value="available"> متاح</option>' +
+      '<option value="low"> منخفض</option>' +
+      '<option value="out"> نفد</option>' +
+      "</select>" +
+      '<select class="input" id="cs-filter-color" style="width:auto;min-width:120px">' +
+      colorOpts +
+      "</select>" +
+      "</div></div>" +
+      // ── منطقة المحتوى ──
+      '<div id="cs-content"></div>'
+    );
+  }
+
+  function renderStocktake() {
+    var warehouses = APP.data.warehouses || [];
+    var whOpts = warehouses
+      .map(function (w) {
+        return (
+          '<option value="' +
+          esc(w.name || w.id) +
+          '">' +
+          esc(w.name || w.id) +
+          "</option>"
+        );
+      })
+      .join("");
+    return (
+      '<div class="page-header">' +
+      "<div>" +
+      "<h2 style='display:flex;align-items:center;gap:10px'>" +
+      iconBadge("ti-clipboard-check", "var(--teal-soft)", "var(--teal)") +
+      "<span>جرد المخزون</span></h2>" +
+      '<p class="page-subtitle">أدخل الكمية الفعلية لترحيل فروق الجرد كحركات مخزون واضحة وقابلة للتتبع</p>' +
+      "</div>" +
+      '<div class="header-actions">' +
+      '<button class="btn btn-outline" id="stk-refresh-btn"><i class="ti ti-refresh"></i> تحديث الرصيد</button>' +
+      '<button class="btn btn-primary" id="stk-post-btn"><i class="ti ti-check"></i> ترحيل الفروق</button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="card" style="margin-bottom:16px">' +
+      '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">' +
+      '<div class="search-input-wrap" style="flex:1;min-width:220px">' +
+      '<span class="s-icon"></span>' +
+      '<input class="input" id="stk-search" placeholder="ابحث بالكود أو الصنف أو اللون...">' +
+      "</div>" +
+      '<select class="input" id="stk-warehouse" style="width:auto;min-width:160px">' +
+      '<option value="">كل المخازن</option>' +
+      whOpts +
+      "</select>" +
+      '<select class="input" id="stk-diff-filter" style="width:auto">' +
+      '<option value="">كل السجلات</option>' +
+      '<option value="changed">فروق فقط</option>' +
+      '<option value="short">عجز</option>' +
+      '<option value="extra">زيادة</option>' +
+      "</select>" +
+      '<span id="stk-summary" style="color:var(--text3);font-size:12px;white-space:nowrap"></span>' +
+      "</div></div>" +
+      // [PHASE-CE/Inventory] الجدول بقى معتمد بالكامل على ColumnEngine
+      // (Metadata-Driven) — شوف _stkRegisterColumns/_stkRenderTableCE في
+      // 06_JS_Catalog_Stock.html. الحاوية دي بتتملى ديناميكيًا من bindStocktake().
+      '<div class="card" style="padding:0;overflow:hidden">' +
+      '<div id="stk-ce-container"></div>' +
+      "</div>" +
+      '<div class="card" style="margin-top:16px">' +
+      '<label class="form-label">ملاحظات الجرد</label>' +
+      '<textarea class="input" id="stk-notes" rows="2" placeholder="مثال: جرد نهاية الشهر / لجنة الجرد..." style="width:100%;box-sizing:border-box;resize:vertical"></textarea>' +
+      "</div>"
+    );
+  }
+
+  function renderOpeningStock() {
+    var allRows = APP.data.openingStock || [];
+    var totalItemsSet = {};
+    allRows.forEach(function (r) {
+      totalItemsSet[r.item_id] = 1;
+    });
+    var totalItemsCount = Object.keys(totalItemsSet).length;
+    var totalColors = allRows.filter(function (r) {
+      return r.color && r.color.trim();
+    }).length;
+    var totalQty = allRows.reduce(function (s, r) {
+      return s + Number(r.quantity || 0);
+    }, 0);
+
+    var statsHtml =
+      '<div class="stat-grid" style="margin-bottom:20px">' +
+      statCard(
+        iconBadge("ti-package", "var(--accent-soft)", "var(--primary)"),
+        "أصناف مسجلة",
+        totalItemsCount,
+        "",
+        "var(--accent-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-palette", "var(--purple-soft)", "var(--purple)"),
+        "سجلات بألوان",
+        totalColors,
+        "لون",
+        "var(--teal-soft)",
+      ) +
+      statCard(
+        "",
+        "إجمالي الكميات",
+        totalQty,
+        "وحدة",
+        "var(--success-soft)",
+      ) +
+      "</div>";
+
+    // [PHASE-CE/Inventory] الجدول الهرمي (رأس مجموعة + صفوف تفصيل قابلة
+    // للطي) استُبدل بجدول مسطّح (سجل واحد لكل صنف/لون) عبر ColumnEngine،
+    // عشان يتوحّد نفس المحرك المستخدم في باقي شاشات المخزون (بند "التوافق")
+    // ويبقى فيه فرز/بحث/تخصيص أعمدة/تصدير/طباعة بنفس الطريقة. عمود
+    // "الصنف" لسه بيوضّح كود+اسم الموديل مع بعض، فالتجميع البصري
+    // للموديل لسه واضح حتى في العرض المسطّح — وأضفنا أزرار تعديل/حذف
+    // لكل سجل (كانت مفقودة قبل كده رغم وجود openOpeningStockModal/
+    // deleteOpeningStockConfirm جاهزين وغير مستخدمين).
+    return (
+      '<div class="page-header">' +
+      "<div><h1 style='display:flex;align-items:center;gap:10px'><span style='display:inline-flex;align-items:center;justify-content:center;background:#F3F4F6;border-radius:10px;padding:8px;flex-shrink:0'><i class=\"ti ti-archive\" style='font-size:22px;color:#374151' aria-hidden=\"true\"></i></span><span>أرصدة أول المدة</span></h1><p>الرصيد الافتتاحي لكل موديل ولون</p></div>" +
+      '<div class="header-actions">' +
+      '<button class="btn btn-outline" id="btn-import-os"> استيراد Excel</button>' +
+      (canDo("addOpeningStock")
+        ? '<button class="btn btn-primary" id="btn-add-os">+ إضافة رصيد</button>'
+        : "") +
+      "</div></div>" +
+      statsHtml +
+      '<div class="card" style="padding:0;overflow:hidden">' +
+      '<div id="os-ce-container"></div>' +
+      "</div>"
+    );
+  }
+  function renderWarehouses() {
+    return (
+      '<div class="page-header">' +
+      "<div><h1 style='display:flex;align-items:center;gap:10px'>" +
+      iconBadge(
+        "ti-building-store",
+        "var(--success-soft)",
+        "var(--success-dark)",
+      ) +
+      "<span>إدارة المخازن</span></h1><p>إضافة وتعديل المخازن</p></div>" +
+      '<div class="header-actions">' +
+      (canDo("addWarehouse")
+        ? '<button class="btn btn-primary" id="btn-add-wh">+ مخزن جديد</button>'
+        : "") +
+      "</div>" +
+      "</div>" +
+      // ── الجدول [COLUMN-ENGINE] — أعمدة ديناميكية بالكامل (Metadata-Driven)
+      // راجع _warehousesRegisterColumns/_renderWarehousesTableCE في
+      // 07_JS_Shipping_Colors_Excel.html. لا يوجد أي <th>/<td> ثابت هنا
+      // بعد الآن.
+      '<div class="card"><div id="warehouses-ce-container"></div></div>'
+    );
+  }
+  function renderShipping() {
+    var shipments = (APP.data.shipments || []).slice().reverse();
+
+    // إحصائيات
+    var total = shipments.length;
+    var waitingShip = shipments.filter(function (s) {
+      // v4.2
+      return s.status === "بانتظار الشحن";
+    }).length;
+    var pending = shipments.filter(function (s) {
+      return s.status === "معلق";
+    }).length;
+    var onway = shipments.filter(function (s) {
+      return s.status === "في الطريق";
+    }).length;
+    var done = shipments.filter(function (s) {
+      return s.status === "تم التسليم";
+    }).length;
+
+    var statsHtml =
+      '<div class="stat-grid" style="margin-bottom:20px">' +
+      statCard(
+        iconBadge("ti-truck", "var(--accent-soft)", "var(--primary)"),
+        "إجمالي الشحنات",
+        total,
+        "شحنة",
+        "var(--accent-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-clock-exclamation", "var(--teal-soft)", "var(--teal)"),
+        "بانتظار الشحن",
+        waitingShip,
+        "شحنة",
+        "#e0f2fe",
+      ) +
+      statCard("⏳", "معلقة", pending, "شحنة", "var(--warning-soft)") +
+      statCard(
+        iconBadge("ti-road", "var(--teal-soft)", "var(--teal)"),
+        "في الطريق",
+        onway,
+        "شحنة",
+        "var(--teal-soft)",
+      ) +
+      statCard(
+        iconBadge("ti-circle-check", "var(--success-soft)", "var(--success)"),
+        "تم التسليم",
+        done,
+        "شحنة",
+        "var(--success-soft)",
+      ) +
+      "</div>";
+
+    // فلتر + بحث
+    var filterHtml =
+      '<div class="card" style="margin-bottom:16px"><div class="search-bar">' +
+      '<div class="search-input-wrap"><span class="s-icon"></span>' +
+      '<input class="input" id="ship-search" placeholder="ابحث بالعميل أو رقم الشحنة أو السائق أو رقم الإذن..."></div>' +
+      '<select class="input" id="ship-filter-status" style="width:auto">' +
+      '<option value="">كل الحالات</option>' +
+      Object.keys(SHIP_STATUSES)
+        .map(function (k) {
+          return (
+            '<option value="' +
+            k +
+            '">' +
+            SHIP_STATUSES[k].icon +
+            " " +
+            k +
+            "</option>"
+          );
+        })
+        .join("") +
+      "</select>" +
+      "</div></div>";
+
+    // جدول الشحنات
+    var rows = shipments
+      .map(function (s) {
+        var items = [];
+        try {
+          items =
+            typeof s.items_json === "string"
+              ? JSON.parse(s.items_json)
+              : s.items || [];
+        } catch (e) {}
+        var itemsSummary = items.length
+          ? items
+              .slice(0, 2)
+              .map(function (it) {
+                return esc(it.name || it.item_id) + " ×" + it.qty;
+              })
+              .join("، ") + (items.length > 2 ? " ..." : "")
+          : "—";
+
+        var date = s.date ? fmtDate(s.date) : "—";
+        var expDate = s.expected_date ? fmtDate(s.expected_date) : "—";
+
+        var receiptBtn = s.receipt_url
+          ? '<a href="' +
+            esc(s.receipt_url) +
+            '" target="_blank" class="btn btn-ghost btn-xs" title="عرض الإيصال"></a>'
+          : "";
+
+        return (
+          '<tr data-id="' +
+          esc(s.id) +
+          '" data-customer="' +
+          esc((s.customer || "").toLowerCase()) +
+          '" data-driver="' +
+          esc((s.driver || "").toLowerCase()) +
+          '" data-status="' +
+          esc(s.status || "") +
+          '" data-permit="' +
+          esc((s.dispatch_permit_id || "").toLowerCase()) +
+          '">' +
+          '<td><span class="mono" style="font-size:11px;color:var(--accent)">' +
+          esc(s.id || "") +
+          "</span></td>" +
+          // ── v4.2: عمود إذن الصادر ──
+          "<td>" +
+          (s.dispatch_permit_id
+            ? '<span class="ship-permit-link" onclick="APP._pendingTxFilter=\'' +
+              esc(s.dispatch_permit_id) +
+              '\';navigateTo(\'transactions\')" title="عرض إذن الصادر"><i class="ti ti-arrow-bar-up" style="font-size:11px"></i> <span class="mono" style="font-size:11px">' +
+              esc(s.dispatch_permit_id) +
+              "</span></span>"
+            : '<span style="color:var(--text3);font-size:12px">—</span>') +
+          "</td>" +
+          "<td><b>" +
+          esc(s.customer || "—") +
+          "</b></td>" +
+          "<td>" +
+          esc(s.driver || "—") +
+          (function () {
+            // عرض شركة الشحن المرتبطة من القائمة أو النص الحر
+            var coName = "";
+            if (s.company_id) {
+              var co = (APP.data.shippingCompanies || []).find(function (c) {
+                return c.id === s.company_id;
+              });
+              coName = co ? co.name : s.company || "";
+            } else {
+              coName = s.company || "";
+            }
+            return coName
+              ? '<br><span style="font-size:11px;color:var(--text3)">' +
+                  esc(coName) +
+                  "</span>"
+              : "";
+          })() +
+          "</td>" +
+          "<td>" +
+          date +
+          "</td>" +
+          "<td>" +
+          expDate +
+          "</td>" +
+          '<td style="max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
+          itemsSummary +
+          "</td>" +
+          // ── عمود التتبع (مرحلة 5) ──
+          "<td>" +
+          (s.tracking_number
+            ? '<span class="mono" style="font-size:11px;color:var(--accent)">' +
+              esc(s.tracking_number) +
+              "</span>" +
+              (s.tracking_url
+                ? ' <a href="' +
+                  esc(s.tracking_url) +
+                  '" target="_blank" title="تتبع الشحنة" style="color:var(--primary);font-size:11px"><i class="ti ti-external-link"></i></a>'
+                : "")
+            : '<span style="color:var(--text3);font-size:11px">—</span>') +
+          "</td>" +
+          "<td>" +
+          shipStatusBadge(s.status || "معلق") +
+          "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    var tableHtml =
+      '<div class="card"><div class="table-wrap"><table id="ship-table">' +
+      "<thead><tr>" +
+      "<th>رقم الشحنة</th><th>إذن الصادر</th><th>العميل</th><th>السائق</th>" +
+      "<th>تاريخ الشحن</th><th>موعد التسليم</th><th>الأصناف</th>" +
+      "<th>التتبع</th><th>الحالة</th>" +
+      '</tr></thead><tbody id="ship-tbody">' +
+      (rows ||
+        '<tr><td colspan="9" class="empty-state"><div class="empty-icon"></div><p>لا توجد شحنات مسجلة بعد</p></td></tr>') +
+      "</tbody></table></div></div>";
+
+    return (
+      '<div class="page-header">' +
+      "<div><h1 style='display:flex;align-items:center;gap:10px'>" +
+      iconBadge("ti-truck", "var(--orange-soft)", "var(--orange)") +
+      "<span>إدارة الشحن والتسليم</span></h1><p>تتبع شحنات المبيعات وإيصالات التسليم</p></div>" +
+      '<div class="header-actions">' +
+      '<button class="btn btn-primary" id="btn-new-shipment">+ شحنة جديدة</button>' +
+      "</div></div>" +
+      statsHtml +
+      filterHtml +
+      tableHtml
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // § Render functions — نُقلت من JavaScript.html إلى هنا
+  //   لأنها render-only وتعيد HTML string
+  // ═══════════════════════════════════════════════════════════
+
+  // ── renderReportUsersTable
+</script>

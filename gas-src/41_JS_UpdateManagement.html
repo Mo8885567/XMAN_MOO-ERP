@@ -1,0 +1,669 @@
+<script>
+  // ─────────────────────────────────────────────────────────────
+  // 40_JS_UpdateManagement.html — وحدة إدارة تحديثات النظام (UM)
+  // ملف مؤجّل (Lazy) — يُحمَّل بعد تسجيل الدخول مثل باقي الموديولات.
+  // يعتمد على: openStyledDrawer/openModal/closeModal/showToast (Core_UIManagers)
+  // _gsr (31_JS_DataLayer)، APP/SESSION/canDo/renderPage (01_JS_Core_Auth)،
+  // esc/iconBadge/updateAlertBadge/_buildNotifications (02_JS_UI_Shell).
+  // ─────────────────────────────────────────────────────────────
+  var UM = (function () {
+    "use strict";
+
+    var _categories = null; // كاش تصنيفات التحديثات
+    var _adminTab = "versions"; // versions | announcements | banner | categories
+    var _versionsCache = [];
+    var _announcementsCache = [];
+    var _feedCache = []; // آخر تحديثات/إعلانات لمركز الإشعارات (لدمجها مع الجرس)
+    var _feedLoaded = false;
+    var _bannerDismissedThisSession = {};
+
+    // ── Helpers عامة ──────────────────────────────────────────
+    function _u() {
+      return (APP.currentUser && APP.currentUser.username) || "";
+    }
+    function _t() {
+      return SESSION ? SESSION.token : null;
+    }
+    function _esc(s) {
+      return typeof esc === "function" ? esc(s) : String(s == null ? "" : s);
+    }
+    // دفاع إضافي: منع أي رابط مش http/https من الظهور كـ href (زي
+    // javascript:) حتى لو البيانات جاية من المركزي أصلًا.
+    function _safeHref(url) {
+      if (!url) return "";
+      return /^https?:\/\//i.test(String(url).trim()) ? url : "";
+    }
+    // [DATE-UNIFY] كانت هناك نسخة محلية من _fmtDate هنا بمنطق ar-EG ثابت
+    // يتجاهل تفضيل date_format تمامًا (Dead Setting لهذه الشاشة تحديدًا).
+    // أُزيلت — الاستدعاءات أدناه تسقط الآن تلقائيًا على _fmtDate العامة
+    // (Core_Utilities.html) التي تستدعي fmtDate() المركزية وتحترم التفضيل.
+    function _statusLabel(s) {
+      return (
+        {
+          draft: "مسودة",
+          scheduled: "مجدوَل",
+          published: "منشور",
+          archived: "مؤرشف",
+        }[s] || s
+      );
+    }
+    function _levelLabel(l) {
+      return (
+        { major: "MAJOR", minor: "MINOR", patch: "PATCH", hotfix: "HOTFIX" }[
+          l
+        ] || (l || "").toUpperCase()
+      );
+    }
+    function _catIcon(catKey) {
+      var c = (_categories || []).find(function (x) {
+        return x.key === catKey;
+      });
+      return c ? c.icon : "";
+    }
+    function _catLabel(catKey) {
+      var c = (_categories || []).find(function (x) {
+        return x.key === catKey;
+      });
+      return c ? c.label_ar : catKey;
+    }
+
+    function _ensureCategories(cb) {
+      if (_categories) {
+        cb && cb(_categories);
+        return;
+      }
+      _gsr("getUpdateCategories", [_u(), _t()], {
+        label: "UM.getUpdateCategories",
+        onSuccess: function (res) {
+          _categories = res.data || [];
+          cb && cb(_categories);
+        },
+        onError: function () {
+          _categories = [];
+          cb && cb(_categories);
+        },
+      });
+    }
+
+    // ═════════════════════════════════════════════════════════
+    // §1 — نافذة "What's New" + البانر + مركز الإشعارات (تُستدعى بعد اللوجين)
+    // ═════════════════════════════════════════════════════════
+
+    function checkOnLogin() {
+      if (!APP.currentUser) return;
+      // 0) تبليغ المركزي بآخر ظهور + النسخة المثبتة (fire-and-forget،
+      // بدون onError عشان مايضايقش المستخدم لو المركزي مش متاح دلوقتي)
+      //
+      // [ROOT-FIX-2026-08-13] التعليق فوق ده كان قصد المطوّر بس مكنش
+      // فعليًا بيتحقق: _gsr بترجّع onError افتراضي (لو محدّش مرّر واحد)
+      // بيعمل console.error *و* showToast للمستخدم بعد 25 ثانية —
+      // فالنداء ده كان بيظهر كـ"خطأ" مزعج (توست + كونسول) لكل مستخدم
+      // في كل تسجيل دخول لمجرد إن المركزي (Hub) بطيء/غير متاح مؤقتًا،
+      // رغم إن العملية دي ثانوية بالكامل (تقرير استخدام) ومالهاش أي
+      // تأثير على تسجيل الدخول نفسه. تمرير onSuccess/onError فارغين
+      // هنا يخلّي _gsr تستخدمهم بدل الافتراضي، فيبقى فعلاً صامت 100%
+      // زي ما النية الأصلية كانت — النداء لسه بيتبعت للسيرفر بالظبط
+      // زي الأول، بس فشله (لو حصل) مبيوصلش للمستخدم ولا يتسجّل كخطأ.
+      _gsr("reportInstalledVersionOnLogin", [_u(), _t()], {
+        label: "UM.reportInstalledVersionOnLogin",
+        onSuccess: function () {},
+        onError: function () {},
+      });
+      // 1) What's New
+      _gsr("getWhatsNew", [_u(), _t()], {
+        label: "UM.getWhatsNew",
+        onSuccess: function (res) {
+          if (res.data) _showWhatsNewModal(res.data);
+        },
+        // [ROOT-FIX-2026-08-13] نفس مبدأ الفيكسات التانية في checkOnLogin —
+        // نافذة "الجديد" ثانوية بالكامل، فشلها المؤقت ميستاهلش توست خطأ
+        // يقابل المستخدم أول ما يدخل النظام.
+        onError: function () {},
+      });
+      // 2) البانر العلوي
+      _refreshBanner();
+      // 3) مركز الإشعارات (يُدمَج مع جرس التنبيهات الموجود)
+      _refreshFeed();
+      if (!UM._feedTimerStarted) {
+        UM._feedTimerStarted = true;
+        var _feedTimerId = setInterval(_refreshFeed, 5 * 60 * 1000); // كل 5 دقائق
+        if (typeof _registerPollTimer === "function")
+          _registerPollTimer(_feedTimerId);
+      }
+    }
+
+    function _showWhatsNewModal(v) {
+      var changes = v.changes || [];
+      var byCat = {};
+      changes.forEach(function (c) {
+        byCat[c.cat] = byCat[c.cat] || [];
+        byCat[c.cat].push(c.text);
+      });
+      var body =
+        '<div class="um-whatsnew-body">' +
+        '<div class="um-wn-header">' +
+        '<span class="um-wn-version-pill">v' +
+        _esc(v.version) +
+        "</span>" +
+        '<span class="um-wn-date">' +
+        _fmtDate(v.published_at || v.created_at) +
+        "</span>" +
+        "</div>" +
+        (v.short_desc
+          ? '<p style="font-size:13px;color:var(--text2);margin:0 0 14px">' +
+            _esc(v.short_desc) +
+            "</p>"
+          : "") +
+        Object.keys(byCat)
+          .map(function (cat) {
+            return byCat[cat]
+              .map(function (text) {
+                return (
+                  '<div class="um-change-item"><span class="um-change-icon">' +
+                  _catIcon(cat) +
+                  '</span><span class="um-change-text">' +
+                  _esc(text) +
+                  "</span></div>"
+                );
+              })
+              .join("");
+          })
+          .join("") +
+        (!changes.length
+          ? '<div class="empty-state" style="padding:20px 0"><p>لا توجد تفاصيل إضافية لهذا الإصدار</p></div>'
+          : "") +
+        "</div>";
+
+      var footer =
+        '<button class="btn btn-outline" onclick="UM._wnAction(\'' +
+        v.id +
+        '\',\'remind_later\')">ذكرني لاحقًا</button>' +
+        '<button class="btn btn-secondary" onclick="UM._wnAction(\'' +
+        v.id +
+        '\',\'viewed_details\',true)">عرض التفاصيل</button>' +
+        '<button class="btn btn-primary" onclick="UM._wnAction(\'' +
+        v.id +
+        '\',\'seen\')">فهمت </button>';
+
+      _ensureCategories(function () {
+        openStyledDrawer({
+          title: " " + (v.title || "تحديث جديد"),
+          subtitle: "ما الجديد في هذا الإصدار",
+          icon: "ti-rocket",
+          color: "blue",
+          width: 620,
+          body: body,
+          footer: footer,
+        });
+      });
+    }
+
+    function _wnAction(versionId, action, thenOpenReleaseNotes) {
+      _gsr("recordVersionAction", [versionId, action, _u(), _t()], {
+        label: "UM.recordVersionAction",
+      });
+      if (typeof closeModal === "function") closeModal();
+      if (thenOpenReleaseNotes && typeof renderPage === "function") {
+        renderPage("release_notes");
+      }
+    }
+
+    // ── البانر العلوي (Phase 11) ──
+    function _refreshBanner() {
+      _gsr("getActiveBanner", [_u(), _t()], {
+        label: "UM.getActiveBanner",
+        onSuccess: function (res) {
+          _renderBanner(res.data);
+        },
+        // [ROOT-FIX-2026-08-13] بانر تنبيهات ثانوي فوق الصفحة — نفس مبدأ
+        // الفيكسات التانية فوق: فشل مؤقت في جلبه (شبكة/سيرفر بطيء) مايستاهلش
+        // يوقف/يزعج المستخدم بتوست خطأ عند كل تسجيل دخول.
+        onError: function () {},
+      });
+    }
+
+    function _renderBanner(ann) {
+      var host = document.getElementById("um-banner-host");
+      if (!host) {
+        host = document.createElement("div");
+        host.id = "um-banner-host";
+        var shell = document.querySelector(".app-shell") || document.body;
+        shell.insertBefore(host, shell.firstChild);
+      }
+      if (!ann || _bannerDismissedThisSession[ann.id]) {
+        host.innerHTML = "";
+        return;
+      }
+      var colorMap = {
+        info: "#2563eb",
+        success: "#16a34a",
+        warning: "#d97706",
+        critical: "#dc2626",
+        promo: "#7c3aed",
+      };
+      host.innerHTML =
+        '<div class="um-banner" style="background:' +
+        (colorMap[ann.type] || colorMap.info) +
+        '">' +
+        '<span class="um-banner-icon">' +
+        (ann.icon && ann.icon.indexOf("ti-") === -1 ? ann.icon : "") +
+        "</span>" +
+        '<span class="um-banner-msg">' +
+        "<b>" +
+        _esc(ann.title) +
+        "</b>" +
+        (ann.message ? " — " + _esc(ann.message) : "") +
+        "</span>" +
+        (_safeHref(ann.attachment_url)
+          ? '<a class="um-banner-link" href="' +
+            _esc(_safeHref(ann.attachment_url)) +
+            '" target="_blank" rel="noopener noreferrer">التفاصيل</a>'
+          : "") +
+        (ann.mandatory === "true" || ann.mandatory === true
+          ? ""
+          : '<button class="um-banner-close" onclick="UM._dismissBanner(\'' +
+            ann.id +
+            "')\"></button>") +
+        "</div>";
+    }
+
+    function _dismissBanner(id) {
+      _bannerDismissedThisSession[id] = true;
+      _gsr("recordAnnouncementAction", [id, "dismissed", _u(), _t()], {
+        label: "UM.dismissBanner",
+      });
+      var host = document.getElementById("um-banner-host");
+      if (host) host.innerHTML = "";
+    }
+
+    // ── مركز الإشعارات — دمج مع جرس التنبيهات الموجود (Phase 10) ──
+    function _refreshFeed() {
+      // [SESSION-POLL-FIX] كانت بتتنفذ كل 5 دقائق حتى بعد تسجيل الخروج/
+      // انتهاء الجلسة، فيتكرر خطأ "جلسة غير صالحة" في الكونسول للأبد.
+      if (!APP.currentUser || !SESSION.token) return;
+      _gsr("getNotificationCenterFeed", [_u(), _t()], {
+        label: "UM.getNotificationCenterFeed",
+        onSuccess: function (res) {
+          _feedCache = res.data || [];
+          _feedLoaded = true;
+          if (typeof updateAlertBadge === "function") updateAlertBadge();
+        },
+        // [ROOT-FIX-2026-08-13] مفيش onError قبل كده = _gsr كانت بتاخد
+        // الافتراضي (console.error + showToast للمستخدم). النداء ده
+        // Polling خلفي صامت بيتكرر تلقائيًا كل 5 دقايق (مش فعل مباشر
+        // من المستخدم) — أي انقطاع شبكة عابر أو بطء مؤقت في السيرفر
+        // كان بيظهر كتوست خطأ يقاطع المستخدم لكل محاولة فاشلة، رغم إن
+        // المحاولة الجاية بعد 5 دقايق هتحل الموضوع لوحدها عادةً. بنسجّل
+        // فقط في الكونسول (زي باقي الـ background pollers في النظام،
+        // قارن بـ Auth.silentRefresh) من غير ما نزعج المستخدم بتوست.
+        onError: function (r) {
+          console.warn("[UM] getNotificationCenterFeed failed (silent):", r && r.message);
+        },
+      });
+    }
+
+    /** يُستدعى من الـ wrapper حول _buildNotifications الأصلية (أسفل الملف) */
+    function _buildFeedNotifications() {
+      if (!_feedLoaded) return [];
+      return _feedCache
+        .filter(function (f) {
+          return f.status === "unread";
+        })
+        .map(function (f) {
+          return {
+            id: "um_" + f.feed_type + "_" + f.id,
+            type: f.feed_type === "version" ? "info" : "warning",
+            icon: f.feed_type === "version" ? "" : "",
+            iconBg:
+              f.feed_type === "version"
+                ? "var(--accent-soft, #eaf1ff)"
+                : "var(--warning-soft, #fef3c7)",
+            title: _esc(f.title),
+            desc: _esc(f.desc || ""),
+            page: f.page,
+            ts: new Date(f.date || Date.now()).getTime(),
+          };
+        });
+    }
+
+    // ═════════════════════════════════════════════════════════
+    // §3 — صفحة "حول النظام" المدمجة (About + سجل الإصدارات) — Phase 13
+    // ═════════════════════════════════════════════════════════
+    //
+    // [MERGE-ABOUT-RN] قبل كده كانت صفحتين منفصلتين، وكل واحدة فيهم
+    // بترسم شِل فاضي الأول (renderX) وبعدين تستنى رد سيرفر منفصل
+    // (bindX) تملاه — يعني كل ضغطة سايدبار = فراغ لحظي + رحلة سيرفر
+    // جديدة من الصفر، حتى لو المستخدم داخل ورجع لنفس الصفحة عشرة
+    // مرات في نفس الجلسة. دلوقتي:
+    //   • البيانات (about + كل الإصدارات) بتتجاب مرة واحدة بس لكل
+    //     الجلسة عن طريق getAboutPageData() (نداء واحد مش اتنين)،
+    //     وبتتخزن في _aboutPageCache محليًا.
+    //   • أي فتح تاني للصفحة بيترسم فورًا من الكاش (من غير أي انتظار
+    //     شبكة ولا فراغ)، وبيتعمل تحديث هادئ في الخلفية بس لو الكاش
+    //     أقدم من ABOUT_CACHE_TTL_MS (10 دقايق) — من غير ما يوقف أو
+    //     يفضّي المحتوى المعروض حاليًا.
+    //   • أول فتح في الجلسة (لسه معندناش كاش خالص) بيعرض هيكل تحميل
+    //     احترافي (skeleton/shimmer) بدل شاشة فاضية تمامًا، بنفس
+    //     ستايل الـ skeleton الموجود أصلاً في DashboardWidgets
+    //     (dw-skel-line/dw-skel-box من Style_11_Tail.html).
+    //   • البحث في سجل الإصدارات بقى بالكامل client-side على نفس
+    //     البيانات المخزّنة، من غير أي نداء سيرفر لكل ضغطة حرف.
+
+    var _aboutPageCache = null; // { about, releaseNotes, ts }
+    var ABOUT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 دقايق
+
+    function renderAboutPage() {
+      var header =
+        '<div class="page-header"><h2>ℹ️ حول النظام</h2>' +
+        '<p style="color:var(--text3);font-size:12.5px">معلومات الإصدار وسجل التحديثات الكامل</p></div>';
+
+      if (!_aboutPageCache) {
+        return header + _aboutSkeletonHtml();
+      }
+      return (
+        header +
+        '<div id="um-about-host">' +
+        _aboutHeroHtml(_aboutPageCache.about) +
+        "</div>" +
+        _releaseNotesToolbarHtml() +
+        '<div id="um-rn-content" class="um-rn-timeline">' +
+        _releaseNotesListHtml(_aboutPageCache.releaseNotes) +
+        "</div>"
+      );
+    }
+
+    function bindAboutPage() {
+      _ensureCategories(function () {});
+      var hadCache = !!_aboutPageCache;
+      if (hadCache) {
+        _bindReleaseNotesSearch();
+      }
+      var isFresh =
+        hadCache && Date.now() - _aboutPageCache.ts < ABOUT_CACHE_TTL_MS;
+      if (!isFresh) {
+        _fetchAboutPageData(!hadCache);
+      }
+    }
+
+    function _fetchAboutPageData(isInitialLoad) {
+      _gsr("getAboutPageData", [_u(), _t()], {
+        label: "UM.getAboutPageData",
+        onSuccess: function (res) {
+          _aboutPageCache = {
+            about: res.data.about,
+            releaseNotes: res.data.release_notes || [],
+            ts: Date.now(),
+          };
+          // مانرسمش تاني إلا لو المستخدم لسه واقف في نفس الصفحة دي
+          // (منع الرد المتأخر إنه يقفز بمحتوى غلط فوق صفحة تانية فتحها)
+          if (
+            APP.currentPage === "about_page" ||
+            APP.currentPage === "release_notes"
+          ) {
+            var c = document.getElementById("page-content");
+            if (c) {
+              c.innerHTML = renderAboutPage();
+              _bindReleaseNotesSearch();
+            }
+          }
+        },
+        onError: function (r) {
+          // لو تحديث خلفي (فيه كاش قديم أصلًا) فشل، سيبنا الكاش القديم
+          // زي ما هو من غير ما نزعج المستخدم — بس أول تحميل للجلسة
+          // (مفيش حاجة نعرضها أصلًا) لازم نبلّغه.
+          if (isInitialLoad) NotificationEngine.error(r.message);
+        },
+      });
+    }
+
+    function _bindReleaseNotesSearch() {
+      var el = document.getElementById("um-rn-search");
+      if (!el || el.__umBound) return;
+      el.__umBound = true;
+      el.addEventListener("input", function () {
+        var q = this.value.trim().toLowerCase();
+        var list = (_aboutPageCache && _aboutPageCache.releaseNotes) || [];
+        var filtered = !q
+          ? list
+          : list.filter(function (v) {
+              var hay =
+                (v.title || "") +
+                " " +
+                (v.version || "") +
+                " " +
+                (v.short_desc || "") +
+                " " +
+                (v.full_desc || "") +
+                " " +
+                (v.changes || [])
+                  .map(function (c) {
+                    return c.text || "";
+                  })
+                  .join(" ");
+              return hay.toLowerCase().indexOf(q) !== -1;
+            });
+        var host = document.getElementById("um-rn-content");
+        if (host) host.innerHTML = _releaseNotesListHtml(filtered);
+      });
+    }
+
+    function _aboutSkeletonHtml() {
+      var line = function (w) {
+        return '<div class="dw-skel-line" style="width:' + w + '"></div>';
+      };
+      return (
+        '<div class="card dw-skeleton-wrap" style="padding:20px;margin-bottom:16px">' +
+        '<div class="dw-skel-header">' +
+        '<div class="dw-skel-box" style="width:64px;height:64px;border-radius:14px"></div>' +
+        '<div style="flex:1;display:flex;flex-direction:column;gap:8px">' +
+        line("40%") +
+        line("25%") +
+        "</div></div>" +
+        '<div style="display:flex;gap:12px;margin-top:18px;flex-wrap:wrap">' +
+        [1, 2, 3, 4, 5]
+          .map(function () {
+            return (
+              '<div class="dw-skel-box" style="flex:1;min-width:120px;height:54px;border-radius:10px"></div>'
+            );
+          })
+          .join("") +
+        "</div></div>" +
+        '<div class="card dw-skeleton-wrap" style="padding:20px">' +
+        line("30%") +
+        line("90%") +
+        line("70%") +
+        line("85%") +
+        "</div>"
+      );
+    }
+
+    function _aboutHeroHtml(d) {
+      // [FIX-ABOUT-LOGO-3] صفحة "حول النظام" لازم تعرض شعار MOO.ERP
+      // الأساسي بتاع النظام نفسه دايمًا (نفس mooLogoSVG المستخدم في
+      // السايدبار وشاشة الدخول) — مش شعار الشركة المخصص اللي بيتحدد من
+      // "إعدادات النظام" (APP.companySettings.logo_url). ده لأن الصفحة
+      // دي بتوصف هوية النظام/المنتج نفسه، فمفيش داعي تتغيّر بتغيّر شعار
+      // شركة العميل.
+      var logoHtml =
+        typeof mooLogoSVG === "function"
+          ? '<div class="um-about-logo" style="display:flex;align-items:center;justify-content:center">' +
+            mooLogoSVG(64) +
+            "</div>"
+          : '<div class="um-about-logo" style="display:flex;align-items:center;justify-content:center;font-size:28px"></div>';
+      return (
+        '<div class="card">' +
+        '<div class="um-about-hero">' +
+        logoHtml +
+        "<h2 style=\"margin:0 0 4px\">" +
+        _esc(d.system_name) +
+        "</h2>" +
+        '<p style="color:var(--text3);font-size:13px;margin:0">Enterprise Resource Planning</p>' +
+        '<div class="um-about-grid">' +
+        _aboutCell("رقم الإصدار", "v" + _esc(d.version)) +
+        _aboutCell("Build", _esc(d.build)) +
+        _aboutCell("تاريخ الإصدار", _fmtDate(d.release_date)) +
+        _aboutCell("بيئة التشغيل", _esc(d.environment)) +
+        _aboutCell("المطور", _esc(d.developer)) +
+        "</div>" +
+        "</div></div>"
+      );
+    }
+
+    function _releaseNotesToolbarHtml() {
+      return (
+        '<div class="page-header" style="margin-top:22px"><h3 style="margin:0"> سجل الإصدارات</h3>' +
+        '<p style="color:var(--text3);font-size:12.5px">كل ما جديد في MOO.ERP عبر الزمن</p></div>' +
+        '<div class="um-toolbar" style="border-radius:12px;margin-bottom:16px">' +
+        '<input class="search-bar" id="um-rn-search" placeholder="ابحث في الإصدارات..." style="width:260px;height:34px;border-radius:9px;border:1.5px solid var(--border)">' +
+        '<div style="display:flex;gap:8px">' +
+        '<button class="btn btn-outline btn-sm" onclick="UM._printReleaseNotes()"><i class="ti ti-printer"></i> طباعة</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="UM._exportReleaseNotes()"><i class="ti ti-download"></i> تصدير</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="UM._shareReleaseNotes()"><i class="ti ti-share"></i> مشاركة</button>' +
+        "</div></div>"
+      );
+    }
+
+    function _releaseNotesListHtml(list) {
+      if (!list.length) {
+        return '<div class="empty-state"><p>لا توجد إصدارات منشورة بعد</p></div>';
+      }
+      return list
+        .map(function (v) {
+          var changes = v.changes || [];
+          return (
+            '<div class="um-rn-entry">' +
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
+            '<span class="um-wn-version-pill">v' +
+            _esc(v.version) +
+            "</span>" +
+            '<span class="um-level-chip um-level-' +
+            v.level +
+            '">' +
+            _levelLabel(v.level) +
+            "</span>" +
+            '<span style="color:var(--text3);font-size:12px">' +
+            _fmtDate(v.published_at || v.created_at) +
+            "</span></div>" +
+            "<h3 style=\"margin:0 0 6px;font-size:15px\">" +
+            _esc(v.title) +
+            "</h3>" +
+            (v.short_desc
+              ? '<p style="color:var(--text2);font-size:13px;margin:0 0 10px">' +
+                _esc(v.short_desc) +
+                "</p>"
+              : "") +
+            changes
+              .map(function (c) {
+                return (
+                  '<div class="um-change-item"><span class="um-change-icon">' +
+                  _catIcon(c.cat) +
+                  '</span><span class="um-change-text">' +
+                  _esc(c.text) +
+                  "</span></div>"
+                );
+              })
+              .join("") +
+            (v.known_issues
+              ? '<div style="margin-top:10px;padding:8px 10px;background:var(--warning-soft,#fef3c7);border-radius:8px;font-size:12.5px"><b> مشاكل معروفة:</b> ' +
+                _esc(v.known_issues) +
+                "</div>"
+              : "") +
+            "</div>"
+          );
+        })
+        .join("");
+    }
+
+    // [PRINT-BUG-FIX] كان زر الطباعة بينادي window.print() على الصفحة
+    // كاملة (بدون تكرار رأس/تذييل/ترقيم صفحات). الحل: نبني جدول
+    // (الإصدار/التاريخ/العنوان/التغييرات) من كل سجل الإصدارات ونطبعه
+    // عبر المحرك الموحّد.
+    function _printReleaseNotes() {
+      var list = (_aboutPageCache && _aboutPageCache.releaseNotes) || [];
+      if (!list.length)
+        return NotificationEngine.warning("لا توجد إصدارات لطباعتها");
+      var headers = ["الإصدار", "التاريخ", "العنوان", "التغييرات"];
+      var data = list.map(function (v) {
+        var changes = (v.changes || [])
+          .map(function (c) {
+            return c.text;
+          })
+          .join(" | ");
+        return [
+          "v" + (v.version || ""),
+          _fmtDate(v.published_at || v.created_at),
+          v.title || "",
+          changes,
+        ];
+      });
+      ExportUtil.toPrint(data, headers, "سجل إصدارات MOO.ERP");
+    }
+
+    function _exportReleaseNotes() {
+      var text = Array.prototype.map
+        .call(document.querySelectorAll("#um-rn-content .um-rn-entry"), function (el) {
+          return el.innerText;
+        })
+        .join("\n\n" + "─".repeat(40) + "\n\n");
+      var blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "release-notes.txt";
+      a.click();
+    }
+
+    function _shareReleaseNotes() {
+      var url = (typeof getScriptUrlClient === "function"
+        ? getScriptUrlClient()
+        : location.href
+      ).split("?")[0];
+      if (navigator.share) {
+        navigator.share({ title: "سجل إصدارات MOO.ERP", url: url }).catch(function () {});
+      } else if (navigator.clipboard) {
+        navigator.clipboard.writeText(url);
+        NotificationEngine.success("تم نسخ الرابط");
+      }
+    }
+
+    function _aboutCell(label, value) {
+      return (
+        '<div class="um-about-cell"><div class="lbl">' +
+        label +
+        '</div><div class="val">' +
+        (value || "—") +
+        "</div></div>"
+      );
+    }
+
+    // ═════════════════════════════════════════════════════════
+    // §5 — دمج آمن مع جرس الإشعارات الموجود (بدون كسره — Wrapping فقط)
+    // ═════════════════════════════════════════════════════════
+    if (
+      typeof window._buildNotifications === "function" &&
+      !window._buildNotifications.__umWrapped
+    ) {
+      var _origBuildNotifications = window._buildNotifications;
+      var _wrapped = function () {
+        var base = _origBuildNotifications() || [];
+        return base.concat(_buildFeedNotifications());
+      };
+      _wrapped.__umWrapped = true;
+      window._buildNotifications = _wrapped;
+    }
+
+    // [MOVED-TO-HUB] شاشة الإدارة (renderAdmin/bindAdmin) وكل دوال
+    // CRUD الإصدارات/الإعلانات/التصنيفات اتشالت نهائيًا من هنا — بقت
+    // في لوحة تحكم المطوّر في بروجيكت MOO-UpdatesHub المركزي.
+    return {
+      checkOnLogin: checkOnLogin,
+      renderAboutPage: renderAboutPage,
+      bindAboutPage: bindAboutPage,
+      // internal (مُستخدَمة عبر onclick= في الـ HTML المُولَّد)
+      _wnAction: _wnAction,
+      _dismissBanner: _dismissBanner,
+      _exportReleaseNotes: _exportReleaseNotes,
+      _printReleaseNotes: _printReleaseNotes,
+      _shareReleaseNotes: _shareReleaseNotes,
+    };
+  })();
+</script>

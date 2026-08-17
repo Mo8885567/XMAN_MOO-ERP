@@ -1,0 +1,2333 @@
+<style>
+  /* ═══════════════════════════════════════════════════════════════
+   Style_03_Layout.html — جزء من Style.html الأصلي (تقسيم آلي نصي بحت، 2026-07-04)
+   راجع Architecture Audit 2026-07-03، المرحلة 5 — تقسيم بحسب الحجم
+   لا تقسيم دلالي بحت (الملف الأصلي كان منظّم بالفعل بترقيم أقسام
+   داخلي، فالتقسيم هنا اتبع نفس الترتيب الأصلي حرفيًا بدون أي تغيير
+   أو إعادة ترتيب لتفادي أي كسر في cascade/specificity الخاص بـ CSS).
+   يُحمَّل بالترتيب عبر  في Index.html مع باقي أجزاء Style.
+   ═══════════════════════════════════════════════════════════════ */
+
+  .content {
+    margin-right: var(--sidebar-w);
+    padding: 22px 26px;
+    height: 100vh;
+    /* RTL fix: لا نستخدم 100vw في الحساب عشان الـ scrollbar على اليسار يعمل overflow
+       width:100% + flex:1 + min-width:0 بيملّي المساحة المتاحة بشكل صحيح */
+    width: 100%;
+    flex: 1;
+    box-sizing: border-box;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-width: 0;
+    /* RTL fix: نحجز مكان الـ scrollbar دايماً عشان اللايأوت ميتحركش */
+    scrollbar-gutter: stable;
+    /* [SIDEBAR-COLLAPSE] انتقال سلس لتوسّع المحتوى عند طي/فتح السايدبار */
+    transition: margin-right var(--sidebar-collapse-speed, 0.25s)
+      cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  #page-content {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    will-change: opacity, transform;
+    transform: translateZ(0);
+    transition:
+      opacity 0.18s ease,
+      transform 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+    /* Isolate page content from drawer paint */
+    contain: layout style;
+  }
+
+  #page-trail {
+    margin-bottom: 14px;
+  }
+
+  .page-trail-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 38px;
+  }
+
+  .breadcrumbs,
+  .page-trail-actions,
+  .page-fav-list,
+  .bc-link,
+  .bc-current,
+  .page-fav-chip,
+  .page-fav-btn {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .breadcrumbs {
+    gap: 7px;
+    min-width: 0;
+    color: var(--text3);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .bc-link {
+    gap: 5px;
+    border: 0;
+    background: transparent;
+    color: var(--text3);
+    cursor: pointer;
+    font: inherit;
+    padding: 4px 0;
+  }
+
+  .bc-link:hover {
+    color: var(--accent);
+  }
+
+  .bc-sep {
+    font-size: 13px;
+    color: var(--text3);
+  }
+
+  .bc-group {
+    white-space: nowrap;
+  }
+
+  .bc-current {
+    gap: 6px;
+    color: var(--text);
+    min-width: 0;
+  }
+
+  .page-trail-actions {
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .page-fav-list {
+    gap: 6px;
+    max-width: min(42vw, 520px);
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .page-fav-chip {
+    gap: 5px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text2);
+    border-radius: 8px;
+    padding: 5px 9px;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 800;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .page-fav-chip:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .page-fav-btn {
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text3);
+    cursor: pointer;
+    flex: 0 0 auto;
+  }
+
+  .page-fav-btn.active {
+    color: var(--palette-amber-600);
+    border-color: rgba(217, 119, 6, 0.35);
+    background: rgba(217, 119, 6, 0.08);
+  }
+
+  /* Content loading overlay (refresh) */
+  #content-loading {
+    position: absolute;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    border-radius: var(--radius);
+  }
+  [data-theme="dark"] #content-loading {
+    background: rgba(13, 17, 23, 0.75);
+  }
+
+  /* ===== 6. SIDEBAR ===== */
+  .sidebar {
+    width: var(--sidebar-w);
+    height: 100vh;
+    height: 100dvh; /* [FIX] dynamic viewport height — يمنع القطع على موبايل */
+    background: var(--surface);
+    position: fixed;
+    right: 0;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    box-shadow: -4px 0 20px rgba(14, 21, 37, 0.06);
+    z-index: 100;
+    transition:
+      transform var(--transition-slow),
+      width var(--sidebar-collapse-speed, 0.25s) cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+    scrollbar-gutter: stable;
+    /* Isolate sidebar from drawer repaint */
+    contain: layout style;
+    will-change: transform;
+  }
+
+  /* Head */
+  .sidebar-head {
+    padding: 22px 18px 16px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(160deg, #f0f5ff 0%, var(--surface) 100%);
+  }
+
+  [data-theme="dark"] .sidebar-head {
+    background: linear-gradient(
+      160deg,
+      rgba(37, 99, 235, 0.1) 0%,
+      rgba(14, 165, 233, 0.04) 100%
+    );
+  }
+
+  .sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+
+  /* [FIX-LAZY-CRASH-2026-08-02] بديل مبسّط لشعار السايدبار — بيظهر بس
+     لو الحزمة المؤجلة (اللي فيها _renderSidebarBrand الحقيقية) اتأخرت
+     أو فشلت، بدل ما الشاشة تنكسر بالكامل. شوف renderLayout في
+     Templates_01.html. */
+  .sidebar-brand-fallback {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 16px;
+  }
+  .sidebar-brand-fallback-name {
+    font-size: 17px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: var(--text);
+    line-height: 1.2;
+  }
+  .sidebar-brand-fallback-sub {
+    font-size: 11.5px;
+    color: var(--text3);
+    font-weight: 500;
+  }
+
+  .brand-icon {
+    width: 60px;
+    height: 60px;
+    border-radius: 18px;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--accent2) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    box-shadow:
+      0 6px 20px rgba(37, 99, 235, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  .brand-text h2 {
+    font-size: 17px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: var(--text);
+    line-height: 1.2;
+  }
+
+  .brand-text p {
+    font-size: 11.5px;
+    color: var(--text3);
+    margin-top: 2px;
+    font-weight: 500;
+  }
+
+  /* User chip */
+  .user-chip {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 13px;
+    transition: background var(--transition);
+  }
+
+  .user-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--purple), var(--primary));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    color: #fff;
+    font-weight: 800;
+    flex-shrink: 0;
+    box-shadow: 0 2px 10px rgba(139, 92, 246, 0.4);
+  }
+
+  .user-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .user-info .u-name {
+    font-size: 13.5px;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+  }
+  .user-info .u-role {
+    font-size: 11px;
+    color: var(--text3);
+    margin-top: 2px;
+    font-weight: 500;
+  }
+
+  /* Nav */
+  .sidebar-nav {
+    flex: 1;
+    min-height: 0; /* [FIX] flex child يلازم min-height:0 عشان overflow-y يشتغل */
+    padding: 12px 10px;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+
+  .nav-section {
+    margin-bottom: 8px;
+  }
+
+  .nav-label {
+    font-size: 10px;
+    font-weight: 800;
+    color: var(--text3);
+    letter-spacing: 1.2px;
+    padding: 10px 13px 5px;
+    text-transform: uppercase;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 10px 13px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--text2);
+    font-size: 14.5px;
+    font-weight: 500;
+    transition:
+      background var(--transition),
+      color var(--transition),
+      opacity var(--transition),
+      border-color var(--transition);
+    position: relative;
+    margin-bottom: 2px;
+    user-select: none;
+  }
+  .nav-item:hover {
+    background: var(--surface2);
+    color: var(--text);
+    transform: translateX(-2px);
+  }
+  .nav-item.active {
+    background: linear-gradient(135deg, #ddeaff 0%, #e8f0ff 100%);
+    color: var(--accent);
+    font-weight: 700;
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+
+  [data-theme="dark"] .nav-item:hover {
+    transform: translateX(-2px);
+    background: rgba(255, 255, 255, 0.04);
+  }
+  [data-theme="dark"] .nav-item.active {
+    background: rgba(37, 99, 235, 0.18);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+
+  .nav-icon {
+    font-size: 20px;
+    width: 30px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .nav-badge {
+    background: var(--danger);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 800;
+    min-width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    padding: 0 5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: auto;
+    flex-shrink: 0;
+    box-shadow:
+      0 0 0 2px var(--surface),
+      0 0 0 4px rgba(239, 68, 68, 0.25);
+    animation: pulseBadge 2s ease-in-out infinite;
+    line-height: 1;
+  }
+
+  .nav-new-badge {
+    background: var(--palette-emerald-100);
+    color: var(--palette-emerald-800);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    border-radius: 999px;
+    padding: 2px 8px;
+    margin-right: auto;
+    flex-shrink: 0;
+    line-height: 1.4;
+  }
+  [data-theme="dark"] .nav-new-badge {
+    background: rgba(16, 185, 129, 0.18);
+    color: var(--palette-emerald-300);
+  }
+
+  /* ===== NOTIFICATION BELL ===== */
+  #notif-bell-btn {
+    position: relative;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 6px 8px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 23px;
+    transition: background var(--transition);
+    line-height: 1;
+    margin-right: 4px;
+  }
+  #notif-bell-btn:hover {
+    background: var(--surface2);
+  }
+
+  #notif-bell-dot {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    width: 9px;
+    height: 9px;
+    background: var(--danger);
+    border-radius: 50%;
+    border: 2px solid var(--surface);
+    display: none;
+    animation: pulseBadge 2s ease-in-out infinite;
+  }
+  #notif-bell-dot.show {
+    display: block;
+  }
+
+  #notif-count-bubble {
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    min-width: 17px;
+    height: 17px;
+    background: var(--danger);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 800;
+    border-radius: 999px;
+    padding: 0 4px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border: 1.5px solid var(--surface);
+    line-height: 1;
+  }
+  #notif-count-bubble.show {
+    display: inline-flex;
+  }
+
+  /* Dropdown panel */
+  #notif-dropdown {
+    position: fixed;
+    top: 56px;
+    left: 24px;
+    width: 340px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+    z-index: 9997;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    animation: notifSlideIn 0.22s cubic-bezier(0.34, 1.4, 0.64, 1) forwards;
+    direction: rtl;
+  }
+  #notif-dropdown.open {
+    display: flex;
+  }
+
+  @keyframes notifSlideIn {
+    from {
+      opacity: 0;
+      transform: translateY(-10px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .notif-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .notif-header h3 {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+    margin: 0;
+  }
+  .notif-mark-all {
+    font-size: 11px;
+    color: var(--accent);
+    cursor: pointer;
+    font-weight: 600;
+    background: none;
+    border: none;
+    padding: 0;
+  }
+  .notif-mark-all:hover {
+    text-decoration: underline;
+  }
+
+  .notif-list {
+    max-height: 360px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .notif-list::-webkit-scrollbar {
+    width: 4px;
+  }
+  .notif-list::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 4px;
+  }
+
+  .notif-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background var(--transition);
+    position: relative;
+  }
+  .notif-item:last-child {
+    border-bottom: none;
+  }
+  .notif-item:hover {
+    background: var(--surface2);
+  }
+  .notif-item.unread {
+    background: var(--accent-soft);
+  }
+  .notif-item.unread:hover {
+    background: var(--surface2);
+  }
+
+  .notif-unread-dot {
+    position: absolute;
+    top: 14px;
+    left: 10px;
+    width: 7px;
+    height: 7px;
+    background: var(--accent);
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .notif-icon-wrap {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 17px;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  .notif-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .notif-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .notif-desc {
+    font-size: 11.5px;
+    color: var(--text2);
+    line-height: 1.4;
+  }
+  .notif-time {
+    font-size: 10px;
+    color: var(--text3);
+    white-space: nowrap;
+    margin-top: 3px;
+    display: block;
+  }
+
+  .notif-footer {
+    padding: 10px 16px;
+    border-top: 1px solid var(--border);
+    text-align: center;
+  }
+  .notif-footer button {
+    font-size: 12px;
+    color: var(--accent);
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .notif-footer button:hover {
+    text-decoration: underline;
+  }
+
+  .notif-empty {
+    padding: 32px 16px;
+    text-align: center;
+    color: var(--text3);
+    font-size: 13px;
+  }
+  .notif-empty div {
+    font-size: 28px;
+    margin-bottom: 8px;
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+       صفحة التنبيهات الكاملة (Notifications Full Page) v4.2
+     ═══════════════════════════════════════════════════════════ */
+  .notif-page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .notif-page-tabs {
+    display: flex;
+    gap: 6px;
+    background: var(--surface2);
+    border-radius: 12px;
+    padding: 4px;
+  }
+  .notif-page-tab {
+    padding: 7px 18px;
+    border-radius: 9px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    background: none;
+    color: var(--text2);
+    transition:
+      background var(--transition),
+      color var(--transition),
+      opacity var(--transition),
+      border-color var(--transition);
+    white-space: nowrap;
+  }
+  .notif-page-tab.active {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+  }
+  .notif-page-tab .tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--danger);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 800;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    padding: 0 4px;
+    margin-right: 5px;
+    line-height: 1;
+  }
+  .notif-actions-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .notif-full-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .notif-full-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 16px 20px;
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition:
+      box-shadow var(--transition),
+      border-color var(--transition),
+      background var(--transition);
+    position: relative;
+  }
+  .notif-full-item:hover {
+    box-shadow: var(--shadow-md);
+    border-color: var(--accent);
+  }
+  .notif-full-item.unread {
+    background: var(--accent-soft);
+    border-color: #2563eb33;
+  }
+  .notif-full-item.unread:hover {
+    border-color: var(--accent);
+  }
+  .notif-full-item.type-danger {
+    background: var(--danger-soft);
+    border-color: #ef444433;
+  }
+  .notif-full-item.type-danger.unread {
+    border-color: #ef4444aa;
+  }
+  .notif-full-item.type-warning {
+    background: var(--warning-soft);
+    border-color: #f59e0b33;
+  }
+  .notif-full-item.type-warning.unread {
+    border-color: #f59e0baa;
+  }
+  .notif-full-unread-strip {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: 4px;
+    background: var(--accent);
+    border-radius: 0 var(--radius) var(--radius) 0;
+  }
+  .notif-full-item.type-danger .notif-full-unread-strip {
+    background: var(--danger);
+  }
+  .notif-full-item.type-warning .notif-full-unread-strip {
+    background: var(--warning);
+  }
+  .notif-full-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    flex-shrink: 0;
+  }
+  .notif-full-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .notif-full-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .notif-full-desc {
+    font-size: 12.5px;
+    color: var(--text2);
+    line-height: 1.5;
+    margin-bottom: 6px;
+  }
+  .notif-full-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .notif-full-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 20px;
+    background: var(--surface3);
+    color: var(--text2);
+  }
+  .notif-full-badge.unread-badge {
+    background: var(--accent);
+    color: #fff;
+  }
+  .notif-full-badge.read-badge {
+    background: var(--success-soft);
+    color: var(--success);
+  }
+  .notif-full-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .notif-full-item-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 18px;
+    opacity: 0.45;
+    transition: opacity var(--transition);
+    padding: 4px;
+    border-radius: 6px;
+    line-height: 1;
+  }
+  .notif-full-item-btn:hover {
+    opacity: 1;
+    background: var(--surface2);
+  }
+  .notif-full-empty {
+    padding: 60px 20px;
+    text-align: center;
+    color: var(--text3);
+    font-size: 14px;
+  }
+  .notif-full-empty .empty-icon {
+    font-size: 48px;
+    margin-bottom: 12px;
+    display: block;
+  }
+
+  /* ── Rename User Modal ── */
+  .rename-modal-avatar {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    font-weight: 800;
+    color: #fff;
+    margin: 0 auto 16px;
+    flex-shrink: 0;
+  }
+  .rename-confirm-banner {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    background: var(--warning-soft);
+    border: 1px solid #f59e0b44;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 12.5px;
+    color: var(--warning);
+    margin-top: 12px;
+    font-weight: 500;
+  }
+  .rename-confirm-banner.show {
+    display: flex;
+  }
+
+  /* top-bar الشريط العلوي */
+  #app-top-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: var(--sidebar-w);
+    height: 52px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0 12px;
+    z-index: 90;
+    gap: 6px;
+    box-shadow: -4px 0 32px rgba(14, 21, 37, 0.08);
+    transition: right var(--transition);
+  }
+
+  /* [FIX-TOPBAR-RIGHT] الـ search wrap أبعد من الـ flex flow عشان الأزرار تلاصق اليمين */
+  #app-top-bar .global-search-wrap {
+    margin-right: auto; /* يدفع الأزرار لأقصى اليمين */
+  }
+
+  @media (max-width: 860px) {
+    #app-top-bar {
+      right: 0;
+      padding: 0 58px 0 12px; /* [FIX] اليمين: مساحة للـ hamburger (44px+10px+4px) */
+    }
+  }
+
+  @media (max-width: 540px) {
+    #app-top-bar {
+      padding: 0 58px 0 8px; /* [FIX] نفس المسافة على الموبايل */
+      gap: 4px;
+    }
+  }
+
+  /* ── Global Search ── */
+  /* ══════════════════════════════════════════════
+     Global Search — البحث الشامل المطوّر
+     ══════════════════════════════════════════════ */
+
+  .global-search-wrap {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(440px, calc(100vw - var(--sidebar-w) - 200px));
+    z-index: 100;
+  }
+
+  .global-search-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg2);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    padding: 0 12px;
+    height: 38px;
+    transition:
+      border-color 0.2s,
+      box-shadow 0.2s,
+      background 0.2s;
+    cursor: text;
+  }
+
+  .global-search-box:focus-within {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.13);
+    background: var(--surface);
+  }
+
+  .gs-icon {
+    flex-shrink: 0;
+    color: var(--text3);
+    transition: color 0.2s;
+  }
+
+  .global-search-box:focus-within .gs-icon {
+    color: var(--primary);
+  }
+
+  .gs-input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    outline: none;
+    font-size: 13px;
+    color: var(--text1);
+    font-family: inherit;
+    direction: rtl;
+    min-width: 0;
+  }
+
+  .gs-input::placeholder {
+    color: var(--text3);
+    font-size: 12px;
+  }
+
+  .gs-kbd {
+    flex-shrink: 0;
+    background: var(--surface);
+    color: var(--text3);
+    font-size: 10px;
+    font-family: inherit;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 2px 7px;
+    white-space: nowrap;
+    letter-spacing: 0.3px;
+  }
+
+  .gs-clear {
+    flex-shrink: 0;
+    background: var(--bg2);
+    border: none;
+    color: var(--text3);
+    cursor: pointer;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    line-height: 1;
+    transition:
+      background 0.15s,
+      color 0.15s;
+  }
+
+  .gs-clear:hover {
+    background: var(--border);
+    color: var(--text1);
+  }
+
+  /* ── الـ Dropdown ── */
+  .gs-dropdown {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    left: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow:
+      0 4px 6px rgba(0, 0, 0, 0.07),
+      0 12px 40px rgba(0, 0, 0, 0.14);
+    z-index: 9999;
+    max-height: 480px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+  }
+
+  /* Scrollbar أنيق */
+  .gs-dropdown::-webkit-scrollbar {
+    width: 4px;
+  }
+  .gs-dropdown::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .gs-dropdown::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 99px;
+  }
+
+  .gs-results {
+    padding: 6px;
+  }
+
+  /* ── عنوان المجموعة ── */
+  .gs-section-title {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--text3);
+    padding: 10px 14px 5px;
+    text-align: right;
+    direction: rtl;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .gs-section-title::before {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+    order: 2;
+  }
+
+  /* ── عنصر النتيجة ── */
+  .gs-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: 9px;
+    cursor: pointer;
+    direction: rtl;
+    transition: background 0.12s;
+    position: relative;
+  }
+
+  .gs-item:hover,
+  .gs-item.gs-selected {
+    background: var(--bg2);
+  }
+
+  .gs-item.gs-selected {
+    outline: 1.5px solid var(--primary);
+    outline-offset: -1px;
+  }
+
+  /* ── أيقونة العنصر ── */
+  .gs-item-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    flex-shrink: 0;
+    transition: transform 0.15s;
+  }
+
+  .gs-item-icon i {
+    font-size: 17px;
+  }
+
+  .gs-item:hover .gs-item-icon {
+    transform: scale(1.08);
+  }
+
+  /* ── نص العنصر ── */
+  .gs-item-body {
+    flex: 1;
+    min-width: 0;
+    text-align: right;
+  }
+
+  .gs-item-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+  }
+
+  .gs-item-title mark {
+    background: rgba(37, 99, 235, 0.15);
+    color: var(--primary);
+    border-radius: 3px;
+    padding: 0 2px;
+    font-weight: 700;
+  }
+
+  .gs-item-sub {
+    font-size: 11px;
+    color: var(--text3);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ── Badge ── */
+  .gs-item-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    flex-shrink: 0;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  /* ── سهم التنقل ── */
+  .gs-item-arrow {
+    color: var(--text3);
+    font-size: 14px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+
+  .gs-item:hover .gs-item-arrow,
+  .gs-item.gs-selected .gs-item-arrow {
+    opacity: 1;
+  }
+
+  /* ── الـ Shortcut hint ── */
+  .gs-item-shortcut {
+    font-size: 10px;
+    color: var(--text3);
+    background: var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    flex-shrink: 0;
+    display: none;
+  }
+
+  .gs-item.gs-selected .gs-item-shortcut {
+    display: block;
+  }
+
+  /* ── حالة فارغة ── */
+  .gs-empty {
+    text-align: center;
+    padding: 32px 16px;
+    color: var(--text3);
+    direction: rtl;
+  }
+
+  .gs-empty-icon {
+    display: none !important;
+  }
+
+  .gs-empty-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text2);
+    margin-bottom: 4px;
+  }
+
+  .gs-empty-sub {
+    font-size: 12px;
+    color: var(--text3);
+  }
+
+  /* ── Footer ── */
+  .gs-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text3);
+    direction: rtl;
+    gap: 8px;
+    background: var(--bg2);
+    border-radius: 0 0 14px 14px;
+  }
+
+  .gs-footer kbd {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 10px;
+    font-family: inherit;
+  }
+
+  .gs-footer-hint {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  /* ── Divider بين الأقسام ── */
+  .gs-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 12px;
+    opacity: 0.5;
+  }
+
+  /* ── Quick Nav Chip ── */
+  .gs-quicknav-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    padding: 4px 0;
+  }
+
+  .gs-qn-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 9px;
+    cursor: pointer;
+    direction: rtl;
+    transition: background 0.12s;
+  }
+
+  .gs-qn-item:hover,
+  .gs-qn-item.gs-selected {
+    background: var(--bg2);
+  }
+
+  .gs-qn-item.gs-selected {
+    outline: 1.5px solid var(--primary);
+    outline-offset: -1px;
+  }
+
+  .gs-qn-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .gs-qn-icon i {
+    font-size: 16px;
+  }
+
+  .gs-qn-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ── شريط فلاتر النوع ── */
+  .gs-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 0 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    direction: rtl;
+    animation: gsFilterIn 0.15s ease;
+  }
+  .gs-filter-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  @keyframes gsFilterIn {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .gs-filter-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-family: inherit;
+    font-weight: 500;
+    color: var(--text2);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 3px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      background 0.12s,
+      color 0.12s,
+      border-color 0.12s;
+    direction: rtl;
+  }
+  .gs-filter-btn:hover {
+    background: var(--surface);
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+  .gs-filter-btn.gs-filter-active {
+    background: var(--primary, #2563eb);
+    border-color: var(--primary, #2563eb);
+    color: #fff;
+  }
+  .gs-filter-count {
+    background: rgba(255, 255, 255, 0.25);
+    border-radius: 20px;
+    padding: 0 5px;
+    font-size: 10px;
+    font-weight: 700;
+    min-width: 16px;
+    text-align: center;
+  }
+  .gs-filter-btn:not(.gs-filter-active) .gs-filter-count {
+    background: var(--border);
+    color: var(--text3);
+  }
+
+  /* ── عدّاد في عنوان القسم ── */
+  .gs-section-count {
+    background: var(--border);
+    border-radius: 99px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 0 6px;
+    color: var(--text3);
+    margin-right: 4px;
+  }
+
+  /* ── سعر الصنف ── */
+  .gs-item-price {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--success-dark);
+    background: #d1fae522;
+    border-radius: 6px;
+    padding: 2px 7px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    direction: rtl;
+  }
+
+  /* ── عرض المزيد ── */
+  .gs-show-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    font-size: 11.5px;
+    color: var(--primary, #2563eb);
+    padding: 6px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    direction: rtl;
+    transition: background 0.12s;
+    font-weight: 500;
+  }
+  .gs-show-more:hover {
+    background: var(--bg2);
+  }
+
+  /* ── زر إعادة ضبط الفلتر (في صفحة لا نتائج) ── */
+  .gs-empty-reset-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin: 10px auto 0;
+    font-size: 12px;
+    font-family: inherit;
+    color: var(--primary);
+    background: var(--accent-soft, #eff6ff);
+    border: 1px solid var(--primary);
+    border-radius: 20px;
+    padding: 4px 14px;
+    cursor: pointer;
+    transition: background 0.12s;
+    direction: rtl;
+  }
+  .gs-empty-reset-btn:hover {
+    background: var(--primary);
+    color: #fff;
+  }
+
+  /* ── اقتراحات في حالة لا نتائج ── */
+  .gs-empty-suggestions {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    justify-content: center;
+    flex-wrap: wrap;
+    font-size: 11px;
+    color: var(--text3);
+    direction: rtl;
+  }
+  .gs-suggestion-chip {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 2px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    color: var(--text2);
+    transition: border-color 0.12s;
+  }
+  .gs-suggestion-chip:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+
+  /* ── سجل البحث ── */
+  .gs-history-list {
+    padding: 2px 4px;
+  }
+  .gs-history-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    direction: rtl;
+    transition: background 0.12s;
+    font-size: 12.5px;
+    color: var(--text2);
+  }
+  .gs-history-item:hover {
+    background: var(--bg2);
+  }
+  .gs-history-text {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .gs-history-clear-btn {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    font-family: inherit;
+    color: var(--text3);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition:
+      color 0.12s,
+      background 0.12s;
+  }
+  .gs-history-clear-btn:hover {
+    color: var(--danger-dark);
+    background: var(--palette-red-100);
+  }
+
+  /* ── أنيميشن ظهور الـ dropdown ── */
+  .gs-dropdown {
+    animation: gsDropIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes gsDropIn {
+    from {
+      opacity: 0;
+      transform: translateY(-6px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  /* نزّل الـ content شوية عشان الـ top-bar */
+  .content {
+    padding-top: 62px !important;
+  }
+
+  .top-bar-page-title {
+    display: none;
+  }
+
+  /* backdrop للـ dropdown */
+  #notif-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9996;
+    display: none;
+  }
+  #notif-backdrop.show {
+    display: block;
+  }
+
+  @media (max-width: 768px) {
+    #app-top-bar {
+      right: 0;
+    }
+    #notif-dropdown {
+      left: 8px;
+      right: 8px;
+      width: auto;
+    }
+  }
+
+  .auto-fill-badge {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--success-dark);
+    background: var(--success-soft);
+    border: 1px solid var(--palette-emerald-200);
+    border-radius: 20px;
+    padding: 1px 8px;
+    margin-right: 6px;
+    vertical-align: middle;
+    animation: fadeInBadge 0.3s ease;
+  }
+
+  /* Dropdown nav */
+  .nav-dropdown {
+    margin-bottom: 2px;
+  }
+  .nav-dropdown-toggle {
+    cursor: default;
+    user-select: none;
+    align-items: stretch;
+    justify-content: flex-start;
+    padding: 0 6px 0 0;
+    gap: 0;
+  }
+  /* الـ hover/transform العام بتاع .nav-item مش مناسب لرأس المجموعة
+     المنقسم دلوقتي — الـ hover بقى مسؤولية .nav-grp-label و .nav-grp-arrow
+     كل واحدة لوحدها */
+  .nav-dropdown-toggle:hover {
+    background: transparent;
+    transform: none;
+  }
+  /* ── [SIDEBAR-V3] رأس المجموعة بقى منطقتين مستقلتين ──
+     .nav-grp-label تفتح الـ Dashboard، .nav-grp-arrow تفتح/تقفل القائمة */
+  .nav-grp-label {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    flex: 1;
+    min-width: 0;
+    padding: 9px 7px 9px 13px;
+    cursor: pointer;
+    border-radius: 10px;
+    transition:
+      background 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+      color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+      transform 0.15s ease;
+  }
+  .nav-grp-label .nav-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    background: var(--surface2);
+    font-size: 15px;
+    transition:
+      background 0.2s ease,
+      color 0.2s ease,
+      transform 0.2s ease;
+    flex-shrink: 0;
+  }
+  [data-theme="dark"] .nav-grp-label .nav-icon {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .nav-grp-label:not(.has-dashboard) {
+    cursor: pointer; /* لسه قابلة للضغط لفتح/قفل القائمة لحد ما ييجيلها Dashboard */
+  }
+  .nav-grp-label.has-dashboard:hover {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .nav-grp-label.has-dashboard:hover .nav-icon {
+    background: var(--accent);
+    color: #fff;
+    transform: scale(1.06);
+  }
+  [data-theme="dark"] .nav-grp-label.has-dashboard:hover {
+    background: rgba(59, 130, 246, 0.12);
+    color: var(--palette-blue-300);
+  }
+  /* أقسام لسه معندهاش Dashboard مستقل — نفس hover الرمادي القديم بتاع
+     nav-item عشان يبقى واضح إن الضغط عليها هيعمل حاجة (فتح/قفل القائمة) */
+  .nav-grp-label:not(.has-dashboard):hover {
+    background: var(--surface2);
+  }
+  [data-theme="dark"] .nav-grp-label:not(.has-dashboard):hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+  /* ── [SIDEBAR-V4] زرار السهم بقى مربّع كامل قابل للضغط ──
+     بدل الدايرة الصغيرة القديمة (28×28 في نص الصف)، دلوقتي الزرار
+     بياخد ارتفاع الصف بالكامل (align-self:stretch) وعرض ثابت مريح،
+     فأي ضغطة جوه المربع كله (مش بس على الدايرة القديمة) بتشتغل. */
+  .nav-grp-arrow {
+    align-self: stretch;
+    margin: 3px 4px 3px 0;
+    width: 40px;
+    min-height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    cursor: pointer;
+    flex-shrink: 0;
+    position: relative;
+    overflow: hidden;
+    transition:
+      background 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+      transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .nav-grp-arrow:hover {
+    background: var(--surface2);
+  }
+  .nav-grp-arrow:active {
+    transform: scale(0.9);
+    background: var(--accent-soft);
+  }
+  [data-theme="dark"] .nav-grp-arrow:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+  [data-theme="dark"] .nav-grp-arrow:active {
+    background: rgba(37, 99, 235, 0.18);
+  }
+  /* هالة خفيفة بترجّع لما تفتح المجموعة — بتدي إحساس إن الزرار "اتفعّل" */
+  .nav-grp-arrow::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 10px;
+    background: var(--accent-soft);
+    opacity: 0;
+    transform: scale(0.6);
+    transition:
+      opacity 0.3s ease,
+      transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    pointer-events: none;
+  }
+  .nav-grp-toggle.open .nav-grp-arrow::after {
+    opacity: 1;
+    transform: scale(1);
+  }
+  [data-theme="dark"] .nav-grp-toggle.open .nav-grp-arrow::after {
+    background: rgba(37, 99, 235, 0.16);
+  }
+  .nav-dropdown-arrow {
+    position: relative;
+    z-index: 1;
+    font-size: 16px;
+    opacity: 0.55;
+    transition:
+      transform 0.42s cubic-bezier(0.34, 1.56, 0.64, 1),
+      color 0.2s ease,
+      opacity 0.2s ease;
+    display: inline-block;
+    color: var(--text2);
+  }
+  .nav-grp-arrow:hover .nav-dropdown-arrow {
+    opacity: 0.85;
+  }
+  .nav-grp-toggle.open .nav-dropdown-arrow,
+  .nav-grp-toggle.has-active .nav-dropdown-arrow {
+    opacity: 1;
+    color: var(--accent);
+  }
+  .nav-grp-toggle.open .nav-dropdown-arrow {
+    transform: rotate(180deg);
+  }
+  [data-theme="dark"] .nav-grp-toggle.open .nav-dropdown-arrow,
+  [data-theme="dark"] .nav-grp-toggle.has-active .nav-dropdown-arrow {
+    color: var(--palette-blue-300);
+  }
+
+  /* toggle المجموعة لما تكون مفتوحة */
+  .nav-grp-toggle.open {
+    background: linear-gradient(
+      135deg,
+      var(--accent-soft) 0%,
+      rgba(59, 130, 246, 0.06) 100%
+    ) !important;
+    color: var(--accent) !important;
+    font-weight: 600;
+  }
+  [data-theme="dark"] .nav-grp-toggle.open {
+    background: rgba(37, 99, 235, 0.14) !important;
+    color: var(--palette-blue-300) !important;
+  }
+
+  /* toggle المجموعة عند وجود صفحة active بداخلها (تلوين بس، من غير ما
+     يفرض فتح القائمة — الفتح مسؤولية .open لوحدها) */
+  .nav-grp-toggle.has-active {
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .nav-grp-toggle.has-active .nav-grp-label {
+    background: linear-gradient(
+      135deg,
+      var(--accent-soft) 0%,
+      rgba(59, 130, 246, 0.05) 100%
+    );
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+  .nav-grp-toggle.has-active .nav-grp-label .nav-icon {
+    background: var(--accent);
+    color: #fff;
+  }
+  [data-theme="dark"] .nav-grp-toggle.has-active {
+    color: var(--palette-blue-300);
+  }
+  [data-theme="dark"] .nav-grp-toggle.has-active .nav-grp-label {
+    background: rgba(37, 99, 235, 0.16);
+    box-shadow: inset 2px 0 0 var(--palette-blue-300);
+  }
+
+  /* ── القائمة المنسدلة — بدون box، indent أنيق ── */
+  /* [PERF-FIX] تم التحويل من grid-template-rows إلى max-height + translateZ
+     grid animation ثقيل على الـ CPU داخل Apps Script iframe — max-height
+     يشغّل GPU compositor مباشرة ويعطي حركة أسرع وأكثر سلاسة                 */
+  .nav-dropdown-menu {
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    margin: 0;
+    background: transparent;
+    border: none;
+    will-change: max-height, opacity;
+    transform: translateZ(0);
+    transition:
+      max-height 0.38s cubic-bezier(0.16, 1, 0.3, 1),
+      opacity 0.22s ease;
+  }
+  .nav-dropdown-menu.open {
+    max-height: 600px;
+    opacity: 1;
+  }
+  .nav-dropdown-inner {
+    overflow: hidden;
+    min-height: 0;
+    border-right: 2px solid var(--border);
+    margin-right: 22px;
+    border-radius: 0 0 4px 0;
+    padding: 0;
+    transform-origin: top;
+    transition:
+      padding 0.32s cubic-bezier(0.16, 1, 0.3, 1),
+      border-color 0.3s ease;
+  }
+  .nav-dropdown-menu.open > .nav-dropdown-inner {
+    padding: 4px 0 6px 0;
+    border-right-color: var(--accent-soft);
+  }
+
+  /* [ANIM] كل عنصر فرعي بيتحرك لوحده — بيبدأ مخفي ومزاح شوية لفوق/جنب،
+     وبيظهر بترتيب متتابع (cascade) مع تأخير بسيط بينهم بدل ما يظهروا
+     كلهم مرة واحدة زي زرار عادي. الإغلاق بيرجع بسرعة وبدون تأخير. */
+  .nav-sub-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 12px 8px 10px;
+    font-size: 13px;
+    color: var(--text2);
+    cursor: pointer;
+    border-radius: 9px;
+    margin: 2px 6px 2px 8px;
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+    transition:
+      background 0.18s cubic-bezier(0.4, 0, 0.2, 1),
+      color 0.18s ease,
+      opacity 0.22s ease,
+      transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+    transition-delay: 0s;
+    font-weight: 500;
+  }
+  .nav-dropdown-menu.open .nav-sub-item {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  .nav-dropdown-menu.open .nav-sub-item:nth-child(1) {
+    transition-delay: 0.03s;
+  }
+  .nav-dropdown-menu.open .nav-sub-item:nth-child(2) {
+    transition-delay: 0.06s;
+  }
+  .nav-dropdown-menu.open .nav-sub-item:nth-child(3) {
+    transition-delay: 0.09s;
+  }
+  .nav-dropdown-menu.open .nav-sub-item:nth-child(4) {
+    transition-delay: 0.12s;
+  }
+  .nav-dropdown-menu.open .nav-sub-item:nth-child(5) {
+    transition-delay: 0.15s;
+  }
+  .nav-dropdown-menu.open .nav-sub-item:nth-child(6) {
+    transition-delay: 0.18s;
+  }
+  .nav-dropdown-menu.open .nav-sub-item:nth-child(7) {
+    transition-delay: 0.21s;
+  }
+  .nav-dropdown-menu.open .nav-sub-item:nth-child(8) {
+    transition-delay: 0.24s;
+  }
+  .nav-dropdown-menu.open .nav-sub-item:nth-child(9) {
+    transition-delay: 0.27s;
+  }
+  .nav-dropdown-menu.open .nav-sub-item:nth-child(10) {
+    transition-delay: 0.3s;
+  }
+  .nav-dropdown-menu.open .nav-sub-item:nth-child(11) {
+    transition-delay: 0.33s;
+  }
+  .nav-dropdown-menu.open .nav-sub-item:nth-child(12) {
+    transition-delay: 0.36s;
+  }
+  /* لما تكون مقفولة، مفيش تأخير خالص عشان الاختفاء يبقى فوري ومتزامن */
+  .nav-dropdown-menu:not(.open) .nav-sub-item {
+    transition-delay: 0s !important;
+    transition-duration: 0.12s, 0.12s, 0.1s, 0.1s;
+  }
+  .nav-sub-item::before {
+    content: "";
+    position: absolute;
+    right: -8px;
+    top: 50%;
+    width: 6px;
+    height: 1.5px;
+    background: var(--border);
+    transition:
+      background 0.18s ease,
+      width 0.18s ease;
+  }
+  .nav-sub-item:first-child {
+    border-radius: 9px;
+  }
+  .nav-sub-item:last-child {
+    border-radius: 9px;
+  }
+
+  .nav-dropdown-menu.open .nav-sub-item:hover {
+    background: var(--accent-soft);
+    color: var(--accent);
+    transform: translateX(-3px) scale(1);
+  }
+  .nav-sub-item:hover::before {
+    background: var(--accent);
+    width: 9px;
+  }
+  .nav-sub-item.active {
+    background: linear-gradient(
+      135deg,
+      var(--accent-soft) 0%,
+      rgba(59, 130, 246, 0.04) 100%
+    );
+    color: var(--accent);
+    font-weight: 700;
+    box-shadow: inset 2.5px 0 0 var(--accent);
+  }
+  .nav-sub-item.active::before {
+    background: var(--accent);
+    width: 9px;
+  }
+
+  [data-theme="dark"] .nav-dropdown-menu {
+    background: transparent;
+  }
+  [data-theme="dark"] .nav-dropdown-inner {
+    border-color: rgba(59, 130, 246, 0.35);
+  }
+  [data-theme="dark"] .nav-sub-item:hover {
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--palette-blue-300);
+  }
+  [data-theme="dark"] .nav-sub-item.active {
+    background: rgba(37, 99, 235, 0.18);
+    box-shadow: inset 3px 0 0 var(--accent);
+    color: var(--palette-blue-300);
+  }
+
+  /* Footer */
+  .sidebar-foot {
+    padding: 12px 10px 16px;
+    border-top: 1px solid var(--border);
+    background: linear-gradient(0deg, var(--surface2) 0%, transparent 100%);
+  }
+
+  /* ── Theme Pill Toggle (Moon / Sun) ── */
+  .theme-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding: 3px;
+    border-radius: 30px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition:
+      background var(--transition),
+      border-color var(--transition);
+    height: 38px;
+  }
+  .theme-toggle:hover {
+    border-color: var(--primary);
+  }
+  .theme-pill-opt {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 30px;
+    border-radius: 22px;
+    font-size: 17px;
+    transition:
+      background var(--transition),
+      box-shadow var(--transition);
+    flex-shrink: 0;
+  }
+  .theme-pill-opt.active-dark {
+    background: #1e1e3a;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  }
+  .theme-pill-opt.active-light {
+    background: #fef9c3;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  }
+  .theme-pill-opt i {
+    color: var(--text2);
+    transition: color var(--transition);
+  }
+  #pill-dark i {
+    color: #a5a5d6;
+  }
+  .theme-pill-opt.active-dark i {
+    color: #ffd76a;
+  }
+  #pill-light i {
+    color: #b98f00;
+  }
+  .theme-pill-opt.active-light i {
+    color: #e8a500;
+  }
+
+  /* ── AI Assistant Button (Top Bar) ── */
+  .ai-topbar-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius-sm);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition:
+      background var(--transition),
+      color var(--transition),
+      opacity var(--transition),
+      border-color var(--transition);
+    font-size: 17px;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .ai-topbar-btn:hover {
+    background: var(--purple-soft);
+    border-color: var(--purple);
+    transform: translateY(-1px);
+    box-shadow: 0 3px 10px rgba(139, 92, 246, 0.2);
+  }
+  .ai-topbar-btn.active {
+    background: var(--purple-soft);
+    border-color: var(--purple);
+  }
+  .ai-topbar-btn .ai-pulse {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--purple);
+    border: 1.5px solid var(--surface);
+    animation: pulseBadge 2s infinite;
+  }
+
+  /* legacy - keep for compat */
+  .toggle-switch {
+    display: none;
+  }
+
+  .btn-logout {
+    width: 100%;
+    padding: 9px;
+    border-radius: var(--radius-sm);
+    background: var(--danger-soft);
+    color: var(--danger);
+    font-size: 12.5px;
+    font-weight: 700;
+    transition:
+      background var(--transition),
+      color var(--transition),
+      opacity var(--transition),
+      border-color var(--transition);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .btn-logout:hover {
+    background: var(--danger);
+    color: #fff;
+  }
+
+  /* Hamburger & backdrop (mobile) */
+  .sidebar-toggle {
+    display: none;
+    position: fixed;
+    top: 8px;
+    right: 10px;
+    z-index: 300;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    box-shadow: var(--shadow-md);
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 0;
+    font-size: 20px;
+    cursor: pointer;
+    transition:
+      background var(--transition),
+      color var(--transition),
+      opacity var(--transition),
+      border-color var(--transition),
+      right 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+      transform 0.18s ease;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  /* ── Hamburger bars داخل الزر ── */
+  .sidebar-toggle .tog-bar {
+    display: block;
+    width: 18px;
+    height: 2px;
+    background: var(--text1, currentColor);
+    border-radius: 2px;
+    margin: 3px 0;
+    transition:
+      transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+      opacity 0.25s ease,
+      width 0.25s ease;
+    transform-origin: center;
+  }
+  /* ── حالة الفتح — يتحول لـ X ── */
+  .sidebar-toggle.is-open .tog-bar:nth-child(1) {
+    transform: translateY(8px) rotate(45deg);
+  }
+  .sidebar-toggle.is-open .tog-bar:nth-child(2) {
+    opacity: 0;
+    width: 0;
+  }
+  .sidebar-toggle.is-open .tog-bar:nth-child(3) {
+    transform: translateY(-8px) rotate(-45deg);
+  }
+  .sidebar-toggle:hover {
+    background: var(--surface2);
+  }
+  .sidebar-toggle:active {
+    transform: scale(0.93);
+    background: var(--surface2);
+  }
+
+  /* ── الزر يتحرك مع السايدبار عند الفتح عشان ميغطيش المحتوى ── */
+  .sidebar-toggle.is-open {
+    right: calc(var(--sidebar-w, 260px) + 10px);
+  }
+
+  .sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.38);
+    /* REMOVED backdrop-filter: blur(3px) */
+    z-index: 99;
+    opacity: 0;
+    pointer-events: none; /* [FIX-CLICK-BLOCK] invisible → must NOT intercept events */
+    transition: opacity var(--transition);
+  }
+  .sidebar-backdrop.visible {
+    opacity: 1;
+    pointer-events: auto; /* [FIX-CLICK-BLOCK] only block clicks when actually visible */
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+      [SIDEBAR-COLLAPSE] Collapsible Sidebar — نمط ERP احترافي
+     (SAP Business One / Odoo / Dynamics 365 / ERPNext)
+     - ديسكتوب فقط (> 860px). على الموبايل السايدبار بيفضل شغال
+       بنظام الـ Drawer الموجود أصلاً من غير أي تغيير.
+     - الفكرة: تقليل var(--sidebar-w) لعرض صف الأيقونات (68px) بس
+       وقت الطي، وده بيخلي كل حاجة معتمدة على المتغير ده (المحتوى،
+       الشريط العلوي، الـ Drawers، البحث الشامل...) تتوسّع تلقائيًا
+       بنفس الحركة السلسة من غير ما نلمس أي CSS تاني بتاعهم.
+     - صفر تغيير في منطق التنقل أو أسماء الدوال الأصلية.
+     ═══════════════════════════════════════════════════════════════ */
+
+  :root {
+    --sidebar-collapse-speed: 0.25s; /* داخل مدى 200–300ms المطلوب */
+    --sidebar-collapsed-w: 68px;
+  }
+
+  @media (min-width: 861px) {
+    .app-layout.sidebar-collapsed {
+      --sidebar-w: var(--sidebar-collapsed-w);
+    }
+  }
+
+  /* ── زرار الطي/الفتح ── */
+  .sidebar-collapse-btn {
+    position: absolute;
+    top: 24px;
+    left: 8px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    box-shadow: var(--shadow-md, 0 2px 10px rgba(14, 21, 37, 0.12));
+    color: var(--text2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    cursor: pointer;
+    z-index: 5;
+    padding: 0;
+    transition:
+      background var(--transition),
+      color var(--transition),
+      border-color var(--transition),
+      transform var(--sidebar-collapse-speed) cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .sidebar-collapse-btn:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .sidebar-collapse-btn:active {
+    transform: scale(0.9);
+  }
+  .sidebar-collapse-btn i {
+    transition: transform var(--sidebar-collapse-speed) ease;
+  }
+  /* السهم بيتقلب لما السايدبار يبقى مطوي */
+  .sidebar.collapsed .sidebar-collapse-btn i {
+    transform: rotate(180deg);
+  }
+  /* مخفي على الموبايل — الأولوية هناك للـ Drawer hamburger */
+  @media (max-width: 860px) {
+    .sidebar-collapse-btn {
+      display: none;
+    }
+  }
+
+  /* ── حالة الطي: عمود أيقونات 68px ── */
+  @media (min-width: 861px) {
+    .sidebar.collapsed {
+      width: var(--sidebar-collapsed-w);
+    }
+    .sidebar.collapsed .sidebar-collapse-btn {
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    .sidebar.collapsed .sidebar-collapse-btn:active {
+      transform: translateX(-50%) scale(0.9);
+    }
+
+    /* إخفاء كل النصوص/التسميات، والإبقاء على الأيقونات فقط */
+    .sidebar.collapsed .sidebar-label,
+    .sidebar.collapsed .brand-text,
+    .sidebar.collapsed .user-info,
+    .sidebar.collapsed .nav-badge,
+    .sidebar.collapsed .nav-new-badge {
+      display: none;
+    }
+
+    /* رأس السايدبار: الشعار + صورة المستخدم في المنتصف بس */
+    .sidebar.collapsed .sidebar-head {
+      padding: 22px 8px 16px;
+    }
+    .sidebar.collapsed .sidebar-brand {
+      justify-content: center;
+      margin-bottom: 12px;
+    }
+    .sidebar.collapsed .user-chip {
+      justify-content: center;
+      padding: 8px;
+      gap: 0;
+    }
+
+    /* عناصر التنقل: أيقونة في المنتصف بس */
+    .sidebar.collapsed .sidebar-nav {
+      padding: 12px 6px;
+    }
+    .sidebar.collapsed .nav-item {
+      justify-content: center;
+      padding: 10px 0;
+      gap: 0;
+    }
+    .sidebar.collapsed .nav-item:hover {
+      transform: none;
+    }
+    .sidebar.collapsed .nav-icon {
+      width: 30px;
+      flex-shrink: 0;
+    }
+
+    /* رأس المجموعة (Dropdown) — الأيقونة فوق، وسهم صغير تحتها */
+    .sidebar.collapsed .nav-dropdown-toggle {
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 6px 0;
+      gap: 2px;
+    }
+    .sidebar.collapsed .nav-grp-label {
+      flex-direction: column;
+      justify-content: center;
+      padding: 4px 0;
+      gap: 0;
+      width: 100%;
+    }
+    .sidebar.collapsed .nav-grp-arrow {
+      align-self: center;
+      width: 22px;
+      min-height: 18px;
+      margin: 0;
+    }
+    .sidebar.collapsed .nav-dropdown-arrow {
+      font-size: 12px;
+    }
+
+    /* القائمة الفرعية: تفضل تفتح جوه نفس عمود الأيقونات (بدون Flyout)
+       عشان منحافظش على منطق الفتح/القفل الأصلي زي ما هو بالظبط */
+    .sidebar.collapsed .nav-dropdown-inner {
+      margin-right: 0;
+      border-right: none;
+    }
+    .sidebar.collapsed .nav-sub-item {
+      justify-content: center;
+      margin: 2px 4px;
+      padding: 8px 0;
+      gap: 0;
+    }
+    .sidebar.collapsed .nav-sub-item::before {
+      display: none;
+    }
+
+    /* فوتر السايدبار: الأيقونات فقط في المنتصف */
+    .sidebar.collapsed .sidebar-foot button {
+      gap: 0;
+    }
+  }
+</style>

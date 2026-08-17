@@ -1,0 +1,4848 @@
+<script>
+  // ───────────────────────────────────────────────────────────────
+  // JS_Catalog_Stock.html — جزء 6/10 من JavaScript.html الأصلي
+  // النطاق الأصلي: سطر 15051–18438 | بيان القص + دليل الأكواد + المخزن الحالي + أرصدة أول المدة + المخازن
+  // ───────────────────────────────────────────────────────────────
+
+  // بيان القص — Cutting Statement Logic
+  // ─────────────────────────────────────────────────────────────
+
+  function bindCuttingStatement() {
+    // ── مساعد: بناء صف لون في الجدول ─────────────────────────
+    function csColorRow(idx, colorName, theri, kasr, devo) {
+      colorName = colorName || "";
+      theri = theri || 0;
+      kasr = kasr || 0;
+      devo = devo || 0;
+      var net = Math.max(0, Number(theri) + Number(kasr) - Number(devo));
+      return (
+        "<tr>" +
+        '<td style="text-align:center;padding:5px 6px;font-size:12px;color:var(--text3);font-weight:600">' +
+        idx +
+        "</td>" +
+        '<td style="padding:5px 6px">' +
+        '<input class="input cs-color-name" type="text" value="' +
+        esc(colorName) +
+        '" placeholder="اسم اللون" style="width:100%;padding:4px 8px;font-size:13px"></td>' +
+        '<td style="padding:5px 6px;width:88px">' +
+        '<input class="input cs-theri" type="number" min="0" step="0.5" value="' +
+        theri +
+        '" style="width:75px;padding:4px 8px;text-align:center;font-size:13px"></td>' +
+        '<td style="padding:5px 6px;width:88px">' +
+        '<input class="input cs-kasr" type="number" min="0" step="0.5" value="' +
+        kasr +
+        '" style="width:75px;padding:4px 8px;text-align:center;font-size:13px"></td>' +
+        '<td style="padding:5px 6px;width:88px">' +
+        '<input class="input cs-devo" type="number" min="0" step="0.1" value="' +
+        devo +
+        '" style="width:75px;padding:4px 8px;text-align:center;font-size:13px"></td>' +
+        '<td style="padding:5px 6px;width:80px;text-align:center">' +
+        '<span class="cs-row-net" style="font-weight:700;font-size:14px;color:var(--success)">' +
+        NumberEngine.decimal(net, net % 1 ? 2 : 0) +
+        "</span></td>" +
+        '<td style="padding:5px 6px;width:36px;text-align:center">' +
+        '<button type="button" onclick="window._csDel(this)" ' +
+        'style="background:none;border:none;cursor:pointer;color:var(--danger);font-size:16px"></button>' +
+        "</td></tr>"
+      );
+    }
+
+    // ── إعادة حساب الإجماليات ────────────────────────────────
+    function recalcCS() {
+      var totTheri = 0,
+        totKasr = 0,
+        totDevo = 0,
+        totNet = 0;
+      var idx = 1;
+      document
+        .querySelectorAll("#cs-colors-tbody tr:not(#cs-colors-empty)")
+        .forEach(function (tr) {
+          var t = parseFloat(tr.querySelector(".cs-theri").value) || 0;
+          var k = parseFloat(tr.querySelector(".cs-kasr").value) || 0;
+          var d = parseFloat(tr.querySelector(".cs-devo").value) || 0;
+          var net = Math.max(0, t + k - d);
+          totTheri += t;
+          totKasr += k;
+          totDevo += d;
+          totNet += net;
+          var netEl = tr.querySelector(".cs-row-net");
+          if (netEl) netEl.textContent = net % 1 ? net.toFixed(0) : net;
+          // رقم الصف
+          var numEl = tr.querySelector("td:first-child");
+          if (numEl) numEl.textContent = idx++;
+        });
+
+      // Footer totals
+      var fmt = function (v) {
+        return v % 1 ? v.toFixed(0) : v;
+      };
+      var el = function (id) {
+        return document.getElementById(id);
+      };
+      if (el("cs-total-theri"))
+        el("cs-total-theri").textContent = fmt(totTheri);
+      if (el("cs-total-kasr")) el("cs-total-kasr").textContent = fmt(totKasr);
+      if (el("cs-total-devo")) el("cs-total-devo").textContent = fmt(totDevo);
+      if (el("cs-total-all")) el("cs-total-all").textContent = fmt(totNet);
+
+      // Summary cards
+      var totCut = totTheri + totKasr;
+      if (el("cs-sum-cut")) el("cs-sum-cut").textContent = fmt(totCut);
+      if (el("cs-sum-devo")) el("cs-sum-devo").textContent = fmt(totDevo);
+      if (el("cs-sum-net")) el("cs-sum-net").textContent = fmt(totNet);
+    }
+
+    // ── إعادة حساب المتراج ──────────────────────────────────
+    function recalcMeters() {
+      var total =
+        (parseFloat(document.getElementById("cs-m-leather").value) || 0) +
+        (parseFloat(document.getElementById("cs-m-lining").value) || 0) +
+        (parseFloat(document.getElementById("cs-m-interlining").value) || 0) +
+        (parseFloat(document.getElementById("cs-m-sleeve").value) || 0);
+      var el = document.getElementById("cs-meters-total");
+      if (el) el.textContent = NumberEngine.decimal(total, 0) + " م";
+    }
+
+    // ── ربط أحداث جدول الألوان (تفويض) ─────────────────────
+    var tbody = document.getElementById("cs-colors-tbody");
+    if (tbody) {
+      tbody.addEventListener("input", function (e) {
+        if (
+          e.target.classList.contains("cs-theri") ||
+          e.target.classList.contains("cs-kasr") ||
+          e.target.classList.contains("cs-devo")
+        ) {
+          recalcCS();
+        }
+      });
+    }
+
+    // ── أحداث المتراج ────────────────────────────────────────
+    document.querySelectorAll(".cs-meter-input").forEach(function (inp) {
+      inp.addEventListener("input", recalcMeters);
+    });
+
+    // ── زر إضافة لون ────────────────────────────────────────
+    var addBtn = document.getElementById("cs-add-color-btn");
+    if (addBtn) {
+      addBtn.addEventListener("click", function () {
+        var tb = document.getElementById("cs-colors-tbody");
+        var empty = document.getElementById("cs-colors-empty");
+        if (empty) empty.remove();
+        var rows = tb.querySelectorAll("tr:not(#cs-colors-empty)");
+        var tr = document.createElement("tr");
+        tr.innerHTML = csColorRow(rows.length + 1, "", 0, 0, 0).replace(
+          "<tr>",
+          "",
+        );
+        // csColorRow returns full <tr>...</tr> — insert as inner
+        var tmp = document.createElement("tbody");
+        tmp.innerHTML = csColorRow(rows.length + 1, "", 0, 0, 0);
+        tb.appendChild(tmp.firstChild);
+        recalcCS();
+        var inp = tb.lastChild && tb.lastChild.querySelector(".cs-color-name");
+        if (inp) inp.focus();
+      });
+    }
+
+    // ── دالة حذف صف (عالمية) ────────────────────────────────
+    window._csDel = function (btn) {
+      var tb = document.getElementById("cs-colors-tbody");
+      btn.closest("tr").remove();
+      if (!tb.querySelector("tr:not(#cs-colors-empty)")) {
+        var empty = document.createElement("tr");
+        empty.id = "cs-colors-empty";
+        empty.innerHTML =
+          '<td colspan="7" style="text-align:center;padding:24px;color:var(--text3)">لا توجد ألوان — اضغط "+ إضافة لون"</td>';
+        tb.appendChild(empty);
+      }
+      recalcCS();
+    };
+
+    // ── بناء جدول توزيع الكميات الفعلية (لون × مقاس) ───────────
+    function buildCsQtyTable(colorRows, sizesArr, savedQty) {
+      // colorRows: [{name, hex}]  sizesArr: ['L','XL',...]
+      // savedQty: { "colorName": { "size": qty } }
+      var wrap = document.getElementById("cs-qty-table-wrap");
+      if (!wrap) return;
+
+      if (!sizesArr || !sizesArr.length || !colorRows || !colorRows.length) {
+        wrap.innerHTML =
+          '<div style="text-align:center;padding:20px;color:var(--text3);font-size:13px">' +
+          '<i class="ti ti-info-circle" style="margin-left:4px"></i>لا توجد مقاسات محددة لهذا الأمر</div>';
+        return;
+      }
+
+      // رأس الجدول — نفس شكل شاشة إنشاء الأمر
+      var headerCells =
+        '<th style="padding:8px 10px;font-size:11px;font-weight:600;color:var(--text2);text-align:right;min-width:100px">اللون \\ المقاس</th>' +
+        sizesArr
+          .map(function (s) {
+            return (
+              '<th style="padding:6px 10px;text-align:center;min-width:72px;background:var(--accent-soft,rgba(37,99,235,.1));color:var(--accent);font-size:12px;font-weight:700">' +
+              '<span style="display:block;padding:3px 8px;background:var(--accent);color:#fff;border-radius:8px;font-size:11px">' +
+              esc(s) +
+              "</span></th>"
+            );
+          })
+          .join("") +
+        '<th style="padding:6px 10px;text-align:center;min-width:64px;font-size:11px;font-weight:600;color:var(--text3)">المجموع</th>';
+
+      // صفوف الألوان مع inputs
+      var bodyRows = colorRows
+        .map(function (clr) {
+          var colorDot = clr.hex
+            ? '<span style="display:inline-block;width:13px;height:13px;border-radius:50%;background:' +
+              esc(clr.hex) +
+              ';border:1.5px solid rgba(0,0,0,.18);margin-left:6px;flex-shrink:0;vertical-align:middle"></span>'
+            : '<span style="display:inline-block;width:13px;height:13px;border-radius:50%;background:var(--border);border:1.5px solid rgba(0,0,0,.1);margin-left:6px;flex-shrink:0;vertical-align:middle"></span>';
+
+          var cells = sizesArr
+            .map(function (sz) {
+              var saved =
+                savedQty && savedQty[clr.name]
+                  ? parseInt(savedQty[clr.name][sz]) || 0
+                  : 0;
+              return (
+                '<td style="padding:5px 4px;text-align:center">' +
+                '<input type="number" min="0" step="1" value="' +
+                saved +
+                '" ' +
+                'class="input cs-qty-input" ' +
+                'data-color="' +
+                esc(clr.name) +
+                '" data-size="' +
+                esc(sz) +
+                '" ' +
+                'style="width:64px;padding:5px 6px;text-align:center;font-size:13px;font-weight:600;border-radius:6px">' +
+                "</td>"
+              );
+            })
+            .join("");
+
+          return (
+            '<tr style="border-bottom:1px solid var(--border)">' +
+            '<td style="padding:7px 12px;font-size:13px;font-weight:700;white-space:nowrap">' +
+            '<div style="display:flex;align-items:center">' +
+            colorDot +
+            '<span style="color:var(--text1)">' +
+            esc(clr.name) +
+            "</span></div></td>" +
+            cells +
+            '<td id="cs-qty-row-' +
+            esc(clr.name) +
+            '" style="padding:7px 10px;text-align:center;font-weight:700;font-size:14px;color:var(--success)">0</td>' +
+            "</tr>"
+          );
+        })
+        .join("");
+
+      // footer إجماليات الأعمدة
+      var footCells = sizesArr
+        .map(function (sz) {
+          return (
+            '<td id="cs-qty-col-' +
+            esc(sz) +
+            '" style="padding:8px 6px;text-align:center;font-weight:700;font-size:13px;color:var(--accent)">0</td>'
+          );
+        })
+        .join("");
+
+      wrap.innerHTML =
+        '<div style="font-size:11px;color:var(--text3);margin-bottom:8px;padding:7px 10px;background:var(--surface3);border-radius:7px;display:flex;align-items:center;gap:6px">' +
+        '<i class="ti ti-pencil" style="color:var(--accent)"></i>' +
+        "<span>أدخل الكميات الفعلية المُقصَّة لكل لون ومقاس</span></div>" +
+        '<div style="border-radius:10px;border:1px solid var(--border);overflow:auto">' +
+        '<table style="width:100%;border-collapse:collapse;font-family:var(--font-main)">' +
+        '<thead><tr style="background:var(--surface3);border-bottom:2px solid var(--border)">' +
+        headerCells +
+        "</tr></thead>" +
+        "<tbody>" +
+        bodyRows +
+        "</tbody>" +
+        '<tfoot><tr style="background:var(--surface3);border-top:2px solid var(--border)">' +
+        '<td style="padding:8px 12px;font-size:12px;font-weight:700;color:var(--text2)">الإجمالي</td>' +
+        footCells +
+        '<td id="cs-qty-grand" style="padding:8px 10px;text-align:center;font-weight:800;font-size:15px;color:var(--success)">0</td>' +
+        "</tr></tfoot>" +
+        "</table></div>";
+
+      recalcCsQty();
+
+      // ربط الأحداث
+      wrap.addEventListener("input", function (e) {
+        if (e.target.classList.contains("cs-qty-input")) recalcCsQty();
+      });
+    }
+
+    function recalcCsQty() {
+      var rowTotals = {},
+        colTotals = {},
+        grand = 0;
+      document.querySelectorAll(".cs-qty-input").forEach(function (inp) {
+        var c = inp.dataset.color,
+          s = inp.dataset.size;
+        var v = parseInt(inp.value) || 0;
+        rowTotals[c] = (rowTotals[c] || 0) + v;
+        colTotals[s] = (colTotals[s] || 0) + v;
+        grand += v;
+      });
+      Object.keys(rowTotals).forEach(function (c) {
+        var el = document.getElementById("cs-qty-row-" + c);
+        if (el) el.textContent = rowTotals[c];
+      });
+      Object.keys(colTotals).forEach(function (s) {
+        var el = document.getElementById("cs-qty-col-" + s);
+        if (el) el.textContent = colTotals[s];
+      });
+      var grandEl = document.getElementById("cs-qty-grand");
+      if (grandEl) grandEl.textContent = grand;
+    }
+
+    // ── اختيار أمر الإنتاج: تحميل بياناته (يُستدعى من selectCuttingPO) ──
+    var poSel = document.getElementById("cs-po");
+    if (poSel) {
+      poSel.addEventListener("change", function () {
+        var poId = this.value;
+        var content = document.getElementById("cs-content");
+        if (!poId || !content) {
+          if (content) content.style.display = "none";
+          return;
+        }
+        var order = (APP.data.productionOrders || []).find(function (o) {
+          return o.id === poId;
+        });
+        if (!order) return;
+        content.style.display = "block";
+
+        // ── معلومات الهيدر (تُملأ أيضاً من selectCuttingPO لكن نكررها للأمان) ──
+        var it = (APP.data.items || []).find(function (i) {
+          return i.id === order.product_id;
+        });
+        var setEl = function (id, val) {
+          var e = document.getElementById(id);
+          if (e) e.textContent = val || "—";
+        };
+        setEl("cs-product-name", it ? it.name : order.product_id);
+        setEl("cs-barcode", it ? it.code || it.id : order.product_id);
+        setEl("cs-patron", order.patron_number || "—");
+        setEl("cs-order-date", fmtDate(order.date));
+
+        // ── تحميل الألوان من sizes_json ─────────────────────
+        var tb = document.getElementById("cs-colors-tbody");
+        if (!tb) return;
+        tb.innerHTML = "";
+
+        var colors = [];
+        try {
+          var sizesRaw = order.sizes_json ? JSON.parse(order.sizes_json) : [];
+          if (Array.isArray(sizesRaw)) {
+            // صيغة قديمة: مصفوفة مباشرة
+            colors = sizesRaw;
+          } else if (sizesRaw && sizesRaw.colors) {
+            // صيغة جديدة: { colors: [...], sizes_table: [...], sizes_labels: [...] }
+            colors = sizesRaw.colors;
+          }
+        } catch (e) {
+          colors = [];
+        }
+
+        // هل في بيانات قص محفوظة من قبل في notes؟
+        var savedCut = null;
+        try {
+          var notesStr = String(order.notes || "").trim();
+          if (notesStr.startsWith("{")) {
+            savedCut = JSON.parse(notesStr);
+          }
+        } catch (e) {
+          savedCut = null;
+        }
+
+        var savedColorsMap = {};
+        if (savedCut && savedCut.colors && savedCut.colors.length) {
+          savedCut.colors.forEach(function (sc) {
+            savedColorsMap[sc.color] = sc;
+          });
+        }
+
+        if (colors.length) {
+          colors.forEach(function (c, idx) {
+            var colorKey =
+              c.color_name || c.color_code || c.color || c.size || "";
+            var saved = savedColorsMap[colorKey] || {};
+            var tmp2 = document.createElement("tbody");
+            tmp2.innerHTML = csColorRow(
+              idx + 1,
+              colorKey,
+              saved.theri || 0,
+              saved.kasr || 0,
+              saved.devo || 0,
+            );
+            tb.appendChild(tmp2.firstChild);
+          });
+        } else {
+          // لو مفيش ألوان، صف واحد فاضي
+          var tmp3 = document.createElement("tbody");
+          tmp3.innerHTML = csColorRow(1, "", 0, 0, 0);
+          tb.appendChild(tmp3.firstChild);
+        }
+
+        // ── المقاسات (sizes distribution table) ─────────────
+        var sizesWrap = document.getElementById("cs-sizes-content");
+        if (sizesWrap) {
+          if (colors.length && colors[0].sizes) {
+            // جمع كل المقاسات الممكنة
+            var allSizes = [];
+            colors.forEach(function (c) {
+              if (c.sizes) {
+                Object.keys(c.sizes).forEach(function (sz) {
+                  if (allSizes.indexOf(sz) === -1) allSizes.push(sz);
+                });
+              }
+            });
+
+            var sizeTh = allSizes
+              .map(function (sz) {
+                return (
+                  '<th style="text-align:center;min-width:50px">' +
+                  esc(sz) +
+                  "</th>"
+                );
+              })
+              .join("");
+
+            var sizeRows = colors
+              .map(function (c) {
+                var colorKey =
+                  c.color_name || c.color_code || c.color || c.size || "—";
+                var tds = allSizes
+                  .map(function (sz) {
+                    var qty = c.sizes ? c.sizes[sz] || 0 : 0;
+                    return (
+                      '<td style="text-align:center;padding:6px 8px">' +
+                      (qty > 0
+                        ? '<span style="font-weight:600;color:var(--accent)">' +
+                          qty +
+                          "</span>"
+                        : '<span style="color:var(--text3)">—</span>') +
+                      "</td>"
+                    );
+                  })
+                  .join("");
+                var rowTotal = allSizes.reduce(function (s, sz) {
+                  return s + (c.sizes ? c.sizes[sz] || 0 : 0);
+                }, 0);
+                return (
+                  "<tr>" +
+                  '<td style="padding:6px 10px;font-weight:600">' +
+                  esc(colorKey) +
+                  "</td>" +
+                  tds +
+                  '<td style="text-align:center;padding:6px 8px;font-weight:700;color:var(--success)">' +
+                  rowTotal +
+                  "</td>" +
+                  "</tr>"
+                );
+              })
+              .join("");
+
+            // صف الإجماليات
+            var sizeTotals = allSizes
+              .map(function (sz) {
+                var t = colors.reduce(function (s, c) {
+                  return s + (c.sizes ? c.sizes[sz] || 0 : 0);
+                }, 0);
+                return (
+                  '<td style="text-align:center;padding:8px;font-weight:700">' +
+                  t +
+                  "</td>"
+                );
+              })
+              .join("");
+            var grandTotal = colors.reduce(function (s, c) {
+              return (
+                s +
+                (c.sizes
+                  ? Object.values(c.sizes).reduce(function (a, b) {
+                      return a + b;
+                    }, 0)
+                  : 0)
+              );
+            }, 0);
+
+            sizesWrap.innerHTML =
+              '<table style="width:100%;border-collapse:collapse">' +
+              "<thead>" +
+              '<tr style="background:var(--bg2)">' +
+              '<th style="text-align:right;padding:8px 10px;min-width:100px">اللون</th>' +
+              sizeTh +
+              '<th style="text-align:center;min-width:60px">المجموع</th>' +
+              "</tr>" +
+              "</thead>" +
+              "<tbody>" +
+              sizeRows +
+              "</tbody>" +
+              '<tfoot><tr style="background:var(--bg2);font-weight:700;border-top:2px solid var(--border)">' +
+              '<td style="padding:8px 10px">الإجمالي</td>' +
+              sizeTotals +
+              '<td style="text-align:center;padding:8px;color:var(--success)">' +
+              grandTotal +
+              "</td>" +
+              "</tr></tfoot>" +
+              "</table>";
+          } else {
+            sizesWrap.textContent = "لا توجد بيانات مقاسات لهذا الأمر";
+          }
+        }
+
+        // ── بناء جدول الكميات الفعلية (لون × مقاس) ────────────
+        var qtyAllSizes = [];
+        var qtyColorRows = [];
+        if (colors.length && colors[0].sizes) {
+          colors.forEach(function (c) {
+            if (c.sizes)
+              Object.keys(c.sizes).forEach(function (sz) {
+                if (qtyAllSizes.indexOf(sz) === -1) qtyAllSizes.push(sz);
+              });
+          });
+        }
+        // جمع الألوان مع hex
+        colors.forEach(function (c) {
+          var colorKey =
+            c.color_name || c.color_code || c.color || c.size || "";
+          if (!colorKey) return;
+          var hex = "";
+          if (typeof CSS_COLOR_MAP !== "undefined") {
+            hex =
+              CSS_COLOR_MAP[colorKey] ||
+              CSS_COLOR_MAP[colorKey.toLowerCase()] ||
+              "";
+          }
+          if (
+            !hex &&
+            colorKey &&
+            (colorKey.startsWith("#") || /^[0-9A-Fa-f]{6}$/.test(colorKey))
+          ) {
+            hex = colorKey.startsWith("#") ? colorKey : "#" + colorKey;
+          }
+          qtyColorRows.push({ name: colorKey, hex: hex });
+        });
+        // محاولة من colors tbody لو مفيش ألوان من sizes_json
+        if (!qtyColorRows.length) {
+          document
+            .querySelectorAll("#cs-colors-tbody tr:not(#cs-colors-empty)")
+            .forEach(function (tr) {
+              var name = (tr.querySelector(".cs-color-name") || {}).value || "";
+              if (name) {
+                var hex =
+                  typeof CSS_COLOR_MAP !== "undefined"
+                    ? CSS_COLOR_MAP[name] ||
+                      CSS_COLOR_MAP[name.toLowerCase()] ||
+                      ""
+                    : "";
+                qtyColorRows.push({ name: name, hex: hex });
+              }
+            });
+        }
+        var savedQty =
+          savedCut && savedCut.qty_distribution
+            ? savedCut.qty_distribution
+            : null;
+        buildCsQtyTable(qtyColorRows, qtyAllSizes, savedQty);
+
+        // ── تعبئة المتراج من الأمر أو من البيانات المحفوظة ──
+        var getVal = function (id, val) {
+          var el = document.getElementById(id);
+          if (el && val > 0) el.value = Number(val).toFixed(0);
+        };
+        if (savedCut) {
+          getVal(
+            "cs-m-leather",
+            savedCut.leather_actual || savedCut.fabric_actual || 0,
+          );
+          getVal("cs-m-lining", savedCut.lining_actual || 0);
+          getVal("cs-m-interlining", savedCut.interlining_actual || 0);
+          getVal("cs-m-sleeve", savedCut.sleeve_actual || 0);
+          // ملاحظات
+          var notesEl = document.getElementById("cs-notes");
+          if (notesEl && savedCut.notes) notesEl.value = savedCut.notes;
+        } else {
+          getVal("cs-m-lining", order.lining_meters || 0);
+          // fabric_meters → leather
+          getVal("cs-m-leather", order.fabric_meters || 0);
+        }
+
+        recalcCS();
+        recalcMeters();
+      });
+    }
+
+    // ── زر الحفظ ─────────────────────────────────────────────
+    var saveBtn = document.getElementById("cs-save-btn");
+    if (saveBtn) {
+      saveBtn.addEventListener("click", function () {
+        var poId = document.getElementById("cs-po").value;
+        if (!poId) {
+          NotificationEngine.error("اختر أمر الإنتاج أولاً");
+          return;
+        }
+
+        var colors = [];
+        document
+          .querySelectorAll("#cs-colors-tbody tr:not(#cs-colors-empty)")
+          .forEach(function (tr) {
+            var name = tr.querySelector(".cs-color-name").value.trim();
+            var theri = parseFloat(tr.querySelector(".cs-theri").value) || 0;
+            var kasr = parseFloat(tr.querySelector(".cs-kasr").value) || 0;
+            var devo = parseFloat(tr.querySelector(".cs-devo").value) || 0;
+            var net = Math.max(0, theri + kasr - devo);
+            if (name || theri || kasr)
+              colors.push({
+                color: name,
+                theri: theri,
+                kasr: kasr,
+                devo: devo,
+                total: theri + kasr,
+                net: net,
+              });
+          });
+
+        if (!colors.length) {
+          NotificationEngine.error("أضف بيانات القص لصنف واحد على الأقل");
+          return;
+        }
+
+        // جمع توزيع الكميات الفعلية من جدول المقاسات
+        var qtyDistribution = {};
+        document.querySelectorAll(".cs-qty-input").forEach(function (inp) {
+          var c = inp.dataset.color,
+            s = inp.dataset.size;
+          var v = parseInt(inp.value) || 0;
+          if (v > 0) {
+            if (!qtyDistribution[c]) qtyDistribution[c] = {};
+            qtyDistribution[c][s] = v;
+          }
+        });
+
+        var cuttingData = {
+          type: "cutting_statement",
+          colors: colors,
+          total_theri: colors.reduce(function (s, c) {
+            return s + c.theri;
+          }, 0),
+          total_kasr: colors.reduce(function (s, c) {
+            return s + c.kasr;
+          }, 0),
+          total_devo: colors.reduce(function (s, c) {
+            return s + c.devo;
+          }, 0),
+          total_pieces: colors.reduce(function (s, c) {
+            return s + c.total;
+          }, 0),
+          total_net: colors.reduce(function (s, c) {
+            return s + c.net;
+          }, 0),
+          leather_actual:
+            parseFloat(document.getElementById("cs-m-leather").value) || 0,
+          lining_actual:
+            parseFloat(document.getElementById("cs-m-lining").value) || 0,
+          interlining_actual:
+            parseFloat(document.getElementById("cs-m-interlining").value) || 0,
+          sleeve_actual:
+            parseFloat(document.getElementById("cs-m-sleeve").value) || 0,
+          notes: document.getElementById("cs-notes").value.trim(),
+          qty_distribution: qtyDistribution,
+          saved_at: new Date().toISOString(),
+          saved_by: APP.currentUser.full_name || APP.currentUser.username || "",
+        };
+
+        // [SE-ROLLOUT] عبر SaveEngine.run بدل showSaveAnim/_gsr اليدوي —
+        // نفس رسائل النجاح/الفشل بالظبط اللي كانت بترجع قبل كده.
+        SaveEngine.run({
+          screen: "cutting_statement",
+          entity: "cutting_statement",
+          recordId: poId,
+          buttonId: "cs-save-btn",
+          data: cuttingData,
+          fn: "saveCuttingData",
+          // [FIX-CUTTING-SAVE-2026-08] كان بيبعت [poId, cuttingData] بس.
+          // الـ backend saveCuttingData(poId, cuttingData, callerUser,
+          // sessionToken) بيعمل _checkPermission(callerUser, ..., sessionToken)
+          // كأول خطوة، وهي fail-closed: من غير username بترجع "يجب تسجيل
+          // الدخول أولاً" دايمًا. يعني حفظ بيان القص كان معطوب 100% —
+          // كل محاولة حفظ كانت بترجع رسالة "يجب تسجيل الدخول" بغض النظر
+          // عن حالة تسجيل الدخول الفعلية.
+          params: [
+            poId,
+            cuttingData,
+            APP.currentUser ? APP.currentUser.username : null,
+            SESSION.token,
+          ],
+          savingLabel: "جاري حفظ بيان القص...",
+          successMessage: " تم حفظ بيان القص بنجاح",
+          onSuccess: function () {
+            reloadAfterMutation(function () {
+              renderPage("cutting_statement");
+            });
+          },
+        });
+      });
+    }
+
+    // ── زر الطباعة ───────────────────────────────────────────
+    // [PRINT-BUG-FIX] كانت window.print() بتطبع الجزء الظاهر بس من
+    // الشاشة (الجدولين هنا جوه wrapper بـ overflow:auto)، فأي صفوف
+    // خارج حدود الـ Scroll كانت بتتقص من الطباعة. الحل: نقرأ الجدولين
+    // كاملين من الـ DOM (مش مرتبط بالـ Scroll) ونطبعهما عبر محرك
+    // الطباعة الموحّد متعدد الصفحات — كل جدول في نافذة طباعة مستقلة
+    // بترتيب متتابع.
+    var printBtn = document.getElementById("cs-print-btn");
+    if (printBtn) {
+      printBtn.addEventListener("click", function () {
+        var colorsTbody = document.getElementById("cs-colors-tbody");
+        var colorsTable = colorsTbody && colorsTbody.closest("table");
+        var qtyWrap = document.getElementById("cs-qty-table-wrap");
+        var qtyTable = qtyWrap && qtyWrap.querySelector("table");
+        var printedAny = false;
+        if (colorsTable) {
+          ExportUtil.printElementTable(
+            colorsTable,
+            "بيان القص",
+            "تاريخ: " + fmtDate(new Date()),
+          );
+          printedAny = true;
+        }
+        if (qtyTable) {
+          setTimeout(function () {
+            ExportUtil.printElementTable(
+              qtyTable,
+              "توزيع الكميات الفعلية (لون × مقاس)",
+              "تاريخ: " + fmtDate(new Date()),
+            );
+          }, 200);
+          printedAny = true;
+        }
+        if (!printedAny) {
+          typeof showToast === "function" &&
+            NotificationEngine.warning("لا توجد بيانات لطباعتها");
+        }
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // دليل الأكواد — Catalog
+  // ─────────────────────────────────────────────────────────────
+
+  var CATALOG_CATEGORIES = {
+    M: " خامات (Materials)",
+    A: " اكسسوارات (Accessories)",
+    FG: " منتجات تامة (Finished Goods)",
+  };
+
+  // ── helpers ──────────────────────────────────────────────────
+
+  function getCatalogItemStock(itemId) {
+    var stock = (APP.data.stock || [])
+      .filter(function (s) {
+        return String(s.item_id) === String(itemId);
+      })
+      .reduce(function (a, s) {
+        return a + Number(s.quantity || 0);
+      }, 0);
+    return stock + getOpeningQty(itemId);
+  }
+
+  /** كل المخازن التي يوجد فيها رصيد للصنف */
+  function getCatalogItemStockByWarehouse(itemId) {
+    return (APP.data.stock || [])
+      .filter(function (s) {
+        return (
+          String(s.item_id) === String(itemId) && Number(s.quantity || 0) > 0
+        );
+      })
+      .map(function (s) {
+        var wh = (APP.data.warehouses || []).find(function (w) {
+          return w.id === s.warehouse;
+        });
+        return {
+          name: wh ? wh.name : s.warehouse,
+          qty: Number(s.quantity || 0),
+        };
+      });
+  }
+
+  function stockStatusBadge(item) {
+    var qty = getCatalogItemStock(item.id);
+    var minQ = Number(item.min_qty || 0);
+    if (qty <= 0)
+      return {
+        badge: '<span class="badge badge-danger">نفد</span>',
+        cls: "out",
+        qty: qty,
+      };
+    if (minQ > 0 && qty <= minQ)
+      return {
+        badge: '<span class="badge badge-warning">منخفض</span>',
+        cls: "low",
+        qty: qty,
+      };
+    return {
+      badge: '<span class="badge badge-success">متاح</span>',
+      cls: "available",
+      qty: qty,
+    };
+  }
+
+  function getItemPrefix(id) {
+    if (!id) return "?";
+    if (id.toUpperCase().startsWith("FG")) return "FG";
+    return id[0].toUpperCase();
+  }
+
+  function getGroupLabel(groupId) {
+    var g = (APP.data.groups || []).find(function (x) {
+      return x.id === groupId;
+    });
+    return g ? g.name : groupId || "—";
+  }
+
+  // ── شريط إحصائيات ────────────────────────────────────────────
+
+  function buildCatalogStats(items) {
+    var total = items.length,
+      available = 0,
+      low = 0,
+      out = 0;
+    items.forEach(function (it) {
+      var c = stockStatusBadge(it).cls;
+      if (c === "available") available++;
+      else if (c === "low") low++;
+      else out++;
+    });
+
+    return (
+      '<div class="stat-grid" style="margin-bottom:0">' +
+      statCard(
+        iconBadge("ti-package", "var(--accent-soft)", "var(--primary)"),
+        "إجمالي",
+        total,
+        "صنف",
+        "",
+      ) +
+      statCard(
+        iconBadge("ti-circle-check", "var(--success-soft)", "var(--success)"),
+        "متاح",
+        available,
+        "صنف",
+        "",
+      ) +
+      statCard(
+        iconBadge("ti-alert-triangle", "var(--warning-soft)", "var(--warning)"),
+        "منخفض",
+        low,
+        "صنف",
+        "",
+      ) +
+      statCard(
+        iconBadge("ti-circle-x", "var(--danger-soft)", "var(--danger)"),
+        "نفد",
+        out,
+        "صنف",
+        "",
+      ) +
+      "</div>"
+    );
+  }
+
+  // ── mini warehouse pills داخل الكرت/الصف ────────────────────
+
+  function buildWhPills(itemId, unit) {
+    var rows = getCatalogItemStockByWarehouse(itemId);
+    if (!rows.length)
+      return '<span style="font-size:11px;color:var(--text3)">—</span>';
+    return rows
+      .map(function (r) {
+        return (
+          '<span style="display:inline-flex;align-items:center;gap:3px;background:var(--accent-soft);' +
+          'color:var(--accent);border-radius:50px;padding:2px 8px;font-size:10px;font-weight:700;white-space:nowrap">' +
+          esc(r.name) +
+          ' <b style="color:var(--text)">' +
+          r.qty +
+          '</b><span style="font-weight:400;color:var(--text3)">' +
+          esc(unit || "") +
+          "</span>" +
+          "</span>"
+        );
+      })
+      .join(" ");
+  }
+
+  // ── عرض الجدول عبر ColumnEngine ─────────────────────────────────────
+  // [COLUMN-ENGINE] ثاني شاشة تُطبَّق عليها Dynamic Columns بعد أوامر
+  // الشراء (22_JS_PurchaseOrders.html). راجع
+  // COLUMN_ENGINE_MIGRATION.md لتفاصيل القرارات والتقدّم.
+  //
+  // ملاحظة تصميم: buildCatalogTable القديمة كانت تعرض جدول منفصل لكل
+  // مجموعة (Category) بعنوان وعدّاد خاص بها. ColumnEngine.renderTable
+  // يبني جدولاً واحدًا مسطّحًا (Toolbar/تخصيص واحد للشاشة كلها، مش لكل
+  // مجموعة) — فالمجموعة أصبحت عمودًا عاديًا قابلاً للفرز والبحث بدل
+  // التقسيم البصري لصناديق منفصلة. هذا الفارق مذكور في ملف التوثيق
+  // كنقطة تحتاج موافقتك.
+  var _catalogColumnsRegistered = false;
+
+  function _catalogRegisterColumns() {
+    if (_catalogColumnsRegistered) return;
+    _catalogColumnsRegistered = true;
+    ColumnEngine.register(
+      "catalog_items",
+      [
+        {
+          key: "id",
+          label: "الكود",
+          type: "text",
+          width: 100,
+          frozen: "right",
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-weight:700;color:var(--accent);font-size:13px">' +
+              esc(v || "") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "image_url",
+          label: "",
+          type: "custom",
+          width: 58,
+          sortable: false,
+          filterable: false,
+          searchable: false,
+          exportable: false,
+          printable: false,
+          format: function (v, row) {
+            return v
+              ? '<div class="cat-thumb-wrap" onclick="event.stopPropagation();openImageLightbox(\'' +
+                  esc(v) +
+                  "','" +
+                  esc(row.name || "") +
+                  '\')"><img src="' +
+                  esc(v) +
+                  '" class="cat-thumb" onerror="this.parentElement.innerHTML=\'<div class=cat-thumb-ph></div>\'">' +
+                  '<div class="cat-thumb-overlay"></div></div>'
+              : '<div class="cat-thumb-ph"></div>';
+          },
+        },
+        {
+          key: "name",
+          label: "الاسم",
+          type: "text",
+          width: 240,
+          format: function (v, row) {
+            return (
+              '<div style="font-weight:600;font-size:13px">' +
+              esc(v || "") +
+              "</div>" +
+              (row.description
+                ? '<div style="font-size:11px;color:var(--text3);margin-top:1px">' +
+                  esc(row.description) +
+                  "</div>"
+                : "")
+            );
+          },
+        },
+        {
+          key: "group",
+          label: "المجموعة",
+          type: "text",
+          width: 130,
+          format: function (v) {
+            return esc(getGroupLabel(v));
+          },
+        },
+        {
+          key: "unit",
+          label: "الوحدة",
+          type: "text",
+          width: 80,
+          align: "center",
+          format: function (v) {
+            return (
+              '<span style="display:block;text-align:center">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "stock_qty",
+          label: "إجمالي المخزون",
+          type: "number",
+          width: 140,
+          format: function (v, row) {
+            var qty = Number(v || 0);
+            var minQ = Number(row.min_qty || 0);
+            var barPct = minQ
+              ? Math.min(100, Math.round((qty / minQ) * 100))
+              : qty > 0
+                ? 100
+                : 0;
+            var barColor =
+              row.stock_cls === "out"
+                ? "var(--danger)"
+                : row.stock_cls === "low"
+                  ? "var(--warning)"
+                  : "var(--success)";
+            return (
+              '<div style="display:flex;align-items:center;gap:6px">' +
+              '<b style="font-size:13px;min-width:28px;text-align:left">' +
+              qty +
+              "</b>" +
+              '<div style="flex:1;height:5px;background:var(--surface3);border-radius:3px;overflow:hidden;min-width:40px">' +
+              '<div style="height:100%;width:' +
+              barPct +
+              "%;background:" +
+              barColor +
+              ';border-radius:3px"></div>' +
+              "</div></div>"
+            );
+          },
+        },
+        {
+          key: "warehouses_text",
+          label: "توزيع المخازن",
+          type: "text",
+          width: 220,
+          format: function (v, row) {
+            return (
+              '<div style="display:flex;flex-wrap:wrap;gap:3px">' +
+              buildWhPills(row.id, row.unit) +
+              "</div>"
+            );
+          },
+          exportValue: function (row) {
+            return row.warehouses_text || "";
+          },
+        },
+        {
+          key: "min_qty",
+          label: "الحد الأدنى",
+          type: "number",
+          width: 100,
+          align: "center",
+          format: function (v) {
+            return (
+              '<span style="display:block;text-align:center;color:var(--text3)">' +
+              (v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "stock_status_label",
+          label: "الحالة",
+          type: "badge",
+          width: 100,
+          format: function (v, row) {
+            return stockStatusBadge(row).badge;
+          },
+          exportValue: function (row) {
+            return row.stock_status_label || "";
+          },
+        },
+        {
+          key: "cost_price",
+          label: "سعر التكلفة",
+          type: "currency",
+          width: 120,
+          format: function (v) {
+            return v
+              ? '<span class="sensitive-price" style="font-size:12px">' +
+                  formatMoney(v, { decimals: 0 }) +
+                  "</span>"
+              : "—";
+          },
+        },
+        // ── أعمدة ذكية: مخفية افتراضيًا (بند "Smart Columns") ──
+        {
+          key: "selling_price",
+          label: "سعر البيع",
+          type: "currency",
+          category: "حقول إضافية",
+          defaultVisible: false,
+          format: function (v) {
+            return v
+              ? '<span class="sensitive-price">' +
+                  formatMoney(v, { decimals: 0 }) +
+                  "</span>"
+              : "—";
+          },
+        },
+        {
+          key: "code",
+          label: "كود إضافي (SKU)",
+          type: "text",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "description",
+          label: "الوصف",
+          type: "text",
+          width: 220,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "created_at",
+          label: "تاريخ الإنشاء",
+          type: "date",
+          width: 110,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+      ],
+      {
+        title: "كتالوج الأصناف",
+        rowKey: "id",
+        contextMenuType: "items",
+      },
+    );
+  }
+
+  // يضيف للحقول المحسوبة (المخزون/الحالة/توزيع المخازن) لأن هذه القيم
+  // مش أعمدة خام في الـ item نفسه — لازم تُحسب مرة واحدة قبل ما تتبعت
+  // لـ ColumnEngine، عشان الفرز/البحث/التصدير كلهم بيشتغلوا على
+  // row[key] مباشرة (مش عبر format).
+  function _catPrepareRowsForCE(items) {
+    return items.map(function (it) {
+      var ss = stockStatusBadge(it);
+      var whRows = getCatalogItemStockByWarehouse(it.id);
+      return Object.assign({}, it, {
+        stock_qty: ss.qty,
+        stock_cls: ss.cls,
+        stock_status_label:
+          ss.cls === "out" ? "نفد" : ss.cls === "low" ? "منخفض" : "متاح",
+        warehouses_text: whRows
+          .map(function (r) {
+            return r.name + ":" + r.qty;
+          })
+          .join(" | "),
+      });
+    });
+  }
+
+  function _catRenderTableCE(container, items) {
+    _catalogRegisterColumns();
+    ColumnEngine.renderTable(
+      "catalog_items",
+      container,
+      _catPrepareRowsForCE(items),
+      {
+        onRowClick: function (row) {
+          openCatalogItemModal(row.id);
+        },
+      },
+    );
+  }
+
+  // ── عرض الكروت (محسّن) ───────────────────────────────────────
+
+  function buildCatalogCards(items) {
+    if (!items.length)
+      return '<div class="card"><div class="empty-state"><div class="empty-icon"></div><p>لا توجد نتائج</p></div></div>';
+
+    var cards = items
+      .map(function (it) {
+        var ss = stockStatusBadge(it);
+        var barPct = it.min_qty
+          ? Math.min(100, Math.round((ss.qty / Number(it.min_qty)) * 100))
+          : ss.qty > 0
+            ? 100
+            : 0;
+        var barColor =
+          ss.cls === "out"
+            ? "var(--danger)"
+            : ss.cls === "low"
+              ? "var(--warning)"
+              : "var(--success)";
+        var whRows = getCatalogItemStockByWarehouse(it.id);
+
+        // صورة الكرت مع زر عرض بالكامل
+        var imgHtml = it.image_url
+          ? '<div class="cat-card-img-wrap">' +
+            '<img src="' +
+            esc(it.image_url) +
+            '" class="cat-card-img" onerror="this.parentElement.innerHTML=\'<div class=cat-card-img-ph></div>\'">' +
+            '<button class="cat-card-img-zoom" onclick="event.stopPropagation();openImageLightbox(\'' +
+            esc(it.image_url) +
+            "','" +
+            esc(it.name || "") +
+            '\')" title="عرض الصورة بالكامل"> عرض</button>' +
+            "</div>"
+          : '<div class="cat-card-img-ph"></div>';
+
+        // أعمدة المخازن داخل الكرت
+        var whHtml = whRows.length
+          ? '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:6px">' +
+            whRows
+              .map(function (r) {
+                return (
+                  '<span style="background:var(--surface3);border:1px solid var(--border);border-radius:6px;padding:2px 7px;font-size:10px;color:var(--text2)">' +
+                  '<b style="color:var(--accent)">' +
+                  r.qty +
+                  "</b> " +
+                  esc(it.unit || "") +
+                  " · " +
+                  esc(r.name) +
+                  "</span>"
+                );
+              })
+              .join("") +
+            "</div>"
+          : "";
+
+        return (
+          '<div class="catalog-card cat-card" onclick="openCatalogItemModal(\'' +
+          esc(it.id) +
+          "')\">" +
+          imgHtml +
+          '<div class="cat-card-body">' +
+          // كود + حالة
+          '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:4px;margin-bottom:4px">' +
+          '<span class="mono" style="font-size:11px;font-weight:700;color:var(--accent)">' +
+          esc(it.id || "") +
+          "</span>" +
+          ss.badge +
+          "</div>" +
+          // اسم
+          '<div style="font-weight:700;font-size:13px;line-height:1.35;margin-bottom:3px">' +
+          esc(it.name || "") +
+          "</div>" +
+          // مجموعة + وحدة
+          '<div style="font-size:11px;color:var(--text3);margin-bottom:8px">' +
+          esc(getGroupLabel(it.group)) +
+          " · " +
+          esc(it.unit || "") +
+          "</div>" +
+          // إجمالي المخزون + بار
+          '<div style="margin-bottom:4px">' +
+          '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">' +
+          '<span style="color:var(--text3)">إجمالي المخزون</span>' +
+          '<span style="font-weight:800;color:var(--text)">' +
+          ss.qty +
+          "</span>" +
+          "</div>" +
+          '<div style="height:5px;background:var(--surface3);border-radius:3px;overflow:hidden">' +
+          '<div style="height:100%;width:' +
+          barPct +
+          "%;background:" +
+          barColor +
+          ';border-radius:3px;transition:width .8s ease"></div>' +
+          "</div>" +
+          "</div>" +
+          // توزيع المخازن
+          whHtml +
+          "</div>" +
+          "</div>"
+        );
+      })
+      .join("");
+
+    return '<div class="cat-grid">' + cards + "</div>";
+  }
+
+  // ── Lightbox (عرض الصورة بالكامل) ────────────────────────────
+
+  function openImageLightbox(url, title) {
+    openModal(
+      '<div class="modal-box" style="width:600px;max-width:92vw;background:transparent;box-shadow:none;padding:0;overflow:visible">' +
+        '<div style="position:relative;width:100%;height:500px;max-height:80vh;background:#111;border-radius:14px;overflow:hidden;box-shadow:var(--shadow-xl)">' +
+        '<button onclick="closeModal()" style="position:absolute;top:10px;right:10px;width:36px;height:36px;border-radius:50%;' +
+        "background:rgba(0,0,0,0.65);border:2px solid rgba(255,255,255,0.3);color:#fff;font-size:18px;cursor:pointer;z-index:10;" +
+        'display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,.5);backdrop-filter:blur(4px);transition:background .2s" ' +
+        "onmouseover=\"this.style.background='rgba(220,38,38,0.85)'\" onmouseout=\"this.style.background='rgba(0,0,0,0.65)'\"></button>" +
+        '<img src="' +
+        esc(url) +
+        '" style="width:100%;height:100%;object-fit:contain;display:block" ' +
+        "onerror=\"this.alt='تعذّر تحميل الصورة'\">" +
+        "</div>" +
+        (title
+          ? '<div style="text-align:center;margin-top:10px;color:#fff;font-size:13px;font-weight:600;text-shadow:0 1px 4px rgba(0,0,0,.5)">' +
+            esc(title) +
+            "</div>"
+          : "") +
+        "</div>",
+    );
+    var overlay = document.getElementById("modal-overlay");
+    if (overlay) overlay.style.background = "rgba(0,0,0,0.88)";
+  }
+  // ── ربط أحداث الكتالوج ───────────────────────────────────────
+
+  var _catViewMode = "table";
+
+  function bindCatalog() {
+    var statsBar = document.getElementById("cat-stats-bar");
+    if (statsBar) statsBar.innerHTML = buildCatalogStats(APP.data.items || []);
+    _renderCatalogContent(APP.data.items || []);
+
+    // إدخال CSS الكتالوج ديناميكياً (مرة واحدة فقط)
+    if (!document.getElementById("cat-dyn-style")) {
+      var s = document.createElement("style");
+      s.id = "cat-dyn-style";
+      s.textContent = [
+        // صورة مصغرة في الجدول
+        ".cat-thumb-wrap{position:relative;width:54px;height:54px;border-radius:8px;overflow:hidden;cursor:pointer;flex-shrink:0}",
+        ".cat-thumb{width:54px;height:54px;object-fit:contain;border-radius:8px;display:block;transition:transform .2s;background:#fff}",
+        ".cat-thumb-wrap:hover .cat-thumb{transform:scale(1.08)}",
+        ".cat-thumb-overlay{position:absolute;inset:0;background:rgba(0,0,0,.45);color:#fff;font-size:13px;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;border-radius:8px}",
+        ".cat-thumb-wrap:hover .cat-thumb-overlay{opacity:1}",
+        ".cat-thumb-ph{width:54px;height:54px;border-radius:8px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0}",
+        // صف الجدول
+        ".cat-row{cursor:pointer;transition:background .15s}",
+        ".cat-row:hover{background:var(--surface2)}",
+        ".cat-table td{vertical-align:middle}",
+        // كرت
+        ".cat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}",
+        ".cat-card{cursor:pointer;display:flex;flex-direction:column;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);background:var(--surface);box-shadow:var(--shadow-xs);transition:box-shadow .2s,transform .2s}",
+        ".cat-card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px)}",
+        // صورة الكرت
+        ".cat-card-img-wrap{position:relative;overflow:hidden;height:140px;background:var(--surface2)}",
+        ".cat-card-img{width:100%;height:140px;object-fit:cover;display:block;transition:transform .3s}",
+        ".cat-card:hover .cat-card-img{transform:scale(1.04)}",
+        ".cat-card-img-zoom{position:absolute;bottom:6px;left:6px;background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;opacity:0;transition:opacity .2s;backdrop-filter:blur(4px)}",
+        ".cat-card:hover .cat-card-img-zoom{opacity:1}",
+        ".cat-card-img-ph{width:100%;height:140px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:44px}",
+        ".cat-card-body{padding:12px;flex:1;display:flex;flex-direction:column}",
+        ".cat-card-footer{padding:8px 12px;border-top:1px solid var(--border);display:flex;gap:6px;justify-content:flex-end;background:var(--surface2);flex-wrap:wrap}",
+        ".cat-card-footer .btn-xs{width:auto!important;min-width:60px;height:32px;padding:0 10px!important;font-size:12px;white-space:nowrap;gap:4px}",
+        // responsive
+        "@media(max-width:600px){.cat-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}}",
+      ].join("");
+      document.head.appendChild(s);
+    }
+
+    function getFiltered() {
+      var q = ((document.getElementById("cat-search") || {}).value || "")
+        .toLowerCase()
+        .trim();
+      var gId = (document.getElementById("cat-filter-group") || {}).value || "";
+      var prefix = (
+        (document.getElementById("cat-filter-prefix") || {}).value || ""
+      ).toUpperCase();
+      var stock =
+        (document.getElementById("cat-filter-stock") || {}).value || "";
+      return (APP.data.items || []).filter(function (it) {
+        var matchQ =
+          !q ||
+          (it.id || "").toLowerCase().includes(q) ||
+          (it.name || "").toLowerCase().includes(q) ||
+          (it.description || "").toLowerCase().includes(q) ||
+          getGroupLabel(it.group).toLowerCase().includes(q);
+        var matchG = !gId || it.group === gId;
+        var matchP = !prefix || getItemPrefix(it.id) === prefix;
+        var matchS = !stock || stockStatusBadge(it).cls === stock;
+        return matchQ && matchG && matchP && matchS;
+      });
+    }
+
+    function applyFilter() {
+      var filtered = getFiltered();
+      _renderCatalogContent(filtered);
+      var el = document.getElementById("cat-count");
+      if (el) el.textContent = filtered.length + " صنف";
+      var sb = document.getElementById("cat-stats-bar");
+      if (sb) sb.innerHTML = buildCatalogStats(filtered);
+    }
+
+    [
+      "cat-search",
+      "cat-filter-group",
+      "cat-filter-prefix",
+      "cat-filter-stock",
+    ].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el)
+        el.addEventListener(
+          id === "cat-search" ? "input" : "change",
+          applyFilter,
+        );
+    });
+
+    if (window.AppSelect) {
+      AppSelect.upgrade("cat-filter-group", {
+        icon: "ti-folder",
+        placeholder: "كل المجموعات",
+        searchable: true,
+      });
+      AppSelect.upgrade("cat-filter-prefix", { icon: "ti-tag" });
+      AppSelect.upgrade("cat-filter-stock", { icon: "ti-package" });
+    }
+
+    // تبديل العرض
+    var toggleBtn = document.getElementById("cat-view-toggle");
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", function () {
+        _catViewMode = _catViewMode === "table" ? "cards" : "table";
+        toggleBtn.textContent =
+          _catViewMode === "table" ? "⊞ عرض كروت" : " عرض جدول";
+        _renderCatalogContent(getFiltered());
+      });
+    }
+
+    // طباعة
+    var printBtn = document.getElementById("cat-print-btn");
+    if (printBtn) {
+      printBtn.addEventListener("click", function () {
+        var filtered = getFiltered();
+        var rows = filtered
+          .map(function (it) {
+            var ss = stockStatusBadge(it);
+            var status =
+              ss.cls === "out" ? "نفد" : ss.cls === "low" ? "منخفض" : "متاح";
+            var whList = getCatalogItemStockByWarehouse(it.id)
+              .map(function (r) {
+                return r.name + ":" + r.qty;
+              })
+              .join(" / ");
+            return (
+              '<tr><td class="mono">' +
+              esc(it.id || "") +
+              "</td>" +
+              "<td><b>" +
+              esc(it.name || "") +
+              "</b></td>" +
+              "<td>" +
+              esc(getGroupLabel(it.group)) +
+              "</td>" +
+              '<td style="text-align:center">' +
+              esc(it.unit || "") +
+              "</td>" +
+              '<td style="text-align:center"><b>' +
+              ss.qty +
+              "</b></td>" +
+              '<td style="font-size:11px">' +
+              esc(whList || "—") +
+              "</td>" +
+              '<td style="text-align:center">' +
+              (it.min_qty || "—") +
+              "</td>" +
+              "<td>" +
+              status +
+              "</td></tr>"
+            );
+          })
+          .join("");
+        var w = window.open("", "_blank");
+        w.document.write(
+          '<html dir="rtl"><head><meta charset="UTF-8"><title>دليل الأكواد</title>' +
+            "<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;padding:20px;font-size:12px}" +
+            "h2{text-align:center;margin-bottom:6px;color:#2563eb}.sub{text-align:center;color:#888;margin-bottom:18px;font-size:11px}" +
+            "table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:6px 8px;text-align:right}" +
+            "th{background:#2563eb;color:#fff}tr:nth-child(even){background:#f8faff}.mono{font-family:monospace;font-weight:700;color:#2563eb}" +
+            "</style></head><body>" +
+            "<h2> دليل الأكواد — MOO.ERP</h2>" +
+            '<div class="sub">تاريخ الطباعة: ' +
+            fmtDate(new Date()) +
+            " — إجمالي: " +
+            filtered.length +
+            " صنف</div>" +
+            "<table><thead><tr><th>الكود</th><th>الاسم</th><th>المجموعة</th><th>الوحدة</th><th>الإجمالي</th><th>توزيع المخازن</th><th>الحد الأدنى</th><th>الحالة</th></tr></thead>" +
+            "<tbody>" +
+            rows +
+            "</tbody></table>" +
+            "<scr" +
+            "ipt>window.onload=function(){window.print()}<\/scr" +
+            "ipt>" +
+            "</body></html>",
+        );
+        w.document.close();
+      });
+    }
+
+    // تصدير CSV
+    var exportBtn = document.getElementById("cat-export-btn");
+    if (exportBtn && window.ExportUtil) {
+      var _getCatData = function () {
+        var filtered = getFiltered();
+        var headers = [
+          "الكود",
+          "الاسم",
+          "المجموعة",
+          "الوحدة",
+          "الإجمالي",
+          "توزيع المخازن",
+          "الحد الأدنى",
+          "الحالة",
+          "سعر التكلفة",
+          "سعر البيع",
+          "الوصف",
+        ];
+        var rows = filtered.map(function (it) {
+          var ss = stockStatusBadge(it);
+          var status =
+            ss.cls === "out" ? "نفد" : ss.cls === "low" ? "منخفض" : "متاح";
+          var whList = getCatalogItemStockByWarehouse(it.id)
+            .map(function (r) {
+              return r.name + ":" + r.qty;
+            })
+            .join(" | ");
+          return [
+            it.id || "",
+            it.name || "",
+            getGroupLabel(it.group),
+            it.unit || "",
+            ss.qty,
+            whList,
+            it.min_qty || 0,
+            status,
+            it.cost_price || 0,
+            it.selling_price || 0,
+            it.description || "",
+          ];
+        });
+        return { headers: headers, rows: rows };
+      };
+      var dd = ExportUtil.createDropdown({
+        getData: _getCatData,
+        filename: "كتالوج_الأصناف_" + new Date().toISOString().slice(0, 10),
+        title: "كتالوج الأصناف",
+        subtitle: "تاريخ التقرير: " + fmtDate(new Date()),
+        sheetName: "الأصناف",
+      });
+      exportBtn.parentNode.replaceChild(dd, exportBtn);
+    }
+    var refreshBtn = document.getElementById("cs-refresh-btn");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", function () {
+        reloadAfterMutationFull(null, null, {
+          title: "جاري تحديث المخزن...",
+          emoji: "",
+          successMsg: " تم تحديث المخزن",
+        });
+      });
+    }
+  }
+
+  function _renderCatalogContent(items) {
+    var el = document.getElementById("catalog-content");
+    if (!el) return;
+    if (_catViewMode === "cards") {
+      el.innerHTML = buildCatalogCards(items);
+      return;
+    }
+    if (!items.length) {
+      el.innerHTML =
+        '<div class="card"><div class="empty-state"><div class="empty-icon"></div><p>لا توجد نتائج</p></div></div>';
+      return;
+    }
+    el.innerHTML = '<div id="catalog-ce-container"></div>';
+    _catRenderTableCE(document.getElementById("catalog-ce-container"), items);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // bindCurrentStock — المخزن الحالي (الشاشة المدمجة)
+  // ─────────────────────────────────────────────────────────────
+
+  var _csViewMode = "table"; // "table" | "cards"
+  var _csColorMode = false; // true = تفصيل بالألوان
+
+  function bindCurrentStock() {
+    // ── inject styles (مرة واحدة) ─────────────────────────────
+    if (!document.getElementById("cs-dyn-style")) {
+      var s = document.createElement("style");
+      s.id = "cs-dyn-style";
+      s.textContent = [
+        ".cs-row{cursor:pointer;transition:background .15s}",
+        ".cs-row:hover{background:var(--surface2)}",
+        ".cs-row td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0}",
+        ".cs-row td:nth-child(7){white-space:normal}",
+        ".cat-thumb-wrap{position:relative;width:54px;height:54px;border-radius:8px;overflow:hidden;cursor:pointer;flex-shrink:0}",
+        ".cat-thumb{width:54px;height:54px;object-fit:contain;border-radius:8px;display:block;transition:transform .2s;background:#fff}",
+        ".cat-thumb-wrap:hover .cat-thumb{transform:scale(1.08)}",
+        ".cat-thumb-overlay{position:absolute;inset:0;background:rgba(0,0,0,.45);color:#fff;font-size:13px;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;border-radius:8px}",
+        ".cat-thumb-wrap:hover .cat-thumb-overlay{opacity:1}",
+        ".cat-thumb-ph{width:54px;height:54px;border-radius:8px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0}",
+        ".cat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}",
+        ".cat-card{cursor:pointer;display:flex;flex-direction:column;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);background:var(--surface);box-shadow:var(--shadow-xs);transition:box-shadow .2s,transform .2s}",
+        ".cat-card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px)}",
+        ".cat-card-img-wrap{position:relative;overflow:hidden;height:140px;background:var(--surface2)}",
+        ".cat-card-img{width:100%;height:140px;object-fit:cover;display:block;transition:transform .3s}",
+        ".cat-card:hover .cat-card-img{transform:scale(1.04)}",
+        ".cat-card-img-zoom{position:absolute;bottom:6px;left:6px;background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;opacity:0;transition:opacity .2s;backdrop-filter:blur(4px)}",
+        ".cat-card:hover .cat-card-img-zoom{opacity:1}",
+        ".cat-card-img-ph{width:100%;height:140px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:44px}",
+        ".cat-card-body{padding:12px;flex:1;display:flex;flex-direction:column}",
+        ".cat-card-footer{padding:8px 12px;border-top:1px solid var(--border);display:flex;gap:6px;justify-content:flex-end;background:var(--surface2);flex-wrap:wrap}",
+        ".cat-card-footer .btn-xs{width:auto!important;min-width:60px;height:32px;padding:0 10px!important;font-size:12px;white-space:nowrap;gap:4px}",
+        "@media(max-width:600px){.cat-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}}",
+      ].join("");
+      document.head.appendChild(s);
+    }
+
+    // ── إحصائيات سريعة ────────────────────────────────────────
+    _csUpdateStats(APP.data.items || []);
+
+    // ── تطبيق فلتر المخزن المُمرَّر من context menu ──────────
+    if (APP._pendingWarehouseId) {
+      var whInst = AppSelect.get("cs-filter-warehouse");
+      if (whInst) whInst.setValue(String(APP._pendingWarehouseId));
+      APP._pendingWarehouseId = null;
+    }
+
+    // ── رندر المحتوى ──────────────────────────────────────────
+    _csRenderContent(_csGetFiltered());
+
+    // ── الفلاتر ───────────────────────────────────────────────
+
+    // ── فلترة المجموعات بناءً على المخزن المختار ──────────────
+    function _csRebuildGroupOpts() {
+      var whId =
+        (document.getElementById("cs-filter-warehouse") || {}).value || "";
+      var groupSel = document.getElementById("cs-filter-group");
+      if (!groupSel) return;
+      var allGroups = APP.data.groups || [];
+      var filtered = whId
+        ? allGroups.filter(function (g) {
+            return String(g.warehouse_id) === String(whId);
+          })
+        : allGroups;
+      var opts = '<option value="">كل المجموعات</option>';
+      filtered.forEach(function (g) {
+        opts +=
+          '<option value="' + esc(g.id) + '">' + esc(g.name) + "</option>";
+      });
+      groupSel.innerHTML = opts;
+      groupSel.value = ""; // مسح الاختيار السابق لو ما بقاش موجود
+      // [SELECTION-ENGINE] AppSelect نفسه بيدير فتح/غلق/outside-click —
+      // مفيش داعي بعد كده لأي كود يدوي هنا (كان قبل كده listener مزدوج
+      // بيدور على IDs زي wh-dropdown-wrap/grp-dropdown-wrap اتشالوا).
+      if (window.AppSelect) AppSelect.refresh("cs-filter-group");
+    }
+
+    // ── ترقية فلاتر المخزن/المجموعة/الحالة/اللون لمحرك AppSelect
+    //    الموحّد (بدل الـ wh-dropdown اليدوي القديم) ──────────
+    if (window.AppSelect) {
+      AppSelect.upgrade("cs-filter-warehouse", {
+        icon: "ti-building-warehouse",
+        placeholder: "كل المخازن",
+        searchPlaceholder: "بحث بالاسم أو الكود...",
+      });
+      AppSelect.upgrade("cs-filter-group", {
+        icon: "ti-folder",
+        placeholder: "كل المجموعات",
+        searchPlaceholder: "بحث في المجموعات...",
+      });
+      AppSelect.upgrade("cs-filter-stock", { icon: "ti-package" });
+      AppSelect.upgrade("cs-filter-color", { icon: "ti-palette" });
+    }
+
+    [
+      "cs-search",
+      "cs-filter-warehouse",
+      "cs-filter-group",
+      "cs-filter-stock",
+      "cs-filter-color",
+    ].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el)
+        el.addEventListener(
+          id === "cs-search" ? "input" : "change",
+          function () {
+            // لو اختار مخزن → أعد بناء قائمة المجموعات أولاً
+            if (id === "cs-filter-warehouse") _csRebuildGroupOpts();
+            var filtered = _csGetFiltered();
+            _csRenderContent(filtered);
+            _csUpdateStats(filtered);
+          },
+        );
+    });
+
+    // ── زر تبديل عرض (جدول / كروت) ────────────────────────────
+    var viewBtn = document.getElementById("cs-view-toggle");
+    if (viewBtn) {
+      viewBtn.addEventListener("click", function () {
+        _csViewMode = _csViewMode === "table" ? "cards" : "table";
+        _csColorMode = false;
+        viewBtn.textContent =
+          _csViewMode === "table" ? "⊞ عرض كروت" : " عرض جدول";
+        var clrBtn = document.getElementById("cs-color-toggle");
+        if (clrBtn) {
+          clrBtn.textContent = " تفصيل بالألوان";
+          clrBtn.className = "btn btn-outline btn-sm";
+        }
+        _csRenderContent(_csGetFiltered());
+      });
+    }
+
+    // ── زر تفصيل بالألوان ─────────────────────────────────────
+    var colorBtn = document.getElementById("cs-color-toggle");
+    if (colorBtn) {
+      colorBtn.addEventListener("click", function () {
+        _csColorMode = !_csColorMode;
+        _csViewMode = "table";
+        colorBtn.textContent = _csColorMode
+          ? " موديل ككل"
+          : " تفصيل بالألوان";
+        colorBtn.className = _csColorMode
+          ? "btn btn-primary btn-sm"
+          : "btn btn-outline btn-sm";
+        var vBtn = document.getElementById("cs-view-toggle");
+        if (vBtn) {
+          vBtn.textContent = "⊞ عرض كروت";
+        }
+        _csRenderContent(_csGetFiltered());
+      });
+    }
+
+    // ── طباعة ─────────────────────────────────────────────────
+    var printBtn = document.getElementById("cs-print-btn");
+    if (printBtn) {
+      printBtn.addEventListener("click", function () {
+        var filtered = _csGetFiltered();
+        // [PRINT-ENGINE-UNIFY] كانت هذه الشاشة تبني نافذة طباعة خاصة بها
+        // (صفحة واحدة، بدون تكرار رأس/تذييل/ترقيم صفحات) — الآن توحّدت
+        // مع باقي شاشات النظام عبر ExportUtil.toPrint نفسه.
+        var _headers = [
+          "الكود",
+          "الاسم",
+          "المجموعة",
+          "الوحدة",
+          "الإجمالي",
+          "توزيع المخازن",
+          "الحد الأدنى",
+          "الحالة",
+          "التكلفة الإجمالية",
+        ];
+        var _data = filtered.map(function (it) {
+          var ss = stockStatusBadge(it);
+          var status =
+            ss.cls === "out" ? "نفد" : ss.cls === "low" ? "منخفض" : "متاح";
+          var whList = getCatalogItemStockByWarehouse(it.id)
+            .map(function (r) {
+              return r.name + ":" + r.qty;
+            })
+            .join(" / ");
+          var totalCost = ss.qty * Number(it.cost_price || 0);
+          return [
+            it.id || "",
+            it.name || "",
+            getGroupLabel(it.group),
+            it.unit || "",
+            ss.qty,
+            whList || "—",
+            it.min_qty || "—",
+            status,
+            totalCost > 0 ? formatMoney(totalCost, { decimals: 0 }) : "—",
+          ];
+        });
+        ExportUtil.toPrint(
+          _data,
+          _headers,
+          "المخزن الحالي",
+          "إجمالي: " + filtered.length + " صنف",
+        );
+      });
+    }
+
+    // ── تصدير CSV ─────────────────────────────────────────────
+    var csExportWrap = document.getElementById("cs-export-btn-wrap");
+    if (csExportWrap && window.ExportUtil) {
+      var _getCsData = function () {
+        var filtered = _csGetFiltered();
+        var headers = [
+          "الكود",
+          "الاسم",
+          "المجموعة",
+          "الوحدة",
+          "الإجمالي",
+          "توزيع المخازن",
+          "الحد الأدنى",
+          "الحالة",
+          "سعر التكلفة",
+          "سعر البيع",
+          "التكلفة الإجمالية",
+          "الوصف",
+        ];
+        var rows = filtered.map(function (it) {
+          var ss = stockStatusBadge(it);
+          var status =
+            ss.cls === "out" ? "نفد" : ss.cls === "low" ? "منخفض" : "متاح";
+          var whList = getCatalogItemStockByWarehouse(it.id)
+            .map(function (r) {
+              return r.name + ":" + r.qty;
+            })
+            .join(" | ");
+          var totalCost = ss.qty * (it.cost_price || 0);
+          return [
+            it.id || "",
+            it.name || "",
+            getGroupLabel(it.group),
+            it.unit || "",
+            ss.qty,
+            whList,
+            it.min_qty || 0,
+            status,
+            it.cost_price || 0,
+            it.selling_price || 0,
+            totalCost.toFixed(0),
+            it.description || "",
+          ];
+        });
+        return { headers: headers, rows: rows };
+      };
+      var csDD = ExportUtil.createDropdown({
+        getData: _getCsData,
+        filename: "مخزون_حالي_" + new Date().toISOString().slice(0, 10),
+        title: "تقرير المخزون الحالي",
+        subtitle: "تاريخ التقرير: " + fmtDate(new Date()),
+        sheetName: "المخزون",
+      });
+      csExportWrap.appendChild(csDD);
+    }
+  }
+
+  // ── فلترة الأصناف ────────────────────────────────────────────
+  function _csGetFiltered() {
+    var q = ((document.getElementById("cs-search") || {}).value || "")
+      .toLowerCase()
+      .trim();
+    var gId = (document.getElementById("cs-filter-group") || {}).value || "";
+    var stock = (document.getElementById("cs-filter-stock") || {}).value || "";
+    var color = (document.getElementById("cs-filter-color") || {}).value || "";
+    var whId =
+      (document.getElementById("cs-filter-warehouse") || {}).value || "";
+    return (APP.data.items || []).filter(function (it) {
+      var matchQ =
+        !q ||
+        (it.id || "").toLowerCase().includes(q) ||
+        (it.name || "").toLowerCase().includes(q) ||
+        (it.description || "").toLowerCase().includes(q) ||
+        getGroupLabel(it.group).toLowerCase().includes(q);
+      var matchG = !gId || it.group === gId;
+      var matchS = !stock || stockStatusBadge(it).cls === stock;
+      var matchC =
+        !color ||
+        (function () {
+          var clrs = getItemColors(it.id);
+          return clrs.some(function (c) {
+            return (typeof c === "object" ? c.name || "" : String(c)) === color;
+          });
+        })();
+      var matchWH =
+        !whId ||
+        (function () {
+          // أولاً: هل مجموعة الصنف مرتبطة بهذا المخزن؟ (السلوك الأصلي)
+          var grp = (APP.data.groups || []).find(function (g) {
+            return g.id === it.group;
+          });
+          if (grp && String(grp.warehouse_id) === String(whId)) return true;
+
+          // ثانياً: هل للصنف رصيد فعلي في هذا المخزن؟ (يظهر بعد التحويل)
+          var wh = (APP.data.warehouses || []).find(function (w) {
+            return w.id === whId;
+          });
+          if (!wh) return false;
+          return (APP.data.stock || []).some(function (s) {
+            return (
+              String(s.item_id) === String(it.id) &&
+              s.warehouse === wh.name &&
+              Number(s.quantity || 0) > 0
+            );
+          });
+        })();
+      return matchQ && matchG && matchS && matchC && matchWH;
+    });
+  }
+
+  // ── تحديث الإحصائيات ─────────────────────────────────────────
+  function _csUpdateStats(items) {
+    // pills شريط
+    var statsBar = document.getElementById("cs-stats-bar");
+    if (statsBar) statsBar.innerHTML = buildCatalogStats(items);
+
+    // بطاقات كبيرة
+    var cardsEl = document.getElementById("cs-stat-cards");
+    if (!cardsEl) return;
+    var total = items.length,
+      avail = 0,
+      low = 0,
+      out = 0,
+      totalCost = 0;
+    items.forEach(function (it) {
+      var ss = stockStatusBadge(it);
+      if (ss.cls === "available") avail++;
+      else if (ss.cls === "low") low++;
+      else out++;
+      totalCost += ss.qty * Number(it.cost_price || 0);
+    });
+    cardsEl.innerHTML =
+      statCard("", "مخزون طبيعي", avail, "صنف", "var(--success-soft)") +
+      statCard(
+        "",
+        "تحت الحد الأدنى",
+        low + out,
+        "صنف",
+        "var(--warning-soft,#fff7e6)",
+      ) +
+      statCard(
+        "",
+        "قيمة المخزون",
+        '<span class="sensitive-balance">' +
+          formatMoney(totalCost, { decimals: 0, withSymbol: false }) +
+          "</span>",
+        "جنيه",
+        "var(--accent-soft)",
+      ) +
+      statCard(
+        "",
+        "إجمالي الأصناف",
+        total,
+        "صنف",
+        "var(--teal-soft,#e0f7f4)",
+      );
+  }
+
+  // ── رندر المحتوى حسب الوضع ────────────────────────────────────
+  function _csRenderContent(items) {
+    var el = document.getElementById("cs-content");
+    if (!el) return;
+    if (_csViewMode === "cards" && !_csColorMode) {
+      el.innerHTML = buildCatalogCards(items);
+      return;
+    }
+    if (!items.length) {
+      el.innerHTML =
+        '<div class="card"><div class="empty-state"><div class="empty-icon"></div><p>لا توجد نتائج</p></div></div>';
+      return;
+    }
+    el.innerHTML = '<div id="cs-ce-container"></div>';
+    var container = document.getElementById("cs-ce-container");
+    if (_csColorMode) {
+      _csRenderColorDetailCE(container, items);
+    } else {
+      _csRenderStockTableCE(container, items);
+    }
+  }
+
+  // ── pills توزيع الألوان لكل صنف ──────────────────────────────
+  function _csColorPills(item) {
+    var colors = getItemColors(item.id);
+    if (!colors.length) {
+      return '<span style="font-size:11px;color:var(--text3)">بدون ألوان</span>';
+    }
+    var minQ = Number(item.min_qty || 0);
+    return (
+      '<div style="display:flex;flex-wrap:wrap;gap:4px">' +
+      colors
+        .map(function (c) {
+          var colorName = typeof c === "object" ? c.name || "" : String(c);
+          var colorCode =
+            typeof c === "object" && c.code && c.code.trim()
+              ? c.code.trim().toUpperCase()
+              : colorName.replace(/\s+/g, "").substring(0, 3).toUpperCase();
+          var qty = getColorQty(item.id, colorName);
+          var bg =
+            qty <= 0
+              ? "var(--danger-soft,#ffeaea)"
+              : minQ > 0 && qty <= minQ
+                ? "var(--warning-soft,#fff7e0)"
+                : "var(--success-soft,#e6f9ee)";
+          var clr =
+            qty <= 0
+              ? "var(--danger)"
+              : minQ > 0 && qty <= minQ
+                ? "var(--orange,#f97316)"
+                : "var(--success)";
+          // ── لون الدائرة ──
+          var dotHex = (function () {
+            if (typeof c === "object" && c.hex && c.hex.trim())
+              return c.hex.trim();
+            if (CSS_COLOR_MAP[colorName]) return CSS_COLOR_MAP[colorName];
+            if (CSS_COLOR_MAP[(colorName || "").toLowerCase()])
+              return CSS_COLOR_MAP[(colorName || "").toLowerCase()];
+            var norm = _normalizeColor(colorName);
+            var keys = Object.keys(CSS_COLOR_MAP);
+            for (var _ki = 0; _ki < keys.length; _ki++) {
+              if (_normalizeColor(keys[_ki]) === norm)
+                return CSS_COLOR_MAP[keys[_ki]];
+            }
+            return "#94a3b8";
+          })();
+          var lightColors = [
+            "#ffffff",
+            "#f8fafc",
+            "#f5f5f5",
+            "#f5f0e8",
+            "#fffdd0",
+            "#e6e6fa",
+            "#fce7f3",
+            "#f9a8d4",
+            "#f7e7ce",
+          ];
+          var dotBorder =
+            lightColors.indexOf(dotHex.toLowerCase()) !== -1
+              ? "#9ca3af"
+              : dotHex;
+          return (
+            '<span style="display:inline-flex;align-items:center;gap:5px;background:' +
+            bg +
+            ";" +
+            "border:1px solid " +
+            clr +
+            ';border-radius:50px;padding:2px 7px;font-size:11px;white-space:nowrap">' +
+            '<span style="width:7px;height:7px;border-radius:50%;background:' +
+            dotHex +
+            ";border:1.5px solid " +
+            dotBorder +
+            ';display:inline-block;flex-shrink:0;box-shadow:0 1px 2px rgba(0,0,0,.2)"></span>' +
+            '<span style="font-weight:600;color:var(--text2)">' +
+            esc(colorCode) +
+            "</span>" +
+            '<span style="color:var(--text3)">·</span>' +
+            '<b style="color:' +
+            clr +
+            '">' +
+            qty +
+            "</b>" +
+            "</span>"
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  // ── الجدول الموسّع عبر ColumnEngine (دمج catalog + stock) ────────
+  // [COLUMN-ENGINE] ثالث شاشة (بعد أوامر الشراء وكتالوج الأصناف).
+  // ملاحظة تصميم مهمة: الجدول القديم (_csBuildMergedTable تحت) كان
+  // فيه صف تفصيلي قابل للطي (Expand/Collapse) يعرض رصيد كل لون في كل
+  // مخزن. ColumnEngine (زي أي جدول ERP قياسي) بيعرض صف واحد لكل عنصر
+  // مش صف Expand مضمّن. القرار: عمود "توزيع الألوان والأرصدة" بقى ملخّص
+  // (Pills) بنفس شكل العرض القديم، والتفاصيل الكاملة (رصيد كل لون في كل
+  // مخزن + رصيد أول مدة) لسه موجودة بالكامل — بس في Modal الصنف
+  // (openCatalogItemModal) اللي أصلاً بيفتح بنفس الضغطة على الصف
+  // (onRowClick) وكان بيحتوي على نفس التفاصيل بالظبط. مفيش أي بيانات
+  // اتفقدت، بس التفصيل بقى في نافذة بدل صف موسّع.
+  // ── دعم "المخزن النشط" (Active Warehouse Filter) داخل ColumnEngine ──
+  // [COLUMN-ENGINE] نُقلت هذه الدوال من 07_JS_Shipping_Colors_Excel.html
+  // (كانت override منفصل لدوال قديمة اتشالت من مسار العرض الفعلي).
+  // القرار المعماري: عمود "توزيع الألوان والأرصدة" والحالة والرصيد في
+  // تعريف stock_current الواحد بقوا حساسين لسياق المخزن المختار من
+  // فلتر cs-filter-warehouse، بدل تكرار تعريف الجدول كامل في ملف تاني.
+  function _csGetActiveWarehouseName() {
+    var whId =
+      (document.getElementById("cs-filter-warehouse") || {}).value || "";
+    if (!whId) return "";
+    var wh = (APP.data.warehouses || []).find(function (w) {
+      return w.id === whId;
+    });
+    return wh ? wh.name : "";
+  }
+
+  /**
+   * إجمالي رصيد صنف في مخزن محدد (من شيت Stock فقط)
+   * لو whName فارغ → يرجع الرصيد الكلي من كل المخازن (getCatalogItemStock)
+   */
+  function getCatalogItemStockFiltered(itemId, whName) {
+    if (!whName) return getCatalogItemStock(itemId);
+    return (APP.data.stock || [])
+      .filter(function (s) {
+        return (
+          String(s.item_id) === String(itemId) &&
+          String(s.warehouse || "").trim() === whName.trim()
+        );
+      })
+      .reduce(function (a, s) {
+        return a + Number(s.quantity || 0);
+      }, 0);
+  }
+
+  /**
+   * رصيد لون محدد داخل مخزن محدد (رصيد أول مدة + حركات المخزن ده بس)
+   * لو whName فارغ → يرجع رصيد اللون من كل المخازن (getColorQty)
+   */
+  function getColorQtyFiltered(itemId, colorName, whName) {
+    if (!whName) return getColorQty(itemId, colorName);
+    var idStr = String(itemId || "").trim();
+    var clrStr = _normalizeColor(colorName);
+
+    var opening = (APP.data.openingStock || [])
+      .filter(function (r) {
+        return (
+          String(r.item_id || "").trim() === idStr &&
+          _normalizeColor(r.color) === clrStr &&
+          (!whName || String(r.warehouse || "").trim() === whName.trim())
+        );
+      })
+      .reduce(function (sum, r) {
+        return sum + Number(r.quantity || 0);
+      }, 0);
+
+    var txQty = (APP.data.transactions || [])
+      .filter(function (t) {
+        return (
+          String(t.item_id || "").trim() === idStr &&
+          _normalizeColor(t.color) === clrStr
+        );
+      })
+      .reduce(function (sum, t) {
+        var type = String(t.type || "").toUpperCase();
+        var qty = Number(t.quantity || 0);
+        var toWh = String(t.to_warehouse || "").trim();
+        var fromWh = String(t.from_warehouse || "").trim();
+        var wh = whName.trim();
+        if (type === "IN" || type === "FG_IN" || type === "FACTORY_RETURN") {
+          return toWh === wh ? sum + qty : sum;
+        }
+        if (type === "OUT" || type === "DISPATCH") {
+          return fromWh === wh ? sum - qty : sum;
+        }
+        if (type === "TRANSFER") {
+          if (fromWh === wh) return sum - qty;
+          if (toWh === wh) return sum + qty;
+        }
+        return sum;
+      }, 0);
+
+    return Math.max(0, opening + txQty);
+  }
+
+  /**
+   * stockStatusBadge مع دعم المخزن المُفلتر — لو whName ممرر يحسب
+   * الرصيد من المخزن ده بس، غير كده بيرجع stockStatusBadge العادية
+   */
+  function stockStatusBadgeFiltered(item, whName) {
+    if (!whName) return stockStatusBadge(item);
+    var qty = getCatalogItemStockFiltered(item.id, whName);
+    var minQ = Number(item.min_qty || 0);
+    if (qty <= 0)
+      return {
+        badge: '<span class="badge badge-danger">نفد</span>',
+        cls: "out",
+        qty: qty,
+      };
+    if (minQ > 0 && qty <= minQ)
+      return {
+        badge: '<span class="badge badge-warning">منخفض</span>',
+        cls: "low",
+        qty: qty,
+      };
+    return {
+      badge: '<span class="badge badge-success">متاح</span>',
+      cls: "available",
+      qty: qty,
+    };
+  }
+
+  /**
+   * pills الألوان — بالرصيد الفعلي للمخزن المُفلتر لو whName ممرر،
+   * غير كده نفس _csColorPills العادية (كل المخازن)
+   */
+  function _csColorPillsFiltered(item, whName) {
+    if (!whName) return _csColorPills(item);
+    var colors = getItemColors(item.id);
+    if (!colors.length) {
+      return '<span style="font-size:11px;color:var(--text3)">بدون ألوان</span>';
+    }
+    var minQ = Number(item.min_qty || 0);
+    return (
+      '<div style="display:flex;flex-wrap:wrap;gap:3px">' +
+      colors
+        .map(function (c) {
+          var colorName = typeof c === "object" ? c.name || "" : String(c);
+          var colorCode =
+            typeof c === "object" && c.code && c.code.trim()
+              ? c.code.trim().toUpperCase()
+              : colorName.replace(/\s+/g, "").substring(0, 3).toUpperCase();
+          var qty = getColorQtyFiltered(item.id, colorName, whName);
+          var bg =
+            qty <= 0
+              ? "var(--danger-soft,#ffeaea)"
+              : minQ > 0 && qty <= minQ
+                ? "var(--warning-soft,#fff7e0)"
+                : "var(--success-soft,#e6f9ee)";
+          var clr =
+            qty <= 0
+              ? "var(--danger)"
+              : minQ > 0 && qty <= minQ
+                ? "var(--orange,#f97316)"
+                : "var(--success)";
+          return (
+            '<span style="display:inline-flex;align-items:center;gap:4px;background:' +
+            bg +
+            ";border:1px solid " +
+            clr +
+            ';border-radius:50px;padding:2px 8px;font-size:10px;white-space:nowrap">' +
+            '<span style="font-weight:600;color:var(--text2)">' +
+            esc(colorCode) +
+            "</span>" +
+            '<span style="color:var(--text3)">·</span>' +
+            '<b style="color:' +
+            clr +
+            '">' +
+            qty +
+            "</b>" +
+            "</span>"
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  var _csStockColumnsRegistered = false;
+
+  function _csRegisterStockColumns() {
+    if (_csStockColumnsRegistered) return;
+    _csStockColumnsRegistered = true;
+    ColumnEngine.register(
+      "stock_current",
+      [
+        {
+          key: "display_code",
+          label: "الكود",
+          type: "text",
+          width: 110,
+          frozen: "right",
+          format: function (v, row) {
+            return (
+              '<span class="mono" style="font-weight:700;color:var(--accent);font-size:13.5px">' +
+              esc(v || "") +
+              "</span>" +
+              (row.colors_count
+                ? '<span style="font-size:12px;color:var(--text3);display:block;margin-top:2px"> ' +
+                  row.colors_count +
+                  " لون</span>"
+                : "")
+            );
+          },
+        },
+        {
+          key: "image_url",
+          label: "",
+          type: "custom",
+          width: 58,
+          sortable: false,
+          filterable: false,
+          searchable: false,
+          exportable: false,
+          printable: false,
+          format: function (v, row) {
+            return v
+              ? '<div class="cat-thumb-wrap" onclick="event.stopPropagation();openImageLightbox(\'' +
+                  esc(v) +
+                  "','" +
+                  esc(row.name || "") +
+                  '\')"><img src="' +
+                  esc(v) +
+                  '" class="cat-thumb" onerror="this.parentElement.innerHTML=\'<div class=cat-thumb-ph></div>\'">' +
+                  '<div class="cat-thumb-overlay"></div></div>'
+              : '<div class="cat-thumb-ph"></div>';
+          },
+        },
+        {
+          key: "name",
+          label: "الاسم",
+          type: "text",
+          width: 240,
+          format: function (v, row) {
+            return (
+              '<div style="font-weight:700;font-size:14px">' +
+              esc(v || "") +
+              "</div>" +
+              (row.description
+                ? '<div style="font-size:12px;color:var(--text3);margin-top:2px">' +
+                  esc(row.description) +
+                  "</div>"
+                : "")
+            );
+          },
+        },
+        {
+          key: "group",
+          label: "المجموعة",
+          type: "text",
+          width: 130,
+          format: function (v) {
+            return (
+              '<span style="font-size:13px;font-weight:600">' +
+              esc(getGroupLabel(v)) +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "unit",
+          label: "الوحدة",
+          type: "text",
+          width: 80,
+          align: "center",
+          format: function (v) {
+            return (
+              '<span style="display:block;text-align:center;font-weight:600">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "stock_qty",
+          label: "الرصيد",
+          type: "number",
+          width: 140,
+          format: function (v, row) {
+            var qty = Number(v || 0); // محسوبة مسبقًا حسب المخزن النشط (لو فيه) في _csPrepareStockRowsForCE
+            var minQ = Number(row.min_qty || 0);
+            var barPct = minQ
+              ? Math.min(100, Math.round((qty / minQ) * 100))
+              : qty > 0
+                ? 100
+                : 0;
+            var barColor =
+              row.stock_cls === "out"
+                ? "var(--danger)"
+                : row.stock_cls === "low"
+                  ? "var(--warning)"
+                  : "var(--success)";
+            return (
+              '<div style="display:flex;align-items:center;gap:6px">' +
+              '<b style="font-size:14px;min-width:32px;text-align:left">' +
+              qty +
+              "</b>" +
+              '<div style="flex:1;height:6px;background:var(--surface3);border-radius:3px;overflow:hidden;min-width:40px">' +
+              '<div style="height:100%;width:' +
+              barPct +
+              "%;background:" +
+              barColor +
+              ';border-radius:3px"></div>' +
+              "</div></div>"
+            );
+          },
+        },
+        {
+          key: "colors_text",
+          label: "توزيع الألوان والأرصدة",
+          type: "text",
+          width: 260,
+          format: function (v, row) {
+            return _csColorPillsFiltered(row, row._whName || "");
+          },
+          exportValue: function (row) {
+            return row.colors_text || "";
+          },
+        },
+        {
+          key: "min_qty",
+          label: "الحد الأدنى",
+          type: "number",
+          width: 100,
+          align: "center",
+          format: function (v) {
+            return (
+              '<span style="display:block;text-align:center;font-weight:600;color:var(--text2)">' +
+              (v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "stock_status_label",
+          label: "الحالة",
+          type: "badge",
+          width: 100,
+          format: function (v, row) {
+            return stockStatusBadgeFiltered(row, row._whName || "").badge;
+          },
+          exportValue: function (row) {
+            return row.stock_status_label || "";
+          },
+        },
+        // ── أعمدة ذكية (نفس معايير كتالوج الأصناف — بند "التوافق") ──
+        {
+          key: "cost_price",
+          label: "سعر التكلفة",
+          type: "currency",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "selling_price",
+          label: "سعر البيع",
+          type: "currency",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "description",
+          label: "الوصف",
+          type: "text",
+          width: 220,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "created_at",
+          label: "تاريخ الإنشاء",
+          type: "date",
+          width: 110,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+      ],
+      {
+        title: "المخزن الحالي",
+        rowKey: "id",
+        contextMenuType: "items",
+        // [FIT-TO-WIDTH] كل الأعمدة الظاهرة تاخد نفس النسبة من عرض الجدول
+        // وتتقلّص/تتمدد مع الحاوية بدل عرض px ثابت — بدون سكرول جانبي.
+        fitToWidth: true,
+      },
+    );
+  }
+
+  function _csPrepareStockRowsForCE(items, whName) {
+    return items.map(function (it) {
+      var ss = stockStatusBadgeFiltered(it, whName);
+      var itemColors = getItemColors(it.id);
+      var colorsTextParts = itemColors.map(function (c) {
+        var name = typeof c === "object" ? c.name || "" : String(c);
+        return name + ":" + getColorQtyFiltered(it.id, name, whName);
+      });
+      return Object.assign({}, it, {
+        display_code: it.code || it.id,
+        stock_qty: ss.qty,
+        stock_cls: ss.cls,
+        stock_status_label:
+          ss.cls === "out" ? "نفد" : ss.cls === "low" ? "منخفض" : "متاح",
+        colors_text: colorsTextParts.join(" | "),
+        colors_count: itemColors.length,
+        _whName: whName || "", // يُستخدَم داخل format الأعمدة (الحالة/الألوان) في نفس الصف
+      });
+    });
+  }
+
+  function _csRenderStockTableCE(container, items) {
+    _csRegisterStockColumns();
+    var whName = _csGetActiveWarehouseName();
+    ColumnEngine.renderTable(
+      "stock_current",
+      container,
+      _csPrepareStockRowsForCE(items, whName),
+      {
+        onRowClick: function (row) {
+          openCatalogItemModal(row.id);
+        },
+      },
+    );
+  }
+
+  // ── جدول تفصيل الألوان عبر ColumnEngine (صف لكل عنصر×لون) ────────
+  // [COLUMN-ENGINE] رابع شاشة. هذا الجدول أصلاً مسطّح (صف واحد لكل
+  // مجموعة لون داخل الصنف) فمافيش أي تبسيط أو فقدان بيانات هنا —
+  // تحويل مباشر ١:١.
+  var _csdColumnsRegistered = false;
+
+  function _csdRegisterColumns() {
+    if (_csdColumnsRegistered) return;
+    _csdColumnsRegistered = true;
+    ColumnEngine.register(
+      "stock_color_detail",
+      [
+        {
+          key: "code",
+          label: "الكود",
+          type: "text",
+          width: 110,
+          frozen: "right",
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-weight:700;color:var(--accent)">' +
+              esc(v || "") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "name",
+          label: "الاسم",
+          type: "text",
+          width: 200,
+          format: function (v) {
+            return '<span style="font-weight:500">' + esc(v || "—") + "</span>";
+          },
+        },
+        {
+          key: "color_name",
+          label: "اللون",
+          type: "text",
+          width: 140,
+          format: function (v) {
+            return v
+              ? '<span style="background:var(--accent-soft);color:var(--accent);padding:2px 8px;border-radius:10px;font-size:12px">' +
+                  esc(v) +
+                  "</span>"
+              : '<span style="color:var(--text3)">—</span>';
+          },
+        },
+        {
+          key: "sub_code",
+          label: "الكود الفرعي",
+          type: "text",
+          width: 130,
+          format: function (v) {
+            return v
+              ? '<span style="font-family:var(--font-mono);font-size:12px;background:var(--bg2);padding:2px 8px;border-radius:6px">' +
+                  esc(v) +
+                  "</span>"
+              : '<span style="color:var(--text3)">—</span>';
+          },
+        },
+        {
+          key: "qty",
+          label: "الرصيد",
+          type: "number",
+          width: 90,
+          align: "center",
+          format: function (v) {
+            return (
+              '<b style="display:block;text-align:center">' + (v || 0) + "</b>"
+            );
+          },
+        },
+        {
+          key: "status_label",
+          label: "الحالة",
+          type: "badge",
+          width: 110,
+          format: function (v, row) {
+            if (row.stock_cls === "out")
+              return '<span class="badge badge-danger">نفد </span>';
+            if (row.stock_cls === "low")
+              return '<span class="badge badge-warning">منخفض </span>';
+            return '<span class="badge badge-success">طبيعي </span>';
+          },
+        },
+        // ── عمود ذكي: المجموعة (مخفي افتراضيًا — كان data-attribute
+        // غير مستخدَم فعليًا في أي فلتر حي بالنسخة القديمة) ──
+        {
+          key: "group",
+          label: "المجموعة",
+          type: "text",
+          category: "حقول إضافية",
+          defaultVisible: false,
+          format: function (v) {
+            return esc(getGroupLabel(v));
+          },
+        },
+      ],
+      {
+        title: "تفصيل الألوان",
+        rowKey: "row_id",
+        // row_id مركّب "itemId__colorName" — الاستخراج في
+        // 20_JS_ContextMenu.html (_extractDataFromRow, menuType="items")
+        // يفصل الجزء الأول تلقائيًا قبل البحث عن الصنف.
+        contextMenuType: "items",
+      },
+    );
+  }
+
+  function _csdPrepareRows(items, whName) {
+    var out = [];
+    items.forEach(function (item) {
+      var colors = getItemColors(item.id);
+      var minQ = Number(item.min_qty || 0);
+      if (!colors.length) {
+        var qty = getCatalogItemStockFiltered(item.id, whName);
+        out.push({
+          row_id: String(item.id),
+          _itemId: item.id,
+          code: item.code || item.id,
+          name: item.name || "—",
+          color_name: null,
+          sub_code: null,
+          qty: qty,
+          stock_cls: qty <= 0 ? "out" : minQ > 0 && qty <= minQ ? "low" : "ok",
+          group: item.group,
+        });
+        return;
+      }
+      colors.forEach(function (c) {
+        var colorName = typeof c === "object" ? c.name || "" : String(c);
+        var colorCode =
+          typeof c === "object" && c.code && c.code.trim()
+            ? c.code.trim().toUpperCase()
+            : colorName.replace(/\s+/g, "").substring(0, 3).toUpperCase();
+        var subCode = (item.code || item.id) + "-" + colorCode;
+        var colorQty = getColorQtyFiltered(item.id, colorName, whName);
+        out.push({
+          row_id: String(item.id) + "__" + colorName,
+          _itemId: item.id,
+          code: item.code || item.id,
+          name: item.name || "—",
+          color_name: colorName,
+          sub_code: subCode,
+          qty: colorQty,
+          stock_cls:
+            colorQty <= 0 ? "out" : minQ > 0 && colorQty <= minQ ? "low" : "ok",
+          group: item.group,
+        });
+      });
+    });
+    return out;
+  }
+
+  function _csRenderColorDetailCE(container, items) {
+    _csdRegisterColumns();
+    var whName = _csGetActiveWarehouseName();
+    ColumnEngine.renderTable(
+      "stock_color_detail",
+      container,
+      _csdPrepareRows(items, whName),
+      {
+        onRowClick: function (row) {
+          openCatalogItemModal(row._itemId);
+        },
+      },
+    );
+  }
+
+  // [DEPRECATED — COLUMN-ENGINE] لم تعد مستخدَمة بعد التحويل لـ
+  // _csRenderStockTableCE أعلاه. باقية هنا فقط كمرجع مؤقت، ومرشّحة
+  // للحذف بعد التأكد من استقرار النسخة الجديدة على الإنتاج.
+  function _csBuildMergedTable(items) {
+    if (!items.length)
+      return '<div class="card"><div class="empty-state"><div class="empty-icon"></div><p>لا توجد نتائج</p></div></div>';
+
+    // تجميع حسب المجموعة
+    var groups = {};
+    items.forEach(function (it) {
+      var k = it.group || "__nogroup__";
+      if (!groups[k]) groups[k] = [];
+      groups[k].push(it);
+    });
+
+    return Object.keys(groups)
+      .map(function (k) {
+        var rows = groups[k]
+          .map(function (it) {
+            var ss = stockStatusBadge(it);
+            var minQ = Number(it.min_qty || 0);
+            var totalCost = ss.qty * Number(it.cost_price || 0);
+            var barPct = minQ
+              ? Math.min(100, Math.round((ss.qty / minQ) * 100))
+              : ss.qty > 0
+                ? 100
+                : 0;
+            var barColor =
+              ss.cls === "out"
+                ? "var(--danger)"
+                : ss.cls === "low"
+                  ? "var(--warning)"
+                  : "var(--success)";
+            var itemColors = getItemColors(it.id);
+            var hasColors = itemColors.length > 0;
+
+            // صورة مصغرة
+            var imgHtml = it.image_url
+              ? '<div class="cat-thumb-wrap" onclick="event.stopPropagation();openImageLightbox(\'' +
+                esc(it.image_url) +
+                "','" +
+                esc(it.name || "") +
+                "')\">" +
+                '<img src="' +
+                esc(it.image_url) +
+                '" class="cat-thumb" onerror="this.parentElement.innerHTML=\'<div class=cat-thumb-ph></div>\'">' +
+                '<div class="cat-thumb-overlay"></div></div>'
+              : '<div class="cat-thumb-ph"></div>';
+
+            // زر توسيع الألوان
+            var expandBtn = hasColors
+              ? '<button id="csbtn-' +
+                esc(it.id) +
+                '" onclick="event.stopPropagation();_csToggleColorRow(\'' +
+                esc(it.id) +
+                "')\" " +
+                'style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:13px;font-weight:700;cursor:pointer;margin-left:5px;line-height:1;vertical-align:middle;transition:all .2s" title="عرض الألوان">+</button>'
+              : "";
+
+            // صف الألوان (قابل للطي)
+            var colorRowHtml = "";
+            if (hasColors) {
+              var colorCards = itemColors
+                .map(function (c) {
+                  var colorName =
+                    typeof c === "object" ? c.name || "" : String(c);
+                  var colorCode =
+                    typeof c === "object" && c.code && c.code.trim()
+                      ? c.code.trim().toUpperCase()
+                      : colorName
+                          .replace(/\s+/g, "")
+                          .substring(0, 3)
+                          .toUpperCase();
+                  var subCode = (it.code || it.id) + "-" + colorCode;
+                  var warehouseQtys = {};
+                  (APP.data.stock || []).forEach(function (s) {
+                    if (
+                      String(s.item_id) === String(it.id) &&
+                      String(s.color || "").trim() === colorName.trim()
+                    ) {
+                      var wn = s.warehouse || "غير محدد";
+                      warehouseQtys[wn] =
+                        (warehouseQtys[wn] || 0) + Number(s.quantity || 0);
+                    }
+                  });
+                  // إضافة رصيد أول المدة للون — كان مفقوداً من حساب الرصيد
+                  var colorOpeningQty = (APP.data.openingStock || [])
+                    .filter(function (o) {
+                      return (
+                        String(o.item_id || "").trim() ===
+                          String(it.id || "").trim() &&
+                        _normalizeColor(o.color) === _normalizeColor(colorName)
+                      );
+                    })
+                    .reduce(function (sum, o) {
+                      return sum + Number(o.quantity || 0);
+                    }, 0);
+                  if (colorOpeningQty > 0) {
+                    warehouseQtys[" رصيد أول مدة"] =
+                      (warehouseQtys[" رصيد أول مدة"] || 0) + colorOpeningQty;
+                  }
+                  var colorTotal = Object.keys(warehouseQtys).reduce(function (
+                    a,
+                    k,
+                  ) {
+                    return a + warehouseQtys[k];
+                  }, 0);
+                  var whBreakdown = Object.keys(warehouseQtys)
+                    .map(function (wn) {
+                      return (
+                        '<span style="font-size:11px;color:var(--text3)">' +
+                        esc(wn) +
+                        ': <b style="color:var(--text2)">' +
+                        warehouseQtys[wn] +
+                        "</b></span>"
+                      );
+                    })
+                    .join(
+                      '<span style="color:var(--border);margin:0 4px">|</span>',
+                    );
+                  var qtyColor =
+                    colorTotal <= 0
+                      ? "var(--danger)"
+                      : minQ > 0 && colorTotal <= minQ
+                        ? "var(--orange)"
+                        : "var(--success)";
+                  return (
+                    '<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;min-width:130px;flex:0 0 auto">' +
+                    '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">' +
+                    (function () {
+                      var dh =
+                        CSS_COLOR_MAP[colorName] ||
+                        CSS_COLOR_MAP[(colorName || "").toLowerCase()] ||
+                        (function () {
+                          var n = _normalizeColor(colorName),
+                            ks = Object.keys(CSS_COLOR_MAP);
+                          for (var i = 0; i < ks.length; i++)
+                            if (_normalizeColor(ks[i]) === n)
+                              return CSS_COLOR_MAP[ks[i]];
+                          return "#94a3b8";
+                        })();
+                      var lc = [
+                        "#ffffff",
+                        "#f8fafc",
+                        "#f5f5f5",
+                        "#f5f0e8",
+                        "#fffdd0",
+                        "#e6e6fa",
+                        "#fce7f3",
+                        "#f9a8d4",
+                        "#f7e7ce",
+                      ];
+                      var db =
+                        lc.indexOf(dh.toLowerCase()) !== -1 ? "#9ca3af" : dh;
+                      return (
+                        '<span style="width:10px;height:10px;border-radius:50%;background:' +
+                        dh +
+                        ";border:2px solid " +
+                        db +
+                        ';display:inline-block;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.25)"></span>'
+                      );
+                    })() +
+                    '<b style="font-size:13px">' +
+                    esc(colorName) +
+                    "</b>" +
+                    '<span style="font-family:var(--font-mono);font-size:10px;background:var(--accent);color:#fff;padding:1px 5px;border-radius:8px;margin-right:4px">' +
+                    esc(subCode) +
+                    "</span>" +
+                    "</div>" +
+                    '<div style="font-size:14px;font-weight:700;color:' +
+                    qtyColor +
+                    ';margin-bottom:3px">' +
+                    colorTotal +
+                    ' <span style="font-size:11px;font-weight:400;color:var(--text3)">' +
+                    esc(it.unit || "") +
+                    "</span></div>" +
+                    (Object.keys(warehouseQtys).length > 0
+                      ? '<div style="display:flex;flex-wrap:wrap;gap:4px">' +
+                        whBreakdown +
+                        "</div>"
+                      : '<div style="font-size:11px;color:var(--text3)">لا يوجد رصيد</div>') +
+                    "</div>"
+                  );
+                })
+                .join("");
+              colorRowHtml =
+                '<tr id="csrow-' +
+                esc(it.id) +
+                '" style="display:none">' +
+                '<td colspan="9" style="padding:0;border-bottom:2px solid var(--accent)">' +
+                '<div style="padding:12px 16px 14px;background:linear-gradient(to bottom,var(--surface2),var(--bg2));border-right:3px solid var(--accent)">' +
+                '<div style="font-size:12px;color:var(--text3);margin-bottom:10px;font-weight:600">الأرصدة والألوان — <span style="color:var(--accent)">' +
+                esc(it.name || it.id) +
+                "</span></div>" +
+                '<div style="display:flex;flex-wrap:wrap;gap:8px">' +
+                colorCards +
+                "</div></div></td></tr>";
+            }
+
+            var mainRow =
+              '<tr class="cs-row" data-group="' +
+              esc(it.group || "") +
+              '" onclick="openCatalogItemModal(\'' +
+              esc(it.id) +
+              "')\">" +
+              '<td style="width:58px">' +
+              imgHtml +
+              "</td>" +
+              "<td>" +
+              expandBtn +
+              '<span class="mono" style="font-weight:700;color:var(--accent);font-size:13.5px">' +
+              esc(it.code || it.id || "") +
+              "</span>" +
+              (hasColors
+                ? '<span style="font-size:12px;color:var(--text3);display:block;margin-top:2px"> ' +
+                  itemColors.length +
+                  " لون</span>"
+                : "") +
+              "</td>" +
+              '<td><div style="font-weight:700;font-size:14px">' +
+              esc(it.name || "") +
+              "</div>" +
+              (it.description
+                ? '<div style="font-size:12px;color:var(--text3);margin-top:2px">' +
+                  esc(it.description) +
+                  "</div>"
+                : "") +
+              "</td>" +
+              '<td><span style="font-size:13px;font-weight:600">' +
+              esc(getGroupLabel(it.group)) +
+              "</span></td>" +
+              '<td style="text-align:center;font-size:13px;font-weight:600">' +
+              esc(it.unit || "—") +
+              "</td>" +
+              // الرصيد مع بار
+              '<td style="min-width:100px"><div style="display:flex;align-items:center;gap:6px">' +
+              '<b style="font-size:14px;min-width:32px;text-align:left">' +
+              ss.qty +
+              "</b>" +
+              '<div style="flex:1;height:6px;background:var(--surface3);border-radius:3px;overflow:hidden">' +
+              '<div style="height:100%;width:' +
+              barPct +
+              "%;background:" +
+              barColor +
+              ';border-radius:3px;transition:width .8s ease"></div>' +
+              "</div></div></td>" +
+              // توزيع الألوان
+              '<td onclick="event.stopPropagation()">' +
+              _csColorPills(it) +
+              "</td>" +
+              // الحد الأدنى
+              '<td style="text-align:center;font-size:14px;font-weight:600;color:var(--text2)">' +
+              (minQ || "—") +
+              "</td>" +
+              // الحالة
+              "<td>" +
+              ss.badge +
+              "</td>" +
+              "</tr>";
+
+            return mainRow + colorRowHtml;
+          })
+          .join("");
+
+        return (
+          '<div class="card" style="margin-bottom:16px">' +
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
+          '<h3 style="font-size:17px;font-weight:700;margin:0">' +
+          (k === "__nogroup__" ? "بدون مجموعة" : getGroupLabel(k)) +
+          "</h3>" +
+          '<span class="badge" style="background:var(--accent-soft);color:var(--accent);font-size:13px">' +
+          groups[k].length +
+          " صنف</span>" +
+          "</div>" +
+          '<div class="table-wrap"><table style="width:100%;table-layout:fixed"><colgroup>' +
+          '<col style="width:60px">' +
+          '<col style="width:10%">' +
+          '<col style="width:16%">' +
+          '<col style="width:7%">' +
+          '<col style="width:7%">' +
+          '<col style="width:16%">' +
+          '<col style="width:23%">' +
+          '<col style="width:9%">' +
+          '<col style="width:9%">' +
+          "</colgroup><thead><tr>" +
+          '<th style="width:58px"></th>' +
+          "<th>الكود</th><th>الاسم</th><th>المجموعة</th>" +
+          '<th style="text-align:center">الوحدة</th>' +
+          "<th style='font-size:14px;font-weight:700'>الرصيد</th>" +
+          "<th style='font-size:14px;font-weight:700'> توزيع الألوان والأرصدة</th>" +
+          '<th style="text-align:center">الحد الأدنى</th>' +
+          "<th style='font-size:14px;font-weight:700'>الحالة</th>" +
+          "</tr></thead><tbody>" +
+          rows +
+          "</tbody></table></div></div>"
+        );
+      })
+      .join("");
+  }
+
+  // ── وضع تفصيل بالألوان ───────────────────────────────────────
+  // [DEPRECATED — COLUMN-ENGINE] لم تعد مستخدَمة بعد التحويل لـ
+  // _csRenderColorDetailCE أعلاه. باقية هنا فقط كمرجع مؤقت.
+  function _csBuildColorDetail(items) {
+    if (!items.length)
+      return '<div class="card"><div class="empty-state"><div class="empty-icon"></div><p>لا توجد نتائج</p></div></div>';
+    var rows = [];
+    items.forEach(function (item) {
+      var colors = getItemColors(item.id);
+      var minQ = Number(item.min_qty || 0);
+      if (!colors.length) {
+        var qty = getCatalogItemStock(item.id);
+        var badge =
+          qty <= 0
+            ? '<span class="badge badge-danger">نفد </span>'
+            : minQ > 0 && qty <= minQ
+              ? '<span class="badge badge-warning">منخفض </span>'
+              : '<span class="badge badge-success">طبيعي </span>';
+        rows.push(
+          '<tr data-group="' +
+            esc(item.group || "") +
+            '">' +
+            '<td><span class="mono" style="font-weight:700;color:var(--accent)">' +
+            esc(item.code || item.id) +
+            "</span></td>" +
+            '<td style="font-weight:500">' +
+            esc(item.name || "—") +
+            "</td>" +
+            '<td style="color:var(--text3)">—</td>' +
+            '<td style="color:var(--text3);font-family:var(--font-mono)">—</td>' +
+            '<td style="text-align:center"><b>' +
+            qty +
+            "</b></td>" +
+            '<td style="text-align:center">' +
+            badge +
+            "</td></tr>",
+        );
+        return;
+      }
+      colors.forEach(function (c) {
+        var colorName = typeof c === "object" ? c.name || "" : String(c);
+        var colorCode =
+          typeof c === "object" && c.code && c.code.trim()
+            ? c.code.trim().toUpperCase()
+            : colorName.replace(/\s+/g, "").substring(0, 3).toUpperCase();
+        var subCode = (item.code || item.id) + "-" + colorCode;
+        var colorQty = getColorQty(item.id, colorName);
+        var badge =
+          colorQty <= 0
+            ? '<span class="badge badge-danger">نفد </span>'
+            : minQ > 0 && colorQty <= minQ
+              ? '<span class="badge badge-warning">منخفض </span>'
+              : '<span class="badge badge-success">طبيعي </span>';
+        rows.push(
+          '<tr data-group="' +
+            esc(item.group || "") +
+            '">' +
+            '<td><span class="mono" style="font-weight:700;color:var(--accent)">' +
+            esc(item.code || item.id) +
+            "</span></td>" +
+            '<td style="font-weight:500">' +
+            esc(item.name || "—") +
+            "</td>" +
+            '<td><span style="background:var(--accent-soft);color:var(--accent);padding:2px 8px;border-radius:10px;font-size:12px">' +
+            esc(colorName) +
+            "</span></td>" +
+            '<td><span style="font-family:var(--font-mono);font-size:12px;background:var(--bg2);padding:2px 8px;border-radius:6px">' +
+            esc(subCode) +
+            "</span></td>" +
+            '<td style="text-align:center"><b>' +
+            colorQty +
+            "</b></td>" +
+            '<td style="text-align:center">' +
+            badge +
+            "</td></tr>",
+        );
+      });
+    });
+    return (
+      '<div class="card"><div class="table-wrap"><table><thead><tr>' +
+      "<th>الكود</th><th>الاسم</th><th>اللون</th>" +
+      '<th style="font-family:var(--font-mono);font-size:12px">الكود الفرعي</th>' +
+      '<th style="text-align:center">الرصيد</th>' +
+      '<th style="text-align:center">الحالة</th>' +
+      "</tr></thead><tbody>" +
+      rows.join("") +
+      "</tbody></table></div></div>"
+    );
+  }
+
+  // ── toggle صف الألوان ─────────────────────────────────────────
+  function _csToggleColorRow(itemId) {
+    var row = document.getElementById("csrow-" + itemId);
+    var btn = document.getElementById("csbtn-" + itemId);
+    if (!row) return;
+    var open = row.style.display !== "none";
+    row.style.display = open ? "none" : "";
+    if (btn) {
+      btn.textContent = open ? "+" : "−";
+      btn.style.background = open ? "var(--accent)" : "var(--success)";
+    }
+  }
+
+  // ── Modal تفاصيل الصنف (محسّن) ──────────────────────────────
+
+  function openCatalogItemModal(id) {
+    var it = (APP.data.items || []).find(function (x) {
+      return x.id === id;
+    });
+    if (!it) return;
+    var ss = stockStatusBadge(it);
+
+    // تفاصيل الألوان — بدلاً من المخازن
+    var itemColors = getItemColors(it.id);
+    var minQ = Number(it.min_qty || 0);
+    var colorCards = itemColors.length
+      ? itemColors
+          .map(function (c) {
+            var colorName = typeof c === "object" ? c.name || "" : String(c);
+            var colorCode =
+              typeof c === "object" && c.code && c.code.trim()
+                ? c.code.trim().toUpperCase()
+                : colorName.replace(/\s+/g, "").substring(0, 3).toUpperCase();
+            var subCode = (it.code || it.id) + "-" + colorCode;
+            // رصيد هذا اللون من المخازن
+            var warehouseQtys = {};
+            (APP.data.stock || []).forEach(function (s) {
+              if (
+                String(s.item_id) === String(id) &&
+                String(s.color || "").trim() === colorName.trim()
+              ) {
+                var wn = s.warehouse || "غير محدد";
+                warehouseQtys[wn] =
+                  (warehouseQtys[wn] || 0) + Number(s.quantity || 0);
+              }
+            });
+            // إضافة رصيد أول المدة للون في التوزيع التفصيلي بالمودال
+            var _modalColorOpening = (APP.data.openingStock || [])
+              .filter(function (o) {
+                return (
+                  String(o.item_id || "").trim() === String(id || "").trim() &&
+                  _normalizeColor(o.color) === _normalizeColor(colorName)
+                );
+              })
+              .reduce(function (sum, o) {
+                return sum + Number(o.quantity || 0);
+              }, 0);
+            if (_modalColorOpening > 0) {
+              warehouseQtys[" رصيد أول مدة"] =
+                (warehouseQtys[" رصيد أول مدة"] || 0) + _modalColorOpening;
+            }
+            var colorTotal = getColorQty(id, colorName);
+            var qtyColor =
+              colorTotal <= 0
+                ? "var(--danger)"
+                : minQ > 0 && colorTotal <= minQ
+                  ? "var(--orange,#f97316)"
+                  : "var(--success)";
+            // ── استخراج لون الدائرة الحقيقي ──
+            var _mDotHex = (function () {
+              if (typeof c === "object" && c.hex && c.hex.trim())
+                return c.hex.trim();
+              // بحث مباشر أولاً
+              if (CSS_COLOR_MAP[colorName]) return CSS_COLOR_MAP[colorName];
+              // بحث بـ lowercase
+              if (CSS_COLOR_MAP[(colorName || "").toLowerCase()])
+                return CSS_COLOR_MAP[(colorName || "").toLowerCase()];
+              // بحث بعد تطبيع الحروف العربية
+              var norm = _normalizeColor(colorName);
+              var keys = Object.keys(CSS_COLOR_MAP);
+              for (var _ki = 0; _ki < keys.length; _ki++) {
+                if (_normalizeColor(keys[_ki]) === norm)
+                  return CSS_COLOR_MAP[keys[_ki]];
+              }
+              return "#94a3b8";
+            })();
+            var _mLightColors = [
+              "#ffffff",
+              "#f8fafc",
+              "#f5f5f5",
+              "#f5f0e8",
+              "#fffdd0",
+              "#e6e6fa",
+              "#fce7f3",
+              "#f9a8d4",
+              "#f7e7ce",
+            ];
+            var _mDotBorder =
+              _mLightColors.indexOf(_mDotHex.toLowerCase()) !== -1
+                ? "#9ca3af"
+                : _mDotHex;
+            var whLines = Object.keys(warehouseQtys)
+              .map(function (wn) {
+                return (
+                  '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;' +
+                  'background:var(--bg);border-radius:6px;padding:3px 8px;margin-top:4px">' +
+                  '<span style="color:var(--text3)"> ' +
+                  esc(wn) +
+                  "</span>" +
+                  '<b style="color:var(--text2)">' +
+                  warehouseQtys[wn] +
+                  " " +
+                  esc(it.unit || "") +
+                  "</b>" +
+                  "</div>"
+                );
+              })
+              .join("");
+            return (
+              '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;">' +
+              '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
+              '<div style="display:flex;align-items:center;gap:7px">' +
+              '<span style="width:12px;height:12px;border-radius:50%;background:' +
+              _mDotHex +
+              ";border:2px solid " +
+              _mDotBorder +
+              ';display:inline-block;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.25)"></span>' +
+              '<span style="font-size:13px;font-weight:700">' +
+              esc(colorName) +
+              "</span>" +
+              '<span style="font-family:var(--font-mono);font-size:10px;background:var(--accent);color:#fff;padding:1px 6px;border-radius:8px">' +
+              esc(subCode) +
+              "</span>" +
+              "</div>" +
+              '<span style="font-size:16px;font-weight:800;color:' +
+              qtyColor +
+              '">' +
+              colorTotal +
+              ' <span style="font-size:11px;font-weight:400;color:var(--text3)">' +
+              esc(it.unit || "") +
+              "</span></span>" +
+              "</div>" +
+              (Object.keys(warehouseQtys).length > 0
+                ? whLines
+                : '<div style="font-size:11px;color:var(--text3);margin-top:4px;padding:2px 4px">لا يوجد رصيد</div>') +
+              "</div>"
+            );
+          })
+          .join("")
+      : "";
+
+    var openingQty = getOpeningQty(id);
+
+    var lastTx = (APP.data.transactions || [])
+      .filter(function (t) {
+        return t.item_id === id;
+      })
+      .slice(-5)
+      .reverse()
+      .map(function (t) {
+        var tb =
+          t.type === "IN"
+            ? "badge-success"
+            : t.type === "OUT"
+              ? "badge-danger"
+              : "badge-purple";
+        var tl =
+          { IN: "وارد", OUT: "صادر", TRANSFER: "تحويل" }[t.type] || t.type;
+        return (
+          "<tr>" +
+          '<td style="padding:4px 8px;font-size:11px">' +
+          fmtDate(t.date) +
+          "</td>" +
+          '<td style="padding:4px 8px"><span class="badge ' +
+          tb +
+          '" style="font-size:10px">' +
+          tl +
+          "</span></td>" +
+          '<td style="padding:4px 8px;font-weight:700">' +
+          Number(t.quantity || 0) +
+          "</td>" +
+          '<td style="padding:4px 8px;font-size:11px;color:var(--text3)">' +
+          esc(t.notes || "—") +
+          "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    // صورة في الـ Modal — كبيرة مع زر lightbox
+    var imgSection = it.image_url
+      ? '<div style="position:relative;width:110px;height:110px;flex-shrink:0">' +
+        '<img src="' +
+        esc(it.image_url) +
+        '" style="width:110px;height:110px;object-fit:cover;border-radius:12px;border:2px solid var(--border);cursor:pointer;display:block" ' +
+        "onclick=\"openImageLightbox('" +
+        esc(it.image_url) +
+        "','" +
+        esc(it.name || "") +
+        "')\" " +
+        "onerror=\"this.parentElement.innerHTML='<div style=\\'width:110px;height:110px;border-radius:12px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:44px\\'></div>'\">" +
+        "<button onclick=\"openImageLightbox('" +
+        esc(it.image_url) +
+        "','" +
+        esc(it.name || "") +
+        "')\" " +
+        'style="position:absolute;bottom:4px;left:4px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:6px;' +
+        'padding:2px 7px;font-size:10px;cursor:pointer;backdrop-filter:blur(4px)"> تكبير</button>' +
+        "</div>"
+      : '<div style="width:110px;height:110px;border-radius:12px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:44px;flex-shrink:0;border:2px solid var(--border)"></div>';
+
+    openDrawer(
+      '<div class="modal-box" style="width:100%">' +
+        '<div class="modal-header">' +
+        '<div class="modal-header-left">' +
+        '<div class="modal-icon"><i class="ti ti-box" style="font-size:20px"></i></div>' +
+        "<div><h2>" +
+        esc(it.name || "") +
+        '</h2><div class="modal-header-sub">' +
+        esc(it.code || it.id || "") +
+        "</div></div>" +
+        "</div>" +
+        '<button class="modal-close" onclick="closeDrawer()"><i class="ti ti-x"></i></button>' +
+        "</div>" +
+        '<div class="modal-body">' +
+        // رأس الصنف
+        '<div style="display:flex;gap:16px;margin-bottom:18px;flex-wrap:wrap">' +
+        imgSection +
+        '<div style="flex:1;min-width:0">' +
+        '<div class="mono" style="color:var(--accent);font-size:17px;font-weight:800;margin-bottom:4px">' +
+        esc(it.code || it.id || "") +
+        "</div>" +
+        '<div style="font-size:15px;font-weight:700;margin-bottom:6px">' +
+        esc(it.name || "") +
+        "</div>" +
+        (it.description
+          ? '<div style="font-size:12px;color:var(--text3);margin-bottom:8px;line-height:1.5">' +
+            esc(it.description) +
+            "</div>"
+          : "") +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+        ss.badge +
+        '<span class="badge" style="background:var(--surface2);color:var(--text2)">' +
+        esc(it.unit || "—") +
+        "</span>" +
+        '<span class="badge" style="background:var(--accent-soft);color:var(--accent)">' +
+        esc(getGroupLabel(it.group)) +
+        "</span>" +
+        "</div>" +
+        "</div></div>" +
+        // توزيع الألوان
+        '<div style="margin-bottom:16px">' +
+        '<div style="font-weight:700;font-size:13px;margin-bottom:10px;display:flex;align-items:center;gap:6px">توزيع الألوان والأرصدة</div>' +
+        '<div style="display:flex;flex-direction:column;gap:6px">' +
+        (colorCards ||
+          '<div style="color:var(--text3);font-size:12px;padding:8px">لا توجد ألوان مسجلة لهذا الصنف</div>') +
+        (openingQty > 0
+          ? '<div style="background:var(--warning-soft);border:1px solid var(--warning);border-radius:10px;padding:10px 14px;' +
+            'display:flex;align-items:center;justify-content:space-between">' +
+            '<div style="display:flex;align-items:center;gap:6px"><span></span><span style="font-size:12px;font-weight:600">رصيد أول مدة</span></div>' +
+            '<span style="font-size:16px;font-weight:800;color:var(--warning)">' +
+            openingQty +
+            ' <span style="font-size:11px;font-weight:400;color:var(--text3)">' +
+            esc(it.unit || "") +
+            "</span></span>" +
+            "</div>"
+          : "") +
+        "</div>" +
+        // إجمالي
+        '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;margin-top:8px;' +
+        'background:var(--accent-soft);border-radius:10px;border:1px solid var(--accent)">' +
+        '<span style="font-weight:700;font-size:13px;color:var(--accent)">الإجمالي الكلي</span>' +
+        '<span style="font-size:18px;font-weight:800;color:var(--accent)">' +
+        ss.qty +
+        ' <span style="font-size:12px;font-weight:500">' +
+        esc(it.unit || "") +
+        "</span></span>" +
+        "</div>" +
+        "</div>" +
+        // الأسعار
+        (it.cost_price || it.selling_price
+          ? '<div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">' +
+            (it.cost_price
+              ? '<div style="flex:1;min-width:100px;padding:12px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);text-align:center">' +
+                '<div style="font-size:11px;color:var(--text3);margin-bottom:3px">سعر التكلفة</div>' +
+                '<div class="sensitive-price" style="font-size:16px;font-weight:800">' +
+                formatMoney(it.cost_price, { decimals: 0 }) +
+                "</div>" +
+                "</div>"
+              : "") +
+            (it.selling_price
+              ? '<div style="flex:1;min-width:100px;padding:12px;background:var(--success-soft);border-radius:10px;border:1px solid var(--success);text-align:center">' +
+                '<div style="font-size:11px;color:var(--text3);margin-bottom:3px">سعر البيع</div>' +
+                '<div class="sensitive-price" style="font-size:16px;font-weight:800;color:var(--success)">' +
+                formatMoney(it.selling_price, { decimals: 0 }) +
+                "</div>" +
+                (it.cost_price
+                  ? '<div style="font-size:10px;color:var(--success);margin-top:2px">هامش: ' +
+                    Math.round(
+                      ((Number(it.selling_price) - Number(it.cost_price)) /
+                        Number(it.selling_price)) *
+                        100,
+                    ) +
+                    "%</div>"
+                  : "") +
+                "</div>"
+              : "") +
+            "</div>"
+          : "") +
+        // آخر الحركات
+        (lastTx
+          ? '<div style="margin-bottom:14px"><div style="font-weight:700;font-size:13px;margin-bottom:8px"> آخر الحركات</div>' +
+            '<div class="table-wrap" style="max-height:150px;overflow-y:auto"><table style="width:100%">' +
+            '<thead><tr style="background:var(--surface2)"><th style="padding:4px 8px;font-size:11px">التاريخ</th><th style="padding:4px 8px;font-size:11px">النوع</th><th style="padding:4px 8px;font-size:11px">الكمية</th><th style="padding:4px 8px;font-size:11px">ملاحظات</th></tr></thead>' +
+            "<tbody>" +
+            lastTx +
+            "</tbody></table></div></div>"
+          : "") +
+        "</div>" +
+        '<div class="modal-actions">' +
+        '<button class="btn btn-outline" onclick="closeDrawer()">إغلاق</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="closeDrawer();copyCode(\'' +
+        esc(it.code || it.id || "") +
+        "')\"><i class='ti ti-copy'></i> نسخ الكود</button>" +
+        '<button class="btn btn-primary btn-sm" onclick="closeDrawer();quickDispatch(\'' +
+        esc(it.id || "") +
+        "')\"><i class='ti ti-arrow-bar-up'></i> صرف سريع</button>" +
+        "</div></div>",
+    );
+  }
+
+  function copyCode(id) {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(id).then(function () {
+        NotificationEngine.success("تم نسخ: " + id);
+      });
+    } else {
+      // [UNIFY-NOTIF] كان بينادي showToast(id, "") — نوع فارغ وبدون رسالة
+      // واضحة (قيمة id بس). استبدلته بـ NotificationEngine.info برسالة صريحة.
+      NotificationEngine.info("الكود: " + id);
+    }
+  }
+
+  function quickDispatch(id) {
+    sessionStorage.setItem("dispatchItem", id);
+    renderPage("dispatch");
+    NotificationEngine.success("انتقل إلى صرف للصنف: " + id);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // أرصدة أول المدة — Opening Stock
+  // ─────────────────────────────────────────────────────────────
+
+  function getOpeningQty(item_id) {
+    // يجمع كل الألوان للصنف الواحد
+    return (APP.data.openingStock || [])
+      .filter(function (r) {
+        return String(r.item_id) === String(item_id);
+      })
+      .reduce(function (sum, r) {
+        return sum + Number(r.quantity || 0);
+      }, 0);
+  }
+
+  /**
+   * رصيد صنف بلون محدد = OpeningStock لهذا اللون + حركات IN - حركات OUT
+   * شيت Stock مفيهوش عمود color، فالرصيد بالألوان يتحسب من Transactions فقط
+   */
+  function getColorQty(item_id, colorName) {
+    var idStr = String(item_id || "").trim();
+    // إصلاح: normalize يحل مشكلة أسود/اسود/ASWAD
+    var clrStr = _normalizeColor(colorName);
+
+    var opening = (APP.data.openingStock || [])
+      .filter(function (r) {
+        return (
+          String(r.item_id || "").trim() === idStr &&
+          _normalizeColor(r.color) === clrStr
+        );
+      })
+      .reduce(function (sum, r) {
+        return sum + Number(r.quantity || 0);
+      }, 0);
+
+    var txQty = (APP.data.transactions || [])
+      .filter(function (t) {
+        return (
+          String(t.item_id || "").trim() === idStr &&
+          _normalizeColor(t.color) === clrStr
+        );
+      })
+      .reduce(function (sum, t) {
+        var type = String(t.type || "").toUpperCase();
+        var qty = Number(t.quantity || 0);
+        if (type === "IN" || type === "FG_IN" || type === "FACTORY_RETURN")
+          return sum + qty;
+        if (type === "OUT" || type === "DISPATCH") return sum - qty;
+        return sum;
+      }, 0);
+
+    return Math.max(0, opening + txQty);
+  }
+
+  // [PHASE-CE/Inventory] جدول أرصدة أول المدة بقى معتمد على ColumnEngine
+  // (Metadata-Driven) — سجل واحد لكل صنف/لون بدل رأس مجموعة قابل للطي
+  // + صفوف تفصيل، عشان يتوحّد نفس المحرك المستخدم في باقي شاشات المخزون
+  // (بند "التوافق"). إجراءات التعديل/الحذف بقت بالكامل عبر قائمة
+  // السياق (كليك يمين) — راجع CTX.define("opening_stock", ...) في
+  // 20_JS_ContextMenu.html — من غير عمود إجراءات ظاهر في الجدول نفسه.
+  var _osColumnsRegistered = false;
+
+  function _osRegisterColumns() {
+    if (_osColumnsRegistered) return;
+    _osColumnsRegistered = true;
+    ColumnEngine.register(
+      "opening_stock",
+      [
+        {
+          key: "item_code",
+          label: "كود الصنف",
+          type: "text",
+          width: 110,
+          frozen: "right",
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-weight:700;color:var(--accent);font-size:13px">' +
+              esc(v || "") +
+              "</span>"
+            );
+          },
+        },
+        { key: "item_name", label: "الموديل", type: "text", width: 200 },
+        {
+          key: "color",
+          label: "اللون",
+          type: "text",
+          width: 160,
+          format: function (v) {
+            if (!v)
+              return '<span style="color:var(--text3);font-size:12px">— بدون لون —</span>';
+            var hex = colorNameToHex(v);
+            return (
+              '<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface2);padding:3px 10px;border-radius:20px;font-size:12px;border:1px solid var(--border)">' +
+              '<span style="width:12px;height:12px;border-radius:50%;background:' +
+              hex +
+              ';border:1px solid rgba(0,0,0,0.15);flex-shrink:0"></span>' +
+              esc(v) +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "quantity",
+          label: "الكمية",
+          type: "number",
+          width: 100,
+          align: "center",
+        },
+        {
+          key: "notes",
+          label: "ملاحظات",
+          type: "text",
+          width: 200,
+          format: function (v) {
+            return esc(v || "—");
+          },
+        },
+        { key: "date", label: "التاريخ", type: "date", width: 110 },
+      ],
+      {
+        title: "أرصدة أول المدة",
+        rowKey: "_key",
+        // [CTX] الاعتماد الكامل على قائمة السياق الموحّدة (كليك يمين /
+        // ضغط مطوّل على الموبايل) بدل عمود إجراءات ثابت — نفس صلاحيات
+        // تعديل/حذف بالظبط (canDo('addOpeningStock')/canDo('deleteOpeningStock'))
+        // بس معرَّفة مرة واحدة في CTX.define("opening_stock", ...) بـ
+        // 20_JS_ContextMenu.html بدل تكرارها هنا كمان. لو محتجناها ترجع
+        // كعمود ظاهر تاني، التعريف القديم متسيّب في تاريخ الملف.
+        contextMenuType: "opening_stock",
+      },
+    );
+  }
+
+  function _osPrepareRowsForCE(rows) {
+    var itemMap = {};
+    (APP.data.items || []).forEach(function (it) {
+      itemMap[String(it.id)] = it;
+    });
+    return rows.map(function (r) {
+      var item = itemMap[String(r.item_id)];
+      return {
+        _key: String(r.item_id || "") + "|" + (r.color || ""),
+        item_id: r.item_id || "",
+        item_code: item ? item.code || item.id : r.item_id || "",
+        item_name: item ? item.name : "—",
+        color: r.color || "",
+        quantity: Number(r.quantity || 0),
+        notes: r.notes || "",
+        date: r.date || "",
+      };
+    });
+  }
+
+  function _osRenderTableCE(container, rows) {
+    if (!container) return;
+    _osRegisterColumns();
+    ColumnEngine.renderTable(
+      "opening_stock",
+      container,
+      _osPrepareRowsForCE(rows),
+      { rowKey: "_key" },
+    );
+  }
+
+  function bindOpeningStock() {
+    var btn = document.getElementById("btn-add-os");
+    if (btn)
+      btn.addEventListener("click", function () {
+        openOpeningStockModal(null);
+      });
+
+    var btnImport = document.getElementById("btn-import-os");
+    if (btnImport)
+      btnImport.addEventListener("click", function () {
+        // [IMP-WIZARD-OS] بقى بيفتح معالج الاستيراد الموحّد
+        // (37_JS_ImportWizard.html) بدل المودال المباشر القديم — بنفس
+        // مسار الأصناف بالظبط (validateImportRows/commitImportBatch عبر
+        // ImportEngine)، والمطابقة مع الصنف بكود الصنف (item.code).
+        openImportWizard("opening_stock");
+      });
+
+    // [AUTO-OB-JOURNAL] الزرار اليدوي "ترحيل القيد المحاسبي" اتشال —
+    // postOpeningStockJournal بقت بتتنادى تلقائيًا في الخلفية بعد كل
+    // إضافة/تعديل رصيد أول مدة (راجع onSuccess في مودال الحفظ فوق).
+
+    _osRenderTableCE(
+      document.getElementById("os-ce-container"),
+      APP.data.openingStock || [],
+    );
+  }
+
+  // ── مودال استيراد Excel [DEAD-CODE — IMP-WIZARD-OS] ─────────────
+  // مش مستخدمة بعد النهاردة — الاستيراد بقى بالكامل عبر
+  // openImportWizard("opening_stock") فوق في bindOpeningStock().
+  // اتسابت هنا كمرجع تاريخي مؤقت، تُحذف بالكامل في تنظيف لاحق.
+  function _legacyOpenImportOpeningStockModal() {
+    openStyledDrawer({
+      title: "استيراد أرصدة أول المدة",
+      subtitle: "استيراد من ملف Excel أو CSV",
+      icon: "ti-file-spreadsheet",
+      color: "green",
+      width: 860,
+      body:
+        '<div class="modal-body">' +
+        '<div style="margin-bottom:16px;background:var(--surface2);border-radius:10px;padding:14px 16px;font-size:13px;line-height:1.8">' +
+        "<b> تنسيق الملف المطلوب (Excel / CSV):</b><br>" +
+        '<span style="font-family:monospace;font-size:12px;color:var(--accent)">كود الصنف | اللون | الكمية | ملاحظات (اختياري)</span><br>' +
+        '<span style="color:var(--text3);font-size:11px">مثال: ITM-22-059-K8 | أزرق | 55</span>' +
+        "</div>" +
+        '<div class="field">' +
+        "<label>اختر ملف Excel أو CSV</label>" +
+        '<input type="file" id="os-import-file" accept=".xlsx,.xls,.csv" class="input" style="padding:10px">' +
+        "</div>" +
+        '<div id="os-import-preview" style="display:none;margin-top:12px"></div>' +
+        "</div>",
+      footer:
+        '<button class="btn btn-outline" onclick="closeStyledDrawer()">إلغاء</button>' +
+        '<button class="btn btn-outline" id="os-btn-parse" style="color:var(--accent)"><i class="ti ti-search"></i> معاينة البيانات</button>' +
+        '<button class="btn btn-primary" id="os-btn-confirm-import" style="display:none"><i class="ti ti-check"></i> تأكيد الاستيراد</button>',
+      onReady: function () {
+        var _parsedRows = [];
+
+        document
+          .getElementById("os-btn-parse")
+          .addEventListener("click", function () {
+            var fileInput = document.getElementById("os-import-file");
+            if (!fileInput || !fileInput.files.length)
+              return NotificationEngine.error("اختر ملف أولاً");
+            var file = fileInput.files[0];
+            var reader = new FileReader();
+
+            reader.onload = function (e) {
+              try {
+                var lines = [];
+                var name = file.name.toLowerCase();
+
+                if (name.endsWith(".csv")) {
+                  // CSV
+                  var text = e.target.result;
+                  lines = text.split(/\r?\n/).filter(function (l) {
+                    return l.trim();
+                  });
+                  // تخطى رأس الجدول لو فيه نص
+                  if (
+                    lines.length &&
+                    /[a-zA-Z\u0600-\u06FF]/.test(lines[0].split(",")[0]) &&
+                    isNaN(Number(lines[0].split(",")[2]))
+                  ) {
+                    lines = lines.slice(1);
+                  }
+                  _parsedRows = lines
+                    .map(function (l) {
+                      var parts = l.split(",");
+                      return {
+                        code: (parts[0] || "").trim().replace(/"/g, ""),
+                        color: (parts[1] || "").trim().replace(/"/g, ""),
+                        qty: Number((parts[2] || "0").trim().replace(/"/g, "")),
+                        notes: (parts[3] || "").trim().replace(/"/g, ""),
+                      };
+                    })
+                    .filter(function (r) {
+                      return r.code && !isNaN(r.qty);
+                    });
+                } else {
+                  // Excel — نستخدم SheetJS
+                  var data = new Uint8Array(e.target.result);
+                  var workbook = XLSX.read(data, { type: "array" });
+                  var sheet = workbook.Sheets[workbook.SheetNames[0]];
+                  var jsonData = XLSX.utils.sheet_to_json(sheet, {
+                    header: 1,
+                    defval: "",
+                  });
+                  // تخطى رأس لو أول خلية مش كود
+                  var startIdx = 0;
+                  if (
+                    jsonData.length &&
+                    isNaN(Number(String(jsonData[0][2] || "")))
+                  )
+                    startIdx = 1;
+                  _parsedRows = jsonData
+                    .slice(startIdx)
+                    .filter(function (r) {
+                      return r[0];
+                    })
+                    .map(function (r) {
+                      return {
+                        code: String(r[0] || "").trim(),
+                        color: String(r[1] || "").trim(),
+                        qty: Number(r[2] || 0),
+                        notes: String(r[3] || "").trim(),
+                      };
+                    })
+                    .filter(function (r) {
+                      return r.code && !isNaN(r.qty);
+                    });
+                }
+
+                if (!_parsedRows.length)
+                  return NotificationEngine.error("لم يتم العثور على بيانات صالحة في الملف");
+
+                // معاينة
+                var previewHtml =
+                  '<div style="font-size:12px;font-weight:700;margin-bottom:8px;color:var(--text2)">معاينة (' +
+                  _parsedRows.length +
+                  " صف):</div>" +
+                  '<div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:8px">' +
+                  '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+                  '<thead style="background:var(--surface2)"><tr>' +
+                  '<th style="padding:6px 10px;text-align:right">كود الصنف</th>' +
+                  '<th style="padding:6px 10px;text-align:right">اللون</th>' +
+                  '<th style="padding:6px 10px;text-align:center">الكمية</th>' +
+                  '<th style="padding:6px 10px;text-align:right">ملاحظات</th>' +
+                  "</tr></thead><tbody>" +
+                  _parsedRows
+                    .slice(0, 20)
+                    .map(function (r) {
+                      var item = APP.data.items.find(function (i) {
+                        return (
+                          (i.code || "") === r.code || String(i.id) === r.code
+                        );
+                      });
+                      var valid = !!item;
+                      return (
+                        '<tr style="border-top:1px solid var(--border);' +
+                        (valid ? "" : "background:#fff0f0") +
+                        '">' +
+                        '<td style="padding:5px 10px"><span style="color:' +
+                        (valid ? "var(--accent)" : "var(--danger)") +
+                        ';font-weight:700">' +
+                        esc(r.code) +
+                        "</span>" +
+                        (valid
+                          ? ""
+                          : ' <span style="color:var(--danger);font-size:10px">غير موجود</span>') +
+                        "</td>" +
+                        '<td style="padding:5px 10px">' +
+                        esc(r.color || "—") +
+                        "</td>" +
+                        '<td style="padding:5px 10px;text-align:center"><b>' +
+                        r.qty +
+                        "</b></td>" +
+                        '<td style="padding:5px 10px;font-size:11px;color:var(--text3)">' +
+                        esc(r.notes || "—") +
+                        "</td>" +
+                        "</tr>"
+                      );
+                    })
+                    .join("") +
+                  (_parsedRows.length > 20
+                    ? '<tr><td colspan="4" style="padding:6px 10px;color:var(--text3);font-size:11px;text-align:center">... و ' +
+                      (_parsedRows.length - 20) +
+                      " صف آخر</td></tr>"
+                    : "") +
+                  "</tbody></table></div>";
+
+                var previewEl = document.getElementById("os-import-preview");
+                previewEl.innerHTML = previewHtml;
+                previewEl.style.display = "block";
+                document.getElementById("os-btn-confirm-import").style.display =
+                  "";
+                NotificationEngine.success("تم تحليل " + _parsedRows.length + " صف");
+              } catch (err) {
+                NotificationEngine.error("خطأ في قراءة الملف: " + err.message);
+              }
+            };
+
+            if (file.name.toLowerCase().endsWith(".csv")) {
+              reader.readAsText(file, "UTF-8");
+            } else {
+              reader.readAsArrayBuffer(file);
+            }
+          });
+
+        document
+          .getElementById("os-btn-confirm-import")
+          .addEventListener("click", function () {
+            if (!_parsedRows.length) return;
+
+            // [VALIDATION-FIX] قبل كده: لو الصنف مش موجود كان بيتبعت
+            // item_id = كود الصف نفسه (نص وهمي)، فيعدّي الفلتر ويوصل
+            // للباك إند وكأنه معرّف حقيقي. دلوقتي بنستبعد الصفوف دي
+            // فعلياً ونعرض تحذير واضح بيها قبل الاستيراد.
+            var rows = [];
+            var rejected = [];
+            _parsedRows.forEach(function (r) {
+              var item = APP.data.items.find(function (i) {
+                return (i.code || "") === r.code || String(i.id) === r.code;
+              });
+              if (!item) {
+                rejected.push(r.code + " — الصنف غير موجود");
+                return;
+              }
+              if (isNaN(r.qty) || r.qty < 0) {
+                rejected.push(r.code + " — كمية غير صالحة (" + r.qty + ")");
+                return;
+              }
+              rows.push({
+                item_id: item.id,
+                color: r.color,
+                qty: r.qty,
+                notes: r.notes,
+              });
+            });
+
+            if (!rows.length)
+              return NotificationEngine.error(
+                "لا توجد أصناف صالحة للاستيراد — كل الصفوف بها أكواد غير معروفة أو كميات غير صالحة"
+              );
+
+            // [DIALOG-FIX] استبدال confirm() الخام بـ showConfirm() الموحّد
+            // (نفس نظام الحوارات المستخدم في باقي الشاشات).
+            function _proceedOpeningStockImport() {
+              closeStyledDrawer();
+
+              // [SE-ROLLOUT] عبر SaveEngine.run بدل showSaveAnim/_gsr اليدوي.
+              SaveEngine.run({
+                screen: "opening_stock_import",
+                entity: "opening_stock",
+                data: rows,
+                fn: "importOpeningStockBulk",
+                // [FIX-IMPORT-OB-2026-08] كان بيبعت [rows] بس، من غير
+                // callerUser/sessionToken. الـ backend
+                // importOpeningStockBulk(rows, callerUser, sessionToken)
+                // بيعمل _checkPermission كأول خطوة — fail-closed دايمًا من
+                // غيرهم، يعني استيراد رصيد أول المدة بالجملة كان معطوب 100%.
+                params: [
+                  rows,
+                  APP.currentUser ? APP.currentUser.username : null,
+                  SESSION.token,
+                ],
+                savingLabel: "جاري الاستيراد... (" + rows.length + " صف)",
+                successMessage: " تم استيراد " + rows.length + " صف بنجاح",
+                onSuccess: function (result) {
+                  var r = result.data || {};
+                  if (r.errors && r.errors.length) {
+                    console.warn("أخطاء استيراد الرصيد الافتتاحي:", r.errors);
+                  }
+                  reloadAfterMutation(function () {
+                    renderPage("opening_stock");
+                  });
+                },
+              });
+            }
+
+            if (rejected.length) {
+              showConfirm({
+                title: "تأكيد الاستيراد الجزئي",
+                message:
+                  " " +
+                  rejected.length +
+                  " صف هيتم تجاهله (أكواد غير معروفة/كمية غير صالحة):\n" +
+                  rejected.slice(0, 15).join("\n") +
+                  (rejected.length > 15
+                    ? "\n...و" + (rejected.length - 15) + " صف آخر"
+                    : "") +
+                  "\n\nهل تريد المتابعة باستيراد الـ " +
+                  rows.length +
+                  " صف الصالحة فقط؟",
+                icon: "ti-alert-triangle",
+                iconColor: "#f59e0b",
+                confirmText: "متابعة الاستيراد",
+                confirmClass: "btn-warning",
+                onConfirm: _proceedOpeningStockImport,
+              });
+              return;
+            }
+
+            _proceedOpeningStockImport();
+          });
+      },
+    });
+  }
+
+  function openOpeningStockModal(item_id, color, defaultItemId) {
+    var isEdit = !!item_id;
+    color = color !== undefined ? color : "";
+    var rec = isEdit
+      ? (APP.data.openingStock || []).find(function (r) {
+          return (
+            String(r.item_id) === String(item_id) &&
+            String(r.color || "").trim() === String(color || "").trim()
+          );
+        })
+      : null;
+
+    // ── Custom Color Dropdown helpers ────────────────────────
+    function _resolveHex(name, code) {
+      var n = (name || "").trim();
+      var c = (code || "").trim();
+      // 1. hex مباشر في الـ colors_json
+      if (c && c.startsWith("#")) return c;
+      // 2. hex من شيت Colors عبر APP.data.colors
+      var globalClr = (APP.data.colors || []).find(function (cl) {
+        return (
+          String(cl.name || "")
+            .trim()
+            .toLowerCase() === n.toLowerCase() ||
+          String(cl.code || "")
+            .trim()
+            .toUpperCase() === c.toUpperCase()
+        );
+      });
+      if (globalClr && globalClr.hex && globalClr.hex.startsWith("#"))
+        return globalClr.hex;
+      // 3. CSS_COLOR_MAP
+      return CSS_COLOR_MAP[n] || CSS_COLOR_MAP[n.toLowerCase()] || "#cccccc";
+    }
+
+    // ══════════════════════════════════════════════
+    // ITEM CUSTOM DROPDOWN  (os-item-dropdown)
+    // ══════════════════════════════════════════════
+
+    function _groupItems(items) {
+      var groups = {};
+      var order = [];
+      items.forEach(function (i) {
+        var code = String(i.code || i.id || "");
+        var prefix = code.replace(/\d+.*$/, "").trim() || "أخرى";
+        if (!groups[prefix]) {
+          groups[prefix] = [];
+          order.push(prefix);
+        }
+        groups[prefix].push(i);
+      });
+      return { groups: groups, order: order };
+    }
+
+    // ── فلترة الأصناف بناءً على المخزن المختار ─────────────────
+    // (نفس منطق شاشة "المخزون الحالي": مجموعة الصنف مرتبطة بالمخزن،
+    // أو للصنف رصيد فعلي فيه)
+    function _osItemMatchesWarehouse(item, whId) {
+      if (!whId) return true;
+      var grp = (APP.data.groups || []).find(function (g) {
+        return g.id === item.group;
+      });
+      if (grp && String(grp.warehouse_id) === String(whId)) return true;
+
+      var wh = (APP.data.warehouses || []).find(function (w) {
+        return String(w.id) === String(whId);
+      });
+      if (!wh) return false;
+      return (APP.data.stock || []).some(function (s) {
+        return (
+          String(s.item_id) === String(item.id) &&
+          s.warehouse === wh.name &&
+          Number(s.quantity || 0) > 0
+        );
+      });
+    }
+
+    function buildItemDropdown(selectedId, whId) {
+      // [OS-WH-REQUIRED] لو مفيش مخزن مختار لسه، الدروب داون يفضل مقفول
+      var whLocked = !whId;
+      var items = APP.data.items.filter(function (i) {
+        return _osItemMatchesWarehouse(i, whId);
+      });
+      var grouped = _groupItems(items);
+
+      var optHtml = grouped.order
+        .map(function (prefix) {
+          var rows = grouped.groups[prefix]
+            .map(function (i) {
+              var isSel = i.id === selectedId ? " os-id-selected" : "";
+              return (
+                '<div class="os-id-opt' +
+                isSel +
+                '" data-id="' +
+                esc(i.id) +
+                '" data-code="' +
+                esc(i.code || i.id) +
+                '" data-name="' +
+                esc(i.name) +
+                '">' +
+                '<span class="os-id-opt-name">' +
+                esc(i.name) +
+                "</span>" +
+                '<span class="os-id-opt-code">' +
+                esc(i.code || i.id) +
+                "</span>" +
+                "</div>"
+              );
+            })
+            .join("");
+          return (
+            '<div class="os-id-group">' +
+            '<div class="os-id-group-label">' +
+            esc(prefix) +
+            "</div>" +
+            rows +
+            '<div class="os-id-divider"></div>' +
+            "</div>"
+          );
+        })
+        .join("");
+
+      var selItem = selectedId
+        ? items.find(function (i) {
+            return i.id === selectedId;
+          })
+        : null;
+      var triggerInner = selItem
+        ? '<div class="os-id-selected-wrap"><span class="os-id-sel-name">' +
+          esc(selItem.name) +
+          '</span><span class="os-id-sel-code">' +
+          esc(selItem.code || selItem.id) +
+          "</span></div>"
+        : whLocked
+          ? '<span class="os-id-placeholder">اختر المخزن أولاً</span>'
+          : '<span class="os-id-placeholder">— اختر الصنف —</span>';
+
+      return (
+        '<div class="os-item-dropdown" id="os-item-wrap"' +
+        (whLocked ? ' data-wh-locked="1"' : "") +
+        ">" +
+        '<input type="hidden" id="os-item" value="' +
+        esc(selectedId || "") +
+        '">' +
+        '<div class="os-id-trigger' +
+        (whLocked ? " os-id-locked" : "") +
+        '" id="os-id-trigger" tabindex="0"' +
+        (whLocked
+          ? ' style="opacity:.55;cursor:not-allowed;background:var(--surface2)"'
+          : "") +
+        ">" +
+        '<span class="os-id-arrow">▼</span>' +
+        triggerInner +
+        "</div>" +
+        '<div class="os-id-panel" id="os-id-panel">' +
+        '<div class="os-id-search-bar"><input type="text" id="os-id-search" placeholder=" بحث..."></div>' +
+        '<div id="os-id-list">' +
+        optHtml +
+        "</div>" +
+        "</div></div>"
+      );
+    }
+
+    // إعادة بناء dropdown الصنف عند تغيير المخزن المختار
+    function refreshItemDropdown(whId) {
+      var wrap = document.getElementById("os-item-wrap");
+      if (!wrap) return;
+      wrap.outerHTML = buildItemDropdown("", whId);
+      bindItemDropdown();
+      // مسح اللون المختار سابقًا لأن الصنف اتغيّر
+      refreshColorDropdown("");
+    }
+
+    function bindItemDropdown() {
+      var wrap = document.getElementById("os-item-wrap");
+      var trigger = document.getElementById("os-id-trigger");
+      var panel = document.getElementById("os-id-panel");
+      var hidden = document.getElementById("os-item");
+      var listWrap = document.getElementById("os-id-list");
+      var searchEl = document.getElementById("os-id-search");
+      var itemNameDiv = document.getElementById("os-item-name");
+      if (!trigger || !panel || !hidden) return;
+
+      // [OS-WH-REQUIRED] لو الدروب داون لسه مقفول (مفيش مخزن مختار)
+      var whLocked = wrap && wrap.getAttribute("data-wh-locked") === "1";
+
+      // [ARCH-AUDIT-2026-07-17] موحّد عبر Core_UIManagers.initSearchableIdPanel
+      var _panelApi = initSearchableIdPanel(trigger, panel, searchEl);
+      var openPanel = _panelApi.openPanel;
+      var closePanel = _panelApi.closePanel;
+
+      trigger.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (whLocked) {
+          NotificationEngine.error("اختر المخزن أولاً");
+          return;
+        }
+        panel.classList.contains("os-id-open") ? closePanel() : openPanel();
+      });
+
+      trigger.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          if (whLocked) {
+            NotificationEngine.error("اختر المخزن أولاً");
+            return;
+          }
+          panel.classList.contains("os-id-open") ? closePanel() : openPanel();
+        }
+        if (e.key === "Escape") closePanel();
+      });
+
+      if (searchEl) {
+        searchEl.addEventListener("input", function () {
+          var q = searchEl.value.trim().toLowerCase();
+          var opts = listWrap.querySelectorAll(".os-id-opt");
+          opts.forEach(function (opt) {
+            var name = (opt.dataset.name || "").toLowerCase();
+            var code = (opt.dataset.code || "").toLowerCase();
+            opt.style.display =
+              !q || name.includes(q) || code.includes(q) ? "" : "none";
+          });
+          listWrap.querySelectorAll(".os-id-group").forEach(function (g) {
+            var visible = Array.from(g.querySelectorAll(".os-id-opt")).some(
+              function (o) {
+                return o.style.display !== "none";
+              },
+            );
+            g.style.display = visible ? "" : "none";
+          });
+        });
+      }
+
+      listWrap.addEventListener("click", function (e) {
+        var opt = e.target.closest(".os-id-opt");
+        if (!opt) return;
+        var code = opt.dataset.code;
+        var name = opt.dataset.name;
+
+        hidden.value = code;
+        var tw = trigger.querySelector(
+          ".os-id-selected-wrap, .os-id-placeholder",
+        );
+        if (tw)
+          tw.outerHTML =
+            '<div class="os-id-selected-wrap"><span class="os-id-sel-name">' +
+            esc(name) +
+            '</span><span class="os-id-sel-code">' +
+            esc(code) +
+            "</span></div>";
+
+        listWrap.querySelectorAll(".os-id-opt").forEach(function (o) {
+          o.classList.remove("os-id-selected");
+        });
+        opt.classList.add("os-id-selected");
+
+        if (itemNameDiv) {
+          itemNameDiv.style.display = "none";
+        }
+
+        closePanel();
+        refreshColorDropdown(itemCodeToId(code));
+      });
+
+      document.addEventListener("click", function (e) {
+        if (!e.target.closest("#os-item-wrap")) closePanel();
+      });
+    }
+
+    // يبني HTML الـ custom dropdown للألوان
+    function buildColorDropdown(itemId) {
+      var it = APP.data.items.find(function (i) {
+        return i.id === itemId;
+      });
+      var colors = it ? getItemColors(it.id) : [];
+      var noColors = colors.length === 0 && itemId;
+
+      var items = noColors
+        ? '<div class="os-cd-item os-cd-disabled"> لا توجد ألوان مُعرَّفة</div>'
+        : colors
+            .map(function (c) {
+              var hex = _resolveHex(c.name, c.code);
+              return (
+                '<div class="os-cd-item" data-value="' +
+                esc(c.name) +
+                '">' +
+                '<span class="os-cd-dot" style="background:' +
+                hex +
+                '"></span>' +
+                '<span class="os-cd-label">' +
+                esc(c.name) +
+                (c.code
+                  ? ' <span class="os-cd-code">(' + esc(c.code) + ")</span>"
+                  : "") +
+                "</span></div>"
+              );
+            })
+            .join("");
+
+      return (
+        '<div class="os-color-dropdown" id="os-color-wrap">' +
+        '<input type="hidden" id="os-color" value="">' +
+        '<div class="os-cd-trigger input" id="os-cd-trigger" tabindex="0">' +
+        '<span id="os-cd-display" style="color:var(--text3)">— اختر اللون *</span>' +
+        '<span style="margin-right:auto;font-size:11px;opacity:.6">▼</span>' +
+        "</div>" +
+        '<div class="os-cd-list" id="os-cd-list">' +
+        items +
+        "</div>" +
+        "</div>"
+      );
+    }
+
+    // يربط أحداث الـ custom dropdown بعد الـ render
+    function bindColorDropdown() {
+      var trigger = document.getElementById("os-cd-trigger");
+      var list = document.getElementById("os-cd-list");
+      var hidden = document.getElementById("os-color");
+      var display = document.getElementById("os-cd-display");
+      if (!trigger || !list || !hidden) return;
+
+      trigger.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var open = list.classList.toggle("os-cd-open");
+        trigger.classList.toggle("os-cd-active", open);
+      });
+
+      list.addEventListener("click", function (e) {
+        var item = e.target.closest(".os-cd-item");
+        if (!item || item.classList.contains("os-cd-disabled")) return;
+        var val = item.dataset.value;
+        hidden.value = val;
+        // عرض الدائرة + الاسم في الـ trigger
+        var dot = item.querySelector(".os-cd-dot");
+        var hex = dot ? dot.style.background : "#ccc";
+        display.innerHTML =
+          '<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:' +
+          hex +
+          ';border:1.5px solid #00000022;vertical-align:middle;margin-left:6px"></span>' +
+          esc(val);
+        display.style.color = "var(--text)";
+        list.classList.remove("os-cd-open");
+        trigger.classList.remove("os-cd-active");
+      });
+
+      document.addEventListener("click", function (e) {
+        if (!e.target.closest("#os-color-wrap")) {
+          list.classList.remove("os-cd-open");
+          trigger.classList.remove("os-cd-active");
+        }
+      });
+    }
+
+    // بناء dropdown الألوان للصنف المختار (وضع إضافة)
+    function refreshColorDropdown(itemId) {
+      var wrap = document.getElementById("os-color-wrap");
+      if (!wrap) return;
+      wrap.outerHTML = buildColorDropdown(itemId);
+      bindColorDropdown();
+    }
+
+    // حقل اللون حسب الوضع
+    var colorField = "";
+    if (isEdit) {
+      var colorDisplay = color && color.trim() ? color.trim() : "بدون لون";
+      var editHex = _resolveHex(color, "");
+      colorField =
+        '<div class="field"><label>اللون *</label>' +
+        '<div class="input" style="display:flex;align-items:center;gap:8px;background:var(--surface2);cursor:default">' +
+        '<span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:' +
+        editHex +
+        ';border:1.5px solid #00000022;flex-shrink:0"></span>' +
+        "<span>" +
+        esc(colorDisplay) +
+        "</span></div>" +
+        "</div>";
+    } else {
+      colorField =
+        '<div class="field"><label>اللون *</label>' +
+        buildColorDropdown("") +
+        "</div>";
+    }
+
+    // حقل المخزن — يُستخدم لفلترة قائمة الأصناف (وضع الإضافة فقط)
+    // [OS-WH-REQUIRED] المخزن بقى إلزامي قبل اختيار الصنف — اتشالت
+    // "كل المخازن" عشان يضمن إن المستخدم يحدد مخزن الأول.
+    var warehouseOptions = (APP.data.warehouses || [])
+      .map(function (wh) {
+        return (
+          '<option value="' +
+          esc(wh.id) +
+          '">' +
+          esc(wh.name) +
+          "</option>"
+        );
+      })
+      .join("");
+    var warehouseField = isEdit
+      ? ""
+      : '<div class="field"><label>المخزن *</label>' +
+        '<select class="input" id="os-warehouse">' +
+        '<option value="">— اختر المخزن —</option>' +
+        warehouseOptions +
+        "</select></div>";
+
+    openStyledDrawer({
+      title: isEdit ? "تعديل رصيد أول المدة" : "إضافة رصيد أول المدة",
+      subtitle: "تحديد الكمية الافتتاحية للصنف",
+      icon: "ti-archive",
+      color: "purple",
+      width: 860,
+      body:
+        '<div class="modal-body">' +
+        '<div style="display:flex;flex-direction:column;gap:16px">' +
+        (isEdit
+          ? '<div class="field full" style="width:100%"><label>الصنف *</label>' +
+            '<input class="input" value="' +
+            esc(itemIdToCode(item_id)) +
+            '" readonly style="background:var(--surface2)">' +
+            "</div>"
+          : '<div style="display:grid;grid-template-columns:1fr 2fr;gap:12px">' +
+            warehouseField +
+            '<div class="field"><label>الصنف *</label>' +
+            buildItemDropdown("", "") +
+            "</div>" +
+            "</div>") +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+        colorField +
+        '<div class="field"><label>الكمية *</label><input class="input" type="number" id="os-qty" min="0" value="' +
+        (rec ? Number(rec.quantity) : 0) +
+        '"></div>' +
+        "</div>" +
+        // [تم شيل حقل تكلفة الوحدة الافتتاحية بناءً على طلب المستخدم —
+        // رصيد أول المدة بيعتمد دايمًا على تكلفة الصنف الحالية من شاشة
+        // الأصناف وقت الترحيل، زي ما كان السلوك قبل MD-06 FIX.]
+        "" +
+        '<div class="field" style="width:100%"><label>ملاحظات</label><input class="input" id="os-notes" value="' +
+        (rec ? esc(rec.notes || "") : "") +
+        '" placeholder="مثال: مخزون 1 يناير 2025"></div>' +
+        "</div>" +
+        "</div>",
+      footer:
+        '<button class="btn btn-outline" onclick="closeStyledDrawer()">إلغاء</button>' +
+        '<button class="btn btn-primary" id="save-os-btn"><i class="ti ti-device-floppy"></i> حفظ</button>',
+      onReady: function () {
+        // في وضع الإضافة: لما يتغير الصنف يتحدث custom dropdown اللون
+        if (!isEdit) {
+          bindColorDropdown();
+          bindItemDropdown();
+
+          var whSelectEl = document.getElementById("os-warehouse");
+          if (whSelectEl) {
+            whSelectEl.addEventListener("change", function () {
+              refreshItemDropdown(whSelectEl.value);
+            });
+          }
+
+          // إذا في defaultItemId — اختاره تلقائياً بالـ custom dropdown
+          if (defaultItemId) {
+            var defItem = APP.data.items.find(function (i) {
+              return i.id === defaultItemId;
+            });
+            if (defItem) {
+              var hiddenOsItem = document.getElementById("os-item");
+              if (hiddenOsItem) hiddenOsItem.value = defItem.code || defItem.id;
+              var trigger = document.getElementById("os-id-trigger");
+              if (trigger) {
+                var tw = trigger.querySelector(
+                  ".os-id-selected-wrap, .os-id-placeholder",
+                );
+                if (tw)
+                  tw.outerHTML =
+                    '<div class="os-id-selected-wrap"><span class="os-id-sel-name">' +
+                    esc(defItem.name) +
+                    '</span><span class="os-id-sel-code">' +
+                    esc(defItem.code || defItem.id) +
+                    "</span></div>";
+              }
+              var listWrap = document.getElementById("os-id-list");
+              if (listWrap) {
+                listWrap.querySelectorAll(".os-id-opt").forEach(function (o) {
+                  o.classList.toggle(
+                    "os-id-selected",
+                    o.dataset.id === defaultItemId,
+                  );
+                });
+              }
+              refreshColorDropdown(defaultItemId);
+            }
+          }
+        }
+
+        document
+          .getElementById("save-os-btn")
+          .addEventListener("click", function () {
+            var selCode = isEdit
+              ? item_id
+              : document.getElementById("os-item").value;
+            var selId = isEdit ? item_id : itemCodeToId(selCode);
+            var selColor = isEdit
+              ? color || ""
+              : document.getElementById("os-color")
+                ? document.getElementById("os-color").value
+                : "";
+            var qty = Number(document.getElementById("os-qty").value);
+            // [تم شيل حقل تكلفة الوحدة الافتتاحية] — دايمًا نسيب unitCost فاضية
+            // عشان السيرفر (saveOpeningStock) يستخدم تكلفة الصنف الحالية من
+            // شاشة الأصناف وقت الترحيل بدل أي قيمة مُدخلة يدويًا.
+            var unitCost = "";
+            var notes = document.getElementById("os-notes").value.trim();
+
+            // [OS-WH-REQUIRED] تحقق دفاعي إضافي (بجانب قفل الدروب داون
+            // نفسه) — لازم مخزن محدد قبل الحفظ في وضع الإضافة
+            if (!isEdit) {
+              var whChosen = document.getElementById("os-warehouse")
+                ? document.getElementById("os-warehouse").value
+                : "";
+              if (!whChosen) return NotificationEngine.error("اختر المخزن أولاً");
+            }
+            if (!selId) return NotificationEngine.error("اختر الصنف");
+            if (!selColor) return NotificationEngine.error("اختر اللون أولاً");
+            if (isNaN(qty) || qty < 0)
+              return NotificationEngine.error("الكمية غير صحيحة");
+
+            // UX: إغلاق فوري + مؤشر خلفي
+            closeStyledDrawer();
+
+            // [SE-ROLLOUT] عبر SaveEngine.run بدل _freezeUI/_gsr اليدوي.
+            SaveEngine.run({
+              screen: "opening_stock",
+              entity: "opening_stock",
+              recordId: isEdit ? item_id : null,
+              fn: "saveOpeningStock",
+              params: [
+                selId,
+                selColor,
+                qty,
+                notes,
+                APP.currentUser ? APP.currentUser.username : "",
+                SESSION.token,
+                unitCost,
+              ],
+              savingLabel: isEdit
+                ? "⏳ جاري تعديل رصيد أول المدة..."
+                : "⏳ جاري حفظ رصيد أول المدة...",
+              successMessage: isEdit
+                ? " تم تعديل رصيد أول المدة بنجاح"
+                : " تم حفظ رصيد أول المدة بنجاح",
+              onSuccess: function () {
+                // [AUTO-OB-JOURNAL] كان في السابق زرار يدوي منفصل "ترحيل
+                // القيد المحاسبي" لازم المستخدم يدوسه بنفسه بعد إضافة كل
+                // رصيد افتتاحي. دلوقتي بيترحّل تلقائيًا في الخلفية فورًا بعد
+                // كل حفظ ناجح — postOpeningStockJournal بقت Idempotent
+                // (بتلغي القيد القديم وترحّل قيد جديد بالإجمالي المحدّث)،
+                // فمفيش داعي لأي تدخل يدوي أو تأكيد من المستخدم هنا.
+                _gsr(
+                  "postOpeningStockJournal",
+                  [new Date().toISOString().split("T")[0], SESSION.token],
+                  {
+                    // [FIX-REFERR] _invalidateServerCache دالة سيرفر فقط
+                    // (Code_12_Core.js) ومش موجودة في سكوب المتصفح — استدعاؤها
+                    // هنا مباشرة كان بيطلّع ReferenceError. مفيش داعي لها من
+                    // العميل أصلًا لأن postOpeningStockJournal بتعمل الـ
+                    // invalidate بنفسها سيرفر-سايد جوه تنفيذها.
+                    onSuccess: function () {},
+                    onError: function (r) {
+                      // ما بنوقفش المستخدم أو نفشّل الحفظ بسبب فشل الترحيل
+                      // التلقائي (زي مثلاً عدم وجود صلاحية addJournalEntry،
+                      // أو عدم تسعير صنف) — نسجّل فقط في الكونسول، وفيه
+                      // زرار " ترحيل القيد المحاسبي" لسه موجود للمدير
+                      // لو حابب يرحّل يدويًا في أي وقت.
+                      console.warn(
+                        "[AUTO-OB-JOURNAL] تعذّر الترحيل التلقائي: " +
+                          (r && r.message),
+                      );
+                    },
+                  },
+                );
+
+                // [PERF-FIX] الحفظ خلص فعلاً فوق (saveOpeningStock) في السيرفر.
+                // قبل كده كنا بنستنى reloadAfterMutationFull() اللي بتمسح كل
+                // الكاش وتعيد قراءة كل شيتات النظام (فواتير/حركات/عملاء...)
+                // مش بس OpeningStock — فكان الصف الجديد يتأخر في الظهور لحد
+                // ما الرحلة الكاملة دي تخلص. دلوقتي: تحديث محلي فوري لمصفوفة
+                // openingStock في APP.data (Optimistic Update) + رسم الجدول
+                // على طول، ومزامنة خفيفة في الخلفية (reloadAfterMutation) بس
+                // للتأكد من مطابقة السيرفر — بدون ما تنتظرها.
+                var _osRow = {
+                  item_id: selId,
+                  color: selColor,
+                  quantity: qty,
+                  notes: notes,
+                  date: new Date().toISOString(),
+                  unit_cost: unitCost,
+                };
+                if (APP.data && Array.isArray(APP.data.openingStock)) {
+                  var _osIdx = APP.data.openingStock.findIndex(function (r) {
+                    return (
+                      String(r.item_id) === String(selId) &&
+                      String(r.color || "").trim() ===
+                        String(selColor).trim()
+                    );
+                  });
+                  if (_osIdx > -1) APP.data.openingStock[_osIdx] = _osRow;
+                  else APP.data.openingStock.push(_osRow);
+                  if (typeof _cache !== "undefined" && _cache.data) {
+                    _cache.data.openingStock = APP.data.openingStock;
+                  }
+                }
+                reloadAfterMutation(
+                  function () {
+                    renderPage("opening_stock");
+                  },
+                  null,
+                  {
+                    title: "⏳ جار التحديث...",
+                    emoji: "",
+                    successMsg: " تم تحديث البيانات",
+                  },
+                );
+              },
+            });
+          });
+      },
+    });
+  }
+
+  function deleteOpeningStockConfirm(item_id, color) {
+    var colorLabel = color && color.trim() ? " — " + color : "";
+    showConfirm({
+      icon: "ti-database-off",
+      iconColor: "#dc2626",
+      title: "حذف رصيد أول المدة",
+      message:
+        "هل أنت متأكد من حذف رصيد أول المدة للصنف " +
+        esc(itemIdToCode(item_id)) +
+        esc(colorLabel) +
+        "؟",
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      onConfirm: function (unfreeze) {
+        // [SE-ROLLOUT] عبر SaveEngine.run بدل _gsr المباشر.
+        SaveEngine.run({
+          screen: "opening_stock",
+          entity: "opening_stock",
+          recordId: item_id,
+          fn: "deleteOpeningStock",
+          params: [
+            item_id,
+            color || "",
+            APP.currentUser ? APP.currentUser.username : "",
+            SESSION.token,
+          ],
+          successMessage: " تم حذف رصيد أول المدة بنجاح",
+          onSuccess: function () {
+            // [AUTO-OB-JOURNAL] نفس مبدأ الحفظ — بعد الحذف، القيمة
+            // الإجمالية اتغيّرت، فلازم القيد يتحدّث تلقائيًا برضه.
+            _gsr(
+              "postOpeningStockJournal",
+              [new Date().toISOString().split("T")[0], SESSION.token],
+              {
+                // [FIX-REFERR] نفس التصحيح: _invalidateServerCache دالة سيرفر
+                // فقط ومش موجودة في المتصفح — تمت إزالتها هنا لعدم الحاجة.
+                onSuccess: function () {},
+                onError: function (r) {
+                  console.warn(
+                    "[AUTO-OB-JOURNAL] تعذّر الترحيل التلقائي: " +
+                      (r && r.message),
+                  );
+                },
+              },
+            );
+            reloadAfterMutation(function () {
+              renderPage("opening_stock");
+            }, unfreeze);
+          },
+          onError: function () {
+            unfreeze();
+          },
+        });
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+
+  // [PHASE-CE/Inventory] جدول الجرد بقى معتمد على ColumnEngine بالكامل
+  // (Metadata-Driven) — نفس نمط _catRegisterColumns/_csRegisterStockColumns.
+  // التعديل الوحيد الخاص بالشاشة دي: عمود "الرصيد الفعلي" قابل للتعديل
+  // (input) وعمود "الفرق" محسوب لحظيًا، فالقيم دي بتتحسب في
+  // _stkPrepareRowsForCE() قبل ما توصل للمحرك، وأي تعديل بيتخزن في
+  // state.edits (مش بس في الـ DOM) عشان القيمة تفضل محفوظة حتى لو
+  // اختفى الصف بالفلترة ورجع تاني — ده بيصلّح مشكلة كانت موجودة في
+  // النسخة القديمة (renderRows) اللي كانت بترجّع كل القيم المُدخلة
+  // للرصيد الدفتري بمجرد أي تغيير في البحث/الفلتر.
+  var _stkColumnsRegistered = false;
+
+  function _stkDiffHtml(diff) {
+    diff = Number(diff || 0);
+    var color =
+      diff < 0 ? "var(--danger)" : diff > 0 ? "var(--success)" : "var(--text3)";
+    return (
+      '<span class="mono" style="font-weight:' +
+      (diff !== 0 ? "900" : "600") +
+      ";color:" +
+      color +
+      '">' +
+      diff +
+      "</span>"
+    );
+  }
+
+  function _stkRegisterColumns() {
+    if (_stkColumnsRegistered) return;
+    _stkColumnsRegistered = true;
+    ColumnEngine.register(
+      "stocktake",
+      [
+        {
+          key: "item_id",
+          label: "الكود",
+          type: "text",
+          width: 100,
+          frozen: "right",
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-weight:700;color:var(--accent);font-size:13px">' +
+              esc(v || "") +
+              "</span>"
+            );
+          },
+        },
+        { key: "item_name", label: "الصنف", type: "text", width: 200 },
+        { key: "warehouse", label: "المخزن", type: "text", width: 140 },
+        {
+          key: "color",
+          label: "اللون",
+          type: "text",
+          width: 120,
+          format: function (v) {
+            return v ? esc(v) : "—";
+          },
+        },
+        {
+          key: "system_qty",
+          label: "الرصيد الدفتري",
+          type: "number",
+          width: 120,
+          align: "center",
+        },
+        {
+          key: "actual_qty",
+          label: "الرصيد الفعلي",
+          type: "number",
+          width: 130,
+          align: "center",
+          format: function (v, row) {
+            return (
+              '<input class="input input-sm stk-actual-input" type="number" step="0.01" min="0" data-key="' +
+              esc(row._key) +
+              '" value="' +
+              (v === undefined || v === null ? row.system_qty : v) +
+              '" style="width:110px;text-align:center" onclick="event.stopPropagation()">'
+            );
+          },
+          exportValue: function (row) {
+            return row.actual_qty;
+          },
+        },
+        {
+          key: "diff",
+          label: "الفرق",
+          type: "number",
+          width: 100,
+          align: "center",
+          searchable: false,
+          format: function (v) {
+            return _stkDiffHtml(v);
+          },
+          exportValue: function (row) {
+            return row.diff;
+          },
+        },
+      ],
+      {
+        title: "جرد المخزون",
+        rowKey: "_key",
+      },
+    );
+  }
+
+  // يحسب "الرصيد الفعلي" و"الفرق" لكل صف بناءً على آخر تعديل محفوظ في
+  // state.edits (لو موجود) وإلا الرصيد الدفتري — لازم يتحسبوا كحقول
+  // خام قبل ما يوصلوا لـ ColumnEngine عشان الفرز يشتغل عليهم صح.
+  function _stkPrepareRowsForCE(rows, edits) {
+    return rows.map(function (r) {
+      var actual = edits[r._key] !== undefined ? edits[r._key] : r.system_qty;
+      return Object.assign({}, r, {
+        actual_qty: actual,
+        diff: actual - r.system_qty,
+      });
+    });
+  }
+
+  function _stkRenderTableCE(container, rows) {
+    if (!container) return;
+    _stkRegisterColumns();
+    ColumnEngine.renderTable("stocktake", container, rows, { rowKey: "_key" });
+  }
+
+  function _stkBuildRows() {
+    var itemMap = {};
+    (APP.data.items || []).forEach(function (it) {
+      itemMap[String(it.id)] = it;
+    });
+    return (APP.data.stock || [])
+      .filter(function (s) {
+        return Number(s.quantity || 0) !== 0;
+      })
+      .map(function (s) {
+        var item = itemMap[String(s.item_id)] || {};
+        var warehouse = s.warehouse || "";
+        var color = s.color || "";
+        return {
+          _key: String(s.item_id || "") + "|" + warehouse + "|" + color,
+          item_id: String(s.item_id || ""),
+          item_name: item.name || s.item_id || "",
+          warehouse: warehouse,
+          color: color,
+          system_qty: Number(s.quantity || 0),
+        };
+      })
+      .sort(function (a, b) {
+        return (a.item_name + a.color).localeCompare(
+          b.item_name + b.color,
+          "ar",
+        );
+      });
+  }
+
+  function bindStocktake() {
+    var state = {
+      allRows: _stkBuildRows(),
+      edits: {}, // _key -> الكمية الفعلية اللي دخلها المستخدم
+    };
+    var container = document.getElementById("stk-ce-container");
+
+    function computeFilteredRows() {
+      var q = ((document.getElementById("stk-search") || {}).value || "")
+        .toLowerCase()
+        .trim();
+      var wh = (document.getElementById("stk-warehouse") || {}).value || "";
+      var diffFilter =
+        (document.getElementById("stk-diff-filter") || {}).value || "";
+      var prepared = _stkPrepareRowsForCE(state.allRows, state.edits);
+      return prepared.filter(function (r) {
+        var matchQ =
+          !q ||
+          r.item_id.toLowerCase().indexOf(q) !== -1 ||
+          r.item_name.toLowerCase().indexOf(q) !== -1 ||
+          String(r.color || "")
+            .toLowerCase()
+            .indexOf(q) !== -1;
+        var matchWh = !wh || r.warehouse === wh;
+        var matchDiff =
+          !diffFilter ||
+          (diffFilter === "changed" && r.diff !== 0) ||
+          (diffFilter === "short" && r.diff < 0) ||
+          (diffFilter === "extra" && r.diff > 0);
+        return matchQ && matchWh && matchDiff;
+      });
+    }
+
+    function updateSummary() {
+      var diffCount = 0;
+      state.allRows.forEach(function (r) {
+        var edited = state.edits[r._key];
+        if (edited !== undefined && edited !== r.system_qty) diffCount++;
+      });
+      var summary = document.getElementById("stk-summary");
+      if (summary)
+        summary.textContent = diffCount
+          ? diffCount + " فرق جاهز للترحيل"
+          : "لا توجد فروق";
+    }
+
+    function refresh() {
+      _stkRenderTableCE(container, computeFilteredRows());
+      updateSummary();
+    }
+
+    // ── تعديل الرصيد الفعلي: تفويض الحدث على الحاوية نفسها (تفضل ثابتة
+    // عبر إعادة renderTable المتكررة) — بيحدّث state.edits وخانة الفرق
+    // في نفس الصف مباشرة من غير ما يعيد رسم الجدول كله (أداء + تركيز
+    // الكتابة يفضل في مكانه).
+    if (container && !container._stkWired) {
+      container._stkWired = true;
+      container.addEventListener("input", function (e) {
+        var inp = e.target.closest(".stk-actual-input");
+        if (!inp) return;
+        var key = inp.getAttribute("data-key");
+        var row = state.allRows.find(function (r) {
+          return r._key === key;
+        });
+        if (!row) return;
+        var val = inp.value === "" ? row.system_qty : Number(inp.value);
+        state.edits[key] = val;
+        var rowEl = inp.closest(".ce-body-row");
+        var diffCell = rowEl && rowEl.querySelector('[data-col="diff"]');
+        if (diffCell) diffCell.innerHTML = _stkDiffHtml(val - row.system_qty);
+        updateSummary();
+      });
+    }
+
+    function collectDiffs() {
+      var rows = [];
+      state.allRows.forEach(function (r) {
+        var edited = state.edits[r._key];
+        if (edited !== undefined && edited !== r.system_qty) {
+          rows.push({
+            item_id: r.item_id,
+            warehouse: r.warehouse,
+            color: r.color,
+            system_qty: r.system_qty,
+            actual_qty: edited,
+          });
+        }
+      });
+      return rows;
+    }
+
+    ["stk-search", "stk-warehouse", "stk-diff-filter"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el)
+        el.addEventListener(
+          id === "stk-search" ? "input" : "change",
+          id === "stk-search" ? debounce(refresh, 250) : refresh,
+        );
+    });
+
+    if (window.AppSelect) {
+      AppSelect.upgrade("stk-warehouse", {
+        icon: "ti-building-warehouse",
+        placeholder: "اختر المخزن",
+        searchable: true,
+      });
+      AppSelect.upgrade("stk-diff-filter", { icon: "ti-filter" });
+    }
+
+    var refreshBtn = document.getElementById("stk-refresh-btn");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", function () {
+        loadAllData(function () {
+          state.allRows = _stkBuildRows();
+          state.edits = {};
+          refresh();
+        }, true);
+      });
+    }
+
+    var postBtn = document.getElementById("stk-post-btn");
+    if (postBtn) {
+      postBtn.addEventListener("click", function () {
+        var rows = collectDiffs();
+        if (!rows.length) {
+          NotificationEngine.info("لا توجد فروق لترحيلها");
+          return;
+        }
+        showConfirm({
+          title: "ترحيل فروق الجرد",
+          message:
+            "سيتم ترحيل " + rows.length + " فرق جرد كحركات مخزون. متابعة؟",
+          icon: "ti-transfer",
+          iconColor: "#2563eb",
+          confirmText: "ترحيل",
+          confirmClass: "btn-primary",
+          onConfirm: function () {
+            // [SE-ROLLOUT] عبر SaveEngine.run بدل _gsr المباشر + تحكم يدوي بالزر.
+            SaveEngine.run({
+              screen: "stocktake",
+              entity: "stocktake_session",
+              buttonId: "stk-post-btn",
+              fn: "postStocktakeSession",
+              params: [
+                {
+                  rows: rows,
+                  notes: (
+                    (document.getElementById("stk-notes") || {}).value || ""
+                  ).trim(),
+                  user: APP.currentUser ? APP.currentUser.username : "",
+                },
+                SESSION.token,
+              ],
+              savingLabel: "جارٍ الترحيل...",
+              successMessage: "تم ترحيل فروق الجرد بنجاح",
+              onSuccess: function (result) {
+                var d = result.data;
+                if (d && d.movements) {
+                  APP.data.transactions = (APP.data.transactions || []).concat(
+                    d.movements,
+                  );
+                }
+                loadAllData(function () {
+                  renderPage("stocktake");
+                }, true);
+              },
+            });
+          },
+        });
+      });
+    }
+
+    // ── تطبيق فلتر المخزن المُمرَّر من context menu ──────────
+    if (APP._pendingWarehouseName) {
+      var whSel = document.getElementById("stk-warehouse");
+      if (whSel) {
+        whSel.value = String(APP._pendingWarehouseName);
+        if (window.AppSelect) AppSelect.refresh("stk-warehouse");
+      }
+      APP._pendingWarehouseName = null;
+    }
+
+    refresh();
+  }
+</script>

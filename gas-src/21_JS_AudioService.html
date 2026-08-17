@@ -1,0 +1,1293 @@
+<script>
+  // ════════════════════════════════════════════════════════════════════════════
+  // §21  AUDIO SERVICE — Enterprise Audio Feedback System
+  // ════════════════════════════════════════════════════════════════════════════
+  //
+  //  ┌─────────────────────────────────────────────────────────────────────┐
+  //  │  AudioService (AS)  — المسؤول الوحيد عن جميع أصوات النظام         │
+  //  │  لا يُسمح لأي شاشة بتشغيل صوت مباشرة.                            │
+  //  │  كل تشغيل يمر عبر: AS.play(soundId)                              │
+  //  └─────────────────────────────────────────────────────────────────────┘
+  //
+  //  الأصوات: مُولَّدة بالكامل عبر Web Audio API (بدون ملفات خارجية)
+  //  التخزين: localStorage  (إعدادات كل مستخدم مستقلة)
+  //  الأداء:  AudioContext واحد مُشترك — لا يُنشأ إلا عند أول تشغيل
+  //
+  // ════════════════════════════════════════════════════════════════════════════
+
+  (function () {
+    "use strict";
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ثوابت
+    // ─────────────────────────────────────────────────────────────────────────
+    var STORAGE_KEY = "moo_audio_settings";
+    var DEBOUNCE_MS = 80; // منع تكرار الأصوات عند الضغط المتكرر
+    var MAX_QUEUE = 1; // لا يُشغَّل أكثر من صوت في نفس الوقت
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // الإعدادات الافتراضية
+    // ─────────────────────────────────────────────────────────────────────────
+    var _defaults = {
+      enabled: true,
+      volume: 0.4,
+      muted: false,
+      enableNotif: true,
+      enableButtons: true,
+      enableSuccess: true,
+      enableError: true,
+      enableWarning: true,
+      enableSystem: true,
+      // [VARIANTS] النغمة الافتراضية لكل تصنيف — كلها اتختارت عشان تبقى
+      // هادية ومريحة بدل ما تبقى ملفتة/مزعجة للمستخدم من أول استخدام.
+      // المستخدم لسه يقدر يغيّرها من شاشة الإعدادات لو حابب صوت أوضح.
+      soundChoice: {
+        success: "d", // بسيط — نغمة واحدة هادية
+        error: "a", // هادي (sine بدل sawtooth)
+        warning: "b", // هادي — sine بدل square
+        notification: "d", // خفيف جداً
+        system: "c", // هادي جداً
+      },
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // كتالوج الأصوات
+    //  كل صوت = { cat, gen }
+    //    cat : التصنيف (ui | success | warning | error | notification | system)
+    //    gen : دالة تُولِّد AudioBuffer عبر Web Audio API
+    // ─────────────────────────────────────────────────────────────────────────
+    var SOUNDS = {
+      // ── UI ──────────────────────────────────────────────────────────────
+      "ui.click": {
+        cat: "ui",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 1200, t: 0, d: 0.04, v: 0.18, type: "sine" },
+            { f: 900, t: 0.02, d: 0.03, v: 0.08, type: "sine" },
+          ]);
+        },
+      },
+      "ui.search": {
+        cat: "ui",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 800, t: 0, d: 0.05, v: 0.12, type: "sine" },
+            { f: 1100, t: 0.04, d: 0.06, v: 0.14, type: "sine" },
+          ]);
+        },
+      },
+      "ui.filter": {
+        cat: "ui",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 700, t: 0, d: 0.04, v: 0.1, type: "triangle" },
+            { f: 950, t: 0.03, d: 0.05, v: 0.12, type: "triangle" },
+          ]);
+        },
+      },
+      "ui.print": {
+        cat: "ui",
+        gen: function (ctx) {
+          return _noise(ctx, { d: 0.18, v: 0.08, attack: 0.01, decay: 0.17 });
+        },
+      },
+
+      // ── Success ─────────────────────────────────────────────────────────
+      "success.save": {
+        cat: "success",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 523, t: 0, d: 0.12, v: 0.2, type: "sine" },
+            { f: 659, t: 0.1, d: 0.12, v: 0.22, type: "sine" },
+            { f: 784, t: 0.2, d: 0.18, v: 0.25, type: "sine" },
+          ]);
+        },
+      },
+      "success.update": {
+        cat: "success",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 600, t: 0, d: 0.1, v: 0.18, type: "sine" },
+            { f: 750, t: 0.09, d: 0.14, v: 0.22, type: "sine" },
+          ]);
+        },
+      },
+      "success.delete": {
+        cat: "success",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 400, t: 0, d: 0.1, v: 0.15, type: "triangle" },
+            { f: 300, t: 0.09, d: 0.12, v: 0.12, type: "triangle" },
+          ]);
+        },
+      },
+      "success.import": {
+        cat: "success",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 440, t: 0, d: 0.08, v: 0.15, type: "sine" },
+            { f: 554, t: 0.07, d: 0.08, v: 0.18, type: "sine" },
+            { f: 659, t: 0.14, d: 0.08, v: 0.2, type: "sine" },
+            { f: 880, t: 0.21, d: 0.14, v: 0.22, type: "sine" },
+          ]);
+        },
+      },
+      "success.upload": {
+        cat: "success",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 500, t: 0, d: 0.1, v: 0.16, type: "sine" },
+            { f: 700, t: 0.09, d: 0.14, v: 0.2, type: "sine" },
+          ]);
+        },
+      },
+      "success.download": {
+        cat: "success",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 700, t: 0, d: 0.1, v: 0.16, type: "sine" },
+            { f: 500, t: 0.09, d: 0.14, v: 0.18, type: "sine" },
+          ]);
+        },
+      },
+      "success.export": {
+        cat: "success",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 550, t: 0, d: 0.08, v: 0.14, type: "sine" },
+            { f: 660, t: 0.07, d: 0.1, v: 0.18, type: "sine" },
+            { f: 770, t: 0.15, d: 0.12, v: 0.2, type: "sine" },
+          ]);
+        },
+      },
+      "success.bg_process": {
+        cat: "success",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 480, t: 0, d: 0.08, v: 0.13, type: "sine" },
+            { f: 640, t: 0.07, d: 0.1, v: 0.16, type: "sine" },
+            { f: 800, t: 0.16, d: 0.12, v: 0.18, type: "sine" },
+          ]);
+        },
+      },
+
+      // ── Warning ─────────────────────────────────────────────────────────
+      "warning.general": {
+        cat: "warning",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 440, t: 0, d: 0.15, v: 0.22, type: "triangle" },
+            { f: 370, t: 0.14, d: 0.15, v: 0.18, type: "triangle" },
+          ]);
+        },
+      },
+      "warning.validation": {
+        cat: "warning",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 380, t: 0, d: 0.12, v: 0.2, type: "triangle" },
+            { f: 380, t: 0.15, d: 0.12, v: 0.18, type: "triangle" },
+          ]);
+        },
+      },
+      "warning.delete_confirm": {
+        cat: "warning",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 330, t: 0, d: 0.18, v: 0.22, type: "sawtooth" },
+            { f: 277, t: 0.17, d: 0.16, v: 0.18, type: "sawtooth" },
+          ]);
+        },
+      },
+
+      // ── Error ────────────────────────────────────────────────────────────
+      "error.general": {
+        cat: "error",
+        gen: function (ctx) {
+          // [SOFTEN] كان sawtooth حاد ومزعج — استبدلناه بـ sine هادي
+          // نازل نغمتين بسيطة، بنفس فكرة "تنبيه فشل" بدون صوت "بزيز"
+          return _tone(ctx, [
+            { f: 330, t: 0, d: 0.16, v: 0.16, type: "sine" },
+            { f: 262, t: 0.14, d: 0.22, v: 0.13, type: "sine" },
+          ]);
+        },
+      },
+      "error.permission": {
+        cat: "error",
+        gen: function (ctx) {
+          // [SOFTEN] نفس المبدأ — sine هادي بدل sawtooth
+          return _tone(ctx, [
+            { f: 294, t: 0, d: 0.13, v: 0.15, type: "sine" },
+            { f: 233, t: 0.12, d: 0.16, v: 0.12, type: "sine" },
+            { f: 294, t: 0.27, d: 0.13, v: 0.13, type: "sine" },
+          ]);
+        },
+      },
+
+      // ── Notification ─────────────────────────────────────────────────────
+      "notif.general": {
+        cat: "notification",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 880, t: 0, d: 0.08, v: 0.18, type: "sine" },
+            { f: 1100, t: 0.07, d: 0.1, v: 0.2, type: "sine" },
+            { f: 880, t: 0.16, d: 0.08, v: 0.15, type: "sine" },
+          ]);
+        },
+      },
+
+      // ── System ───────────────────────────────────────────────────────────
+      "system.login": {
+        cat: "system",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 392, t: 0, d: 0.1, v: 0.18, type: "sine" },
+            { f: 523, t: 0.09, d: 0.1, v: 0.2, type: "sine" },
+            { f: 659, t: 0.18, d: 0.1, v: 0.22, type: "sine" },
+            { f: 784, t: 0.27, d: 0.18, v: 0.25, type: "sine" },
+          ]);
+        },
+      },
+      "system.logout": {
+        cat: "system",
+        gen: function (ctx) {
+          return _tone(ctx, [
+            { f: 784, t: 0, d: 0.1, v: 0.22, type: "sine" },
+            { f: 659, t: 0.09, d: 0.1, v: 0.18, type: "sine" },
+            { f: 523, t: 0.18, d: 0.1, v: 0.15, type: "sine" },
+            { f: 392, t: 0.27, d: 0.18, v: 0.12, type: "sine" },
+          ]);
+        },
+      },
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // [VARIANTS] نغمات بديلة يختار المستخدم بينها لكل تصنيف
+    //  كل تصنيف (success | error | warning | notification | system) عنده
+    //  عدة "نغمات" (id + label + gen). المستخدم يختار واحدة من شاشة
+    //  الإعدادات وتُطبَّق على كل الأصوات التابعة لهذا التصنيف.
+    //  system خاص: عنده genLogin و genLogout بدل gen واحد.
+    // ─────────────────────────────────────────────────────────────────────────
+    var VARIANTS = {
+      success: [
+        {
+          id: "a",
+          label: "افتراضي",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 523, t: 0, d: 0.08, v: 0.2, type: "sine" },
+              { f: 784, t: 0.07, d: 0.14, v: 0.22, type: "sine" },
+            ]);
+          },
+        },
+        {
+          id: "b",
+          label: "جرس ناعم",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 659, t: 0, d: 0.1, v: 0.18, type: "triangle" },
+              { f: 880, t: 0.09, d: 0.16, v: 0.2, type: "triangle" },
+            ]);
+          },
+        },
+        {
+          id: "c",
+          label: "نغمة صاعدة",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 440, t: 0, d: 0.07, v: 0.16, type: "sine" },
+              { f: 554, t: 0.06, d: 0.07, v: 0.18, type: "sine" },
+              { f: 659, t: 0.12, d: 0.14, v: 0.2, type: "sine" },
+            ]);
+          },
+        },
+        {
+          id: "d",
+          label: "بسيط",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 698, t: 0, d: 0.13, v: 0.2, type: "sine" },
+            ]);
+          },
+        },
+      ],
+
+      error: [
+        {
+          id: "a",
+          label: "افتراضي (هادي)",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 330, t: 0, d: 0.16, v: 0.16, type: "sine" },
+              { f: 262, t: 0.14, d: 0.22, v: 0.13, type: "sine" },
+            ]);
+          },
+        },
+        {
+          id: "b",
+          label: "واضح",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 392, t: 0, d: 0.1, v: 0.2, type: "triangle" },
+              { f: 294, t: 0.09, d: 0.16, v: 0.16, type: "triangle" },
+            ]);
+          },
+        },
+        {
+          id: "c",
+          label: "منخفض",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 220, t: 0, d: 0.22, v: 0.18, type: "sine" },
+            ]);
+          },
+        },
+        {
+          id: "d",
+          label: "كلاسيكي (حاد)",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 220, t: 0, d: 0.15, v: 0.24, type: "sawtooth" },
+              { f: 196, t: 0.13, d: 0.2, v: 0.18, type: "sawtooth" },
+            ]);
+          },
+        },
+      ],
+
+      warning: [
+        {
+          id: "a",
+          label: "افتراضي",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 587, t: 0, d: 0.09, v: 0.2, type: "square" },
+              { f: 587, t: 0.14, d: 0.09, v: 0.16, type: "square" },
+            ]);
+          },
+        },
+        {
+          id: "b",
+          label: "هادي",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 494, t: 0, d: 0.12, v: 0.17, type: "sine" },
+              { f: 415, t: 0.11, d: 0.14, v: 0.14, type: "sine" },
+            ]);
+          },
+        },
+        {
+          id: "c",
+          label: "نقرتين",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 523, t: 0, d: 0.06, v: 0.2, type: "triangle" },
+              { f: 523, t: 0.1, d: 0.06, v: 0.2, type: "triangle" },
+            ]);
+          },
+        },
+        {
+          id: "d",
+          label: "طويل",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 440, t: 0, d: 0.25, v: 0.16, type: "sine" },
+            ]);
+          },
+        },
+      ],
+
+      notification: [
+        {
+          id: "a",
+          label: "افتراضي",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 880, t: 0, d: 0.08, v: 0.18, type: "sine" },
+              { f: 1100, t: 0.07, d: 0.1, v: 0.2, type: "sine" },
+              { f: 880, t: 0.16, d: 0.08, v: 0.15, type: "sine" },
+            ]);
+          },
+        },
+        {
+          id: "b",
+          label: "جرس واحد",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 988, t: 0, d: 0.14, v: 0.18, type: "sine" },
+            ]);
+          },
+        },
+        {
+          id: "c",
+          label: "نغمتين",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 784, t: 0, d: 0.09, v: 0.18, type: "triangle" },
+              { f: 988, t: 0.08, d: 0.12, v: 0.18, type: "triangle" },
+            ]);
+          },
+        },
+        {
+          id: "d",
+          label: "خفيف جداً",
+          gen: function (ctx) {
+            return _tone(ctx, [
+              { f: 1046, t: 0, d: 0.06, v: 0.12, type: "sine" },
+            ]);
+          },
+        },
+      ],
+
+      system: [
+        {
+          id: "a",
+          label: "افتراضي",
+          genLogin: function (ctx) {
+            return _tone(ctx, [
+              { f: 392, t: 0, d: 0.1, v: 0.18, type: "sine" },
+              { f: 523, t: 0.09, d: 0.1, v: 0.2, type: "sine" },
+              { f: 659, t: 0.18, d: 0.1, v: 0.22, type: "sine" },
+              { f: 784, t: 0.27, d: 0.18, v: 0.25, type: "sine" },
+            ]);
+          },
+          genLogout: function (ctx) {
+            return _tone(ctx, [
+              { f: 784, t: 0, d: 0.1, v: 0.22, type: "sine" },
+              { f: 659, t: 0.09, d: 0.1, v: 0.18, type: "sine" },
+              { f: 523, t: 0.18, d: 0.1, v: 0.15, type: "sine" },
+              { f: 392, t: 0.27, d: 0.18, v: 0.12, type: "sine" },
+            ]);
+          },
+        },
+        {
+          id: "b",
+          label: "قصير",
+          genLogin: function (ctx) {
+            return _tone(ctx, [
+              { f: 523, t: 0, d: 0.1, v: 0.2, type: "triangle" },
+              { f: 784, t: 0.09, d: 0.14, v: 0.22, type: "triangle" },
+            ]);
+          },
+          genLogout: function (ctx) {
+            return _tone(ctx, [
+              { f: 659, t: 0, d: 0.1, v: 0.18, type: "triangle" },
+              { f: 440, t: 0.09, d: 0.14, v: 0.15, type: "triangle" },
+            ]);
+          },
+        },
+        {
+          id: "c",
+          label: "هادي جداً",
+          genLogin: function (ctx) {
+            return _tone(ctx, [
+              { f: 440, t: 0, d: 0.18, v: 0.14, type: "sine" },
+            ]);
+          },
+          genLogout: function (ctx) {
+            return _tone(ctx, [
+              { f: 349, t: 0, d: 0.18, v: 0.12, type: "sine" },
+            ]);
+          },
+        },
+      ],
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // متغيرات داخلية
+    // ─────────────────────────────────────────────────────────────────────────
+    var _ctx = null; // AudioContext — يُنشأ عند الطلب الأول
+    var _cache = {}; // AudioBuffer cache
+    var _playing = false; // هل يُشغَّل صوت الآن؟
+    var _lastPlay = {}; // { soundId: timestamp } — debounce
+    var _settings = null; // الإعدادات الحالية
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // مولِّدات الأصوات (Web Audio API)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * _tone: يُولِّد AudioBuffer من قائمة نبرات متتالية
+     * @param {AudioContext} ctx
+     * @param {Array}  notes  [{ f, t, d, v, type }]
+     *   f    = التردد (Hz)
+     *   t    = وقت البدء (ثواني)
+     *   d    = مدة النبرة (ثواني)
+     *   v    = مستوى الصوت 0-1
+     *   type = نوع الموجة
+     *
+     * [AUDIO-QUALITY] تحسينات:
+     *   - Envelope بمنحنى ناعم (equal-power raised-cosine) بدل linear
+     *     → يمنع طقطقة/خشونة بداية ونهاية النغمة (كانت أوضح في sawtooth/triangle)
+     *   - sawtooth بحساب period مستمر (زي triangle) بدل floor صحيح
+     *     → تردد أدق وبدون قفزة عند التفاف الموجة
+     *   - Soft-clip نهائي لمنع تشويه الـ clipping عند تراكب نغمتين
+     */
+    function _tone(ctx, notes) {
+      // احسب الطول الكلي
+      var totalDur = notes.reduce(function (mx, n) {
+        return Math.max(mx, n.t + n.d + 0.05);
+      }, 0);
+      totalDur = Math.min(totalDur, 0.55); // حد أقصى 550ms
+
+      var sampleRate = ctx.sampleRate;
+      var numSamples = Math.ceil(sampleRate * totalDur);
+      var buffer = ctx.createBuffer(1, numSamples, sampleRate);
+      var data = buffer.getChannelData(0);
+
+      notes.forEach(function (n) {
+        var startSample = Math.floor(n.t * sampleRate);
+        var durSamples = Math.floor(n.d * sampleRate);
+        // Attack/Release نسبية لطول النغمة (بحد أدنى/أقصى) بدل قيمة ثابتة —
+        // نغمة قصيرة جداً كانت بتاخد release ثابت 20ms يشوّهها بالكامل
+        var attackSamp = Math.max(
+          8,
+          Math.min(
+            Math.floor(0.012 * sampleRate),
+            Math.floor(durSamples * 0.25),
+          ),
+        );
+        var releaseSamp = Math.max(
+          8,
+          Math.min(
+            Math.floor(0.035 * sampleRate),
+            Math.floor(durSamples * 0.4),
+          ),
+        );
+
+        for (var i = 0; i < durSamples && startSample + i < numSamples; i++) {
+          // Envelope — raised-cosine (equal-power) بدل linear: صعود/هبوط ناعم
+          // بدون أي طقطقة مسموعة عند حواف النغمة
+          var env = 1;
+          if (i < attackSamp) {
+            env = 0.5 - 0.5 * Math.cos((Math.PI * i) / attackSamp);
+          } else if (i > durSamples - releaseSamp) {
+            var rp = (durSamples - i) / releaseSamp;
+            env = 0.5 - 0.5 * Math.cos(Math.PI * Math.max(0, Math.min(1, rp)));
+          }
+          env = Math.max(0, Math.min(1, env));
+
+          // Waveform
+          var phase = (2 * Math.PI * n.f * i) / sampleRate;
+          var sample;
+          switch (n.type) {
+            case "sawtooth": {
+              var sawPeriod = sampleRate / n.f;
+              var sawPos = (i % sawPeriod) / sawPeriod;
+              sample = sawPos * 2 - 1;
+              break;
+            }
+            case "triangle": {
+              var period = sampleRate / n.f;
+              var pos = (i % period) / period;
+              sample = pos < 0.5 ? 4 * pos - 1 : 3 - 4 * pos;
+              break;
+            }
+            case "square":
+              sample = Math.sin(phase) >= 0 ? 1 : -1;
+              break;
+            default: // sine
+              sample = Math.sin(phase);
+          }
+
+          data[startSample + i] += sample * env * n.v;
+        }
+      });
+
+      _softClip(data);
+      return buffer;
+    }
+
+    /**
+     * _softClip: يمنع التشويه الرقمي (digital clipping) عند تراكب أكثر من
+     * نغمة في نفس اللحظة — بدل القطع الحاد عند ±1 نستخدم tanh تقريبي
+     * يحافظ على نعومة الصوت حتى مع القمم العالية.
+     */
+    function _softClip(data) {
+      for (var i = 0; i < data.length; i++) {
+        var s = data[i];
+        if (s > 0.92 || s < -0.92) {
+          data[i] = Math.tanh(s);
+        }
+      }
+    }
+
+    /**
+     * _noise: يُولِّد صوت ضوضاء (للطباعة وما شابهها)
+     * [AUDIO-QUALITY] فلترة moving-average خفيفة تلطّف الضوضاء البيضاء
+     * الخام (كانت تُسمع كـ"استاتيك" حاد) لصوت أقرب لهمسة/whoosh ناعمة
+     */
+    function _noise(ctx, opts) {
+      var d = opts.d || 0.15;
+      var vol = opts.v || 0.08;
+      var attackFrac = opts.attack || 0.01;
+      var decayFrac = opts.decay || d;
+
+      var numSamples = Math.ceil(ctx.sampleRate * d);
+      var buffer = ctx.createBuffer(1, numSamples, ctx.sampleRate);
+      var data = buffer.getChannelData(0);
+      var atkSamp = Math.max(4, Math.floor(attackFrac * ctx.sampleRate));
+      var decSamp = Math.max(4, Math.floor(decayFrac * ctx.sampleRate));
+
+      // ولّد ضوضاء خام أولاً
+      var raw = new Float32Array(numSamples);
+      for (var i = 0; i < numSamples; i++) raw[i] = Math.random() * 2 - 1;
+
+      // Moving-average بسيط (3-tap) لتنعيم الحدة العشوائية
+      for (var j = 0; j < numSamples; j++) {
+        var a = raw[j];
+        var b = j > 0 ? raw[j - 1] : a;
+        var c = j < numSamples - 1 ? raw[j + 1] : a;
+        var smoothed = (a + b + c) / 3;
+
+        var env;
+        if (j < atkSamp) {
+          env = 0.5 - 0.5 * Math.cos((Math.PI * j) / atkSamp);
+        } else {
+          var rp = Math.max(0, 1 - (j - atkSamp) / decSamp);
+          env = rp;
+        }
+        data[j] = smoothed * env * vol;
+      }
+
+      return buffer;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // الإعدادات
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // [SOFTEN-MIGRATION] رقم إصدار الإعدادات — لما يتغيّر، أي إعدادات
+    // محفوظة قبل كده من نسخة أقدم بتتحدّث تلقائياً مرة واحدة بس لتطبيق
+    // النغمات الهادية الجديدة، من غير ما نلمس أي تخصيص تاني عمله المستخدم
+    // (مستوى الصوت، تفعيل/تعطيل تصنيفات... إلخ لو غيّرهم بنفسه بعد كده).
+    var _SETTINGS_VERSION = 2;
+
+    function _loadSettings() {
+      try {
+        var raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          var parsed = JSON.parse(raw);
+          _settings = Object.assign({}, _defaults, parsed);
+          if (
+            !parsed.settingsVersion ||
+            parsed.settingsVersion < _SETTINGS_VERSION
+          ) {
+            // ترحيل: رجّع نغمات كل التصنيفات للاختيار الهادي الجديد
+            _settings.soundChoice = Object.assign({}, _defaults.soundChoice);
+            _settings.settingsVersion = _SETTINGS_VERSION;
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(_settings));
+            } catch (e) {}
+          }
+        } else {
+          _settings = Object.assign({}, _defaults, {
+            settingsVersion: _SETTINGS_VERSION,
+          });
+        }
+      } catch (e) {
+        _settings = Object.assign({}, _defaults, {
+          settingsVersion: _SETTINGS_VERSION,
+        });
+      }
+    }
+
+    function _saveSettings() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(_settings));
+      } catch (e) {}
+    }
+
+    function _settingFor(cat) {
+      switch (cat) {
+        case "ui":
+          return _settings.enableButtons;
+        case "success":
+          return _settings.enableSuccess;
+        case "warning":
+          return _settings.enableWarning;
+        case "error":
+          return _settings.enableError;
+        case "notification":
+          return _settings.enableNotif;
+        case "system":
+          return _settings.enableSystem;
+        default:
+          return true;
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // [AUDIO-EXPAND] تحليل رسالة الـ Toast لاختيار الصوت الدقيق
+    // ─────────────────────────────────────────────────────────────────────────
+    //  الفكرة: showToast(msg, type) موجودة بالفعل في مئات الأماكن بكل الموديولات
+    //  وكل رسالة تحمل كلمات دالة على نوع العملية (حذف/تصدير/استيراد/رفع...).
+    //  بدل تعديل كل نداء لتمرير soundId، نفحص msg هنا مرة واحدة فقط.
+    // ─────────────────────────────────────────────────────────────────────────
+    function _has(msg, words) {
+      for (var i = 0; i < words.length; i++) {
+        if (msg.indexOf(words[i]) !== -1) return true;
+      }
+      return false;
+    }
+
+    function _resolveToastSound(type, msg) {
+      msg = typeof msg === "string" ? msg : "";
+
+      if (type === "success") {
+        if (_has(msg, ["حذف"])) return "success.delete";
+        if (_has(msg, ["استيراد"])) return "success.import";
+        if (_has(msg, ["تصدير"])) return "success.export";
+        if (_has(msg, ["رفع اللوجو", "تم رفع", "رفع الملف"]))
+          return "success.upload";
+        if (_has(msg, ["تنزيل", "تحميل"]) && !_has(msg, ["جاري"]))
+          return "success.download";
+        if (_has(msg, ["تحديث", "تعديل", "تغيير"])) return "success.update";
+        return "success.save";
+      }
+
+      if (type === "error") {
+        if (_has(msg, ["صلاحية", "مصرح", "ممنوع"])) return "error.permission";
+        return "error.general";
+      }
+
+      if (type === "warning") {
+        if (_has(msg, ["تأكيد"])) return "warning.delete_confirm";
+        if (
+          _has(msg, [
+            "مطلوب",
+            "اختر",
+            "أدخل",
+            "أضف",
+            "غير صحيح",
+            "غير صالح",
+            "يجب أن يكون",
+            "يجب اختيار",
+          ])
+        )
+          return "warning.validation";
+        return "warning.general";
+      }
+
+      // info وأي نوع غير معروف: بدون صوت (سلوك مطابق للنسخة السابقة —
+      // معظم توستات info رسائل "جاري..." مؤقتة، تشغيل صوت لها كل مرة مُزعج)
+      return null;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // التشغيل
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // [AUDIO-LATENCY] latencyHint: "interactive" يطلب من المتصفح أقل زمن
+    // استجابة ممكن للمخرجات (بدل الافتراضي المُحسَّن لتوفير البطارية)
+    function _ensureCtx() {
+      if (_ctx) return _ctx;
+      try {
+        var Ctx = window.AudioContext || window.webkitAudioContext;
+        if (Ctx) _ctx = new Ctx({ latencyHint: "interactive" });
+      } catch (e) {
+        try {
+          if (Ctx) _ctx = new Ctx();
+        } catch (e2) {}
+      }
+      return _ctx;
+    }
+
+    function _preloadAll() {
+      var ctx = _ensureCtx();
+      if (!ctx) return;
+      Object.keys(SOUNDS).forEach(function (id) {
+        if (!_cache[_cacheKey(id)]) {
+          try {
+            _cache[_cacheKey(id)] = _genFor(id)(ctx);
+          } catch (e) {}
+        }
+      });
+    }
+
+    // ── [VARIANTS] اختيار النغمة الحالية لتصنيف معيّن (افتراضي "a") ──
+    function _currentVariantId(cat) {
+      if (!_settings) _loadSettings();
+      return (_settings.soundChoice && _settings.soundChoice[cat]) || "a";
+    }
+
+    function _variantFor(cat) {
+      var list = VARIANTS[cat];
+      if (!list) return null;
+      var choice = _currentVariantId(cat);
+      var found = list.filter(function (v) {
+        return v.id === choice;
+      })[0];
+      return found || list[0];
+    }
+
+    // مفتاح الكاش لازم يتغيّر مع تغيّر النغمة المختارة عشان مايفضلش
+    // يشغّل بفر قديم اتولّد بنغمة سابقة
+    function _cacheKey(soundId) {
+      var sound = SOUNDS[soundId];
+      if (sound && VARIANTS[sound.cat]) {
+        return soundId + "::" + _currentVariantId(sound.cat);
+      }
+      return soundId;
+    }
+
+    // بيرجّع دالة gen(ctx) الصح — إما نغمة مختارة (للتصنيفات المدعومة)
+    // أو الـ gen الأصلي (لأصوات ui وغيرها اللي مالهاش نغمات بديلة)
+    function _genFor(soundId) {
+      var sound = SOUNDS[soundId];
+      if (!sound) return null;
+      var variant = VARIANTS[sound.cat] ? _variantFor(sound.cat) : null;
+      if (variant) {
+        if (sound.cat === "system") {
+          return soundId === "system.logout"
+            ? variant.genLogout
+            : variant.genLogin;
+        }
+        return variant.gen;
+      }
+      return sound.gen;
+    }
+
+    // [AUDIO-LATENCY] فتح الـ AudioContext (resume) عند أقرب لحظة تفاعل
+    // ممكنة — pointerdown/touchstart/keydown تحدث قبل click بفارق زمني
+    // (مدة الضغطة نفسها)، فيكتمل الـ resume غير المتزامن قبل ما يُطلب
+    // تشغيل الصوت فعلياً على click، فيختفي التأخير المحسوس تماماً.
+    var _unlocked = false;
+    function _unlockCtx() {
+      if (_unlocked) return;
+      var ctx = _ensureCtx();
+      if (!ctx) return;
+      if (ctx.state === "suspended") {
+        ctx
+          .resume()
+          .then(function () {
+            _unlocked = true;
+            _removeUnlockListeners();
+          })
+          .catch(function () {});
+      } else {
+        _unlocked = true;
+        _removeUnlockListeners();
+      }
+      // تشغيل buffer صامت خالص لإكمال "فتح" مسار الصوت فوراً على iOS/Safari
+      try {
+        var src = ctx.createBufferSource();
+        src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+        src.connect(ctx.destination);
+        src.start(0);
+      } catch (e) {}
+    }
+    var _unlockEvents = ["pointerdown", "touchstart", "mousedown", "keydown"];
+    function _removeUnlockListeners() {
+      _unlockEvents.forEach(function (ev) {
+        document.removeEventListener(ev, _unlockCtx);
+      });
+    }
+
+    function _play(soundId) {
+      if (!_settings) _loadSettings();
+      if (!_settings.enabled || _settings.muted) return;
+
+      var sound = SOUNDS[soundId];
+      if (!sound) return;
+
+      // فحص إعداد التصنيف
+      if (!_settingFor(sound.cat)) return;
+
+      // Debounce — منع التكرار السريع
+      var now = Date.now();
+      if (_lastPlay[soundId] && now - _lastPlay[soundId] < DEBOUNCE_MS) return;
+      _lastPlay[soundId] = now;
+
+      // لا تُشغِّل إذا هناك صوت يُشغَّل الآن (non-notification sounds)
+      if (_playing && sound.cat !== "notification" && sound.cat !== "system")
+        return;
+
+      var ctx = _ensureCtx();
+      if (!ctx) return;
+
+      // Resume إذا كان suspended (سياسة المتصفح) — احتياطي فقط، الحالة
+      // الطبيعية أن يكون الـ ctx مفتوح مسبقاً بفضل _unlockCtx
+      if (ctx.state === "suspended") {
+        // [AUDIO-NO-WARN-FIX] لو الـ context لسه متقفل ومحصلش أي فتح
+        // حقيقي من قبل (_unlocked = false)، فده معناه إن الصوت اتطلب من
+        // كود برمجي (مش من جوه handler ضغطة/لمسة مباشرة) — استدعاء
+        // resume() هنا هيترفض من المتصفح ويطبع تحذير "AudioContext was
+        // not allowed to start" في الـ console من غير أي فايدة فعلية.
+        // بنتجاهل الصوت ده بهدوء؛ الـ context هيتفتح تلقائيًا أول ما
+        // المستخدم يعمل أي تفاعل حقيقي (شوف _unlockCtx فوق)، وبعدها كل
+        // الأصوات هتشتغل عادي زي المتوقع.
+        if (!_unlocked) return;
+        ctx
+          .resume()
+          .then(function () {
+            _playBuffer(ctx, soundId);
+          })
+          .catch(function () {});
+        return;
+      }
+
+      _playBuffer(ctx, soundId);
+    }
+
+    function _playBuffer(ctx, soundId) {
+      var key = _cacheKey(soundId);
+      var buffer = _cache[key];
+      if (!buffer) {
+        try {
+          var gen = _genFor(soundId);
+          if (!gen) return;
+          buffer = _cache[key] = gen(ctx);
+        } catch (e) {
+          return;
+        }
+      }
+
+      try {
+        var gain = ctx.createGain();
+        var vol = Math.max(0, Math.min(1, _settings.volume || 0.55));
+        gain.gain.setValueAtTime(vol, ctx.currentTime);
+        gain.connect(ctx.destination);
+
+        var source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(gain);
+
+        _playing = true;
+        source.onended = function () {
+          _playing = false;
+        };
+        source.start();
+      } catch (e) {
+        _playing = false;
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // واجهة الإعدادات — HTML
+    // ─────────────────────────────────────────────────────────────────────────
+
+    function _renderSettingsUI(containerId) {
+      var el = document.getElementById(containerId);
+      if (!el) return;
+      if (!_settings) _loadSettings();
+
+      var s = _settings;
+
+      el.innerHTML = [
+        '<div class="audio-settings-panel" dir="rtl">',
+        '<div class="audio-settings-header">',
+        '<span class="ti ti-volume" style="font-size:1.4em;color:var(--color-primary,#6366f1)"></span>',
+        '<span style="font-weight:700;font-size:1.05em;color:var(--text-primary,#1e293b)">إعدادات الأصوات</span>',
+        "</div>",
+
+        // ── Enable / Mute ──
+        '<div class="audio-row">',
+        _toggle("as_enabled", "تفعيل الأصوات", s.enabled),
+        _toggle("as_muted", "كتم كل الأصوات", s.muted),
+        "</div>",
+
+        // ── Volume ──
+        '<div class="audio-vol-row">',
+        '<label style="font-size:0.88em;color:var(--text-secondary,#64748b)">مستوى الصوت</label>',
+        '<div style="display:flex;align-items:center;gap:10px">',
+        '<span class="ti ti-volume-2" style="color:var(--text-secondary,#64748b)"></span>',
+        '<input type="range" id="as_volume" min="0" max="1" step="0.05" value="' +
+          s.volume +
+          '" ',
+        'style="flex:1;accent-color:var(--color-primary,#6366f1)">',
+        '<span id="as_vol_label" style="font-size:0.85em;font-weight:700;color:var(--text-primary,#1e293b);min-width:32px;text-align:center">',
+        Math.round(s.volume * 100) + "%",
+        "</span>",
+        "</div>",
+        "</div>",
+
+        // ── Categories ──
+        '<div class="audio-section-title">تصنيفات الأصوات</div>',
+        '<div class="audio-cat-grid">',
+        _toggle("as_enableButtons", " أزرار وواجهة", s.enableButtons),
+        _toggle("as_enableSuccess", " عمليات ناجحة", s.enableSuccess),
+        _toggle("as_enableError", " أخطاء", s.enableError),
+        _toggle("as_enableWarning", " تحذيرات", s.enableWarning),
+        _toggle("as_enableNotif", " إشعارات", s.enableNotif),
+        _toggle("as_enableSystem", " نظام (دخول/خروج)", s.enableSystem),
+        "</div>",
+
+        // ── Test Sounds ──
+        '<div class="audio-section-title">اختبار الأصوات</div>',
+        '<div class="audio-test-grid">',
+        _testBtn("ui.click", "نقرة زر"),
+        _testBtn("success.save", "حفظ ناجح"),
+        _testBtn("success.update", "تعديل ناجح"),
+        _testBtn("warning.delete_confirm", "تأكيد حذف"),
+        _testBtn("success.delete", "حذف ناجح"),
+        _testBtn("error.general", "خطأ"),
+        _testBtn("warning.general", "تحذير"),
+        _testBtn("notif.general", "إشعار"),
+        _testBtn("system.login", "دخول"),
+        _testBtn("system.logout", "خروج"),
+        _testBtn("ui.search", "بحث"),
+        _testBtn("ui.filter", "فلتر"),
+        _testBtn("ui.print", "طباعة"),
+        _testBtn("success.export", "تصدير"),
+        _testBtn("success.import", "استيراد"),
+        _testBtn("error.permission", "صلاحية مرفوضة"),
+        _testBtn("warning.validation", "خطأ تحقق"),
+        _testBtn("success.upload", "رفع ملف"),
+        _testBtn("success.download", "تنزيل"),
+        _testBtn("success.bg_process", "عملية خلفية"),
+        "</div>",
+
+        "</div>",
+      ].join("");
+
+      // ── Bindings ──
+      [
+        "as_enabled",
+        "as_muted",
+        "as_enableNotif",
+        "as_enableButtons",
+        "as_enableSuccess",
+        "as_enableError",
+        "as_enableWarning",
+        "as_enableSystem",
+      ].forEach(function (id) {
+        var inp = document.getElementById(id);
+        if (inp) {
+          inp.addEventListener("change", function () {
+            var key = id.replace("as_", "");
+            // map IDs to setting keys
+            var map = {
+              enabled: "enabled",
+              muted: "muted",
+              enableNotif: "enableNotif",
+              enableButtons: "enableButtons",
+              enableSuccess: "enableSuccess",
+              enableError: "enableError",
+              enableWarning: "enableWarning",
+              enableSystem: "enableSystem",
+            };
+            var settingKey = map[key] || key;
+            _settings[settingKey] = inp.checked;
+            _saveSettings();
+          });
+        }
+      });
+
+      var volSlider = document.getElementById("as_volume");
+      var volLabel = document.getElementById("as_vol_label");
+      if (volSlider) {
+        volSlider.addEventListener("input", function () {
+          _settings.volume = parseFloat(volSlider.value);
+          if (volLabel)
+            volLabel.textContent = Math.round(_settings.volume * 100) + "%";
+          _saveSettings();
+        });
+      }
+
+      // Test buttons
+      el.querySelectorAll("[data-as-test]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var id = btn.getAttribute("data-as-test");
+          // تشغيل مباشر متجاوزاً الـ debounce للاختبار
+          _lastPlay[id] = 0;
+          _playing = false;
+          _play(id);
+        });
+      });
+    }
+
+    function _toggle(id, label, checked) {
+      return [
+        '<label class="audio-toggle-row">',
+        '<input type="checkbox" id="' +
+          id +
+          '"' +
+          (checked ? " checked" : "") +
+          ">",
+        '<span class="audio-toggle-track"><span class="audio-toggle-thumb"></span></span>',
+        '<span class="audio-toggle-label">' + label + "</span>",
+        "</label>",
+      ].join("");
+    }
+
+    function _testBtn(id, label) {
+      return (
+        '<button class="audio-test-btn" data-as-test="' +
+        id +
+        '">' +
+        label +
+        "</button>"
+      );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Public API
+    // ─────────────────────────────────────────────────────────────────────────
+
+    window.AS = {
+      // ── تشغيل صوت بالـ ID ──────────────────────────────────────────────
+      play: _play,
+
+      // ── اختصارات دلالية ──────────────────────────────────────────────────
+      click: function () {
+        _play("ui.click");
+      },
+      saveSuccess: function () {
+        _play("success.save");
+      },
+      updateSuccess: function () {
+        _play("success.update");
+      },
+      deleteConfirm: function () {
+        _play("warning.delete_confirm");
+      },
+      deleteSuccess: function () {
+        _play("success.delete");
+      },
+      error: function () {
+        _play("error.general");
+      },
+      warning: function () {
+        _play("warning.general");
+      },
+      notification: function () {
+        _play("notif.general");
+      },
+      loginSuccess: function () {
+        _play("system.login");
+      },
+      logout: function () {
+        _play("system.logout");
+      },
+      search: function () {
+        _play("ui.search");
+      },
+      filterApplied: function () {
+        _play("ui.filter");
+      },
+      print: function () {
+        _play("ui.print");
+      },
+      exportDone: function () {
+        _play("success.export");
+      },
+      importDone: function () {
+        _play("success.import");
+      },
+      permissionDenied: function () {
+        _play("error.permission");
+      },
+      validationError: function () {
+        _play("warning.validation");
+      },
+      uploadDone: function () {
+        _play("success.upload");
+      },
+      downloadDone: function () {
+        _play("success.download");
+      },
+      bgProcessDone: function () {
+        _play("success.bg_process");
+      },
+
+      // ── إدارة الإعدادات ──────────────────────────────────────────────────
+      getSettings: function () {
+        if (!_settings) _loadSettings();
+        return Object.assign({}, _settings);
+      },
+      setSettings: function (patch) {
+        if (!_settings) _loadSettings();
+        Object.assign(_settings, patch);
+        _saveSettings();
+      },
+      renderSettings: _renderSettingsUI,
+
+      // ── التهيئة (تُستدعى تلقائياً عند الدخول) ──────────────────────────
+      // [AUDIO-LATENCY] التحميل المسبق (توليد الـ buffers) لا يحتاج
+      // user gesture إطلاقاً — نعمله فوراً بدل انتظار أول ضغطة، عشان
+      // أول صوت في حياة الجلسة يطلع فوري زي أي صوت بعده بالظبط.
+      // فتح الـ AudioContext نفسه (resume) هو اللي محتاج gesture، وده
+      // بيحصل عند أقرب حركة (pointerdown/touchstart/keydown) قبل click
+      // بفارق زمني كافٍ لإخفاء أي تأخير غير متزامن.
+      init: function () {
+        _loadSettings();
+        _preloadAll();
+        _unlockEvents.forEach(function (ev) {
+          document.addEventListener(ev, _unlockCtx, { passive: true });
+        });
+      },
+
+      // ── [VARIANTS] إدارة اختيار النغمات ──────────────────────────────────
+      // بيرجع { id, label } لكل نغمة متاحة في التصنيف ده
+      getVariants: function (cat) {
+        var list = VARIANTS[cat];
+        if (!list) return [];
+        return list.map(function (v) {
+          return { id: v.id, label: v.label };
+        });
+      },
+      // النغمة المختارة حالياً للتصنيف
+      getSoundChoice: function (cat) {
+        return _currentVariantId(cat);
+      },
+      // حفظ اختيار نغمة جديدة لتصنيف — بيتطبّق فوراً على كل الأصوات التابعة
+      setSoundChoice: function (cat, variantId) {
+        if (!_settings) _loadSettings();
+        if (!VARIANTS[cat]) return;
+        if (!_settings.soundChoice) _settings.soundChoice = {};
+        _settings.soundChoice[cat] = variantId;
+        _saveSettings();
+      },
+      // تجربة نغمة معيّنة بدون حفظ الاختيار (لمعاينة قبل الحفظ)
+      previewVariant: function (cat, variantId) {
+        var list = VARIANTS[cat];
+        if (!list) return;
+        var variant =
+          list.filter(function (v) {
+            return v.id === variantId;
+          })[0] || list[0];
+        var ctx = _ensureCtx();
+        if (!ctx) return;
+        var gen = cat === "system" ? variant.genLogin : variant.gen;
+        try {
+          var buffer = gen(ctx);
+          var gain = ctx.createGain();
+          if (!_settings) _loadSettings();
+          gain.gain.setValueAtTime(
+            Math.max(0, Math.min(1, _settings.volume || 0.55)),
+            ctx.currentTime,
+          );
+          gain.connect(ctx.destination);
+          var source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(gain);
+          source.start();
+        } catch (e) {}
+      },
+
+      // ── إضافة صوت جديد بدون تعديل أي شاشة ─────────────────────────────
+      register: function (id, cat, genFn) {
+        SOUNDS[id] = { cat: cat, gen: genFn };
+        // إذا كان الـ ctx جاهزاً، حمِّل مباشرة
+        if (_ctx) {
+          try {
+            _cache[id] = genFn(_ctx);
+          } catch (e) {}
+        }
+      },
+
+      // ── للاستخدام الداخلي من الأحداث العامة (showToast) ──────────────────
+      // [AUDIO-EXPAND] بدل الصوت العام الوحيد لكل نوع، نفحص نص الرسالة
+      // لاختيار الصوت الدقيق (حذف/تصدير/استيراد/رفع/صلاحية/تحقق...)
+      // نقطة اختناق واحدة — بدون أي تعديل في مئات نداءات showToast الحالية.
+      _onToastType: function (type, msg) {
+        _play(_resolveToastSound(type, msg));
+      },
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Auto-init
+    // ─────────────────────────────────────────────────────────────────────────
+    AS.init();
+  })();
+</script>

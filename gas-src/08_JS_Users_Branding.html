@@ -1,0 +1,2748 @@
+<script>
+  // ───────────────────────────────────────────────────────────────
+  // JS_Users_Branding.html — جزء 8/10 من JavaScript.html الأصلي
+  // النطاق الأصلي: سطر 21883–23877 | المستخدمين وسجل العمليات + الصلاحيات (PM) + العلامة التجارية
+  // ───────────────────────────────────────────────────────────────
+
+  //  [TAB-ENGINE / المرحلة 7: Lazy Tabs] التبديل بين تابات شاشة
+  //  المستخدمين (المستخدمون / سجل العمليات / الصلاحيات / التخزين)
+  // ─────────────────────────────────────────────────────────────
+  //  قبل كده كل تاب كان بيتحمّل بمنطق يدوي مكرر (فحص state.length،
+  //  استدعاء loader، إلخ) داخل switchUsersTab نفسها. دلوقتي TabEngine
+  //  هو المسؤول عن: "لا تحمّل أي تاب غير المفتوح فعليًا، ولا تعيد تحميل
+  //  تاب اتحمّل قبل كده" — واحنا سايبين بس منطق العرض (الألوان/الإظهار)
+  //  ومنطق التحميل الفعلي (loadAuditLog/bindPermissionsPage/loadStorageStats)
+  //  زي ما هو، لأنه أصلاً عنده كاش داخلي بالـ TTL — TabEngine بيمنع
+  //  تكرار *نداء* هذه الدوال، مش بديل عن الكاش الداخلي بتاعها.
+  //  _usersTabEngine بيتبنى مرة واحدة من bindUsers() تحت.
+  // ─────────────────────────────────────────────────────────────
+  var _usersTabEngine = null;
+
+  function _usersTabVisuals(tab) {
+    // تحديث أزرار التبويب (الألوان/الحدود) — التصميم الحالي inline style
+    // مش class-based، فسايبينها هنا بدل ما نعتمد على activeClass بتاع
+    // TabEngine (اللي بيضيف/يشيل class فقط)
+    document.querySelectorAll(".users-tab").forEach(function (btn) {
+      var isActive = btn.dataset.tab === tab;
+      btn.style.color = isActive ? "var(--accent)" : "var(--text2)";
+      btn.style.borderBottom = isActive
+        ? "2.5px solid var(--accent)"
+        : "2.5px solid transparent";
+    });
+
+    // إظهار/إخفاء زر إضافة مستخدم حسب التبويب النشط
+    var addBtn = document.getElementById("btn-add-user");
+    if (addBtn) addBtn.style.display = tab === "users" ? "" : "none";
+
+    // تحديث لوحات المحتوى
+    ["users", "audit", "permissions", "storage"].forEach(function (t) {
+      var pane = document.getElementById("users-tab-" + t);
+      if (pane) pane.style.display = t === tab ? "" : "none";
+    });
+
+    // ربط فلاتر المستخدمين عند فتح تبويبهم (بيتنفذ في كل مرة، مش تحميل بيانات)
+    if (tab === "users") {
+      _bindUsersFilters();
+    }
+  }
+
+  // للتوافق الرجعي لو فيه أي استدعاء قديم لـ switchUsersTab من مكان تاني
+  function switchUsersTab(tab) {
+    var btn = document.querySelector(
+      '.users-tab[data-tab="' + tab + '"]',
+    );
+    if (btn) btn.click();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  bindUsers — تُستدعى بعد render للصفحة
+  // ─────────────────────────────────────────────────────────────
+  function bindUsers() {
+    // [COLUMN-ENGINE] عرض جدول المستخدمين عبر ColumnEngine (كان جدولًا ثابتًا)
+    _renderUsersTable(APP.data.users || []);
+
+    // زر تحديث البيانات
+    var refreshBtn = document.getElementById("btn-refresh-users");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", function () {
+        reloadAfterMutationFull(null, null, {
+          title: "جاري تحديث البيانات...",
+          emoji: "",
+          successMsg: " تم تحديث البيانات",
+        });
+      });
+    }
+
+    // زر إضافة مستخدم
+    var addBtn = document.getElementById("btn-add-user");
+    if (addBtn)
+      addBtn.addEventListener("click", function () {
+        openUserModal(null);
+      });
+
+    // فلاتر المستخدمين
+    _bindUsersFilters();
+
+    // [TAB-ENGINE / المرحلة 7] تفعيل التابات — لازم destroy للـ instance
+    // القديمة الأول لو الشاشة اتعاد رسمها (منع تسريب Listeners)
+    if (_usersTabEngine) {
+      _usersTabEngine.destroy();
+      _usersTabEngine = null;
+    }
+    _usersTabEngine = TabEngine.init({
+      tabSelector: ".users-tab",
+      panelPrefix: "users-tab-",
+      activeClass: "active",
+      recordId: "users-branding-screen", // شاشة واحدة ثابتة، مفيش سجلات متعددة
+      defaultTab: "users",
+      loaders: {
+        audit: function (recordId, done) {
+          loadAuditLog();
+          done();
+        },
+        permissions: function (recordId, done) {
+          bindPermissionsPage();
+          done();
+        },
+        storage: function (recordId, done) {
+          loadStorageStats();
+          done();
+        },
+      },
+      onSwitch: _usersTabVisuals,
+    });
+    // نداء أول مرة عشان نظبط شكل التاب الافتراضي (المستخدمون) فور الرسم
+    _usersTabVisuals("users");
+
+    // [FIX-SelectionEngine] فلاتر سجل العمليات موجودة في نفس الصفحة
+    // (مخفية حتى فتح تبويب "سجل العمليات") — ترقيتها هنا مرة واحدة كفاية
+    if (window.AppSelect) {
+      AppSelect.upgrade("audit-user-filter", {
+        icon: "ti-user",
+        placeholder: "كل المستخدمين",
+      });
+      AppSelect.upgrade("audit-action-filter", {
+        icon: "ti-list-details",
+        placeholder: "كل العمليات",
+      });
+    }
+  }
+
+  function _bindUsersFilters() {
+    var searchEl = document.getElementById("users-search");
+    var roleEl = document.getElementById("users-role-filter");
+    if (searchEl) searchEl.addEventListener("input", _filterUsersTable);
+    if (roleEl) roleEl.addEventListener("change", _filterUsersTable);
+
+    if (window.AppSelect) {
+      AppSelect.upgrade("users-role-filter", {
+        icon: "ti-shield",
+        placeholder: "كل الأدوار",
+      });
+    }
+  }
+
+  // [COLUMN-ENGINE] الفلترة أصبحت على مستوى البيانات (بدل إخفاء صفوف DOM
+  // يدويًا) ثم إعادة عرضها عبر _renderUsersTable — نفس أسلوب الموظفين في
+  // 12_JS_HR.html. ملاحظة: خانة البحث هنا فلتر إضافي (اسم/يوزر فقط)؛
+  // ColumnEngine نفسه عنده صندوق بحث عام داخل شريط أدوات الجدول.
+  function _filterUsersTable() {
+    var q = (
+      (document.getElementById("users-search") || {}).value || ""
+    ).toLowerCase();
+    var role = (document.getElementById("users-role-filter") || {}).value || "";
+    var rows = (APP.data.users || []).filter(function (u) {
+      var matchQ =
+        !q ||
+        (u.full_name || "").toLowerCase().indexOf(q) !== -1 ||
+        (u.username || "").toLowerCase().indexOf(q) !== -1;
+      var matchR = !role || u.role === role;
+      return matchQ && matchR;
+    });
+    _renderUsersTable(rows);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  loadAuditLog — تحميل البيانات من الباك إند
+  // ─────────────────────────────────────────────────────────────
+  function loadAuditLog(forceRefresh) {
+    if (!canDo("viewAuditLog")) return;
+
+    // FIX: كاش 30 ثانية — لو البيانات موجودة وحديثة وما في فلتر نشط → اعرض مباشرة بدون طلب
+    var filters = _getAuditFilters();
+    var hasActiveFilter =
+      filters.user ||
+      filters.action ||
+      filters.table ||
+      filters.dateFrom ||
+      filters.dateTo ||
+      filters.search;
+    var cacheAge = Date.now() - AUDIT_STATE.lastLoaded;
+    if (
+      !forceRefresh &&
+      !hasActiveFilter &&
+      AUDIT_STATE.data.length > 0 &&
+      cacheAge < AUDIT_STATE.CACHE_TTL
+    ) {
+      _renderAuditTable(AUDIT_STATE.data);
+      return;
+    }
+
+    if (AUDIT_STATE.loading) return; // FIX: امنع طلبين متزامنين
+    AUDIT_STATE.loading = true;
+
+    var refreshBtn = document.getElementById("audit-refresh-btn");
+    if (refreshBtn) {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = "⏳ جاري التحميل...";
+    }
+
+    _gsr("getAuditLog", [100, filters], {
+      label: "getAuditLog",
+      rawResponse: true,
+      onSuccess: function (r) {
+        var res = r && r.data;
+        AUDIT_STATE.loading = false;
+        AUDIT_STATE.lastLoaded = Date.now(); // FIX: سجّل وقت التحميل
+        if (refreshBtn) {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = " تحديث";
+        }
+        AUDIT_STATE.data = res.data || [];
+        AUDIT_STATE.filtered = AUDIT_STATE.data;
+        AUDIT_STATE.page = 1;
+        _updateAuditStats(res.stats || {}, res.total || 0);
+        _renderAuditTable(AUDIT_STATE.data);
+      },
+      onError: function (r) {
+        AUDIT_STATE.loading = false;
+        if (refreshBtn) {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = " تحديث";
+        }
+        NotificationEngine.error("فشل تحميل السجل: " + r.message);
+      },
+    }); // FIX: قلّل من 300 → 100 سجل في كل طلب
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // [PHASE-5] لوحة إحصائيات مساحة التخزين — تستدعي
+  // getDocumentEngineStorageStats() (DocumentEngine.getStorageStats)
+  // وتعرض النتيجة في تبويب "مساحة التخزين". كاش 60 ثانية زي سجل
+  // العمليات، مع زر تحديث يدوي يتجاوز الكاش.
+  // ─────────────────────────────────────────────────────────────
+  var STORAGE_STATS_STATE = { data: null, loading: false, lastLoaded: 0, CACHE_TTL: 60000 };
+
+  var STORAGE_MODULE_LABELS = {
+    customer: "العملاء",
+    supplier: "الموردون",
+    party: "أطراف (قديم)",
+    item: "الأصناف",
+    production: "الإنتاج",
+  };
+
+  function loadStorageStats(forceRefresh) {
+    var content = document.getElementById("storage-stats-content");
+    if (!content) return;
+
+    var cacheAge = Date.now() - STORAGE_STATS_STATE.lastLoaded;
+    if (!forceRefresh && STORAGE_STATS_STATE.data && cacheAge < STORAGE_STATS_STATE.CACHE_TTL) {
+      _renderStorageStats(STORAGE_STATS_STATE.data);
+      return;
+    }
+    if (STORAGE_STATS_STATE.loading) return;
+    STORAGE_STATS_STATE.loading = true;
+
+    if (!forceRefresh || !STORAGE_STATS_STATE.data) {
+      content.innerHTML =
+        '<div style="text-align:center;padding:40px;color:var(--text2)">' +
+        "<i class='ti ti-loader-2' style='font-size:22px'></i> جاري تحميل إحصائيات المساحة..." +
+        "</div>";
+    }
+
+    _gsr("getDocumentEngineStorageStats", [], {
+      label: "getDocumentEngineStorageStats",
+      rawResponse: true,
+      onSuccess: function (r) {
+        STORAGE_STATS_STATE.loading = false;
+        var res = r && r.data;
+        if (!res || !res.success) {
+          content.innerHTML =
+            '<div style="text-align:center;padding:30px;color:var(--danger)">' +
+            "تعذّر تحميل إحصائيات المساحة" +
+            (res && res.error ? ": " + res.error : "") +
+            "</div>";
+          return;
+        }
+        STORAGE_STATS_STATE.data = res;
+        STORAGE_STATS_STATE.lastLoaded = Date.now();
+        _renderStorageStats(res);
+      },
+      onError: function (r) {
+        STORAGE_STATS_STATE.loading = false;
+        content.innerHTML =
+          '<div style="text-align:center;padding:30px;color:var(--danger)">' +
+          "فشل تحميل إحصائيات المساحة: " +
+          r.message +
+          "</div>";
+      },
+    });
+  }
+
+  function _storageBreakdownTable(title, byGroup, labelMap) {
+    var keys = Object.keys(byGroup || {}).sort(function (a, b) {
+      return byGroup[b].bytes - byGroup[a].bytes;
+    });
+    if (!keys.length) return "";
+    var rows = keys
+      .map(function (k) {
+        var g = byGroup[k];
+        var label = (labelMap && labelMap[k]) || k;
+        var mb = Math.round((g.bytes / (1024 * 1024)) * 100) / 100;
+        return (
+          "<tr>" +
+          '<td style="padding:8px 10px;border-bottom:1px solid var(--border)">' + label + "</td>" +
+          '<td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:center">' + g.count + "</td>" +
+          '<td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:center">' + mb + " MB</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+    return (
+      '<div style="margin-top:18px">' +
+      '<h4 style="margin:0 0 8px;font-size:13px;color:var(--text2)">' + title + "</h4>" +
+      '<table style="width:100%;border-collapse:collapse;font-size:12.5px">' +
+      '<thead><tr style="background:var(--bg2)">' +
+      '<th style="padding:8px 10px;text-align:right">التصنيف</th>' +
+      '<th style="padding:8px 10px;text-align:center">عدد الملفات</th>' +
+      '<th style="padding:8px 10px;text-align:center">الحجم</th>' +
+      "</tr></thead><tbody>" +
+      rows +
+      "</tbody></table></div>"
+    );
+  }
+
+  function _renderStorageStats(res) {
+    var content = document.getElementById("storage-stats-content");
+    if (!content) return;
+
+    var cards =
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:10px">' +
+      _auditStatCard("ti-files", "إجمالي الملفات", res.totalFiles, "#6366f1") +
+      _auditStatCard("ti-database", "إجمالي المساحة", res.totalMB + " MB", "#10b981") +
+      _auditStatCard("ti-archive", "ملفات مؤرشفة", res.archivedFiles, "#f59e0b") +
+      _auditStatCard("ti-photo-cog", "ملفات مضغوطة", res.compressedFiles, "#0ea5e9") +
+      "</div>";
+
+    var refreshBtn =
+      '<div style="text-align:left;margin-bottom:6px">' +
+      '<button class="btn btn-secondary btn-sm" onclick="loadStorageStats(true)" id="storage-refresh-btn">' +
+      "<i class='ti ti-refresh' style='font-size:14px'></i> تحديث</button></div>";
+
+    var byModule = _storageBreakdownTable(
+      "حسب الوحدة",
+      res.byModule,
+      STORAGE_MODULE_LABELS,
+    );
+    var byDocType = _storageBreakdownTable("حسب نوع المستند", res.byDocType, null);
+
+    content.innerHTML = refreshBtn + cards + byModule + byDocType;
+  }
+
+  // ─── جمع قيم الفلاتر ──────────────────────────────────────────
+  function _getAuditFilters() {
+    var search = (document.getElementById("audit-search") || {}).value || "";
+    var user = (document.getElementById("audit-user-filter") || {}).value || "";
+    var action =
+      (document.getElementById("audit-action-filter") || {}).value || "";
+    var table =
+      (document.getElementById("audit-table-filter") || {}).value || "";
+    var dateFrom =
+      (document.getElementById("audit-date-from") || {}).value || "";
+    var dateTo = (document.getElementById("audit-date-to") || {}).value || "";
+    return {
+      search: search,
+      user: user,
+      action: action,
+      table: table,
+      dateFrom: dateFrom,
+      dateTo: dateTo,
+    };
+  }
+
+  // ─── تطبيق الفلاتر (يُعيد fetch من السيرفر) ─────────────────
+  function applyAuditFilters() {
+    AUDIT_STATE.data = [];
+    AUDIT_STATE.lastLoaded = 0; // FIX: إعادة تعيين الكاش عند تطبيق فلتر
+    loadAuditLog(true);
+  }
+
+  // ─── إعادة تعيين الفلاتر ─────────────────────────────────────
+  function resetAuditFilters() {
+    [
+      "audit-search",
+      "audit-user-filter",
+      "audit-action-filter",
+      "audit-table-filter",
+      "audit-date-from",
+      "audit-date-to",
+    ].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.value = "";
+    });
+    AUDIT_STATE.lastLoaded = 0; // FIX: إعادة تعيين الكاش عند إعادة التعيين
+    loadAuditLog(true);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  _updateAuditStats — تحديث بطاقات الإحصاء
+  // ─────────────────────────────────────────────────────────────
+  function _updateAuditStats(stats, total) {
+    var statsRow = document.getElementById("audit-stats-row");
+    if (!statsRow) return;
+
+    var byAction = stats.byAction || {};
+    var addCount = 0,
+      updateCount = 0,
+      deleteCount = 0;
+    Object.keys(byAction).forEach(function (key) {
+      if (key === "ADD") addCount = byAction[key];
+      else if (key === "UPDATE") updateCount = byAction[key];
+      else if (key === "DELETE") deleteCount = byAction[key];
+    });
+
+    statsRow.innerHTML =
+      _auditStatCard("", "إجمالي العمليات", total, "#6366f1") +
+      _auditStatCard("", "إضافات", addCount, "#10b981") +
+      _auditStatCard("", "تعديلات", updateCount, "#f59e0b") +
+      _auditStatCard("", "حذف", deleteCount, "#ef4444");
+  }
+
+  function _auditStatCard(icon, label, value, color) {
+    return (
+      '<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:14px 16px;' +
+      "display:flex;align-items:center;gap:10px;border-top:3px solid " +
+      color +
+      '">' +
+      '<div style="width:38px;height:38px;border-radius:10px;background:' +
+      color +
+      "22;" +
+      'display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">' +
+      icon +
+      "</div>" +
+      "<div>" +
+      '<div style="font-size:20px;font-weight:800;color:' +
+      color +
+      '">' +
+      value +
+      "</div>" +
+      '<div style="font-size:11px;color:var(--text3);font-weight:500">' +
+      label +
+      "</div>" +
+      "</div></div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  _renderAuditTable — عرض جدول السجل
+  // ─────────────────────────────────────────────────────────────
+  // FIX: تحوّل username → full_name للعرض في جدول السجل (للسجلات القديمة)
+  function _getAuditDisplayName(username) {
+    if (!username || username === "SYSTEM" || username === "SCHEDULED_TRIGGER")
+      return username || "—";
+    var users = (APP.data && APP.data.users) || [];
+    var found = users.find(function (u) {
+      return (
+        String(u.username || "").toLowerCase() ===
+        String(username).toLowerCase()
+      );
+    });
+    return found && found.full_name && found.full_name.trim()
+      ? found.full_name.trim()
+      : username;
+  }
+
+  // [COLUMN-ENGINE] جدول سجل الأحداث بقى معتمد على ColumnEngine (نفس نمط
+  // المخازن/الأصناف/المقاسات) بدل جدول HTML ثابت. الـ Pagination بتاعت
+  // الشاشة (AUDIT_STATE.page/pageSize) اتسابت زي ما هي — بنعمل slice
+  // للصفحة الحالية قبل ما نمررها لـ ColumnEngine.renderTable، ونرسم
+  // شريط التنقّل تحت الجدول بنفس الطريقة القديمة.
+  var _auditColumnsRegistered = false;
+
+  function _auditRegisterColumns() {
+    if (_auditColumnsRegistered) return;
+    _auditColumnsRegistered = true;
+    ColumnEngine.register(
+      "audit_log",
+      [
+        {
+          key: "timestamp",
+          label: "الوقت",
+          type: "text",
+          width: 150,
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px;color:var(--text3);white-space:nowrap">' +
+              fmtDate(v) +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "user",
+          label: "المستخدم",
+          type: "text",
+          width: 140,
+          format: function (v, row) {
+            var displayUser = _getAuditDisplayName(row.user);
+            return (
+              '<div style="display:inline-flex;align-items:center;gap:7px;justify-content:center">' +
+              '<div style="width:26px;height:26px;border-radius:50%;background:' +
+              _userAvatarColor(String(displayUser || "?")) +
+              ';color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">' +
+              (String(displayUser || "?")[0] || "?").toUpperCase() +
+              "</div>" +
+              '<span style="font-size:12px;font-weight:600;color:var(--text)" title="' +
+              esc(row.user || "") +
+              '">' +
+              esc(displayUser || "—") +
+              "</span></div>"
+            );
+          },
+        },
+        {
+          key: "action",
+          label: "العملية",
+          type: "text",
+          width: 200,
+          format: function (v) {
+            var rawAction = String(v || "");
+            var actionKey = rawAction.split("_")[0].split(":")[0].toUpperCase();
+            var meta = AUDIT_ACTION_MAP[actionKey] || {
+              icon: "",
+              label: rawAction,
+              color: "#64748b",
+              bg: "#f8fafc",
+            };
+            return (
+              '<div style="display:inline-flex;align-items:center;gap:5px;background:' +
+              meta.bg +
+              ";color:" +
+              meta.color +
+              ";padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid " +
+              meta.color +
+              "33" +
+              '">' +
+              meta.icon +
+              " " +
+              esc(rawAction) +
+              "</div>"
+            );
+          },
+        },
+        {
+          key: "table",
+          label: "الجدول",
+          type: "text",
+          width: 140,
+          format: function (v) {
+            return AUDIT_TABLE_LABELS[String(v || "")] || esc(v || "—");
+          },
+        },
+        {
+          key: "record_id",
+          label: "المعرف",
+          type: "text",
+          width: 120,
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px;color:var(--accent)">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "details",
+          label: "التفاصيل",
+          type: "text",
+          format: function (v) {
+            var details = String(v || "—");
+            return details.length > 50
+              ? '<span title="' +
+                  esc(details) +
+                  '" style="cursor:help">' +
+                  esc(details.substring(0, 50)) +
+                  "…</span>"
+              : esc(details);
+          },
+        },
+        // [COLUMN-ENGINE-FULL-FIELDS] حقول موجودة فعليًا في AUDIT_HEADERS
+        // (Code_12_Core.gs) ولم تكن معروضة كأعمدة اختيارية.
+        {
+          key: "ip",
+          label: "عنوان IP",
+          type: "text",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "old_value",
+          label: "القيمة قبل التعديل",
+          type: "text",
+          category: "حقول إضافية",
+          defaultVisible: false,
+          format: function (v) {
+            var s = String(v || "—");
+            return s.length > 60
+              ? '<span title="' + esc(s) + '">' + esc(s.substring(0, 60)) + "…</span>"
+              : esc(s);
+          },
+        },
+        {
+          key: "new_value",
+          label: "القيمة بعد التعديل",
+          type: "text",
+          category: "حقول إضافية",
+          defaultVisible: false,
+          format: function (v) {
+            var s = String(v || "—");
+            return s.length > 60
+              ? '<span title="' + esc(s) + '">' + esc(s.substring(0, 60)) + "…</span>"
+              : esc(s);
+          },
+        },
+      ],
+      {
+        rowKey: function (row, i) {
+          return row.id || i;
+        },
+        title: "سجل الأحداث",
+      },
+    );
+  }
+
+  function _renderAuditTable(data) {
+    var el = document.getElementById("audit-log-content");
+    if (!el) return;
+
+    AUDIT_STATE.filtered = data || [];
+
+    if (!data || !data.length) {
+      el.innerHTML =
+        '<div class="empty-state" style="padding:50px;text-align:center">' +
+        '<div class="empty-icon" style="font-size:52px;color:var(--text3)"><i class="ti ti-clipboard-list" style="font-size:52px"></i></div>' +
+        "<p>لا توجد عمليات تطابق البحث</p>" +
+        "</div>";
+      return;
+    }
+
+    var pageSize = AUDIT_STATE.pageSize || 50;
+    var totalPages = Math.max(1, Math.ceil(data.length / pageSize));
+    if (AUDIT_STATE.page > totalPages) AUDIT_STATE.page = totalPages;
+    if (AUDIT_STATE.page < 1) AUDIT_STATE.page = 1;
+    var startIdx = (AUDIT_STATE.page - 1) * pageSize;
+    var pageData = data.slice(startIdx, startIdx + pageSize);
+    var total = data.length;
+
+    el.innerHTML = '<div id="audit-log-ce-container"></div>';
+    _auditRegisterColumns();
+    ColumnEngine.renderTable(
+      "audit_log",
+      document.getElementById("audit-log-ce-container"),
+      pageData,
+    );
+
+    var footer = document.createElement("div");
+    footer.style.cssText =
+      "display:flex;justify-content:space-between;align-items:center;padding:12px 4px 0;flex-wrap:wrap;gap:8px";
+    footer.innerHTML =
+      '<span style="font-size:11px;color:var(--text3)">يعرض <b>' +
+      pageData.length +
+      "</b> من أصل <b>" +
+      total +
+      "</b> عملية</span>" +
+      _auditPaginationHtml(AUDIT_STATE.page, totalPages) +
+      '<span style="font-size:11px;color:var(--text3)">آخر تحديث: ' +
+      fmtDate(new Date().toISOString()) +
+      "</span>";
+    el.appendChild(footer);
+  }
+
+  // ─── أزرار التنقل بين صفحات سجل الأحداث ─────────────────────
+  function _auditPaginationHtml(page, totalPages) {
+    if (totalPages <= 1) return "";
+    return (
+      '<div style="display:flex;align-items:center;gap:8px">' +
+      '<button type="button" class="btn btn-sm" ' +
+      (page <= 1 ? "disabled" : "") +
+      ' onclick="_goAuditPage(-1)" style="padding:4px 10px;font-size:11px">‹ السابق</button>' +
+      '<span style="font-size:11px;color:var(--text3)">صفحة ' +
+      page +
+      " من " +
+      totalPages +
+      "</span>" +
+      '<button type="button" class="btn btn-sm" ' +
+      (page >= totalPages ? "disabled" : "") +
+      ' onclick="_goAuditPage(1)" style="padding:4px 10px;font-size:11px">التالي ›</button>' +
+      "</div>"
+    );
+  }
+
+  // ─── الانتقال لصفحة تالية/سابقة بدون إعادة طلب من السيرفر ───
+  function _goAuditPage(delta) {
+    AUDIT_STATE.page = (AUDIT_STATE.page || 1) + delta;
+    _renderAuditTable(AUDIT_STATE.filtered || AUDIT_STATE.data);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  exportAuditLogData — تصدير CSV
+  // ─────────────────────────────────────────────────────────────
+  function exportAuditLogData() {
+    if (!canDo("viewAuditLog")) {
+      NotificationEngine.error(" ليس لديك صلاحية");
+      return;
+    }
+    NotificationEngine.loading("⏳ جاري تجهيز الملف...");
+
+    _gsr(
+      "exportAuditLogCSV",
+      [APP.currentUser ? APP.currentUser.username : "", SESSION.token],
+      {
+        label: "exportAuditLogCSV",
+        rawResponse: true,
+        onSuccess: function (r) {
+          var res = r && r.data;
+          if (!res || !res.csv) {
+            finishLoadingToast("خطأ في التصدير", "error");
+            return;
+          }
+          // تنزيل مباشر
+          var blob = new Blob(["\uFEFF" + res.csv], {
+            type: "text/csv;charset=utf-8;",
+          });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement("a");
+          a.href = url;
+          a.download =
+            "audit_log_" + new Date().toISOString().slice(0, 10) + ".csv";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          finishLoadingToast(" تم تصدير السجل بنجاح", "success");
+        },
+        onError: function (r) {
+          finishLoadingToast("فشل التصدير: " + r.message, "error");
+        },
+      },
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  bindAuditLog (نسخة محدّثة — للتوافق مع الـ nav القديم)
+  //  الدالة الآن تُشغّل loadAuditLog مباشرة
+  // ═══════════════════════════════════════════════════════════════
+  function bindAuditLog() {
+    // لو كنا في صفحة audit_log منفصلة → انتقل لصفحة users tab audit
+    if (APP.page === "audit_log") {
+      navigate("users");
+      setTimeout(function () {
+        switchUsersTab("audit");
+      }, 300);
+      return;
+    }
+    loadAuditLog();
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+   bindBarcode() — Production replacement for 08_JS_Users_Branding.html
+   Replaces: function bindBarcode() { ... } (line 448 onward)
+   
+   Drop-in replacement: same function name, same API surface,
+   same output (print window). Only the DOM IDs changed (bc3→bcp).
+═══════════════════════════════════════════════════════════════ */
+  function bindBarcode() {
+    var selectedItems = {};
+
+    function g(id) {
+      return document.getElementById(id);
+    }
+
+    function getSettings() {
+      return {
+        size: (g("bcp-label-size") || { value: "small" }).value,
+        type: (g("bcp-type") || { value: "CODE128" }).value,
+        cols: parseInt((g("bcp-cols") || { value: "3" }).value, 10) || 3,
+        showName: (g("bcp-show-name") || { checked: true }).checked,
+        showCode: (g("bcp-show-code") || { checked: true }).checked,
+        showPrice: (g("bcp-show-price") || { checked: false }).checked,
+        showBrand: (g("bcp-show-brand") || { checked: true }).checked,
+        brand: (g("bcp-brand-name") || { value: "MOO.ERP" }).value.trim(),
+        customW: parseFloat((g("bcp-custom-w") || { value: "58" }).value) || 58,
+        customH: parseFloat((g("bcp-custom-h") || { value: "40" }).value) || 40,
+      };
+    }
+
+    function getLabelDims(s) {
+      var map = {
+        small: { w: 38, h: 25 },
+        medium: { w: 58, h: 40 },
+        large: { w: 100, h: 60 },
+      };
+      return map[s.size] || { w: s.customW, h: s.customH };
+    }
+
+    function getItemData(id) {
+      return (APP.data.items || []).find(function (it) {
+        return String(it.id) === String(id);
+      });
+    }
+
+    var activeStockFilter = "all";
+
+    function filterItems() {
+      var q = ((g("bcp-search") || {}).value || "").toLowerCase().trim();
+      var gid = (g("bcp-group-filter") || {}).value || "";
+      var wid = (g("bcp-warehouse-filter") || {}).value || "";
+      var rows = document.querySelectorAll(".bcp-row");
+      var visible = 0;
+      rows.forEach(function (row) {
+        var whList = (row.dataset.warehouses || "").split(",").filter(Boolean);
+        var whMatch = !wid || whList.indexOf(wid) !== -1;
+        var stock = parseInt(row.dataset.stock || "0", 10);
+        var stockMatch =
+          activeStockFilter === "all" ||
+          (activeStockFilter === "has" && stock > 0) ||
+          (activeStockFilter === "zero" && stock <= 0);
+        var nameMatch =
+          !q ||
+          (row.dataset.name || "").toLowerCase().indexOf(q) !== -1 ||
+          (row.dataset.code || "").toLowerCase().indexOf(q) !== -1;
+        var grpMatch = !gid || row.dataset.group === gid;
+        var show = nameMatch && grpMatch && whMatch && stockMatch;
+        row.style.display = show ? "" : "none";
+        if (show) visible++;
+      });
+    }
+
+    function updateCount() {
+      var totalQty = Object.keys(selectedItems).reduce(function (s, id) {
+        return s + (selectedItems[id] || 0);
+      }, 0);
+      var selCount = Object.keys(selectedItems).filter(function (id) {
+        return selectedItems[id] > 0;
+      }).length;
+
+      var printBtn = g("bcp-print-btn");
+      var printMain = g("bcp-print-main");
+      var pdfBtn = g("bcp-pdf-btn");
+      var expPdf = g("bcp-export-pdf");
+      var countBadge = g("bcp-print-count");
+
+      if (countBadge) countBadge.textContent = totalQty;
+      if (printBtn) printBtn.disabled = totalQty === 0;
+      if (printMain) printMain.disabled = totalQty === 0;
+      if (pdfBtn) pdfBtn.disabled = totalQty === 0;
+      if (expPdf) expPdf.disabled = totalQty === 0;
+
+      if (g("bcp-kpi-selected")) g("bcp-kpi-selected").textContent = selCount;
+      if (g("bcp-kpi-labels")) g("bcp-kpi-labels").textContent = totalQty;
+      if (g("bcp-sum-items")) g("bcp-sum-items").textContent = selCount;
+      if (g("bcp-sum-labels")) g("bcp-sum-labels").textContent = totalQty;
+
+      var bulkBar = g("bcp-bulk-bar");
+      var bulkText = g("bcp-bulk-text");
+      if (bulkBar) bulkBar.classList.toggle("hidden", selCount === 0);
+      if (bulkText)
+        bulkText.textContent =
+          selCount + " أصناف محددة — " + totalQty + " ملصق";
+
+      document.querySelectorAll(".bcp-row").forEach(function (row) {
+        var id = row.dataset.id;
+        var sel = !!(selectedItems[id] && selectedItems[id] > 0);
+        row.classList.toggle("bcp-row-selected", sel);
+        var cb = row.querySelector(".bcp-item-check");
+        if (cb) cb.checked = sel;
+      });
+    }
+
+    /* ── SVG generators (identical to original) ───────────────── */
+    function generateCode128SVG(text) {
+      var CODE128B =
+        " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f".split(
+          "",
+        );
+      var PATTERNS = [
+        "11011001100",
+        "11001101100",
+        "11001100110",
+        "10010011000",
+        "10010001100",
+        "10001001100",
+        "10011001000",
+        "10011000100",
+        "10001100100",
+        "11001001000",
+        "11001000100",
+        "11000100100",
+        "10110011100",
+        "10011011100",
+        "10011001110",
+        "10111001100",
+        "10011101100",
+        "10011100110",
+        "11001110010",
+        "11001011100",
+        "11001001110",
+        "11011100100",
+        "11001110100",
+        "11101101110",
+        "11101001100",
+        "11100101100",
+        "11100100110",
+        "11101100100",
+        "11100110100",
+        "11100110010",
+        "11011011000",
+        "11011000110",
+        "11000110110",
+        "10100011000",
+        "10001011000",
+        "10001000110",
+        "10110001000",
+        "10001101000",
+        "10001100010",
+        "11010001000",
+        "11000101000",
+        "11000100010",
+        "10110111000",
+        "10110001110",
+        "10001101110",
+        "10111011000",
+        "10111000110",
+        "10001110110",
+        "11101110110",
+        "11010001110",
+        "11000101110",
+        "11011101000",
+        "11011100010",
+        "11011101110",
+        "11101011000",
+        "11101000110",
+        "11100010110",
+        "11101101000",
+        "11101100010",
+        "11100011010",
+        "11101111010",
+        "11001000010",
+        "11110001010",
+        "10100110000",
+        "10100001100",
+        "10010110000",
+        "10010000110",
+        "10000101100",
+        "10000100110",
+        "10110010000",
+        "10110000100",
+        "10011010000",
+        "10011000010",
+        "10000110100",
+        "10000110010",
+        "11000010010",
+        "11001010000",
+        "11110111010",
+        "11000010100",
+        "10001111010",
+        "10100111100",
+        "10010111100",
+        "10010011110",
+        "10111100100",
+        "10011110100",
+        "10011110010",
+        "11110100100",
+        "11110010100",
+        "11110010010",
+        "11011011110",
+        "11011110110",
+        "11110110110",
+        "10101111000",
+        "10100011110",
+        "10001011110",
+        "10111101000",
+        "10111100010",
+        "11110101000",
+        "11110100010",
+        "10111011110",
+        "10111101110",
+        "11101011110",
+        "11110101110",
+        "11010000100",
+        "11010010000",
+        "11010011100",
+        "11000111010",
+      ];
+      var START_B = 104,
+        STOP = "1100011101011";
+      var chars = [];
+      for (var i = 0; i < text.length; i++) {
+        var idx = CODE128B.indexOf(text[i]);
+        if (idx === -1) idx = CODE128B.indexOf("?");
+        chars.push(idx);
+      }
+      var cs = START_B;
+      chars.forEach(function (c, i) {
+        cs += c * (i + 1);
+      });
+      cs = cs % 103;
+      var bars = PATTERNS[START_B];
+      chars.forEach(function (c) {
+        bars += PATTERNS[c];
+      });
+      bars += PATTERNS[cs] + STOP + "11";
+      var W = bars.length * 2,
+        H = 60;
+      var svg =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="' +
+        W +
+        '" height="' +
+        H +
+        '" viewBox="0 0 ' +
+        W +
+        " " +
+        H +
+        '">';
+      var x = 0;
+      for (var b = 0; b < bars.length; b++) {
+        if (bars[b] === "1")
+          svg +=
+            '<rect x="' +
+            x +
+            '" y="0" width="2" height="' +
+            H +
+            '" fill="#000"/>';
+        x += 2;
+      }
+      return svg + "</svg>";
+    }
+
+    function generateQRPlaceholder(text) {
+      var size = 21,
+        cells = [],
+        seed = 0;
+      for (var i = 0; i < text.length; i++)
+        seed = (seed * 31 + text.charCodeAt(i)) & 0xffff;
+      for (var r = 0; r < size; r++) {
+        cells[r] = [];
+        for (var c = 0; c < size; c++) {
+          if (
+            (r < 7 && c < 7) ||
+            (r < 7 && c >= size - 7) ||
+            (r >= size - 7 && c < 7)
+          ) {
+            var fr = r % 7,
+              fc = c % 7;
+            cells[r][c] =
+              fr === 0 ||
+              fr === 6 ||
+              fc === 0 ||
+              fc === 6 ||
+              (fr >= 2 && fr <= 4 && fc >= 2 && fc <= 4)
+                ? 1
+                : 0;
+          } else {
+            seed = (seed * 1664525 + 1013904223) & 0xffffffff;
+            cells[r][c] = (seed >>> 16) & 1;
+          }
+        }
+      }
+      var cell = 4,
+        W = size * cell;
+      var svg =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="' +
+        W +
+        '" height="' +
+        W +
+        '" viewBox="0 0 ' +
+        W +
+        " " +
+        W +
+        '">';
+      svg += '<rect width="' + W + '" height="' + W + '" fill="white"/>';
+      for (var rr = 0; rr < size; rr++)
+        for (var cc = 0; cc < size; cc++)
+          if (cells[rr][cc])
+            svg +=
+              '<rect x="' +
+              cc * cell +
+              '" y="' +
+              rr * cell +
+              '" width="' +
+              cell +
+              '" height="' +
+              cell +
+              '" fill="black"/>';
+      return svg + "</svg>";
+    }
+
+    function generateBarcodeSVG(text, type) {
+      return type === "QR"
+        ? generateQRPlaceholder(text)
+        : generateCode128SVG(text);
+    }
+
+    function buildLabel(item, s, dims) {
+      var code = item.code || item.id,
+        isQR = s.type === "QR";
+      var svg = generateBarcodeSVG(code, s.type);
+      var lw = dims.w + "mm",
+        lh = dims.h + "mm";
+      var html =
+        '<div class="bc-label" style="width:' +
+        lw +
+        ";height:" +
+        lh +
+        ";min-height:" +
+        lh +
+        '">';
+      if (s.showBrand && s.brand)
+        html += '<div class="bc-label-brand">' + esc(s.brand) + "</div>";
+      if (s.showName)
+        html += '<div class="bc-label-name">' + esc(item.name) + "</div>";
+      html +=
+        '<div class="bc-label-barcode' +
+        (isQR ? " bc-label-qr" : "") +
+        '">' +
+        svg +
+        "</div>";
+      var footer = "";
+      if (s.showCode)
+        footer += '<span class="bc-lf-code">' + esc(code) + "</span>";
+      if (s.showPrice && item.selling_price)
+        footer +=
+          '<span class="bc-lf-price">' +
+          formatMoney(Number(item.selling_price), { decimals: 0 }) +
+          "</span>";
+      if (footer) html += '<div class="bc-label-footer">' + footer + "</div>";
+      return html + "</div>";
+    }
+
+    function updatePreview() {
+      var stage = g("bcp-preview-stage");
+      if (!stage) return;
+      var s = getSettings(),
+        dims = getLabelDims(s);
+      var dimBadge = g("bcp-dim-badge");
+      if (dimBadge) dimBadge.textContent = dims.w + " × " + dims.h + " مم";
+      var ids = Object.keys(selectedItems).filter(function (id) {
+        return selectedItems[id] > 0;
+      });
+      if (!ids.length) {
+        stage.innerHTML =
+          '<div class="bcp-preview-placeholder"><i class="ti ti-tag" style="font-size:40px;opacity:.2"></i><p>اختر صنفاً<br>لرؤية الملصق</p></div>';
+        return;
+      }
+      var item = getItemData(ids[0]);
+      if (!item) return;
+      var mmToPx = 3.78,
+        labelW = dims.w * mmToPx,
+        maxW = 220;
+      var scale = labelW > maxW ? maxW / labelW : 1;
+      stage.innerHTML =
+        '<div class="bcp-preview-label-wrap"><div style="transform:scale(' +
+        scale +
+        ');transform-origin:center top">' +
+        buildLabel(item, s, dims) +
+        "</div></div>" +
+        '<p class="bcp-preview-hint">' +
+        dims.w +
+        " × " +
+        dims.h +
+        " مم</p>";
+    }
+
+    function doPrint() {
+      var s = getSettings(),
+        dims = getLabelDims(s);
+      var ids = Object.keys(selectedItems).filter(function (id) {
+        return selectedItems[id] > 0;
+      });
+      if (!ids.length) return;
+      var labelsHtml = "";
+      ids.forEach(function (id) {
+        var item = getItemData(id);
+        if (!item) return;
+        var qty = selectedItems[id] || 1;
+        for (var i = 0; i < qty; i++) labelsHtml += buildLabel(item, s, dims);
+      });
+      var printWin = window.open("", "_blank", "width=960,height=720");
+      printWin.document.write(
+        '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>طباعة باركود — MOO.ERP</title>' +
+          '<style>@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;600;700&display=swap");' +
+          'body{font-family:"IBM Plex Sans Arabic",sans-serif;background:#fff;margin:0;padding:8mm;direction:rtl}' +
+          ".bc-grid{display:grid;grid-template-columns:repeat(" +
+          s.cols +
+          ",auto);gap:3mm;justify-content:start}" +
+          ".bc-label{box-sizing:border-box;border:.5px solid #ccc;padding:2mm;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1mm;page-break-inside:avoid;overflow:hidden;background:#fff}" +
+          ".bc-label-brand{font-size:7pt;color:#555;font-weight:600;text-align:center;white-space:nowrap;overflow:hidden;max-width:100%}" +
+          ".bc-label-name{font-size:8pt;font-weight:700;text-align:center;line-height:1.2;max-width:100%;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}" +
+          ".bc-label-barcode svg{max-width:100%;height:auto;display:block}.bc-label-qr svg{width:80%}" +
+          ".bc-label-footer{display:flex;justify-content:space-between;width:100%;gap:2mm}" +
+          ".bc-lf-code{font-size:7pt;color:#333;font-family:monospace}.bc-lf-price{font-size:7pt;color:#000;font-weight:700}" +
+          "@media print{body{padding:5mm}@page{margin:5mm}}</style></head><body>" +
+          '<div class="bc-grid">' +
+          labelsHtml +
+          "</div>" +
+          "<script>window.onload=function(){window.print();}<\/script></body></html>",
+      );
+      printWin.document.close();
+    }
+
+    /* ── Bind events ──────────────────────────────────────────── */
+    var searchEl = g("bcp-search");
+    if (searchEl) searchEl.addEventListener("input", filterItems);
+    var gfEl = g("bcp-group-filter");
+    if (gfEl) gfEl.addEventListener("change", filterItems);
+    var wfEl = g("bcp-warehouse-filter");
+    if (wfEl) wfEl.addEventListener("change", filterItems);
+
+    if (window.SplitSelect) {
+      SplitSelect.init("bcp-group-filter", {
+        label: "المجموعة",
+        icon: "ti-folder",
+        searchable: true,
+      });
+      SplitSelect.init("bcp-warehouse-filter", {
+        label: "المخزن",
+        icon: "ti-building-warehouse",
+        searchable: true,
+      });
+    }
+
+    document.querySelectorAll(".bcp-ftab").forEach(function (tab) {
+      tab.addEventListener("click", function () {
+        document.querySelectorAll(".bcp-ftab").forEach(function (t) {
+          t.classList.remove("active");
+        });
+        tab.classList.add("active");
+        activeStockFilter = tab.dataset.stockFilter || "all";
+        filterItems();
+      });
+    });
+
+    var selStock = g("bcp-select-stock-btn");
+    if (selStock)
+      selStock.addEventListener("click", function () {
+        document.querySelectorAll(".bcp-row").forEach(function (row) {
+          if (parseInt(row.dataset.stock || "0", 10) > 0) {
+            var id = row.dataset.id;
+            var inp = row.querySelector(".bcp-qty-input");
+            selectedItems[id] =
+              parseInt((inp || { value: "1" }).value || 1, 10) || 1;
+          }
+        });
+        updateCount();
+        updatePreview();
+      });
+
+    var clearBtn = g("bcp-clear-btn");
+    if (clearBtn)
+      clearBtn.addEventListener("click", function () {
+        selectedItems = {};
+        updateCount();
+        updatePreview();
+      });
+
+    var checkAll = g("bcp-check-all");
+    if (checkAll)
+      checkAll.addEventListener("change", function () {
+        var checked = checkAll.checked;
+        document.querySelectorAll(".bcp-row").forEach(function (row) {
+          if (row.style.display === "none") return;
+          var id = row.dataset.id;
+          var inp = row.querySelector(".bcp-qty-input");
+          var qty = parseInt((inp || { value: "1" }).value || 1, 10) || 1;
+          if (checked) selectedItems[id] = qty;
+          else delete selectedItems[id];
+        });
+        updateCount();
+        updatePreview();
+      });
+
+    var tbody = g("bcp-tbody");
+    if (tbody) {
+      tbody.addEventListener("change", function (e) {
+        var cb = e.target.closest(".bcp-item-check");
+        if (!cb) return;
+        var row = e.target.closest(".bcp-row");
+        if (!row) return;
+        var id = row.dataset.id;
+        var inp = row.querySelector(".bcp-qty-input");
+        var qty = parseInt((inp || { value: "1" }).value || 1, 10) || 1;
+        if (cb.checked) selectedItems[id] = qty;
+        else delete selectedItems[id];
+        updateCount();
+        updatePreview();
+      });
+      tbody.addEventListener("click", function (e) {
+        if (e.target.closest(".bcp-qty-wrap")) return;
+        if (e.target.closest(".bcp-item-check")) return;
+        var row = e.target.closest(".bcp-row");
+        if (!row) return;
+        var id = row.dataset.id;
+        var cb = row.querySelector(".bcp-item-check");
+        var inp = row.querySelector(".bcp-qty-input");
+        var qty = parseInt((inp || { value: "1" }).value || 1, 10) || 1;
+        if (selectedItems[id]) {
+          delete selectedItems[id];
+          if (cb) cb.checked = false;
+        } else {
+          selectedItems[id] = qty;
+          if (cb) cb.checked = true;
+        }
+        updateCount();
+        updatePreview();
+      });
+      tbody.addEventListener("click", function (e) {
+        var btn = e.target.closest(".bcp-qty-btn");
+        if (!btn) return;
+        var id = btn.dataset.id;
+        var inp = document.querySelector(
+          '.bcp-qty-input[data-id="' + id + '"]',
+        );
+        if (!inp) return;
+        var val = parseInt(inp.value, 10) || 1;
+        if (btn.classList.contains("bcp-qty-plus"))
+          val = Math.min(9999, val + 1);
+        if (btn.classList.contains("bcp-qty-minus")) val = Math.max(1, val - 1);
+        inp.value = val;
+        if (selectedItems[id] !== undefined) {
+          selectedItems[id] = val;
+          updateCount();
+          updatePreview();
+        }
+        e.stopPropagation();
+      });
+      tbody.addEventListener("input", function (e) {
+        if (!e.target.classList.contains("bcp-qty-input")) return;
+        var id = e.target.dataset.id;
+        var val = parseInt(e.target.value, 10) || 1;
+        if (selectedItems[id] !== undefined) {
+          selectedItems[id] = val;
+          updateCount();
+          updatePreview();
+        }
+      });
+    }
+
+    [
+      "bcp-show-name",
+      "bcp-show-code",
+      "bcp-show-price",
+      "bcp-show-brand",
+      "bcp-brand-name",
+      "bcp-custom-w",
+      "bcp-custom-h",
+    ].forEach(function (id) {
+      var el = g(id);
+      if (!el) return;
+      el.addEventListener(
+        el.type === "checkbox" ? "change" : "input",
+        function () {
+          if (id === "bcp-show-brand") {
+            var bw = g("bcp-brand-wrap");
+            if (bw) bw.style.display = el.checked ? "" : "none";
+          }
+          updatePreview();
+        },
+      );
+    });
+
+    document.querySelectorAll(".bcp-size-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll(".bcp-size-btn").forEach(function (b) {
+          b.classList.remove("active");
+        });
+        btn.classList.add("active");
+        var sl = g("bcp-label-size");
+        if (sl) sl.value = btn.dataset.size;
+        var cw = g("bcp-custom-wrap");
+        if (cw) cw.style.display = btn.dataset.size === "custom" ? "" : "none";
+        updatePreview();
+      });
+    });
+
+    document.querySelectorAll(".bcp-type-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll(".bcp-type-btn").forEach(function (b) {
+          b.classList.remove("active");
+        });
+        btn.classList.add("active");
+        var th = g("bcp-type");
+        if (th) th.value = btn.dataset.type;
+        updatePreview();
+      });
+    });
+
+    document.querySelectorAll(".bcp-col-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll(".bcp-col-btn").forEach(function (b) {
+          b.classList.remove("active");
+        });
+        btn.classList.add("active");
+        var ch = g("bcp-cols");
+        if (ch) ch.value = btn.dataset.cols;
+      });
+    });
+
+    [
+      g("bcp-print-btn"),
+      g("bcp-print-main"),
+      g("bcp-pdf-btn"),
+      g("bcp-export-pdf"),
+    ].forEach(function (btn) {
+      if (btn) btn.addEventListener("click", doPrint);
+    });
+
+    var saveTpl = g("bcp-save-template");
+    if (saveTpl)
+      saveTpl.addEventListener("click", function () {
+        if (typeof showToast === "function")
+          NotificationEngine.success("تم حفظ القالب ");
+      });
+
+    /* ── Drawer behavior for Settings/Preview on narrow screens ─── */
+    (function initDrawers() {
+      var backdrop = g("bcp-drawer-backdrop");
+      var settingsPanel = g("bcp-settings-panel");
+      var previewPanel = g("bcp-preview-panel");
+
+      function closeDrawers() {
+        if (settingsPanel) settingsPanel.classList.remove("bcp-drawer-open");
+        if (previewPanel) previewPanel.classList.remove("bcp-drawer-open");
+        if (backdrop) backdrop.classList.remove("bcp-drawer-open");
+      }
+      function openDrawer(panel) {
+        closeDrawers();
+        if (panel) panel.classList.add("bcp-drawer-open");
+        if (backdrop) backdrop.classList.add("bcp-drawer-open");
+      }
+
+      var openSettingsBtn = g("bcp-open-settings");
+      var openPreviewBtn = g("bcp-open-preview");
+      var closeSettingsBtn = g("bcp-close-settings");
+      var closePreviewBtn = g("bcp-close-preview");
+
+      if (openSettingsBtn)
+        openSettingsBtn.addEventListener("click", function () {
+          openDrawer(settingsPanel);
+        });
+      if (openPreviewBtn)
+        openPreviewBtn.addEventListener("click", function () {
+          openDrawer(previewPanel);
+        });
+      if (closeSettingsBtn)
+        closeSettingsBtn.addEventListener("click", closeDrawers);
+      if (closePreviewBtn) closePreviewBtn.addEventListener("click", closeDrawers);
+      if (backdrop) backdrop.addEventListener("click", closeDrawers);
+    })();
+
+    updatePreview();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // العلامة التجارية — Branding Helpers
+  // ─────────────────────────────────────────────────────────────
+
+  // ── تصحيح روابط Google Drive تلقائياً ───────────────────────
+  // [REFACTOR-P2] _fixDriveUrl اتنقلت لـ Core_Utilities.html (Global، بنفس المنطق)
+
+  function _renderSidebarBrand() {
+    var s = APP.companySettings || {};
+    var name =
+      (s.company_name && String(s.company_name).trim()) ||
+      (s.name && String(s.name).trim()) ||
+      "MOO.ERP";
+    var subname =
+      (s.tagline && String(s.tagline).trim()) ||
+      (s.subname && String(s.subname).trim()) ||
+      "Enterprise Resource Planning";
+    // [FIX] حماية من حالة عدم تحميل Core_Utilities.html (أو تأخره) —
+    // بدل ما ينكسر السايدبار بالكامل بـ ReferenceError، نتجاهل تصحيح
+    // رابط درايف ونعرض الرابط الخام كما هو (نفس النمط المستخدم في
+    // Templates_01.html لهذه الدالة بالضبط).
+    var logoUrl =
+      typeof _fixDriveUrl === "function"
+        ? _fixDriveUrl(s.logo_url || "")
+        : s.logo_url || "";
+    var svgLogo = mooLogoSVG(40);
+
+    window._sidebarFallbackSVG = svgLogo;
+
+    var iconHtml = logoUrl
+      ? '<img src="' +
+        logoUrl +
+        '" style="width:40px;height:40px;object-fit:contain;border-radius:10px;background:var(--surface);padding:3px;border:1.5px solid var(--border)" onerror="this.outerHTML=window._sidebarFallbackSVG">'
+      : svgLogo;
+    return (
+      iconHtml +
+      '<div class="brand-text"><h2>' +
+      esc(name) +
+      "</h2><p>" +
+      esc(subname) +
+      "</p></div>"
+    );
+  }
+
+  function _applyCompanyBranding() {
+    var s = APP.companySettings || {};
+    var root = document.documentElement;
+
+    // ── اللون الرئيسي → --primary + --accent ──
+    if (s.primary_color && /^#[0-9a-fA-F]{6}$/.test(s.primary_color)) {
+      root.style.setProperty("--primary", s.primary_color);
+      root.style.setProperty("--accent", s.primary_color);
+      // accent-soft = نسخة شفافة 10%
+      var r1 = parseInt(s.primary_color.slice(1, 3), 16);
+      var g1 = parseInt(s.primary_color.slice(3, 5), 16);
+      var b1 = parseInt(s.primary_color.slice(5, 7), 16);
+      root.style.setProperty(
+        "--accent-soft",
+        "rgba(" + r1 + "," + g1 + "," + b1 + ",0.1)",
+      );
+    }
+
+    // ── اللون الثانوي → --primary-dark + --accent2 ──
+    if (s.secondary_color && /^#[0-9a-fA-F]{6}$/.test(s.secondary_color)) {
+      root.style.setProperty("--primary-dark", s.secondary_color);
+      root.style.setProperty("--accent2", s.secondary_color);
+    }
+
+    // ── لون التمييز → --primary-light ──
+    if (s.accent_color && /^#[0-9a-fA-F]{6}$/.test(s.accent_color)) {
+      root.style.setProperty("--primary-light", s.accent_color);
+    }
+
+    // ── تحديث gradients الـ brand-icon والسايدبار ديناميكياً ──
+    var primary = s.primary_color || "#2563eb";
+    var secondary = s.secondary_color || "#0d1f4e";
+    var accent = s.accent_color || "#0ea5e9";
+
+    // brand-icon gradient
+    var brandIcons = document.querySelectorAll(".brand-icon");
+    brandIcons.forEach(function (el) {
+      el.style.background =
+        "linear-gradient(135deg, " + primary + " 0%, " + accent + " 100%)";
+      el.style.boxShadow =
+        "0 6px 20px rgba(" +
+        parseInt(primary.slice(1, 3), 16) +
+        "," +
+        parseInt(primary.slice(3, 5), 16) +
+        "," +
+        parseInt(primary.slice(5, 7), 16) +
+        ",0.35), inset 0 1px 0 rgba(255,255,255,0.25)";
+    });
+
+    // sidebar-head gradient
+    var sidebarHead = document.querySelector(".sidebar-head");
+    if (sidebarHead) {
+      var r2 = parseInt(accent.slice(1, 3), 16);
+      var g2 = parseInt(accent.slice(3, 5), 16);
+      var b2 = parseInt(accent.slice(5, 7), 16);
+      sidebarHead.style.background =
+        "linear-gradient(160deg, rgba(" +
+        r2 +
+        "," +
+        g2 +
+        "," +
+        b2 +
+        ",0.12) 0%, var(--surface) 100%)";
+    }
+
+    // ── عنوان المتصفح (التاسك بار) — ثابت دايمًا "MOO-ERP" ──
+    // [FIX-FIXED-BRAND-TITLE] كان بيتغيّر تلقائيًا حسب اسم الشركة الداخلي
+    // (company_name/name) اللي المستخدم بيدخله في إعدادات الشركة، فيبقى
+    // عنوان التاب مختلف من شركة لتانية. بناءً على طلب إن اسم النظام في
+    // هيدر المتصفح يفضل ثابت "MOO-ERP" دايمًا وميتأثرش بأي اسم/شعار
+    // داخلي، بقى العنوان قيمة ثابتة صريحة بدل ما يتبني من s.company_name.
+    document.title = "MOO-ERP";
+
+    // ── تحديث السايدبار لو كان مرسوماً ──
+    var brandWrap = document.querySelector(".sidebar-brand");
+    if (brandWrap) brandWrap.innerHTML = _renderSidebarBrand();
+    // ── company-preview-card بيستخدم --preview-secondary مش --primary-dark ──
+    root.style.setProperty("--preview-secondary", s.secondary_color);
+    root.style.setProperty("--preview-primary", s.primary_color);
+  }
+  // ============================================================
+  // §PM Permissions Manager — State & Logic
+  // ============================================================
+
+  var PM_STATE = {
+    roles: [], // كل الأدوار
+    permissions: [], // ALL_PERMISSIONS
+    userOverrides: {}, // { username: { extra, denied } }
+    users: [], // بيانات المستخدمين
+    loaded: false,
+  };
+
+  // ── تحديث ROLE_PERMISSIONS بعد تغيير الأدوار ────────────────
+  function _syncRolePermissions() {
+    ROLE_PERMISSIONS = {};
+    PM_STATE.roles.forEach(function (r) {
+      ROLE_PERMISSIONS[r.name] = r.permissions || [];
+    });
+  }
+
+  // ============================================================
+  //  تبديل التبويبات
+  // ============================================================
+  function switchPermTab(btn, tab) {
+    document.querySelectorAll(".pm-tab").forEach(function (t) {
+      t.classList.remove("active");
+    });
+    btn.classList.add("active");
+
+    document.querySelectorAll(".pm-pane").forEach(function (p) {
+      p.classList.remove("active");
+    });
+    var pane = document.getElementById("pm-pane-" + tab);
+    if (pane) pane.classList.add("active");
+
+    // lazy load
+    if (!PM_STATE.loaded) {
+      loadPermissionMatrix();
+    } else {
+      if (tab === "roles") _renderRolesGrid();
+      if (tab === "matrix") _renderMatrix();
+      if (tab === "overrides") _renderOverrides();
+    }
+  }
+
+  // ============================================================
+  //  تحميل البيانات من الباك إند
+  // ============================================================
+  function loadPermissionMatrix() {
+    var user = APP.currentUser;
+    if (!user) return;
+
+    // Skeleton
+    ["pm-roles-grid", "pm-matrix-wrap", "pm-overrides-list"].forEach(
+      function (id) {
+        var el = document.getElementById(id);
+        if (el) el.innerHTML = _loadingBlock();
+      },
+    );
+
+    _gsr("getPermissionMatrix", [user.username, SESSION.token], {
+      label: "getPermissionMatrix",
+      rawResponse: true,
+      onSuccess: function (r) {
+        var res = r && r.data;
+        PM_STATE.roles = res.roles || [];
+        // [FIX] نفس إصلاح _parseData في 01_JS_Core_Auth.html — لكن هنا
+        // البيانات جاية من نداء سيرفر منفصل (getPermissionMatrix) بيرجّع
+        // ALL_PERMISSIONS الخام (labelKey/catLabelKey فقط، بدون label/
+        // catLabel نصي)، فكان بيتخطى الإصلاح المركزي تمامًا — وده اللي
+        // كان بيسبب فراغ الأسماء في تبويب "مصفوفة الصلاحيات" تحديدًا.
+        PM_STATE.permissions = (res.permissions || []).map(function (p) {
+          var _t =
+            typeof I18N !== "undefined" && I18N.t
+              ? I18N.t
+              : function (k) {
+                  return k;
+                };
+          return Object.assign({}, p, {
+            label: p.label || (p.labelKey ? _t(p.labelKey) : "") || p.key,
+            catLabel:
+              p.catLabel || (p.catLabelKey ? _t(p.catLabelKey) : "") || p.cat,
+          });
+        });
+        PM_STATE.userOverrides = res.userOverrides || {};
+        PM_STATE.users = res.users || [];
+        PM_STATE.loaded = true;
+        _syncRolePermissions();
+
+        // عرض التبويب النشط
+        var activeTab = document.querySelector(".pm-tab.active");
+        var tab = activeTab ? activeTab.dataset.tab : "roles";
+        if (tab === "roles") _renderRolesGrid();
+        if (tab === "matrix") _renderMatrix();
+        if (tab === "overrides") _renderOverrides();
+      },
+      onError: function (r) {
+        NotificationEngine.error("فشل تحميل بيانات الصلاحيات: " + r.message);
+      },
+    });
+  }
+
+  // ============================================================
+  //  عرض الأدوار (تبويب 1)
+  // ============================================================
+  function _renderRolesGrid() {
+    var el = document.getElementById("pm-roles-grid");
+    if (!el) return;
+
+    if (!PM_STATE.roles.length) {
+      el.innerHTML =
+        '<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--text3)">لا توجد أدوار</div>';
+      return;
+    }
+
+    el.innerHTML = PM_STATE.roles
+      .map(function (role, idx) {
+        var count = (role.permissions || []).length;
+        var total = PM_STATE.permissions.length;
+        var pct = total ? Math.round((count / total) * 100) : 0;
+        var bg = role.color + "22";
+
+        return (
+          '<div class="role-card">' +
+          // Header
+          '<div class="role-card-header">' +
+          '<div class="role-dot" style="background:' +
+          role.color +
+          '"></div>' +
+          '<div><div class="role-card-title">' +
+          esc(role.label) +
+          "</div>" +
+          '<div class="role-card-sub">@' +
+          esc(role.name) +
+          (role.is_builtin ? " · أساسي" : "") +
+          "</div></div>" +
+          (role.is_builtin
+            ? '<span class="builtin-badge"> ثابت</span>'
+            : "") +
+          "</div>" +
+          // شريط التقدم
+          '<div style="background:var(--surface2);border-radius:10px;height:6px;margin-bottom:8px">' +
+          '<div style="width:' +
+          pct +
+          "%;background:" +
+          role.color +
+          ';height:6px;border-radius:10px;transition:width .4s"></div>' +
+          "</div>" +
+          '<div style="font-size:11px;color:var(--text3);margin-bottom:12px">' +
+          count +
+          " من " +
+          total +
+          " صلاحية (" +
+          pct +
+          "%)</div>" +
+          // مثال الصلاحيات
+          '<div style="display:flex;flex-wrap:wrap;gap:4px">' +
+          (role.permissions || [])
+            .slice(0, 4)
+            .map(function (pk) {
+              var p = PM_STATE.permissions.find(function (x) {
+                return x.key === pk;
+              });
+              return p
+                ? '<span style="font-size:10px;padding:2px 7px;border-radius:10px;background:' +
+                    bg +
+                    ";color:" +
+                    role.color +
+                    ";border:1px solid " +
+                    role.color +
+                    '33">' +
+                    esc(p.label) +
+                    "</span>"
+                : "";
+            })
+            .join("") +
+          (count > 4
+            ? '<span style="font-size:10px;padding:2px 7px;border-radius:10px;background:var(--surface2);color:var(--text3)">+' +
+              (count - 4) +
+              " أخرى</span>"
+            : "") +
+          "</div>" +
+          // أزرار
+          '<div class="role-actions">' +
+          '<button onclick="_openRoleModalByIdx(' +
+          idx +
+          ')" class="btn btn-outline" style="flex:1;font-size:12px;padding:6px">' +
+          (role.is_builtin ? " عرض" : " تعديل") +
+          "</button>" +
+          (!role.is_builtin
+            ? '<button onclick="_confirmDeleteRoleByIdx(' +
+              idx +
+              ')" class="btn" style="color:var(--danger);border-color:var(--danger);font-size:12px;padding:6px 12px"></button>'
+            : "") +
+          "</div>" +
+          "</div>"
+        );
+      })
+      .join("");
+  }
+
+  // ============================================================
+  //  عرض مصفوفة الصلاحيات (تبويب 2)
+  // ============================================================
+  function _renderMatrix() {
+    var wrap = document.getElementById("pm-matrix-wrap");
+    if (!wrap) return;
+
+    var roles = PM_STATE.roles;
+    var perms = PM_STATE.permissions;
+
+    if (!roles.length || !perms.length) {
+      wrap.innerHTML =
+        '<div style="padding:30px;text-align:center;color:var(--text3)">لا توجد بيانات</div>';
+      return;
+    }
+
+    // تجميع الصلاحيات في فئات
+    var cats = {};
+    var catOrder = [];
+    perms.forEach(function (p) {
+      if (!cats[p.cat]) {
+        cats[p.cat] = { label: p.catLabel, perms: [] };
+        catOrder.push(p.cat);
+      }
+      cats[p.cat].perms.push(p);
+    });
+
+    // Header row
+    var headerCells = roles
+      .map(function (r) {
+        return (
+          '<th style="min-width:90px">' +
+          '<div style="display:flex;flex-direction:column;align-items:center;gap:4px">' +
+          '<div style="width:10px;height:10px;border-radius:50%;background:' +
+          r.color +
+          '"></div>' +
+          '<span style="font-size:11px;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+          esc(r.label) +
+          "</span>" +
+          "</div></th>"
+        );
+      })
+      .join("");
+
+    // Body rows
+    var bodyRows = catOrder
+      .map(function (catKey) {
+        var cat = cats[catKey];
+        // صف التصنيف
+        var catRow =
+          '<tr class="cat-separator"><td class="cat-row" colspan="' +
+          (roles.length + 1) +
+          '"> ' +
+          esc(cat.label) +
+          "</td></tr>";
+
+        var permRows = cat.perms
+          .map(function (p) {
+            var cells = roles
+              .map(function (r) {
+                var hasRolePerm = (r.permissions || []).indexOf(p.key) !== -1;
+                var cls, icon;
+                if (hasRolePerm) {
+                  cls = "granted";
+                  icon = "";
+                } else {
+                  cls = "empty";
+                  icon = "—";
+                }
+
+                return (
+                  '<td><div class="perm-check ' +
+                  cls +
+                  '">' +
+                  icon +
+                  "</div></td>"
+                );
+              })
+              .join("");
+
+            return (
+              "<tr>" +
+              '<td class="perm-label">' +
+              esc(p.label) +
+              "</td>" +
+              cells +
+              "</tr>"
+            );
+          })
+          .join("");
+
+        return catRow + permRows;
+      })
+      .join("");
+
+    wrap.innerHTML =
+      '<table class="pm-matrix">' +
+      "<thead><tr>" +
+      '<th class="perm-name">الصلاحية</th>' +
+      headerCells +
+      "</tr></thead>" +
+      "<tbody>" +
+      bodyRows +
+      "</tbody>" +
+      "</table>";
+  }
+
+  // ============================================================
+  //  عرض Override المستخدمين (تبويب 3)
+  // ============================================================
+  function _renderOverrides() {
+    var el = document.getElementById("pm-overrides-list");
+    if (!el) return;
+
+    var users = PM_STATE.users;
+    if (!users.length) {
+      el.innerHTML =
+        '<div style="padding:30px;text-align:center;color:var(--text3)">لا يوجد مستخدمون</div>';
+      return;
+    }
+
+    el.innerHTML = users
+      .map(function (u) {
+        var ov = PM_STATE.userOverrides[u.username] || {
+          extra: [],
+          denied: [],
+        };
+        var extraCount = (ov.extra || []).length;
+        var deniedCount = (ov.denied || []).length;
+
+        return (
+          '<div class="user-perm-row">' +
+          // Avatar + info
+          '<div style="display:flex;align-items:center;gap:10px;flex:1">' +
+          '<div style="width:36px;height:36px;border-radius:50%;background:' +
+          _pmAvatarColor(u.username) +
+          ';color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex-shrink:0">' +
+          (String(u.username || "?")[0] || "?").toUpperCase() +
+          "</div>" +
+          "<div>" +
+          '<div style="font-weight:600;font-size:13px">' +
+          esc(u.full_name || u.username) +
+          "</div>" +
+          '<div style="font-size:11px;color:var(--text3)">@' +
+          esc(u.username) +
+          " · " +
+          esc(u.role) +
+          "</div>" +
+          "</div></div>" +
+          // Badges
+          '<div class="user-perm-badge-wrap">' +
+          (extraCount
+            ? '<span class="pm-badge extra"> ' + extraCount + " إضافية</span>"
+            : "") +
+          (deniedCount
+            ? '<span class="pm-badge denied"> ' +
+              deniedCount +
+              " محجوبة</span>"
+            : "") +
+          (!extraCount && !deniedCount
+            ? '<span style="font-size:11px;color:var(--text3)">لا overrides</span>'
+            : "") +
+          "</div>" +
+          // Edit button
+          '<button onclick="_openOverrideById(this)" data-user=\'' +
+          JSON.stringify(u).replace(/'/g, "&#39;") +
+          '\' class="btn" style="font-size:11px;padding:5px 12px;margin-right:10px"> تعديل</button>' +
+          "</div>"
+        );
+      })
+      .join("");
+  }
+
+  // ============================================================
+  //  مساعد فتح مودال Override — يتجنب مشكلة JSON داخل onclick
+  // ============================================================
+  function _openOverrideById(btn) {
+    try {
+      var userObj = JSON.parse(btn.getAttribute("data-user"));
+      openUserOverrideModal(userObj);
+    } catch (e) {
+      NotificationEngine.error("خطأ في تحميل بيانات المستخدم");
+    }
+  }
+
+  // ============================================================
+  //  مودال الدور
+  // ============================================================
+  function openNewRoleModal() {
+    openRoleModal(null);
+  }
+
+  function openRoleModal(role) {
+    role = role || {};
+    var allPerms = PM_STATE.permissions;
+    if (!allPerms.length) {
+      NotificationEngine.warning("⏳ لم يتم تحميل الصلاحيات بعد");
+      return;
+    }
+    var roleIconClass = role.is_builtin
+      ? "ti-eye"
+      : role.id
+        ? "ti-shield-check"
+        : "ti-shield-plus";
+    var roleIconColor = role.is_builtin
+      ? "#6B7280"
+      : role.id
+        ? "#D97706"
+        : "#059669";
+    var roleBgColor = role.is_builtin
+      ? "#F3F4F6"
+      : role.id
+        ? "#FEF3C7"
+        : "#D1FAE5";
+    var roleTitleText = role.is_builtin
+      ? esc(role.label || "دور")
+      : role.id
+        ? "تعديل دور"
+        : "دور جديد";
+    openDrawer(
+      '<div class="modal-box">' + renderRoleModal(role, allPerms) + "</div>",
+    );
+  }
+
+  function _openRoleModalByIdx(idx) {
+    var role = PM_STATE.roles[idx];
+    if (!role) {
+      NotificationEngine.error("لم يتم العثور على الدور");
+      return;
+    }
+    openRoleModal(role);
+  }
+
+  function _confirmDeleteRoleByIdx(idx) {
+    var role = PM_STATE.roles[idx];
+    if (!role) {
+      NotificationEngine.error("لم يتم العثور على الدور");
+      return;
+    }
+    confirmDeleteRole(role.id, role.label);
+  }
+
+  function _roleCheckAll(state) {
+    // يدعم التصميم الجديد (perm-checkbox-custom) والقديم (perm-cb)
+    document
+      .querySelectorAll(".perm-checkbox-custom:not(.disabled)")
+      .forEach(function (cb) {
+        if (state) cb.classList.add("checked");
+        else cb.classList.remove("checked");
+      });
+    document
+      .querySelectorAll(".perm-cb:not([disabled])")
+      .forEach(function (cb) {
+        cb.checked = state;
+      });
+    // تحديث شريط التقدم
+    var list = document.getElementById("role-perm-list");
+    if (!list) return;
+    var total = list.querySelectorAll(".perm-checkbox-custom").length;
+    var active = list.querySelectorAll(".perm-checkbox-custom.checked").length;
+    var pct = total > 0 ? Math.round((active / total) * 100) : 0;
+    var bar = document.getElementById("role-perm-bar");
+    var badge = document.getElementById("role-perm-badge");
+    if (bar) bar.style.width = pct + "%";
+    if (badge) badge.textContent = active + " من " + total;
+  }
+
+  function saveRoleFromModal() {
+    var id = (document.getElementById("role-id") || {}).value || "";
+    var name = (
+      (document.getElementById("role-name") || {}).value || ""
+    ).trim();
+    var label = (
+      (document.getElementById("role-label") || {}).value || ""
+    ).trim();
+    var color =
+      (document.getElementById("role-color") || {}).value || "#6b7280";
+
+    if (!name) {
+      NotificationEngine.error("اسم الدور مطلوب");
+      return;
+    }
+
+    // قراءة الصلاحيات من التصميم الجديد أولاً، ثم القديم كـ fallback
+    var permissions = [];
+    var newCbs = document.querySelectorAll(
+      "#role-perm-list .perm-checkbox-custom.checked",
+    );
+    if (newCbs.length > 0) {
+      newCbs.forEach(function (cb) {
+        if (cb.dataset.key) permissions.push(cb.dataset.key);
+      });
+    } else {
+      document.querySelectorAll(".perm-cb:checked").forEach(function (cb) {
+        permissions.push(cb.dataset.key);
+      });
+    }
+
+    var role = {
+      id: id || null,
+      name: name,
+      label: label || name,
+      color: color,
+      permissions: permissions,
+    };
+
+    // UX: إغلاق فوري + مؤشر خلفي بدل _freezeUI التقليدي
+    closeDrawer();
+    _freezeUI(SAVE_MESSAGES.SAVING);
+    _gsr("saveRole", [role, APP.currentUser.username, SESSION.token], {
+      label: "saveRole",
+      onSuccess: function (res) {
+        _unfreezeUI();
+        NotificationEngine.success(res.message);
+        PM_STATE.loaded = false;
+        loadPermissionMatrix();
+      },
+      onError: function (res) {
+        _unfreezeUI();
+        NotificationEngine.error("خطأ: " + res.message);
+      },
+    });
+  }
+
+  function confirmDeleteRole(roleId, roleLabel) {
+    showConfirm({
+      title: "حذف الدور",
+      message: "هل أنت متأكد من حذف الدور «" + roleLabel + "»؟",
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      icon: "ti-trash",
+      iconColor: "#dc2626",
+      freezeMessage: "⏳ جاري الحذف...",
+      onConfirm: function (unfreezeUI) {
+        _gsr(
+          "deleteRole",
+          [roleId, APP.currentUser.username, SESSION.token],
+          {
+            label: "deleteRole",
+            onSuccess: function (res) {
+              unfreezeUI();
+              NotificationEngine.success(res.message || "تم");
+              PM_STATE.loaded = false;
+              loadPermissionMatrix();
+            },
+            onError: function (res) {
+              unfreezeUI();
+              NotificationEngine.error("خطأ: " + res.message);
+            },
+          },
+        );
+      },
+    });
+  }
+
+  // ============================================================
+  //  مودال Override المستخدم
+  // ============================================================
+  function openUserOverrideModal(userObj) {
+    var allPerms = PM_STATE.permissions;
+    var ov = PM_STATE.userOverrides[userObj.username] || {
+      extra: [],
+      denied: [],
+    };
+    var rolePerms = _getRolePermsLocal(userObj.role);
+    openDrawer(
+      '<div class="modal-box">' +
+        renderUserOverrideModal(userObj, allPerms, ov, rolePerms) +
+        "</div>",
+    );
+  }
+
+  function _getRolePermsLocal(roleName) {
+    var role = PM_STATE.roles.find(function (r) {
+      return r.name === roleName;
+    });
+    return role ? role.permissions || [] : [];
+  }
+
+  function saveUserOverrideFromModal() {
+    var username = (document.getElementById("ov-username") || {}).value || "";
+    var rolePerms = JSON.parse(
+      (document.getElementById("ov-role-perms") || {}).value || "[]",
+    );
+    if (!username) return;
+
+    var extra = [];
+    var denied = [];
+
+    // ── التصميم الجديد: perm-checkbox-custom ──
+    document
+      .querySelectorAll(
+        ".perm-list-wrap .perm-checkbox-custom.checked:not(.disabled)",
+      )
+      .forEach(function (cb) {
+        if (rolePerms.indexOf(cb.dataset.key) === -1)
+          extra.push(cb.dataset.key);
+      });
+
+    // ── التصميم القديم fallback: ov-grant-cb ──
+    if (extra.length === 0) {
+      document
+        .querySelectorAll(".ov-grant-cb:checked:not([disabled])")
+        .forEach(function (cb) {
+          if (rolePerms.indexOf(cb.dataset.key) === -1)
+            extra.push(cb.dataset.key);
+        });
+    }
+
+    // ── deny checkboxes (مشترك بين التصميمين) ──
+    document.querySelectorAll(".ov-deny-cb:checked").forEach(function (cb) {
+      denied.push(cb.dataset.key);
+    });
+
+    // UX: إغلاق فوري + مؤشر خلفي
+    closeDrawer();
+    _freezeUI(SAVE_MESSAGES.SAVING);
+    _gsr(
+      "saveUserPermissionOverrides",
+      [username, extra, denied, APP.currentUser.username, SESSION.token],
+      {
+        label: "saveUserPermissionOverrides",
+        onSuccess: function (res) {
+          _unfreezeUI();
+          NotificationEngine.success(res.message);
+          PM_STATE.userOverrides[username] = { extra: extra, denied: denied };
+          _renderOverrides();
+        },
+        onError: function (res) {
+          _unfreezeUI();
+          NotificationEngine.error("خطأ: " + res.message);
+        },
+      },
+    );
+  }
+
+  // ============================================================
+  //  Helper — لون الأفاتار
+  // ============================================================
+  function _pmAvatarColor(username) {
+    var colors = [
+      "#3b82f6",
+      "#10b981",
+      "#f59e0b",
+      "#ef4444",
+      "#8b5cf6",
+      "#ec4899",
+      "#14b8a6",
+      "#f97316",
+    ];
+    var hash = 0;
+    for (var i = 0; i < username.length; i++) hash += username.charCodeAt(i);
+    return colors[hash % colors.length];
+  }
+
+  // ============================================================
+  //  ربط الصفحة — bindPermissionsPage()
+  // ============================================================
+  function bindPermissionsPage() {
+    if (!PM_STATE.loaded) {
+      loadPermissionMatrix();
+    } else {
+      _renderRolesGrid();
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // دوال إدارة المستخدمين (نُقلت من 05_Production)
+  // ─────────────────────────────────────────────────────────────
+  // المستخدمون — Users
+  // ============================================================
+
+  function editUser(username) {
+    var u = APP.data.users.find(function (u) {
+      return String(u.username) === String(username);
+    });
+    if (u) {
+      openUserModal(u);
+    } else {
+      _gsr("getUsers", [APP.currentUser.username, SESSION.token], {
+        label: "getUsers:editUser",
+        onSuccess: function (r) {
+          var users = r.data && r.data.users;
+          var found =
+            users &&
+            users.find(function (x) {
+              return String(x.username) === String(username);
+            });
+          if (found) openUserModal(found);
+          else NotificationEngine.error("لم يتم العثور على المستخدم");
+        },
+        onError: function () {
+          NotificationEngine.error("خطأ في تحميل بيانات المستخدم");
+        },
+      });
+    }
+  }
+
+  function delUser(username) {
+    showConfirm({
+      icon: "ti-user-x",
+      iconColor: "#dc2626",
+      title: "حذف المستخدم",
+      message:
+        'هل تريد حذف المستخدم "' +
+        username +
+        '"؟ لا يمكن التراجع عن هذا الإجراء.',
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      onConfirm: function () {
+        _gsr(
+          "deleteUser",
+          [
+            username,
+            APP.currentUser.username,
+            SESSION ? SESSION.token : null,
+          ],
+          {
+            label: "deleteUser",
+            // [SESSION-FIX] نفس مشكلة إضافة/تعديل المستخدم: deleteUser(username,
+            // callerUser, sessionToken) بدون المعامل الثالث كانت ترفض الحذف
+            // دائمًا برسالة "جلسة غير صالحة" مهما كانت الجلسة سليمة.
+            onSuccess: function (r) {
+              NotificationEngine.success(r.message);
+              // 🎯 [FIX] نفس فيكس إضافة/تعديل المستخدم — بدون optimisticPatch
+              // كان الجدول بيترسم فورًا من الكاش القديم اللي لسه فيه
+              // المستخدم المحذوف، ومكانش بيختفي إلا بعد اكتمال المزامنة
+              // الخلفية.
+              reloadAfterMutation(null, null, undefined, {
+                collection: "users",
+                idField: "username",
+                op: "remove",
+                record: { username: username },
+              });
+            },
+            onError: function (r) {
+              NotificationEngine.error(r.message);
+            },
+          },
+        );
+      },
+    });
+  }
+
+  function openUserModal(user) {
+    var isEdit = !!user;
+    var isActive = isEdit
+      ? user.active === true || String(user.active).toUpperCase() === "TRUE"
+      : true;
+    openStyledDrawer({
+      title: isEdit ? "تعديل مستخدم" : "إضافة مستخدم",
+      subtitle: "إدارة صلاحيات المستخدم",
+      icon: isEdit ? "ti-user-edit" : "ti-user-plus",
+      color: "blue",
+      width: 860,
+      body:
+        '<div class="modal-body">' +
+        '<div class="form-grid">' +
+        '<div class="field"><label>اسم المستخدم *</label><input class="input" id="u-username" data-testid="user-username" value="' +
+        (isEdit ? esc(user.username) : "") +
+        '" placeholder="username">' +
+        (isEdit
+          ? '<div style="font-size:11px;color:var(--text2);margin-top:4px;">' +
+            " تغيير اسم المستخدم سيُنهي كل جلسات دخوله الحالية وسيحتاج لتسجيل الدخول باسمه الجديد." +
+            "</div>"
+          : "") +
+        "</div>" +
+        '<div class="field"><label>الاسم الكامل *</label><input class="input" id="u-fullname" data-testid="user-fullname" value="' +
+        (isEdit ? esc(user.full_name || "") : "") +
+        '" placeholder="الاسم الكامل"></div>' +
+        '<div class="field"><label>كلمة المرور ' +
+        (isEdit ? "(فارغة = بدون تغيير)" : "*") +
+        "</label>" +
+        '<div style="position:relative">' +
+        '<input class="input" id="u-pass" data-testid="user-password" type="password" value=""' +
+        ' placeholder="8+ أحرف، رقم، حرف كبير، رمز" autocomplete="new-password"' +
+        ' oninput="_evalPasswordStrength(this.value)" style="padding-left:2.5rem">' +
+        '<button type="button" onclick="_togglePassVis()" title="إظهار/إخفاء"' +
+        ' style="position:absolute;left:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;padding:0;color:var(--text2)">' +
+        '<i id="u-pass-eye" class="ti ti-eye" style="font-size:16px"></i></button>' +
+        "</div>" +
+        '<div id="u-pass-strength" style="margin-top:5px;display:none">' +
+        '<div style="background:var(--border);border-radius:2px;height:3px;margin-bottom:3px">' +
+        '<div id="u-pass-bar" style="height:3px;border-radius:2px;transition:width .3s,background .3s;width:0"></div>' +
+        "</div>" +
+        '<span id="u-pass-msg" style="font-size:11px;color:var(--text2)"></span>' +
+        "</div>" +
+        "</div>" +
+        '<div class="field"><label>البريد الإلكتروني</label><input class="input" id="u-email" type="email" value="' +
+        (isEdit ? esc(user.email || "") : "") +
+        '" placeholder="example@email.com"></div>' +
+        '<div class="field"><label>الصلاحية</label><select class="input" id="u-role" data-testid="user-role">' +
+        '<option value="admin"' +
+        (isEdit && user.role === "admin" ? " selected" : "") +
+        ">مدير</option>" +
+        '<option value="supervisor"' +
+        (isEdit && user.role === "supervisor" ? " selected" : "") +
+        ">مشرف</option>" +
+        '<option value="operator"' +
+        (!isEdit || (isEdit && user.role === "operator") ? " selected" : "") +
+        ">موظف</option>" +
+        '<option value="viewer"' +
+        (isEdit && user.role === "viewer" ? " selected" : "") +
+        ">مشاهد</option>" +
+        "</select></div>" +
+        '<div class="field"><label>حالة الحساب</label>' +
+        '<select class="input" id="u-active">' +
+        '<option value="true"' +
+        (isActive ? " selected" : "") +
+        ">نشط</option>" +
+        '<option value="false"' +
+        (!isActive ? " selected" : "") +
+        ">موقوف</option>" +
+        "</select></div>" +
+        "</div>" +
+        // [FORCE-PW-1] التحكم في إجبار المستخدم على تغيير كلمة المرور
+        '<div class="field" style="margin-top:10px;padding:12px 14px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);">' +
+        '<label style="display:flex;align-items:center;gap:8px;cursor:' +
+        (isEdit ? "pointer" : "default") +
+        ';font-weight:600;font-size:13px;">' +
+        '<input type="checkbox" id="u-force-pw" ' +
+        (!isEdit
+          ? "checked disabled"
+          : user && user.forcePasswordChange
+            ? "checked"
+            : "") +
+        ' style="width:16px;height:16px;cursor:' +
+        (isEdit ? "pointer" : "default") +
+        '">' +
+        " إجبار المستخدم على تغيير كلمة المرور عند الدخول القادم" +
+        "</label>" +
+        '<div style="font-size:11px;color:var(--text2);margin-top:4px;margin-right:24px;">' +
+        (!isEdit
+          ? "إلزامي لكل مستخدم جديد — لن يستطيع استخدام النظام بكلمة المرور المؤقتة قبل تغييرها."
+          : "لو فعّلت هذا الخيار (أو عيّنت كلمة مرور جديدة أعلاه)، سيُطالَب المستخدم بتغيير كلمة مروره فور تسجيل الدخول القادم، ولن يصل لأي شاشة أخرى قبل ذلك.") +
+        "</div>" +
+        "</div>",
+      footer:
+        '<button class="btn btn-outline" onclick="closeStyledDrawer()">إلغاء</button>' +
+        '<button class="btn btn-primary" id="user-save-btn" data-testid="btn-save-user">' +
+        '<i class="ti ' +
+        (isEdit ? "ti-device-floppy" : "ti-user-plus") +
+        '"></i> ' +
+        (isEdit ? "حفظ التعديلات" : "إضافة المستخدم") +
+        "</button>",
+      onReady: function () {
+        // [FORCE-PW-1] لو الأدمن كتب كلمة مرور جديدة، فعّل تلقائيًا خيار
+        // "إجبار على تغيير كلمة المرور" (هو السلوك الافتراضي عند أي إعادة
+        // تعيين لكلمة المرور) — يقدر الأدمن يلغيه يدويًا لو مش عايزه.
+        var _uPassEl = document.getElementById("u-pass");
+        var _uForcePwEl = document.getElementById("u-force-pw");
+        if (_uPassEl && _uForcePwEl) {
+          _uPassEl.addEventListener("input", function () {
+            if (this.value && !_uForcePwEl.disabled) {
+              _uForcePwEl.checked = true;
+            }
+          });
+        }
+
+        document
+          .getElementById("user-save-btn")
+          .addEventListener("click", function () {
+            var obj = {
+              username: document.getElementById("u-username").value.trim(),
+              // [RENAME-USER] هوية البحث الثابتة في الباك-إند — تسمح
+              // بتغيير username نفسه دون أن يفقد الباك-إند القدرة على
+              // إيجاد الصف الأصلي (كان findRow يبحث بالقيمة الجديدة
+              // فيفشل دائمًا لو اختلفت عن القديمة).
+              original_username: isEdit ? user.username : undefined,
+              full_name: document.getElementById("u-fullname").value.trim(),
+              password: document.getElementById("u-pass").value || "",
+              role: document.getElementById("u-role").value,
+              email: document.getElementById("u-email").value.trim(),
+              active: document.getElementById("u-active").value === "true",
+              // [FORCE-PW-1] لمستخدم جديد: دايمًا true (checkbox معطّل ومحدد).
+              // لمستخدم موجود: يعكس اختيار الأدمن الصريح من الـ checkbox.
+              force_password_change: document.getElementById("u-force-pw")
+                ? document.getElementById("u-force-pw").checked
+                : true,
+              callerUser: APP.currentUser.username,
+              // [SESSION-FIX] بدون هذا الحقل، updateUser تقرأ user.sessionToken
+              // كـ undefined وتَرفض العملية دائمًا برسالة "جلسة غير صالحة" —
+              // بغض النظر عن صحة الجلسة الفعلية. نفس النمط المتّبع في باقي
+              // نداءات google.script.run بالمشروع (قارن SESSION.token في
+              // saveRole/deleteRole/getPermissionMatrix بنفس الملف).
+              sessionToken: SESSION ? SESSION.token : null,
+            };
+            // ── [VF] التحقق الموحّد ──────────────────────────────
+            if (typeof VF !== "undefined") {
+              var _uCfg = [
+                {
+                  fieldId: "u-user",
+                  rules: VF.RULES.requiredText("اسم المستخدم"),
+                },
+                {
+                  fieldId: "u-full-name",
+                  rules: VF.RULES.requiredText("الاسم الكامل"),
+                },
+                { fieldId: "u-email", rules: VF.RULES.email(false) },
+              ];
+              if (!isEdit) {
+                _uCfg.push({
+                  fieldId: "u-pass",
+                  rules: VF.RULES.requiredText("كلمة المرور"),
+                });
+              }
+              if (!VF.quickSave(_uCfg)) return;
+            } else {
+              if (!obj.username || !obj.full_name) {
+                NotificationEngine.error("اسم المستخدم والاسم الكامل مطلوبان");
+                return;
+              }
+              if (!isEdit && !obj.password) {
+                NotificationEngine.error("كلمة المرور مطلوبة");
+                return;
+              }
+            }
+            // [SEC] تحقق من قوة كلمة المرور في الواجهة قبل الإرسال
+            if (obj.password) {
+              var pwErr = _checkPasswordPolicy(obj.password);
+              if (pwErr) {
+                NotificationEngine.error(pwErr);
+                return;
+              }
+            }
+            var fn = isEdit ? "updateUser" : "addUser";
+            // [SELF-RENAME] لو المستخدم بيغيّر اسم المستخدم (username) بتاعه
+            // هو نفسه وهو شغال بنفس الجلسة الحالية — الباك-إند (updateUser →
+            // _propagateUserRename → _destroyAllUserSessions) بيقفل كل جلساته
+            // القديمة فورًا، فلازم الفرونت يعمل logout فوري بعد نجاح الحفظ
+            // بدل ما يفضل شغال بجلسة اتقفلت ويطلع له خطأ "جلسة غير صالحة"
+            // فجأة في أول عملية بعدها.
+            var _isSelfRename =
+              isEdit &&
+              user &&
+              user.username === APP.currentUser.username &&
+              obj.username &&
+              obj.username !== user.username;
+            // UX: إغلاق فوري + مؤشر خلفي
+            closeModal();
+            _freezeUI(
+              isEdit
+                ? "⏳ جاري حفظ بيانات المستخدم..."
+                : "⏳ جاري إضافة المستخدم...",
+            );
+            _gsr(
+              fn,
+              [obj, APP.currentUser.username, SESSION ? SESSION.token : null],
+              {
+                label: fn,
+                // [SESSION-FIX] addUser(user, callerUser, sessionToken) تقرأ
+                // sessionToken كمعامل ثالث منفصل (بعكس updateUser التي تقرأه من
+                // داخل الكائن نفسه) — لازم يُمرَّر صراحةً هنا وإلا فشلت إضافة
+                // مستخدم جديد بنفس خطأ "جلسة غير صالحة".
+                onSuccess: function (r) {
+                  _unfreezeUI();
+                  NotificationEngine.success(r.message);
+                  // [SELF-RENAME] لو المستخدم غيّر اسمه هو نفسه، منعملش
+                  // reload/renderPage عادي — جلسته اتقفلت من الباك-إند فعلاً،
+                  // فبنعمل logout فوري (بدون نافذة تأكيد) ونطلب منه يسجّل
+                  // دخول تاني باسمه الجديد.
+                  if (_isSelfRename) {
+                    NotificationEngine.info(
+                      "🔒 تم تغيير اسم المستخدم — سجّل الدخول من جديد باسمك الجديد",
+                    );
+                    setTimeout(function () {
+                      if (typeof _performLogout === "function") {
+                        _performLogout();
+                      } else {
+                        location.reload();
+                      }
+                    }, 1200);
+                    return;
+                  }
+                  // 🎯 [FIX] بدون optimisticPatch هنا، renderPage("users")
+                  // كانت بترسم من الكاش القديم فورًا (قبل ما تتحدّث)، وكان
+                  // المستخدم الجديد بيظهر بس بعد اكتمال المزامنة الخلفية
+                  // (DL.Core.getAllData بعد ~300ms+ فوق زمن الشبكة الفعلي) —
+                  // يعني التوست بيخلص قبل ما البيانات فعلاً تتحدّث والمستخدم
+                  // الجديد يظهر في الجدول.
+                  reloadAfterMutation(
+                    function () {
+                      renderPage("users");
+                    },
+                    null,
+                    undefined,
+                    {
+                      collection: "users",
+                      idField: "username",
+                      op: isEdit ? "update" : "add",
+                      record: {
+                        username: obj.username,
+                        full_name: obj.full_name,
+                        role: obj.role,
+                        email: obj.email,
+                        active: obj.active,
+                        last_login: isEdit
+                          ? (user && user.last_login) || ""
+                          : "",
+                      },
+                    },
+                  );
+                },
+                onError: function (r) {
+                  _unfreezeUI();
+                  NotificationEngine.error(r.message);
+                },
+              },
+            );
+          });
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // الإنتاج — Production
+  // ─────────────────────────────────────────────────────────────
+
+  // ─────────────────────────────────────────────────────────────
+  // §SEC  Password strength — مؤشر قوة كلمة المرور [SEC-FIX-UI]
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * _checkPasswordPolicy — [PW-UNIFY] بيفوّض بالكامل لـ VF.checkPasswordRequirements
+   * (VF_JS_Validation.html)، نفس قواعد الباكيند (PASSWORD_POLICY في Code_12_Core.js)
+   * بما فيها شرط الحرف الصغير وقائمة الكلمات الممنوعة (كانا ناقصين هنا سابقًا).
+   * @param {string} pw
+   * @returns {string|null} رسالة الخطأ أو null إذا كانت قوية
+   */
+  function _checkPasswordPolicy(pw) {
+    var s = VF.checkPasswordRequirements(pw);
+    if (!s.len)
+      return (
+        "كلمة المرور يجب أن تكون " +
+        VF.passwordPolicy.MIN_LENGTH +
+        " أحرف على الأقل"
+      );
+    if (!s.num) return "كلمة المرور يجب أن تحتوي على رقم واحد على الأقل";
+    if (!s.upper)
+      return "كلمة المرور يجب أن تحتوي على حرف كبير (A-Z) واحد على الأقل";
+    if (!s.lower)
+      return "كلمة المرور يجب أن تحتوي على حرف صغير (a-z) واحد على الأقل";
+    if (!s.special)
+      return "كلمة المرور يجب أن تحتوي على رمز خاص (!@#$...) واحد على الأقل";
+    if (s.banned) return "كلمة المرور ضعيفة جداً — اختر كلمة مرور أقوى";
+    return null;
+  }
+
+  /**
+   * _evalPasswordStrength — يحدّث مؤشر القوة أثناء الكتابة
+   * [PW-UNIFY] العدّ ولون/تسمية الشريط بيجيوا دلوقتي من VF.checkPasswordRequirements
+   * و VF.passwordStrengthMeta، بدل حساب score محلي منفصل.
+   * @param {string} pw
+   */
+  function _evalPasswordStrength(pw) {
+    var bar = document.getElementById("u-pass-bar");
+    var msg = document.getElementById("u-pass-msg");
+    var wrap = document.getElementById("u-pass-strength");
+    if (!bar || !msg || !wrap) return;
+
+    if (!pw) {
+      wrap.style.display = "none";
+      return;
+    }
+    wrap.style.display = "block";
+
+    var s = VF.checkPasswordRequirements(pw);
+    var meta = VF.passwordStrengthMeta(s.passCount, pw.length);
+    bar.style.width = meta.pct + "%";
+    bar.style.background = meta.color;
+    msg.textContent = meta.label;
+    msg.style.color = meta.color;
+  }
+
+  /**
+   * _togglePassVis — إظهار/إخفاء كلمة المرور
+   */
+  function _togglePassVis() {
+    var inp = document.getElementById("u-pass");
+    var eye = document.getElementById("u-pass-eye");
+    if (!inp) return;
+    var hidden = inp.type === "password";
+    inp.type = hidden ? "text" : "password";
+    if (eye) {
+      eye.className = hidden ? "ti ti-eye-off" : "ti ti-eye";
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // §AD-BIND  لوحة الإدارة — bind/refresh/help/search (Dashboard Framework)
+  // ═══════════════════════════════════════════════════════════════════
+  function bindAdminDashboard() {
+    if (typeof NavigationService !== "undefined") {
+      NavigationService.trackVisit("admin-dashboard", {
+        label: "الإدارة",
+        icon: '<i class="ti ti-settings-2"></i>',
+      });
+    }
+    // سجل العمليات مش جزء من getAllData الأساسية — بيتجاب بشكل منفصل
+    // وبيتعمل له re-render صامت للوحة بمجرد وصوله (نفس فلسفة ensureExtendedData)
+    if (APP._adminAuditLoaded) return;
+    _gsr("getAuditLog", [50, {}], {
+      label: "getAuditLog:adminDashboard",
+      onSuccess: function (r) {
+        APP._adminAuditLoaded = true;
+        APP.data = APP.data || {};
+        APP.data.auditLog = r.data || [];
+        if (APP.currentPage === "admin-dashboard") {
+          APP._fromSilentRefresh = true;
+          renderPage("admin-dashboard");
+          APP._fromSilentRefresh = false;
+        }
+      },
+      onError: function () {
+        APP._adminAuditLoaded = true; // منع إعادة المحاولة اللانهائية
+      },
+    });
+  }
+
+  function refreshAdminDashboard() {
+    APP._adminAuditLoaded = false;
+    if (typeof DashboardService !== "undefined")
+      DashboardService.invalidateByPrefix("admin");
+    renderPage(APP.currentPage);
+  }
+
+  function showAdminDashboardHelp() {
+    if (typeof showToast === "function") {
+      NotificationEngine.info(
+        "اضغط اسم القسم بالقائمة الجانبية للعودة لهذه اللوحة، والسهم بجانبه لفتح/قفل باقي شاشات الإدارة."
+      );
+    }
+  }
+
+  function adminDashboardSearch(value) {
+    var box = document.getElementById("adm-search-results");
+    if (!box) return;
+    var q = (value || "").trim();
+    if (!q) {
+      box.innerHTML = "";
+      return;
+    }
+    var list = (APP.data && APP.data.users) || [];
+    var qLower = q.toLowerCase();
+    var matches = list
+      .filter(function (u) {
+        return (
+          (u.full_name && u.full_name.toLowerCase().indexOf(qLower) !== -1) ||
+          (u.username && u.username.toLowerCase().indexOf(qLower) !== -1)
+        );
+      })
+      .slice(0, 8);
+    if (!matches.length) {
+      box.innerHTML =
+        "<div class='dw-list-item' style='cursor:default'><span class='dw-list-text'>لا توجد نتائج مطابقة</span></div>";
+      return;
+    }
+    box.innerHTML = matches
+      .map(function (u) {
+        return (
+          "<div class='dw-list-item' style='cursor:pointer' onclick=\"navigate('users')\">" +
+          "<span class='dw-list-icon'><i class='ti ti-user'></i></span>" +
+          "<span class='dw-list-text'>" +
+          esc(u.full_name || u.username || "") +
+          "</span>" +
+          "</div>"
+        );
+      })
+      .join("");
+  }
+</script>

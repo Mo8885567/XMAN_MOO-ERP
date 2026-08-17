@@ -1,0 +1,1165 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 23_JS_PostingConfig_FixedAssets.html
+  // شاشة إعدادات ربط الحسابات (Posting Configuration)
+  // + شاشة الأصول الثابتة والإهلاك (Fixed Assets & Depreciation)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // §PC  إعدادات ربط الحسابات — Posting Configuration
+  // ─────────────────────────────────────────────────────────────────────────
+
+  function renderPostingConfig() {
+    return [
+      '<div class="invset-wrap">',
+      '<div class="page-header">',
+      '<div class="page-header-left">',
+      '<div class="page-icon" style="background:linear-gradient(135deg,#7C3AED,#6D28D9)"><i class="ti ti-link" style="font-size:22px;color:#fff"></i></div>',
+      '<div><h1 class="page-title">ثوابت الحسابات</h1>',
+      '<p class="page-subtitle">اربط كل عملية مالية بحسابها في دليل الحسابات — هذه الثوابت تتحكم في جميع القيود التلقائية للنظام</p></div>',
+      "</div>",
+      '<div class="page-header-actions">',
+      '<button class="btn btn-outline" id="pc-refresh-btn" onclick="_loadPostingConfig()" title="تحديث القائمة لو عدّلت دليل الحسابات من مكان تاني">',
+      '<i class="ti ti-refresh"></i></button>',
+      '<button class="btn btn-outline" id="pc-audit-log-btn" onclick="pcOpenAuditLog()" title="من غيّر أي حساب؟ متى؟ من أي حساب إلى أي حساب؟">',
+      '<i class="ti ti-history"></i> سجل التعديلات</button>',
+      '<button class="btn btn-outline" id="pc-auto-detect-btn" onclick="pcAutoDetect()">',
+      '<i class="ti ti-wand"></i> كشف تلقائي</button>',
+      '<button class="btn btn-primary" id="pc-save-btn" onclick="pcSaveAll()">',
+      '<i class="ti ti-device-floppy"></i> حفظ جميع الإعدادات</button>',
+      "</div></div>",
+      '<div id="pc-status-bar" style="display:none;padding:10px 16px;border-radius:8px;margin-bottom:16px;font-size:13px;font-weight:600"></div>',
+      '<div id="pc-content">',
+      '<div class="loading-spinner-wrap"><i class="ti ti-loader-2 spin" style="font-size:32px;color:var(--accent)"></i><p>جاري تحميل إعدادات الترحيل…</p></div>',
+      "</div>",
+      "</div>",
+    ].join("");
+  }
+
+  // [SETTINGS-RESTYLE-2026-08-08-XMAN] مجموعات العرض للمفاتيح — أُعيد
+  // ترتيبها وتوسيعها لمطابقة شاشة "ثوابت الحسابات" المرجعية (تصميم X-MAN):
+  // نفس أسماء الأقسام وترتيبها بالضبط كما تظهر في الشاشة المرجعية.
+  var PC_GROUPS = [
+    {
+      title: "بيانات اساسية",
+      icon: "ti-building-bank",
+      color: "#7C3AED",
+      keys: [
+        "opening_balance_equity_account",
+        "capital_account",
+        "branch_cash_transfer_account",
+      ],
+    },
+    {
+      title: "حسابات النقدية والبنوك",
+      icon: "ti-cash",
+      color: "#059669",
+      keys: [
+        "treasury_account",
+        "bank_account",
+        "employee_cash_custody_account",
+        "notes_receivable_account",
+        "notes_payable_account",
+        "checks_under_collection_account",
+        "bank_notices_account",
+        "documentary_credits_account",
+        "visa_account",
+        "visa_commission_account",
+        "returned_checks_portfolio_account",
+        "accrued_collection_revenue_account",
+        "discount_coupons_account",
+      ],
+    },
+    {
+      title: "العملاء والموردين",
+      icon: "ti-users-group",
+      color: "#1D4ED8",
+      keys: [
+        "customers_account",
+        "suppliers_account",
+        "clients_account",
+        "other_parties_account",
+        "notices_account",
+        "financial_settlements_account",
+        "bad_debts_account",
+        "consignment_sales_ratio_account",
+        "unrealized_profit_account",
+        "realized_profit_account",
+        "third_party_deposits_account",
+      ],
+    },
+    {
+      title: "الأصناف",
+      icon: "ti-package",
+      color: "#92400E",
+      keys: [
+        "goods_inventory_account",
+        "revenue_account",
+        "sales_return_account",
+        "sales_allowances_account",
+        "donations_grants_account",
+        "marketing_gifts_samples_account",
+        "inventory_waste_account",
+        "inventory_variance_account",
+        "finished_goods_account",
+        "cogs_account",
+        "warehouse_transfers_account",
+      ],
+    },
+    {
+      title: "شئون العاملين",
+      icon: "ti-users",
+      color: "#BE185D",
+      keys: [
+        "salary_expense_account",
+        "salary_payable_account",
+        "loan_account",
+        "incentives_account",
+        "employee_service_dues_account",
+        "company_paid_services_account",
+        "sales_rep_commission_ratio_account",
+        "sales_rep_commission_clearing_account",
+        "delivery_revenue_account",
+      ],
+    },
+    {
+      title: "الضرائب و التأمينات",
+      icon: "ti-receipt-tax",
+      color: "#B91C1C",
+      keys: [
+        "taxes_account",
+        "additional_tax_account",
+        "labor_income_tax_account",
+        "insurance_payable_account",
+        "withholding_addition_tax_account",
+      ],
+    },
+    {
+      title: "الخصومات",
+      icon: "ti-discount-2",
+      color: "#0891B2",
+      keys: [
+        "purchase_discount_account",
+        "sales_discount_account",
+        "quantity_discount_earned_account",
+        "quantity_discount_allowed_account",
+      ],
+    },
+    {
+      title: "الأصول الثابتة",
+      icon: "ti-building-factory",
+      color: "#B45309",
+      keys: [
+        "fixed_asset_account",
+        "depreciation_provision_account",
+        "maintenance_expense_account",
+        "accumulated_depreciation_account",
+        "capital_gains_account",
+        "capital_losses_account",
+        "depreciation_expense_account",
+        "disposed_assets_account",
+        "revaluation_surplus_account",
+      ],
+    },
+    {
+      title: "فروق العملات",
+      icon: "ti-currency-dollar",
+      color: "#4338CA",
+      keys: ["fx_gain_account", "fx_loss_account", "rounding_difference_account"],
+    },
+    {
+      title: "إغلاق اليومية",
+      icon: "ti-lock",
+      color: "#64748B",
+      keys: ["daily_closing_shortage_account"],
+    },
+  ];
+
+  var _pcData = null; // الداتا المحملة { keys: [...], accounts: [...] }
+  var _pcLoadedAt = 0; // [PERF-2026-08-08] وقت آخر تحميل ناجح (Date.now())
+  // كانت الشاشة بتعمل _gsr("getPostingConfigKeys") — وده بيقرأ شيت
+  // ChartOfAccounts كامل + شيت الإعدادات — في كل مرة يُفتح فيها التاب،
+  // حتى لو المستخدم راح لتاب تاني ورجع بعد ثانية واحدة بدون أي تغيير
+  // فعلي في الحسابات. البيانات دي "Master Data" مش Real-time Critical،
+  // فمناسب لها Cache قصير المدى بدل تحميل من جديد في كل navigation.
+  // Invalidation صريح لسه شغال زي ما هو: pcSaveAll/pcAutoDetect بينادوا
+  // _loadPostingConfig() مباشرة (بيتخطى الكاش) لأن البيانات فعليًا اتغيرت.
+  var _PC_CACHE_TTL_MS = 5 * 60 * 1000; // 5 دقائق
+
+  function bindPostingConfig() {
+    var isFresh = _pcData && Date.now() - _pcLoadedAt < _PC_CACHE_TTL_MS;
+    if (isFresh) {
+      _pcRender(_pcData); // إعادة استخدام البيانات المحمّلة — بدون Request جديد
+      return;
+    }
+    _loadPostingConfig();
+  }
+
+  function _loadPostingConfig() {
+    _gsr(
+      "getPostingConfigKeys",
+      [
+        APP.currentUser ? APP.currentUser.username : null,
+        SESSION ? SESSION.token : null,
+      ],
+      {
+        rawResponse: true,
+        onSuccess: function (r) {
+          _pcData = r.data;
+          _pcLoadedAt = Date.now();
+          _pcRender(r.data);
+        },
+        onError: function (r) {
+          _pcShowStatus("error", " " + r.message);
+        },
+      },
+    );
+  }
+
+  // بناء صف واحد (label يمين + عنصر التحكم شمال) بنفس شكل شاشة
+  // "ثوابت الحسابات" — الحالة (مثبّت يدوياً/مكتشف تلقائياً/ناقص) بتتحول
+  // لنقطة ملوّنة صغيرة جوه شريط العنوان بدل عمود نص منفصل، عشان الصف
+  // يفضل سطر واحد مضغوط زي الجدول المرجعي.
+  function _pcRow(cfg, accounts) {
+    var isMissing = cfg.is_missing;
+    var statusLabel = isMissing
+      ? "غير موجود في دليل الحسابات"
+      : cfg.is_pinned
+        ? "مثبّت يدوياً"
+        : cfg.is_type_fallback
+          ? "افتراضي مبدئي — راجعه"
+          : "كُشف تلقائياً";
+
+    var control = renderFinancialAccountSelector(
+      "pc-sel-" + cfg.key,
+      cfg.account_id,
+      accounts,
+      {
+        label: "",
+        hint: "",
+        // [FIX-2026-08-08] كانت lazy:true رغم إن شجرة الحسابات كاملة أصلاً
+        // متحمّلة ومتبعتة هنا (_pcData.accounts) — فكان الكومبوبوكس بيفضل
+        // فاضي لحد ما تكتب حرفين بدل ما يعرض الشجرة الجاهزة فورًا. لازم
+        // lazy تتفعّل بس في الشاشات اللي معندهاش الحسابات محمّلة أصلاً.
+        lazy: false,
+        expectedType: cfg.account_type,
+        currentAccountLabel:
+          (cfg.account_code ? "[" + cfg.account_code + "] " : "") +
+          (cfg.account_name || ""),
+      },
+    );
+
+    return (
+      '<div class="pc-row" title="' +
+      statusLabel +
+      '">' +
+      '<span class="pc-row-label">' +
+      cfg.label +
+      "</span>" +
+      '<span class="pc-row-control">' +
+      control +
+      "</span>" +
+      "</div>"
+    );
+  }
+
+  // [SETTINGS-RESTYLE-2026-08-08] كل مجموعة بقت تاب + panel بدل بار
+  // ملوّن — نفس هيكل .invset-tabs/.invset-panels المستخدم في شاشات
+  // المخزون/العملاء/الفواتير، عشان الشاشة تبقى متناسقة بصرياً مع باقي
+  // النظام. لون المجموعة (group.color) اتحول من خلفية بار كاملة لتلوين
+  // أيقونة العنوان بس (نفس روح .invset-section-heading i بلون
+  // var(--primary))، بدل ما يبان كشريط قوي مبهر.
+  // [SETTINGS-RESTYLE-2026-08-08-XMAN] الشاشة بقت مطابقة للتصميم
+  // المرجعي (X-MAN): كل الأقسام معروضة تحت بعض في صفحة واحدة قابلة
+  // للتمرير (مش تابات منفصلة)، كل قسم عنوانه بار رمادي فاتح عريض،
+  // والصفوف تحته في جدول عمودين (يمين/شمال) بنفس ترتيب الشاشة المرجعية.
+  // رابط القفز (pc-jump-link) في الشريط العلوي بيعمل scroll لقسمه.
+  function _pcTabButton(group, index, hasRows) {
+    if (!hasRows) return "";
+    return (
+      '<a href="#pc-sec-' +
+      group.key +
+      '" class="pc-jump-link" onclick="_pcJump(event,\'pc-sec-' +
+      group.key +
+      '\')"><i class="ti ' +
+      group.icon +
+      '" style="color:' +
+      group.color +
+      '"></i><span>' +
+      group.title +
+      "</span></a>"
+    );
+  }
+
+  function _pcJump(ev, id) {
+    if (ev) ev.preventDefault();
+    var el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function _pcPanel(group, index, keys, keyMap) {
+    var rows = keys
+      .map(function (key) {
+        var cfg = keyMap[key];
+        return cfg ? _pcRow(cfg, _pcData.accounts || []) : "";
+      })
+      .join("");
+    if (!rows) return "";
+    return (
+      '<div class="pc-section" id="pc-sec-' +
+      group.key +
+      '">' +
+      '<div class="pc-section-heading"><i class="ti ' +
+      group.icon +
+      '" style="color:' +
+      group.color +
+      '"></i><h3>' +
+      group.title +
+      "</h3></div>" +
+      '<div class="pc-panel-body">' +
+      rows +
+      "</div></div>"
+    );
+  }
+
+
+  function _pcRender(res) {
+    var keys = res.data || [];
+    var accounts = res.accounts || [];
+    _pcData = res; // تحديث المرجع عشان _pcPanel يقدر يوصل للـ accounts
+
+    // بناء map من key → config
+    var keyMap = {};
+    keys.forEach(function (k) {
+      keyMap[k.key] = k;
+    });
+
+    // [ITEM-POSTING-WIRE-GAP-FIX-2026-08-08] تتبّع كل مفتاح تم عرضه ضمن
+    // المجموعات الثابتة فوق — أي مفتاح يرجع من الـ backend ومش موجود في
+    // PC_GROUPS (كان في السابق بيُتجاهل بصمت تماماً، فالمستخدم مايقدرش
+    // يراجعه أو يثبّته يدوياً) هيتعرض تلقائياً في مجموعة "أخرى" آخر
+    // القائمة بدل الاختفاء الصامت. ده تصحيح جذري يمنع تكرار نفس المشكلة
+    // مع أي مفتاح ترحيل جديد يُضاف مستقبلاً.
+    var _pcRenderedKeys = {};
+    var allGroups = PC_GROUPS.slice();
+    var _pcLeftoverKeys = keys
+      .map(function (k) {
+        return k.key;
+      })
+      .filter(function (k) {
+        return !PC_GROUPS.some(function (g) {
+          return g.keys.indexOf(k) !== -1;
+        });
+      });
+    if (_pcLeftoverKeys.length) {
+      allGroups = allGroups.concat([
+        {
+          key: "other",
+          title: "أخرى (حسابات إضافية غير مصنّفة)",
+          icon: "ti-dots",
+          color: "var(--text-muted)",
+          keys: _pcLeftoverKeys,
+        },
+      ]);
+    }
+
+    var visibleIndex = 0;
+    var tabsBtns = "";
+    var panels = "";
+    allGroups.forEach(function (group) {
+      var hasRows = group.keys.some(function (k) {
+        return !!keyMap[k];
+      });
+      if (!hasRows) return;
+      tabsBtns += _pcTabButton(group, visibleIndex, true);
+      panels += _pcPanel(group, visibleIndex, group.keys, keyMap);
+      group.keys.forEach(function (key) {
+        if (keyMap[key]) _pcRenderedKeys[key] = true;
+      });
+      visibleIndex++;
+    });
+
+    var html =
+      // [FIX-2026-08-08] بناءً على طلب إزالة شريط المفاتيح اللوني
+      // (مثبّت يدوياً/كُشف تلقائياً/افتراضي مبدئي/غير موجود) من أعلى
+      // الشاشة — لسه موجودة كـ tooltip (title) على كل صف عند الـ hover
+      // لو حد احتاج يعرف معنى النقطة الملوّنة.
+      '<div class="pc-jump-bar" id="pc-tabs">' +
+      tabsBtns +
+      "</div>" +
+      '<div class="pc-sections" id="pc-panels">' +
+      panels +
+      "</div>";
+
+    var container = document.getElementById("pc-content");
+    if (container) {
+      container.innerHTML = html;
+      // تفعيل حقل البحث الموحّد فوق كل select حساب (نفس سلوك شاشات العملاء/الموردين)
+      if (typeof initFinancialAccountSearcher === "function")
+        initFinancialAccountSearcher("pc-content");
+    }
+  }
+  // [SE-ROLLOUT] عبر SaveEngine.run بدل SaveButtonController + _gsr اليدوي
+  function pcSaveAll() {
+    SaveEngine.run({
+      screen: "posting_config",
+      entity: "accounting_settings",
+      buttonId: "pc-save-btn",
+      rules: [
+        {
+          test: function () {
+            return document.querySelectorAll('[id^="pc-sel-"]').length > 0;
+          },
+          message: "لا توجد إعدادات للحفظ",
+        },
+        {
+          test: function () {
+            var settings = [];
+            document.querySelectorAll('[id^="pc-sel-"]').forEach(function (sel) {
+              var key = sel.id.slice("pc-sel-".length);
+              if (key && sel.value)
+                settings.push({ key: key, account_id: sel.value });
+            });
+            return settings.length > 0;
+          },
+          message: " لم تختر أي حساب للحفظ",
+        },
+      ],
+      collect: function () {
+        var settings = [];
+        document.querySelectorAll('[id^="pc-sel-"]').forEach(function (sel) {
+          var key = sel.id.slice("pc-sel-".length);
+          var accountId = sel.value;
+          if (key && accountId) settings.push({ key: key, account_id: accountId });
+        });
+        return settings;
+      },
+      fn: "saveAllAccountingSettings",
+      params: function (settings) {
+        return [
+          {
+            callerUser: APP.currentUser ? APP.currentUser.username : null,
+            settings: settings,
+          },
+          SESSION ? SESSION.token : null,
+        ];
+      },
+      onSuccess: function (r) {
+        _pcShowStatus("success", r.message);
+        _loadPostingConfig(); // إعادة التحميل لتحديث حالة الأيقونات
+      },
+    });
+  }
+
+  // [PC-AUDIT-LOG-2026-08-08] فتح سجل العمليات (Audit Log) مفلتراً مسبقاً
+  // على تغييرات ثوابت الحسابات — يجاوب مباشرة على "من غيّر حساب المبيعات؟
+  // متى؟ من أي حساب؟ إلى أي حساب؟" المطلوب من شاشة ثوابت الحسابات، بالاعتماد
+  // على شاشة سجل العمليات العامة الموجودة أصلاً بدل بناء عارض منفصل.
+  // ملاحظة: تم استخدام حقل البحث النصي (audit-search) لا قائمة فلترة جدول،
+  // لأن العنصر audit-table-filter الذي تقرأه _getAuditFilters() غير موجود
+  // فعلياً في HTML شاشة سجل العمليات (خطأ منفصل خارج نطاق هذه المهمة) —
+  // كل سطور SET_POSTING_DEFAULT تحمل "ثوابت الحسابات" في حقل details، وهو
+  // من الحقول التي يبحث فيها audit-search فعلياً.
+  function pcOpenAuditLog() {
+    navigate("users");
+    setTimeout(function () {
+      switchUsersTab("audit");
+      setTimeout(function () {
+        var searchBox = document.getElementById("audit-search");
+        if (searchBox) {
+          searchBox.value = "ثوابت الحسابات";
+          if (typeof applyAuditFilters === "function") applyAuditFilters();
+        }
+      }, 200);
+    }, 200);
+  }
+
+  function pcAutoDetect() {
+    var btn = document.getElementById("pc-auto-detect-btn");
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="ti ti-loader-2 spin"></i> جاري الكشف…';
+    }
+
+    _gsr(
+      "autoDetectAndPinAccounts",
+      [
+        APP.currentUser ? APP.currentUser.username : null,
+        SESSION ? SESSION.token : null,
+      ],
+      {
+        onSuccess: function (r) {
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="ti ti-wand"></i> كشف تلقائي';
+          }
+          NotificationEngine.success(r.message);
+          _pcShowStatus("success", r.message);
+          _loadPostingConfig();
+        },
+        onError: function (r) {
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="ti ti-wand"></i> كشف تلقائي';
+          }
+          NotificationEngine.error(" " + r.message);
+        },
+      },
+    );
+  }
+
+  function _pcShowStatus(type, msg) {
+    var bar = document.getElementById("pc-status-bar");
+    if (!bar) return;
+    bar.style.display = "block";
+    bar.style.background = type === "success" ? "#D1FAE5" : "#FEE2E2";
+    bar.style.color = type === "success" ? "#065F46" : "#991B1B";
+    bar.style.border =
+      "1px solid " + (type === "success" ? "#6EE7B7" : "#FCA5A5");
+    bar.textContent = msg;
+    setTimeout(function () {
+      bar.style.display = "none";
+    }, 6000);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // §FA  الأصول الثابتة والإهلاك — Fixed Assets
+  // ─────────────────────────────────────────────────────────────────────────
+
+  var _faAssets = [];
+
+  function renderFixedAssets() {
+    return [
+      '<div class="page-header">',
+      '<div class="page-header-left">',
+      '<div class="page-icon" style="background:linear-gradient(135deg,#B45309,#92400E)"><i class="ti ti-building-factory" style="font-size:22px;color:#fff"></i></div>',
+      '<div><h1 class="page-title">الأصول الثابتة والإهلاك</h1>',
+      '<p class="page-subtitle">إدارة الأصول الثابتة وترحيل الإهلاك الدوري مع القيود المحاسبية التلقائية</p></div>',
+      "</div>",
+      '<div class="page-header-actions">',
+      '<button class="btn btn-outline" id="fa-depreciation-btn" onclick="faOpenDepreciation()">',
+      '<i class="ti ti-chart-line-down"></i> ترحيل إهلاك دوري</button>',
+      '<button class="btn btn-primary" onclick="faOpenAddModal()">',
+      '<i class="ti ti-plus"></i> إضافة أصل جديد</button>',
+      "</div></div>",
+      // بطاقات الملخص
+      '<div id="fa-summary-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px"></div>',
+      // جدول الأصول
+      '<div class="card">',
+      '<div class="card-header" style="display:flex;justify-content:space-between;align-items:center">',
+      '<h3 style="font-size:15px;font-weight:700;margin:0">قائمة الأصول الثابتة</h3>',
+      "</div>",
+      // [COLUMN-ENGINE] الجدول انتقل لـ ColumnEngine (Metadata-Driven) —
+      // البحث/الفرز/التصدير/تخصيص الأعمدة كلها مدمجة تلقائيًا في التولبار،
+      // بدل <table id="fa-table"> الثابت + fa-search + faFilterTable القديمة.
+      '<div id="fa-ce-container"><div style="text-align:center;padding:30px">',
+      '<i class="ti ti-loader-2 spin" style="font-size:24px;color:var(--accent)"></i>',
+      "</div></div>",
+      "</div>",
+      // مودال إضافة / تعديل أصل
+      _faRenderModal(),
+      // مودال ترحيل الإهلاك
+      _faRenderDeprecModal(),
+    ].join("");
+  }
+
+  function _faRenderModal() {
+    return [
+      '<div id="fa-modal" style="display:none;position:fixed;inset:0;background:#0008;z-index:3000;align-items:center;justify-content:center">',
+      '<div class="modal-box" style="max-width:560px;width:100%">',
+      '<div class="modal-header"><div class="modal-header-left">',
+      '<div class="modal-icon" style="background:#B4530922"><i class="ti ti-building-factory" style="color:#B45309"></i></div>',
+      '<div><h2 id="fa-modal-title">إضافة أصل ثابت</h2>',
+      '<div class="modal-header-sub">البيانات الأساسية والقيد المحاسبي</div></div></div>',
+      '<button class="modal-close" onclick="faCloseModal()"><i class="ti ti-x"></i></button></div>',
+      '<div class="modal-body" style="display:grid;grid-template-columns:1fr 1fr;gap:14px">',
+      '<div class="form-group" style="grid-column:1/-1"><label class="form-label">اسم الأصل *</label>',
+      '<input class="form-input" id="fa-name" placeholder="مثال: سيارة نقل، ماكينة خياطة"></div>',
+      '<div class="form-group"><label class="form-label">الفئة</label>',
+      '<select class="form-input" id="fa-category">',
+      '<option value="مركبات">مركبات</option>',
+      '<option value="معدات">معدات وآلات</option>',
+      '<option value="مباني">مباني وإنشاءات</option>',
+      '<option value="أثاث">أثاث وديكور</option>',
+      '<option value="أجهزة">أجهزة ومعدات IT</option>',
+      '<option value="أخرى">أخرى</option>',
+      "</select></div>",
+      '<div class="form-group"><label class="form-label">تاريخ الشراء *</label>',
+      '<input type="date" class="form-input" id="fa-date"></div>',
+      '<div class="form-group"><label class="form-label">تكلفة الشراء *</label>',
+      '<input type="number" class="form-input" id="fa-cost" min="0" step="0.01" placeholder="0.00"></div>',
+      '<div class="form-group"><label class="form-label">العمر الإنتاجي (بالسنوات) *</label>',
+      '<input type="number" class="form-input" id="fa-life" min="1" step="1" placeholder="5"></div>',
+      '<div class="form-group"><label class="form-label">القيمة التخريدية</label>',
+      '<input type="number" class="form-input" id="fa-salvage" min="0" step="0.01" placeholder="0.00"></div>',
+      '<div class="form-group"><label class="form-label">طريقة الإهلاك</label>',
+      '<select class="form-input" id="fa-method">',
+      '<option value="STRAIGHT_LINE">القسط الثابت (Straight Line)</option>',
+      '<option value="DECLINING_BALANCE">القسط المتناقص (Declining Balance)</option>',
+      '<option value="DOUBLE_DECLINING">القسط المتناقص المضاعف (DDB)</option>',
+      "</select></div>",
+      '<div class="form-group"><label class="form-label">طريقة الدفع</label>',
+      '<select class="form-input" id="fa-payment">',
+      '<option value="نقدي">نقدي (صندوق)</option>',
+      '<option value="آجل">آجل (ذمم دائنة)</option>',
+      "</select></div>",
+      '<div class="form-group" style="grid-column:1/-1"><label class="form-label">الوصف</label>',
+      '<textarea class="form-input" id="fa-desc" rows="2" style="resize:vertical;min-height:60px"></textarea></div>',
+      "</div>",
+      '<div class="modal-actions">',
+      '<button class="btn btn-outline" onclick="faCloseModal()">إلغاء</button>',
+      '<button class="btn btn-primary" id="fa-save-btn" onclick="faSaveAsset()">',
+      '<i class="ti ti-device-floppy"></i> حفظ الأصل</button>',
+      "</div></div></div>",
+    ].join("");
+  }
+
+  function _faRenderDeprecModal() {
+    return [
+      '<div id="fa-deprec-modal" style="display:none;position:fixed;inset:0;background:#0008;z-index:3000;align-items:center;justify-content:center">',
+      '<div class="modal-box" style="max-width:440px;width:100%">',
+      '<div class="modal-header"><div class="modal-header-left">',
+      '<div class="modal-icon" style="background:#7C3AED22"><i class="ti ti-chart-line-down" style="color:#7C3AED"></i></div>',
+      "<div><h2>ترحيل قيد الإهلاك</h2>",
+      '<div class="modal-header-sub">يُطبَّق على جميع الأصول النشطة</div></div></div>',
+      '<button class="modal-close" onclick="faCloseDeprecModal()"><i class="ti ti-x"></i></button></div>',
+      '<div class="modal-body" style="display:grid;gap:14px">',
+      '<div class="form-group"><label class="form-label">تاريخ الإهلاك *</label>',
+      '<input type="date" class="form-input" id="fa-dep-date"></div>',
+      '<div class="form-group"><label class="form-label">الفترة (بالأشهر)</label>',
+      '<select class="form-input" id="fa-dep-months">',
+      '<option value="1">شهري (1 شهر)</option>',
+      '<option value="3">ربع سنوي (3 أشهر)</option>',
+      '<option value="6">نصف سنوي (6 أشهر)</option>',
+      '<option value="12" selected>سنوي (12 شهر)</option>',
+      "</select></div>",
+      '<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:12px;font-size:12px;color:#92400E">',
+      " سيُنشئ هذا قيداً محاسبياً مباشراً لجميع الأصول النشطة. تأكد من صحة إعدادات الترحيل (حساب مصروف الإهلاك ومجمع الإهلاك).",
+      "</div>",
+      "</div>",
+      '<div class="modal-actions">',
+      '<button class="btn btn-outline" onclick="faCloseDeprecModal()">إلغاء</button>',
+      '<button class="btn btn-primary" id="fa-dep-save-btn" onclick="faPostDepreciation()">',
+      '<i class="ti ti-check"></i> ترحيل الإهلاك</button>',
+      "</div></div></div>",
+    ].join("");
+  }
+
+  function bindFixedAssets() {
+    // تاريخ اليوم كافتراضي
+    var today = (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().split("T")[0]);
+    var dateEl = document.getElementById("fa-date");
+    var depDateEl = document.getElementById("fa-dep-date");
+    if (dateEl) dateEl.value = today;
+    if (depDateEl) depDateEl.value = today;
+
+    _faLoadAssets();
+  }
+
+  function _faLoadAssets() {
+    _gsr(
+      "getFixedAssets",
+      [
+        APP.currentUser ? APP.currentUser.username : null,
+        SESSION ? SESSION.token : null,
+      ],
+      {
+        onSuccess: function (r) {
+          _faAssets = r.data || [];
+          _faRenderTable(_faAssets);
+          _faRenderSummary(_faAssets);
+        },
+        onError: function (r) {
+          var c = document.getElementById("fa-ce-container");
+          if (c)
+            c.innerHTML =
+              '<div style="text-align:center;padding:30px;color:var(--error)"> ' +
+              esc(r.message) +
+              "</div>";
+        },
+      },
+    );
+  }
+
+  function _faRenderSummary(assets) {
+    var active = assets.filter(function (a) {
+      return a.status === "ACTIVE";
+    });
+    var totalCost = assets.reduce(function (s, a) {
+      return s + Number(a.purchase_cost || 0);
+    }, 0);
+    var totalAccum = assets.reduce(function (s, a) {
+      return s + Number(a.accumulated_depreciation || 0);
+    }, 0);
+    var totalBook = totalCost - totalAccum;
+
+    var cards = [
+      {
+        label: "إجمالي الأصول",
+        value: assets.length,
+        icon: "ti-building-factory",
+        color: "#B45309",
+      },
+      {
+        label: "أصول نشطة",
+        value: active.length,
+        icon: "ti-check-circle",
+        color: "#059669",
+      },
+      {
+        label: "إجمالي التكلفة",
+        value: _fmtMoney(totalCost),
+        icon: "ti-cash",
+        color: "#1D4ED8",
+      },
+      {
+        label: "القيمة الدفترية",
+        value: _fmtMoney(totalBook),
+        icon: "ti-chart-line",
+        color: "#7C3AED",
+      },
+    ];
+
+    var html = cards
+      .map(function (c) {
+        return (
+          '<div class="stat-card" style="border-top:3px solid ' +
+          c.color +
+          '">' +
+          '<div style="display:flex;align-items:center;gap:10px">' +
+          '<div style="width:40px;height:40px;border-radius:10px;background:' +
+          c.color +
+          '22;display:flex;align-items:center;justify-content:center">' +
+          '<i class="ti ' +
+          c.icon +
+          '" style="color:' +
+          c.color +
+          ';font-size:20px"></i></div>' +
+          '<div><div style="font-size:20px;font-weight:800;color:var(--text1)">' +
+          c.value +
+          "</div>" +
+          '<div style="font-size:12px;color:var(--text3)">' +
+          c.label +
+          "</div></div></div></div>"
+        );
+      })
+      .join("");
+
+    var el = document.getElementById("fa-summary-cards");
+    if (el) el.innerHTML = html;
+  }
+
+  // [COLUMN-ENGINE] تعريف أعمدة جدول الأصول الثابتة كـ Metadata بدل
+  // <th> الثابتة القديمة. الإجراءات (تعديل/بيع-إتلاف) انتقلت لقائمة
+  // الزر اليمين (راجع CTX_DEFINITIONS.fixed_assets في 20_JS_ContextMenu.html)
+  // بدل عمود "إجراءات" ثابت.
+  var _faStatusMap = {
+    ACTIVE: { label: "نشط", color: "#059669", bg: "#D1FAE5" },
+    FULLY_DEPRECIATED: {
+      label: "مُهلَك بالكامل",
+      color: "#6B7280",
+      bg: "#F3F4F6",
+    },
+    DISPOSED: { label: "تم التصرف", color: "#B91C1C", bg: "#FEE2E2" },
+  };
+  var _faMethodMap = {
+    STRAIGHT_LINE: "قسط ثابت",
+    DECLINING_BALANCE: "قسط متناقص",
+    DOUBLE_DECLINING: "متناقص مضاعف",
+  };
+
+  var _faColumnsRegistered = false;
+
+  function _faRegisterColumns() {
+    if (_faColumnsRegistered) return;
+    _faColumnsRegistered = true;
+    ColumnEngine.register(
+      "fixed_assets",
+      [
+        {
+          key: "name",
+          label: "الاسم",
+          type: "text",
+          width: 200,
+          frozen: "right",
+          format: function (v) {
+            return "<strong>" + esc(v || "") + "</strong>";
+          },
+        },
+        { key: "category", label: "الفئة", type: "text", width: 120 },
+        {
+          key: "purchase_date",
+          label: "تاريخ الشراء",
+          type: "date",
+          width: 110,
+        },
+        {
+          key: "purchase_cost",
+          label: "التكلفة",
+          type: "currency",
+          width: 130,
+          format: function (v) {
+            return _fmtMoney(v);
+          },
+        },
+        {
+          key: "accumulated_depreciation",
+          label: "مجمع الإهلاك",
+          type: "currency",
+          width: 130,
+          format: function (v) {
+            return _fmtMoney(v);
+          },
+        },
+        {
+          key: "book_value",
+          label: "القيمة الدفترية",
+          type: "currency",
+          width: 130,
+          format: function (v, row) {
+            var bookVal =
+              Number(row.purchase_cost || 0) -
+              Number(row.accumulated_depreciation || 0);
+            return (
+              '<strong style="color:' +
+              (bookVal > 0 ? "#059669" : "#6B7280") +
+              '">' +
+              _fmtMoney(bookVal) +
+              "</strong>"
+            );
+          },
+        },
+        {
+          key: "depreciation_method",
+          label: "طريقة الإهلاك",
+          type: "text",
+          width: 120,
+          format: function (v) {
+            return esc(_faMethodMap[v] || v || "—");
+          },
+        },
+        {
+          key: "status",
+          label: "الحالة",
+          type: "badge",
+          width: 110,
+          format: function (v) {
+            var st = _faStatusMap[v] || {
+              label: v,
+              color: "#374151",
+              bg: "#F9FAFB",
+            };
+            return (
+              '<span class="badge" style="background:' +
+              st.bg +
+              ";color:" +
+              st.color +
+              '">' +
+              st.label +
+              "</span>"
+            );
+          },
+        },
+        // ── أعمدة ذكية ──
+        {
+          key: "description",
+          label: "الوصف",
+          type: "text",
+          width: 200,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "useful_life_years",
+          label: "العمر الإنتاجي",
+          type: "number",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "salvage_value",
+          label: "القيمة التخريدية",
+          type: "currency",
+          category: "حقول إضافية",
+          defaultVisible: false,
+          format: function (v) {
+            return _fmtMoney(v);
+          },
+        },
+        // [COLUMN-ENGINE-FULL-FIELDS] حقول موجودة في FIXED_ASSETS_HEADERS
+        // (Code_14_FixedAssets.gs) لكنها لم تكن معروضة كأعمدة اختيارية.
+        {
+          key: "account_id",
+          label: "الحساب المحاسبي المرتبط",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "created_at",
+          label: "تاريخ الإضافة",
+          type: "date",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "created_by",
+          label: "أُضيف بواسطة",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+      ],
+      {
+        title: "الأصول الثابتة",
+        rowKey: "id",
+        contextMenuType: "fixed_assets",
+      },
+    );
+  }
+
+  function _faRenderTable(assets) {
+    var container = document.getElementById("fa-ce-container");
+    if (!container) return;
+    _faRegisterColumns();
+    ColumnEngine.renderTable("fixed_assets", container, assets || [], {
+      onRowClick: function (row) {
+        if (row.status === "ACTIVE") faEditAsset(row.id);
+      },
+    });
+  }
+
+  function faOpenAddModal() {
+    document.getElementById("fa-modal-title").textContent =
+      "إضافة أصل ثابت جديد";
+    ["fa-name", "fa-desc", "fa-cost", "fa-salvage"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.value = "";
+    });
+    document.getElementById("fa-life").value = "5";
+    document.getElementById("fa-method").value = "STRAIGHT_LINE";
+    document.getElementById("fa-payment").value = "نقدي";
+    document.getElementById("fa-category").value = "معدات";
+    document.getElementById("fa-date").value = new Date()
+      .toISOString()
+      .split("T")[0];
+    document.getElementById("fa-save-btn").dataset.editId = "";
+    document.getElementById("fa-modal").style.display = "flex";
+  }
+
+  function faEditAsset(id) {
+    var a = _faAssets.find(function (x) {
+      return x.id === id;
+    });
+    if (!a) return;
+    document.getElementById("fa-modal-title").textContent = "تعديل أصل ثابت";
+    document.getElementById("fa-name").value = a.name || "";
+    document.getElementById("fa-desc").value = a.description || "";
+    document.getElementById("fa-category").value = a.category || "معدات";
+    document.getElementById("fa-date").value = a.purchase_date || "";
+    document.getElementById("fa-cost").value = a.purchase_cost || "";
+    document.getElementById("fa-life").value = a.useful_life_years || "5";
+    document.getElementById("fa-salvage").value = a.salvage_value || "0";
+    document.getElementById("fa-method").value =
+      a.depreciation_method || "STRAIGHT_LINE";
+    document.getElementById("fa-save-btn").dataset.editId = id;
+    document.getElementById("fa-modal").style.display = "flex";
+  }
+
+  function faCloseModal() {
+    document.getElementById("fa-modal").style.display = "none";
+  }
+
+  // [SE-ROLLOUT] عبر SaveEngine.run بدل SaveButtonController + _gsr اليدوي
+  function faSaveAsset() {
+    var editId = document.getElementById("fa-save-btn").dataset.editId;
+    var fn = editId ? "updateFixedAsset" : "addFixedAsset";
+
+    SaveEngine.run({
+      screen: "fixed_assets",
+      entity: "fixed_asset",
+      recordId: editId || null,
+      buttonId: "fa-save-btn",
+      rules: [
+        { field: "fa-name", label: "اسم الأصل", required: true },
+        {
+          test: function () {
+            return Number(document.getElementById("fa-cost").value) > 0;
+          },
+          message: "تكلفة الشراء يجب أن تكون أكبر من صفر",
+        },
+        { field: "fa-date", label: "تاريخ الشراء", required: true },
+        {
+          test: function () {
+            return Number(document.getElementById("fa-life").value) >= 1;
+          },
+          message: "العمر الإنتاجي يجب أن يكون على الأقل سنة",
+        },
+      ],
+      collect: function () {
+        return {
+          id: editId || undefined,
+          name: document.getElementById("fa-name").value.trim(),
+          description: document.getElementById("fa-desc").value.trim(),
+          category: document.getElementById("fa-category").value,
+          purchase_date: document.getElementById("fa-date").value,
+          purchase_cost: Number(document.getElementById("fa-cost").value),
+          useful_life_years: Number(document.getElementById("fa-life").value),
+          salvage_value:
+            Number(document.getElementById("fa-salvage").value) || 0,
+          depreciation_method: document.getElementById("fa-method").value,
+          payment_type: document.getElementById("fa-payment").value,
+          callerUser: APP.currentUser ? APP.currentUser.username : null,
+        };
+      },
+      fn: fn,
+      params: function (payload) {
+        return [payload, SESSION ? SESSION.token : null];
+      },
+      onSuccess: function () {
+        faCloseModal();
+        _faLoadAssets();
+      },
+    });
+  }
+
+  function faOpenDispose(id) {
+    var a = _faAssets.find(function (x) {
+      return x.id === id;
+    });
+    if (!a) return;
+    var bookVal =
+      Number(a.purchase_cost || 0) - Number(a.accumulated_depreciation || 0);
+    openModal(
+      '<div class="modal-box" style="max-width:400px"><div class="modal-header">' +
+        '<div class="modal-header-left"><div class="modal-icon" style="background:#FEE2E2"><i class="ti ti-trash" style="color:#B91C1C"></i></div>' +
+        '<div><h2>التصرف في الأصل</h2><div class="modal-header-sub">' +
+        esc(a.name) +
+        "</div></div></div>" +
+        '<button class="modal-close" onclick="closeModal()"><i class="ti ti-x"></i></button></div>' +
+        '<div class="modal-body" style="display:grid;gap:14px">' +
+        '<div style="background:var(--surface2);border-radius:8px;padding:12px;font-size:13px">' +
+        "<div>التكلفة الأصلية: <strong>" +
+        _fmtMoney(a.purchase_cost) +
+        "</strong></div>" +
+        "<div>مجمع الإهلاك: <strong>" +
+        _fmtMoney(a.accumulated_depreciation) +
+        "</strong></div>" +
+        '<div>القيمة الدفترية: <strong style="color:#059669">' +
+        _fmtMoney(bookVal) +
+        "</strong></div>" +
+        "</div>" +
+        '<div class="form-group"><label class="form-label">تاريخ التصرف *</label>' +
+        '<input type="date" class="form-input" id="fa-disp-date" value="' +
+        (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().split("T")[0]) +
+        '"></div>' +
+        '<div class="form-group"><label class="form-label">ثمن البيع (0 إذا إتلاف)</label>' +
+        '<input type="number" class="form-input" id="fa-disp-price" min="0" step="0.01" value="0" placeholder="0.00"></div>' +
+        "</div>" +
+        '<div class="modal-actions">' +
+        '<button class="btn btn-outline" onclick="closeModal()">إلغاء</button>' +
+        '<button class="btn btn-danger" onclick="faConfirmDispose(\'' +
+        esc(id) +
+        "')\">" +
+        '<i class="ti ti-check"></i> تأكيد التصرف</button>' +
+        "</div></div>",
+    );
+  }
+
+  function faConfirmDispose(id) {
+    var date = document.getElementById("fa-disp-date").value;
+    var price = Number(document.getElementById("fa-disp-price").value) || 0;
+    if (!date) {
+      NotificationEngine.warning("تاريخ التصرف مطلوب");
+      return;
+    }
+    closeModal();
+    _gsr(
+      "disposeFixedAsset",
+      [
+        {
+          id: id,
+          date: date,
+          sale_price: price,
+          callerUser: APP.currentUser ? APP.currentUser.username : null,
+        },
+        SESSION ? SESSION.token : null,
+      ],
+      {
+        onSuccess: function (r) {
+          NotificationEngine.success(r.message);
+          _faLoadAssets();
+        },
+        onError: function (r) {
+          NotificationEngine.error(" " + r.message);
+        },
+      },
+    );
+  }
+
+  function faOpenDepreciation() {
+    document.getElementById("fa-dep-date").value = new Date()
+      .toISOString()
+      .split("T")[0];
+    document.getElementById("fa-deprec-modal").style.display = "flex";
+  }
+
+  function faCloseDeprecModal() {
+    document.getElementById("fa-deprec-modal").style.display = "none";
+  }
+
+  function faPostDepreciation() {
+    var date = document.getElementById("fa-dep-date").value;
+    var months = document.getElementById("fa-dep-months").value;
+    if (!date) {
+      NotificationEngine.warning("تاريخ الإهلاك مطلوب");
+      return;
+    }
+
+    var btn = document.getElementById("fa-dep-save-btn");
+    btn.disabled = true;
+    btn.innerHTML = '<i class="ti ti-loader-2 spin"></i> جاري الترحيل…';
+
+    _gsr(
+      "postDepreciation",
+      [
+        {
+          date: date,
+          period_months: Number(months),
+          callerUser: APP.currentUser ? APP.currentUser.username : null,
+        },
+        SESSION ? SESSION.token : null,
+      ],
+      {
+        onSuccess: function (r) {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="ti ti-check"></i> ترحيل الإهلاك';
+          NotificationEngine.success(r.message);
+          faCloseDeprecModal();
+          _faLoadAssets();
+        },
+        onError: function (r) {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="ti ti-check"></i> ترحيل الإهلاك';
+          NotificationEngine.error(" " + r.message);
+        },
+      },
+    );
+  }
+
+  // Helpers مشتركة
+  // ── [إصلاح P2/P6/P11] كانت هذه نسخة محلية مكررة تتجاهل تفضيل currency
+  // وتفرض "ar-EG" locale دائمًا. الآن تُفوَّض لـ formatMoney() المركزية
+  // (00_JS_DataLayer.html) عشان تحترم عملة المستخدم الفعلية، مع الإبقاء
+  // على اسم الدالة القديم _fmtMoney كي لا نكسر أي استدعاء موجود لها في
+  // هذا الملف.
+  function _fmtMoney(n) {
+    if (typeof formatMoney === "function") return formatMoney(n);
+    // fallback نادر لو formatMoney لم تُحمَّل بعد لأي سبب
+    // [FIX-AUDIT] كان لا يزال "ar-EG" رغم تعليق الإصلاح أعلاه — بيرجّع أرقام
+    // هندية مخالفة لتوحيد الأرقام system-wide (ar-EG → en-US).
+    return Number(n || 0).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }
+  // [REFACTOR-P2] _fmtDate اتنقلت لـ Core_Utilities.html (Global، بنفس المنطق تمامًا)
+</script>

@@ -1,0 +1,2008 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════
+  // Templates_01.html — جزء من Templates.html الأصلي (تقسيم آلي نصي بحت، 2026-07-04)
+  // النطاق: mooLogoSVG → renderDashboard (Login/Layout/TopBar/Dashboards الأساسية)
+  // راجع Architecture Audit 2026-07-03، المرحلة 5 — تقسيم بحسب الحجم،
+  // على حدود دوال كاملة فقط (لا قطع لأي دالة في نص). تحقق برمجيًا:
+  // التركيب النهائي لكل الأجزاء الـ10 مطابق 100% لمحتوى Templates.html
+  // القديم حرفيًا (نفس الترتيب، بدون فقد أو تكرار).
+  // يُحمَّل بالترتيب عبر <script> في Index.html مع باقي الأجزاء.
+  // ═══════════════════════════════════════════════════════════════
+  // ╔═════════════════════════════════════════════════════════════════╗
+  // ║      MOO.ERP — Enterprise Resource Planning                    ║
+  // ║      Templates.html — HTML Builder Functions               ║
+  // ╠═════════════════════════════════════════════════════════════════╣
+  // ║  كل دالة هنا تُعيد HTML string يُعرض في #root أو مودال.      ║
+  // ║  الربط (أحداث، منطق) يتم في JavaScript.html → bind*()      ║
+  // ║                                                            ║
+  // ║  renderLogin()          — صفحة تسجيل الدخول                ║
+  // ║  renderLayout()         — الهيكل العام (sidebar + content) ║
+  // ║  renderTopBar()         — الشريط العلوي                    ║
+  // ║  renderDashboard()      — لوحة التحكم الرئيسية             ║
+  // ║  renderShortcuts()      — الاختصارات السريعة                ║
+  // ║  renderItems()          — صفحة الأصناف                      ║
+  // ║  renderGroups()         — صفحة المجموعات                   ║
+  // ║  renderStock()          — عرض المخزون                      ║
+  // ║  renderTxIn()           — إذن الوارد                       ║
+  // ║  renderTxOut()          — إذن الصادر                       ║
+  // ║  renderTxTransfer()     — التحويل بين المخازن              ║
+  // ║  renderTransactions()   — سجل الحركات                      ║
+  // ║  renderProduction()     — أوامر الإنتاج                     ║
+  // ║  renderDispatch()       — صرف للمصنع                       ║
+  // ║  renderFactoryReturn()  — مردود المصنع                     ║
+  // ║  renderFgReceive()      — استلام المنتج التام               ║
+  // ║  renderCuttingStatement()— كشف القص                        ║
+  // ║  renderCatalog()        — الكتالوج الداخلي                 ║
+  // ║  renderCurrentStock()   — المخزون الحالي                   ║
+  // ║  renderOpeningStock()   — الأرصدة الافتتاحية                 ║
+  // ║  renderWarehouses()     — إدارة المخازن                    ║
+  // ║  renderShipping()       — الشحنات                          ║
+  // ║  renderColorDefinitions()— تعريف الألوان                    ║
+  // ║  renderCodeGuide()      — دليل الأكواد                      ║
+  // ║  renderBarcode()        — طباعة الباركود                   ║
+  // ║  renderWeeklyReports()  — التقارير الأسبوعية                ║
+  // ║  renderCatalogSend()    — إرسال الكتالوج                   ║
+  // ║  renderUsers()          — إدارة المستخدمين                 ║
+  // ╚═════════════════════════════════════════════════════════════════╝
+
+  // ─────────────────────────────────────────────────────────────
+  // MOO.ERP Logo — المصدر الوحيد لتصميم الشعار (نسخة العميل)
+  //  تُستخدم في: شاشة اللوجين (renderLogin)، بانر الداشبورد،
+  //  السايدبار (_renderSidebarBrand في 08_JS_Users_Branding.html).
+  // نفس تصميم getMooLogoSVG() في Code.js تمامًا — أي تعديل
+  //  في الشكل لازم يتكرر في الاتنين مع بعض.
+  // ─────────────────────────────────────────────────────────────
+  function mooLogoSVG(px, opts) {
+    px = px || 40;
+    opts = opts || {};
+    var withBg = opts.bg !== false; // افتراضيًا: true
+    var mono = !!opts.mono;
+    var c1 = mono ? "#fff" : "#2563EB";
+    var c2 = mono ? "#fff" : "#10B981";
+    var bg = withBg
+      ? '<rect width="100" height="100" rx="18" fill="#0F172A"/>'
+      : "";
+    return (
+      '<svg width="' +
+      px +
+      '" height="' +
+      px +
+      '" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">' +
+      bg +
+      '<path d="M24 76 L24 22 L50 50" fill="none" stroke="' +
+      c1 +
+      '" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<path d="M50 50 L76 22 L76 76" fill="none" stroke="' +
+      c2 +
+      '" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>' +
+      "</svg>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // شعار شاشة اللوجين — نفس مصدر شعار السايدبار بالظبط
+  //  [FIX-LOGIN-LOGO] قبل كده renderLogin() كانت بتعرض دايمًا شعار
+  //  MOO.ERP الافتراضي (mooLogoSVG) بغض النظر عن وجود شعار مخصص
+  //  مرفوع من الشركة (company_settings.logo_url) — رغم إن السايدبار
+  //  (_renderSidebarBrand في 08_JS_Users_Branding.html) بيفضّل الشعار
+  //  المخصص لو موجود. النتيجة كانت شعارين مختلفين لنفس النظام: واحد
+  //  في شاشة الدخول وواحد جوه بعد اللوجين. الدالة دي بتوحّد المصدر:
+  //  لو فيه logo_url في بيانات prefetch (متاحة حتى قبل تسجيل الدخول)
+  //  تُستخدم، وإلا fallback لنفس mooLogoSVG الافتراضي.
+  // ─────────────────────────────────────────────────────────────
+  function _loginLogoIconHtml(px) {
+    var s = (window.APP && APP.companySettings) || {};
+    var rawUrl = s.logo_url || "";
+    var logoUrl =
+      typeof _fixDriveUrl === "function" ? _fixDriveUrl(rawUrl) : rawUrl;
+    // [FIX-LOGIN-LOGO-2] الشعار الافتراضي (لو مفيش logo_url مخصص) لازم يتطابق
+    // بصرياً 100% مع شعار السايدبار — نفس استدعاء mooLogoSVG(px) الافتراضي
+    // (خلفية كحلي داكنة + حروف M بالتدرج الأزرق/الأخضر)، بدل النسخة
+    // المسطحة الأحادية اللون (bg:false, mono:true) اللي كانت مختلفة شكلاً.
+    var svgLogo = mooLogoSVG(px);
+    if (!logoUrl) return svgLogo;
+    return (
+      '<img src="' +
+      logoUrl +
+      '" alt="" style="width:' +
+      px +
+      "px;height:" +
+      px +
+      'px;object-fit:contain;border-radius:6px" onerror="this.outerHTML=' +
+      "'" +
+      svgLogo.replace(/'/g, "&#39;") +
+      "'" +
+      '">'
+    );
+  }
+
+  // ── خريطة الألوان العالمية — متاحة لكل الدوال ──────────────
+  var CSS_COLOR_MAP = {
+    أحمر: "#ef4444",
+    احمر: "#ef4444",
+    red: "#ef4444",
+    خمري: "#9b2335",
+    خمرى: "#9b2335",
+    maroon: "#800000",
+    نبيذي: "#722f37",
+    نبيتي: "#722f37",
+    wine: "#722f37",
+    وردي: "#f472b6",
+    وردى: "#f472b6",
+    ورده: "#f9a8d4",
+    pink: "#ec4899",
+    سلموني: "#fa8072",
+    salmon: "#fa8072",
+    برتقالي: "#f97316",
+    برتقالى: "#f97316",
+    orange: "#f97316",
+    أصفر: "#eab308",
+    اصفر: "#eab308",
+    yellow: "#eab308",
+    ذهبي: "#d97706",
+    ذهبى: "#d97706",
+    gold: "#d4af37",
+    كريمي: "#f5f0dc",
+    كريمى: "#f5f0dc",
+    cream: "#fffdd0",
+    بيج: "#f5deb3",
+    beige: "#f5deb3",
+    أخضر: "#22c55e",
+    اخضر: "#22c55e",
+    green: "#22c55e",
+    زيتي: "#6b7c3c",
+    زيتى: "#6b7c3c",
+    olive: "#808000",
+    نيلي: "#4338ca",
+    نيلى: "#4338ca",
+    indigo: "#4f46e5",
+    تيل: "#0d9488",
+    teal: "#0d9488",
+    فيروزي: "#06b6d4",
+    فيروزى: "#06b6d4",
+    cyan: "#06b6d4",
+    تركوازي: "#40e0d0",
+    تركواز: "#40e0d0",
+    turquoise: "#40e0d0",
+    أزرق: "#3b82f6",
+    ازرق: "#3b82f6",
+    blue: "#3b82f6",
+    كحلي: "#1e3a5f",
+    كحلى: "#1e3a5f",
+    navy: "#001f5b",
+    بنفسجي: "#a855f7",
+    بنفسجى: "#a855f7",
+    purple: "#9333ea",
+    أبيض: "#f8fafc",
+    ابيض: "#f8fafc",
+    white: "#ffffff",
+    فضي: "#94a3b8",
+    فضى: "#94a3b8",
+    silver: "#c0c0c0",
+    رمادي: "#6b7280",
+    رمادى: "#6b7280",
+    grey: "#9ca3af",
+    gray: "#9ca3af",
+    أسود: "#1a1a1a",
+    اسود: "#1a1a1a",
+    black: "#000000",
+    بني: "#92400e",
+    بنى: "#92400e",
+    brown: "#7c3f00",
+    انثراسايت: "#374151",
+    أنثراسايت: "#374151",
+    "أوف وايت": "#f5f0e8",
+    "اوف وايت": "#f5f0e8",
+    شامبين: "#f7e7ce",
+    كاميل: "#c19a6b",
+    خاكي: "#c3b091",
+    خاكى: "#c3b091",
+    khaki: "#c3b091",
+    تيراكوتا: "#e2725b",
+    terracotta: "#e2725b",
+    مرجاني: "#ff6b6b",
+    coral: "#ff7f50",
+    بوردو: "#800020",
+    فوشيا: "#ff00ff",
+    fuchsia: "#ff00ff",
+    لافندر: "#e6e6fa",
+    lavender: "#e6e6fa",
+    موف: "#e0b0ff",
+    mauve: "#e0b0ff",
+    سيدج: "#b2ac88",
+    sage: "#b2ac88",
+    "أخضر زجاجي": "#2e8b57",
+    "أخضر نعناع": "#98ff98",
+    "أخضر غابة": "#228b22",
+    "وردي فاتح": "#f9a8d4",
+    "باودر بينك": "#fce7f3",
+    سماوي: "#38bdf8",
+    سماوى: "#38bdf8",
+    ليموني: "#bef264",
+    ليمونى: "#bef264",
+    lime: "#84cc16",
+  };
+  // ── نهاية خريطة الألوان ─────────────────────────────────────
+
+  // ── دالة تحويل اسم اللون/كوده إلى قيمة CSS — عالمية ───────
+  function _getCssColor(name, code) {
+    var trimmed = (name || "").trim();
+    var fromName =
+      CSS_COLOR_MAP[trimmed] || CSS_COLOR_MAP[trimmed.toLowerCase()] || null;
+    if (fromName) return fromName;
+    if (code) {
+      var c = code.trim();
+      if (c.startsWith("#")) return c;
+      var CSS_NAMED = {
+        red: 1,
+        blue: 1,
+        green: 1,
+        black: 1,
+        white: 1,
+        yellow: 1,
+        orange: 1,
+        pink: 1,
+        purple: 1,
+        brown: 1,
+        gray: 1,
+        grey: 1,
+        navy: 1,
+        teal: 1,
+        cyan: 1,
+        gold: 1,
+        silver: 1,
+        maroon: 1,
+        olive: 1,
+        lime: 1,
+        aqua: 1,
+        coral: 1,
+        salmon: 1,
+        indigo: 1,
+        violet: 1,
+        magenta: 1,
+        turquoise: 1,
+        beige: 1,
+        ivory: 1,
+      };
+      if (CSS_NAMED[c.toLowerCase()]) return c;
+    }
+    return null;
+  }
+  // ── نهاية _getCssColor ───────────────────────────────────────
+
+  // ── showImageModal — عرض الصورة في مودال (Lightbox) ─────────
+  function showImageModal(url, title) {
+    if (typeof openModal !== "function") return;
+    openModal(
+      '<div class="modal-box" style="width:620px;max-width:93vw;background:transparent;box-shadow:none;padding:0;overflow:visible">' +
+        '<div style="position:relative;width:100%;height:520px;max-height:82vh;background:#111;border-radius:14px;overflow:hidden;box-shadow:var(--shadow-xl)">' +
+        '<button onclick="closeModal()" style="position:absolute;top:10px;right:10px;width:36px;height:36px;border-radius:50%;' +
+        "background:rgba(0,0,0,0.65);border:2px solid rgba(255,255,255,0.3);color:#fff;font-size:18px;cursor:pointer;z-index:10;" +
+        'display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,.5);backdrop-filter:blur(4px);transition:background .2s" ' +
+        "onmouseover=\"this.style.background='rgba(220,38,38,0.85)'\" onmouseout=\"this.style.background='rgba(0,0,0,0.65)'\"></button>" +
+        '<img src="' +
+        (url || "") +
+        '" style="width:100%;height:100%;object-fit:contain;display:block" ' +
+        "onerror=\"this.alt='تعذّر تحميل الصورة'\">" +
+        "</div>" +
+        (title
+          ? '<div style="text-align:center;margin-top:10px;color:#fff;font-size:13px;font-weight:600;text-shadow:0 1px 4px rgba(0,0,0,.5)">' +
+            title +
+            "</div>"
+          : "") +
+        "</div>",
+    );
+    var overlay = document.getElementById("modal-overlay");
+    if (overlay) overlay.style.background = "rgba(0,0,0,0.88)";
+  }
+  window.showImageModal = showImageModal;
+  // ── نهاية showImageModal ─────────────────────────────────────
+
+  // ============================================================
+  //  MOO.ERP — Enterprise Resource Planning
+  //  Templates.html — دوال عرض واجهة المستخدم (render functions)
+  // ============================================================
+
+  // ── بيانات شرائح الـ Slideshow (يمين الشاشة) — موديولات النظام ──
+  // [LOGIN-FOCUS-5] بالطلب: الاكتفاء بخمس شرائح فقط (بدل عشرة) عشان
+  // العدّاد ميطولش والمستخدم ميملّش وهو مستني. الشرائح مختارة عشان
+  // تغطّي أهم خمس مساحات في النظام: المحاسبة، المخازن، المبيعات،
+  // الموارد البشرية، والمساعد الذكي.
+  var LOGIN_SLIDES = [
+    {
+      eyebrow: "LOGIN_S1_EYEBROW",
+      title: "LOGIN_S1_TITLE",
+      desc: "LOGIN_S1_DESC",
+      color: "#34D399",
+      bg: "rgba(52,211,153,.1)",
+      border: "rgba(52,211,153,.18)",
+      icon: '<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+      chips: [
+        {
+          icon: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+          label: "LOGIN_S1_CHIP1",
+        },
+        {
+          icon: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>',
+          label: "LOGIN_S1_CHIP2",
+        },
+      ],
+    },
+    {
+      eyebrow: "LOGIN_S2_EYEBROW",
+      title: "LOGIN_S2_TITLE",
+      desc: "LOGIN_S2_DESC",
+      color: "#60A5FA",
+      bg: "rgba(96,165,250,.1)",
+      border: "rgba(96,165,250,.18)",
+      icon: '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
+      chips: [
+        {
+          icon: '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>',
+          label: "LOGIN_S2_CHIP1",
+        },
+        {
+          icon: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/>',
+          label: "LOGIN_S2_CHIP2",
+        },
+      ],
+    },
+    {
+      eyebrow: "LOGIN_S3_EYEBROW",
+      title: "LOGIN_S3_TITLE",
+      desc: "LOGIN_S3_DESC",
+      color: "#F472B6",
+      bg: "rgba(244,114,182,.1)",
+      border: "rgba(244,114,182,.18)",
+      icon: '<circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>',
+      chips: [
+        {
+          icon: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/>',
+          label: "LOGIN_S3_CHIP1",
+        },
+        {
+          icon: '<path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+          label: "LOGIN_S3_CHIP2",
+        },
+      ],
+    },
+    {
+      eyebrow: "LOGIN_S4_EYEBROW",
+      title: "LOGIN_S4_TITLE",
+      desc: "LOGIN_S4_DESC",
+      color: "#A78BFA",
+      bg: "rgba(167,139,250,.1)",
+      border: "rgba(167,139,250,.18)",
+      icon: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+      chips: [
+        {
+          icon: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+          label: "LOGIN_S4_CHIP1",
+        },
+        {
+          icon: '<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>',
+          label: "LOGIN_S4_CHIP2",
+        },
+      ],
+    },
+    {
+      eyebrow: "LOGIN_S5_EYEBROW",
+      title: "LOGIN_S5_TITLE",
+      desc: "LOGIN_S5_DESC",
+      color: "#E879F9",
+      bg: "rgba(232,121,249,.1)",
+      border: "rgba(232,121,249,.18)",
+      icon: '<rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><line x1="12" y1="7" x2="12" y2="11"/><line x1="8" y1="16" x2="8" y2="16.01"/><line x1="16" y1="16" x2="16" y2="16.01"/>',
+      chips: [
+        {
+          icon: '<path d="M12 20l9-5-9-5-9 5 9 5z"/><path d="M12 10L3 5l9-5 9 5-9 5z"/>',
+          label: "LOGIN_S5_CHIP1",
+        },
+        {
+          icon: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+          label: "LOGIN_S5_CHIP2",
+        },
+      ],
+    },
+  ];
+
+  function _renderLoginSlide(s, idx) {
+    var chipsHtml = s.chips
+      .map(function (c) {
+        return (
+          '<span class="slide-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+          c.icon +
+          "</svg>" +
+          I18N.t(c.label) +
+          "</span>"
+        );
+      })
+      .join("");
+    return (
+      '<div class="slide' +
+      (idx === 0 ? " active" : "") +
+      '" data-slide="' +
+      idx +
+      '">' +
+      '<div class="slide-icon" style="background:' +
+      s.bg +
+      ";border-color:" +
+      s.border +
+      '">' +
+      '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="' +
+      s.color +
+      '" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+      s.icon +
+      "</svg>" +
+      "</div>" +
+      '<div class="slide-eyebrow">' +
+      I18N.t(s.eyebrow) +
+      "</div>" +
+      '<h2 class="slide-title">' +
+      I18N.t(s.title) +
+      "</h2>" +
+      '<p class="slide-desc">' +
+      I18N.t(s.desc) +
+      "</p>" +
+      '<div class="slide-strip">' +
+      chipsHtml +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // _renderTableFilters(prefix) — فلاتر موحّدة (فترة + حالة)
+  // الترتيب: فلتر الفترة يسار — فلتر الحالة يمين (RTL)
+  // ══════════════════════════════════════════════════════════
+  function _renderTableFilters(prefix) {
+    var p = prefix;
+    var html = '<div class="tbl-filters-row">';
+
+    // ── Date Range Picker (يظهر يساراً في RTL) ──
+    html += '<div class="je-drp-root-g" id="' + p + '-drp-root">';
+    html +=
+      '<button type="button" class="je-drp-trigger" id="' +
+      p +
+      '-drp-trigger">' +
+      '<i class="ti ti-calendar-event"></i>' +
+      '<span id="' +
+      p +
+      '-drp-label">كل الفترات</span>' +
+      '<i class="ti ti-chevron-down je-drp-trigger-chevron"></i>' +
+      "</button>";
+    html += '<div class="je-drp-popover" id="' + p + '-drp-popover">';
+    html += '<div class="je-drp-card">';
+    html +=
+      '<div class="je-drp-header">' +
+      '<div class="je-drp-hicon"><i class="ti ti-calendar-event"></i></div>' +
+      '<div><div class="je-drp-title">فلتر التاريخ</div><div class="je-drp-sub">اختر نطاق زمني للتصفية</div></div>' +
+      "</div>";
+    html += '<div class="je-drp-body">';
+    html += '<div class="je-drp-fields">';
+    html +=
+      '<div class="je-drp-field"><label class="je-drp-label">من تاريخ</label>' +
+      '<div class="je-drp-inp-wrap"><i class="ti ti-calendar"></i>' +
+      '<input type="date" id="' +
+      p +
+      '-filter-from" class="je-drp-inp" autocomplete="off">' +
+      "</div></div>";
+    html += '<div class="je-drp-sep"><div class="je-drp-sep-line"></div></div>';
+    html +=
+      '<div class="je-drp-field"><label class="je-drp-label">إلى تاريخ</label>' +
+      '<div class="je-drp-inp-wrap"><i class="ti ti-calendar"></i>' +
+      '<input type="date" id="' +
+      p +
+      '-filter-to" class="je-drp-inp" autocomplete="off">' +
+      "</div></div>";
+    html += "</div>";
+    html += '<div class="je-drp-ql">فترات سريعة</div>';
+    html += '<div class="je-drp-grid">';
+    html +=
+      '<button class="je-drp-qb" data-range="all"><i class="ti ti-infinity"></i>كل الفترات</button>';
+    html +=
+      '<button class="je-drp-qb" data-range="today"><i class="ti ti-clock"></i>اليوم</button>';
+    html +=
+      '<button class="je-drp-qb" data-range="7days"><i class="ti ti-calendar-week"></i>آخر 7 أيام</button>';
+    html +=
+      '<button class="je-drp-qb" data-range="month"><i class="ti ti-calendar-month"></i>هذا الشهر</button>';
+    html +=
+      '<button class="je-drp-qb" data-range="30days"><i class="ti ti-calendar-time"></i>آخر 30 يوم</button>';
+    html +=
+      '<button class="je-drp-qb je-drp-qb-full" data-range="year"><i class="ti ti-calendar-stats"></i>هذا العام</button>';
+    html += "</div>";
+    html += "</div>";
+    html += '<div class="je-drp-div"></div>';
+    html +=
+      '<div class="je-drp-footer">' +
+      '<div class="je-drp-info"><i class="ti ti-info-circle"></i><span id="' +
+      p +
+      '-drp-info">لم يتم اختيار نطاق بعد</span></div>' +
+      '<div class="je-drp-acts">' +
+      '<button class="je-drp-bclear" id="' +
+      p +
+      '-drp-clear"><i class="ti ti-x"></i>مسح</button>' +
+      '<button class="je-drp-bapply" id="' +
+      p +
+      '-drp-apply"><i class="ti ti-check"></i>تطبيق</button>' +
+      "</div></div>";
+    html += "</div>";
+    html += "</div>";
+    html += "</div>";
+
+    // ── Status custom dropdown (يظهر يميناً في RTL) ──
+    html += '<div class="je-sf-root" id="' + p + '-sf-root">';
+    html +=
+      '<button type="button" class="je-sf-trigger" id="' + p + '-sf-trigger">';
+    html += '<i class="ti ti-filter"></i>';
+    html += '<span id="' + p + '-sf-label">كل الحالات</span>';
+    html += '<i class="ti ti-chevron-down je-sf-chevron"></i>';
+    html += "</button>";
+    html += '<div class="je-sf-menu" id="' + p + '-sf-menu">';
+    html +=
+      '<button class="je-sf-item je-sf-active" data-sf-status="">' +
+      '<span class="je-sf-dot je-sf-dot-all"></span>' +
+      '<span class="je-sf-item-label">كل الحالات</span>' +
+      '<i class="ti ti-check je-sf-check"></i>' +
+      "</button>";
+    html +=
+      '<button class="je-sf-item" data-sf-status="DRAFT">' +
+      '<span class="je-sf-dot je-sf-dot-draft"></span>' +
+      '<span class="je-sf-item-label">مسودة</span>' +
+      '<i class="ti ti-check je-sf-check"></i>' +
+      "</button>";
+    html +=
+      '<button class="je-sf-item" data-sf-status="POSTED">' +
+      '<span class="je-sf-dot je-sf-dot-posted"></span>' +
+      '<span class="je-sf-item-label">معتمد</span>' +
+      '<i class="ti ti-check je-sf-check"></i>' +
+      "</button>";
+    html +=
+      '<button class="je-sf-item" data-sf-status="CANCELLED">' +
+      '<span class="je-sf-dot je-sf-dot-cancelled"></span>' +
+      '<span class="je-sf-item-label">ملغي</span>' +
+      '<i class="ti ti-check je-sf-check"></i>' +
+      "</button>";
+    html += "</div>";
+    html += "</div>";
+    html += '<input type="hidden" id="' + p + '-filter-status" value="">';
+
+    html += "</div>"; // /tbl-filters-row
+    return html;
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // _renderReportDateBar(opts) — شريط تاريخ موحّد لشاشات التقارير
+  // opts: { fromId, toId, btnId, btnLabel, extra }
+  // extra: HTML إضافي يُضاف بعد زر العرض (اختياري)
+  // ══════════════════════════════════════════════════════════
+  function _renderReportDateBar(opts) {
+    var o = opts || {};
+    var html = '<div class="rpt-date-bar">';
+    if (o.fromId !== false) {
+      html +=
+        '<div class="je-drp-inp-wrap rpt-inp-wrap">' +
+        '<i class="ti ti-calendar"></i>' +
+        '<input type="date" id="' +
+        (o.fromId || "rpt-from") +
+        '" class="je-drp-inp rpt-date-inp" autocomplete="off" placeholder="من تاريخ">' +
+        "</div>";
+    }
+    if (o.toId !== false) {
+      html +=
+        '<div class="je-drp-sep" style="margin:0 4px"><div class="je-drp-sep-line" style="height:28px"></div></div>';
+      html +=
+        '<div class="je-drp-inp-wrap rpt-inp-wrap">' +
+        '<i class="ti ti-calendar"></i>' +
+        '<input type="date" id="' +
+        (o.toId || "rpt-to") +
+        '" class="je-drp-inp rpt-date-inp" autocomplete="off" placeholder="إلى تاريخ">' +
+        "</div>";
+    }
+    if (o.extra) html += o.extra;
+    html +=
+      '<button class="btn btn-primary rpt-btn" id="' +
+      (o.btnId || "rpt-btn") +
+      '">' +
+      '<i class="ti ti-search"></i> ' +
+      (o.btnLabel || "عرض") +
+      "</button>";
+    html += "</div>";
+    return html;
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // renderAccessDenied — دالة موحّدة لعرض شاشة منع الوصول
+  // data-testid="permission-denied" + role="alert" تُمكّن E2E testing
+  // ══════════════════════════════════════════════════════════
+  function renderAccessDenied(message, permissionName) {
+    var msg = message || "ليس لديك صلاحية لعرض هذه الشاشة";
+    var perm = permissionName || "";
+    return (
+      "<div data-testid='permission-denied' role='alert' aria-label='access-denied' " +
+      "class='access-denied-wall' style='display:flex;flex-direction:column;align-items:center;" +
+      "justify-content:center;min-height:40vh;gap:16px;padding:40px;text-align:center;'>" +
+      "<div style='font-size:56px'></div>" +
+      "<h2 data-testid='denied-title' style='color:var(--text2);margin:0'>" +
+      msg +
+      "</h2>" +
+      (perm
+        ? "<p data-testid='denied-permission' style='color:var(--text3);margin:0'>الصلاحية المطلوبة: <b>" +
+          perm +
+          "</b></p>"
+        : "") +
+      "</div>"
+    );
+  }
+
+  /**
+   * _renderLicenseBanner — البانر الصغير اللي بيظهر فوق فورم اللوجين
+   * لو فيه تنبيه اقتراب/انتهاء صلاحية. مصدر البيانات هو الـ Hub
+   * (window.__PREFETCH__.license، محقون من doGet — راجع Code_12c_
+   * WebEntry.js و_getLicenseStatusCacheOnly في Code_41_UpdateManagement.js)
+   * — مفيش أي حساب أيام أو تاريخ محلي هنا، بس عرض للحقول الجاهزة.
+   * بيرجع "" (بدون أي عنصر) في الحالة العادية (NORMAL) عشان ميظهرش
+   * أي حاجة مزعجة لمستخدم بعيد عن الانتهاء.
+   */
+  function _renderLicenseBanner() {
+    var lic = (window.__PREFETCH__ && window.__PREFETCH__.license) || null;
+    if (!lic || !lic.message) return "";
+    if (lic.warningLevel === "NORMAL" && lic.status !== "EXPIRED") return "";
+
+    var levelClass =
+      {
+        INFO: "lic-info",
+        WARNING: "lic-warning",
+        HIGH: "lic-high",
+        CRITICAL: "lic-critical",
+      }[lic.warningLevel] || "lic-warning";
+
+    var iconMap = { INFO: "ℹ️", WARNING: "⚠️", HIGH: "⚠️", CRITICAL: "⛔" };
+    var icon = iconMap[lic.warningLevel] || "⚠️";
+
+    var metaParts = [];
+    if (lic.expiresAt) {
+      try {
+        metaParts.push(
+          "تاريخ الانتهاء: " + new Date(lic.expiresAt).toLocaleDateString("ar-EG"),
+        );
+      } catch (e) {}
+    }
+    if (typeof lic.daysRemaining === "number" && lic.daysRemaining > 0) {
+      metaParts.push("الأيام المتبقية: " + lic.daysRemaining);
+    }
+
+    return (
+      '<div class="license-banner ' +
+      levelClass +
+      '" role="status" data-testid="license-banner">' +
+      '<span class="lic-icon">' +
+      icon +
+      "</span>" +
+      '<div class="lic-body">' +
+      '<div class="lic-title">' +
+      esc(lic.message) +
+      "</div>" +
+      (metaParts.length
+        ? '<div class="lic-meta">' + esc(metaParts.join(" · ")) + "</div>"
+        : "") +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function renderLogin() {
+    var slidesHtml = LOGIN_SLIDES.map(_renderLoginSlide).join("");
+    var dotsHtml = LOGIN_SLIDES.map(function (s, idx) {
+      return (
+        '<button class="show-dot' +
+        (idx === 0 ? " current" : "") +
+        '" data-i="' +
+        idx +
+        '" aria-label="' +
+        esc(I18N.t("LOGIN_SLIDE_ARIA", { n: idx + 1 })) +
+        '"><span class="fill"></span></button>'
+      );
+    }).join("");
+
+    return (
+      '<div class="login-page">' +
+      // ── يسار: فورم تسجيل الدخول ──
+      '<main class="form-panel">' +
+      '<div class="login-wrap">' +
+      '<div class="login-box" id="login-box">' +
+      '<div class="form-mobile-brand">' +
+      '<span class="mk-icon">' +
+      _loginLogoIconHtml(20) +
+      "</span>" +
+      '<span class="mk-text"><b>MOO</b>.ERP</span>' +
+      "</div>" +
+      '<div class="login-greeting" id="login-greet"></div>' +
+      _renderLicenseBanner() +
+      '<h2 class="form-title">' +
+      I18N.t("LOGIN_TITLE") +
+      "</h2>" +
+      '<p class="form-desc">' +
+      I18N.t("LOGIN_SUBTITLE") +
+      "</p>" +
+      '<div class="login-field" id="fld-user">' +
+      // [PERF-FIX-LOGIN-ICONS] كانت أيقونة اسم المستخدم <i class="ti ti-user">
+      // بتعتمد على فونط Tabler اللي بيتحمل Lazy (getLazyAppBundle) — يعني
+      // العنصر بيترسم فورًا من غير أيقونة، وبعدين الأيقونة "تظهر فجأة" بعد
+      // وصول الحزمة المؤجلة، وهو بالظبط اللي بيبان "بطء ملحوظ" في الشاشة.
+      // الحل: SVG مضمّن مباشرة (زي أيقونات الـ slides المجاورة) بيترسم فورًا
+      // مع أول رسم للصفحة، من غير ما ينتظر أي تحميل إضافي.
+      '<label for="l-user"><i class="ti login-ico" aria-hidden="true">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0"/>' +
+      '<path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2"/>' +
+      "</svg></i> " +
+      I18N.t("LOGIN_USERNAME_LABEL") +
+      "</label>" +
+      '<div class="login-input-wrap">' +
+      '<input id="l-user" type="text" data-testid="login-username" placeholder="' +
+      esc(I18N.t("LOGIN_USERNAME_PLACEHOLDER")) +
+      '" autocomplete="username">' +
+      "</div></div>" +
+      '<div class="login-field" id="fld-pass">' +
+      // [PERF-FIX-LOGIN-ICONS] نفس فكرة أيقونة اسم المستخدم فوق.
+      '<label for="l-pass"><i class="ti login-ico" aria-hidden="true">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<rect x="5" y="11" width="14" height="10" rx="2"/>' +
+      '<circle cx="12" cy="16" r="1"/>' +
+      '<path d="M8 11v-4a4 4 0 0 1 8 0v4"/>' +
+      "</svg></i> " +
+      I18N.t("LOGIN_PASSWORD_LABEL") +
+      "</label>" +
+      '<div class="login-input-wrap">' +
+      '<input id="l-pass" class="has-toggle" type="password" data-testid="login-password" placeholder="' +
+      esc(I18N.t("LOGIN_PASSWORD_PLACEHOLDER")) +
+      '" autocomplete="current-password">' +
+      '<button type="button" class="login-eye-btn" id="l-pass-toggle" title="' +
+      esc(I18N.t("LOGIN_TOGGLE_PASSWORD")) +
+      '">' +
+      // [PERF-FIX-LOGIN-ICONS] نفس المبدأ: SVG مضمّن بدل فونط الأيقونات
+      // المؤجل. بنسيب نفس الـ id زي ما هو (l-pass-eye-icon) عشان JS
+      // التبديل في 02_JS_UI_Shell.html (l-pass-toggle) يفضل شغال، لكن
+      // بدّلنا كلاسات الحالة لـ eye-state-open/eye-state-closed (بدل
+      // ti-eye/ti-eye-off القديمة) عشان ما تصطدمش مع قواعد
+      // .ti-eye:before بتوع فونط Tabler لما يتحمّل لاحقًا — شوف
+      // 02_JS_UI_Shell.html وStyle_05_Login.html لباقي التفاصيل.
+      '<i class="ti eye-state-open" id="l-pass-eye-icon" aria-hidden="true">' +
+      '<svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/>' +
+      '<path d="M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6"/>' +
+      "</svg>" +
+      '<svg class="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M10.585 10.587a2 2 0 0 0 2.829 2.828"/>' +
+      '<path d="M16.681 16.673a8.717 8.717 0 0 1 -4.681 1.327c-3.6 0 -6.6 -2 -9 -6c1.272 -2.12 2.712 -3.678 4.32 -4.674m2.86 -1.146a9.055 9.055 0 0 1 1.82 -.18c3.6 0 6.6 2 9 6c-.666 1.11 -1.379 2.067 -2.138 2.87"/>' +
+      '<path d="M3 3l18 18"/>' +
+      "</svg>" +
+      "</i>" +
+      "</button>" +
+      "</div></div>" +
+      '<div class="login-remember-row">' +
+      '<label class="login-rem-lbl">' +
+      '<input type="checkbox" class="login-chk" id="l-remember">' +
+      '<span class="login-chk-box"></span>' +
+      "<span>" +
+      I18N.t("LOGIN_REMEMBER_ME") +
+      "</span>" +
+      "</label>" +
+      '<button type="button" class="login-forgot-link" id="btn-forgot-password" data-testid="btn-forgot-password">' +
+      I18N.t("LOGIN_FORGOT_PASSWORD_LINK") +
+      "</button>" +
+      "</div>" +
+      '<div id="login-err" class="login-error" data-testid="login-error" role="alert" aria-live="assertive"></div>' +
+      '<button type="button" class="btn-login" id="btn-login" data-testid="btn-login">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>' +
+      "<span>" +
+      I18N.t("SHELL_BTN_LOGIN") +
+      "</span>" +
+      '<span class="login-btn-glow"></span>' +
+      "</button>" +
+      '<div class="login-card-foot">' +
+      '<span class="login-srv"><span class="login-srv-dot"></span><span class="login-srv-lbl">' +
+      I18N.t("LOGIN_SERVER_STATUS") +
+      "</span></span>" +
+      '<span class="login-ver">v' +
+      ((window.__PREFETCH__ && window.__PREFETCH__.appVersion) || "?") +
+      "</span>" +
+      "</div>" +
+      "</div>" +
+      // [DEV-FOOTER-V3] شريط تذييل مندمج بالمنتج بدل الكارت العائم القديم:
+      // بدون خلفية/ظل ثقيل، أفاتار صغير (32px)، تدرّج نصي (اسم أوضح من
+      // النص المساعد)، وأزرار تواصل مضغوطة، بنفس روابط لينكدإن/واتساب
+      // ونفس كلاسات .login-social-btn الأصلية عشان لا ينكسر أي استخدام
+      // آخر لها في الكود.
+      '<div class="login-footer">' +
+      '<div class="dev-strip">' +
+      '<span class="dev-strip-text">' +
+      '<span class="dev-strip-label">' +
+      I18N.t("LOGIN_DEVELOPED_BY") +
+      "</span>" +
+      '<a href="https://www.linkedin.com/in/mohamed-muhmoud-932320301" target="_blank" rel="noopener" class="dev-strip-name">محمد محمود' +
+      "</a>" +
+      "</span>" +
+      '<span class="dev-strip-links">' +
+      '<a href="https://www.linkedin.com/in/mohamed-muhmoud-932320301" target="_blank" rel="noopener" class="login-social-btn login-social-linkedin" aria-label="LinkedIn" title="LinkedIn">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>' +
+      "</a>" +
+      '<a href="https://wa.me/201025306678" target="_blank" rel="noopener" class="login-social-btn login-social-whatsapp" aria-label="WhatsApp" title="WhatsApp">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>' +
+      "</a>" +
+      "</span>" +
+      "</div>" +
+      "</div>" +
+      "</main>" +
+      // ── يمين: لوحة العرض المتحرك (Slideshow) ──
+      '<aside class="show-panel">' +
+      '<div class="show-brand">' +
+      '<span class="mk-icon">' +
+      _loginLogoIconHtml(20) +
+      "</span>" +
+      '<span class="mk-text"><b>MOO</b>.ERP</span>' +
+      "</div>" +
+      '<div class="show-stage" id="show-stage">' +
+      slidesHtml +
+      "</div>" +
+      '<div class="show-nav" id="show-nav">' +
+      dotsHtml +
+      "</div>" +
+      '<div class="show-foot">' +
+      '<span class="show-foot-dot"></span>' +
+      "<span>" +
+      I18N.t("LOGIN_SECURE_CONNECTION") +
+      "</span>" +
+      "</div>" +
+      "</aside>" +
+      "</div>"
+    );
+  }
+  function renderLayout() {
+    var user = APP.currentUser;
+    var alerts = alertCount();
+    var navHtml = "";
+    // [SIDEBAR-IW-ACTIVE] شاشات الفاتورة/المرتجع (sale_invoice_workspace...)
+    // مش بنود سايد بار حقيقية، فمقارنة APP.currentPage بيها مباشرة كانت
+    // بتفشل ومفيش تاب بيتلوّن غير هيدر المجموعة (open/has-active بس).
+    // هنا بنستخدم نفس خريطة الـ breadcrumb (IW_WORKSPACE_BREADCRUMB من
+    // 02_JS_UI_Shell.html) عشان نعرف صفحة القائمة المقابلة (مثلاً
+    // "sale-invoices") ونعتبرها هي المرجع لتلوين التاب في السايد بار.
+    var _sidebarActivePage =
+      (typeof IW_WORKSPACE_BREADCRUMB !== "undefined" &&
+        IW_WORKSPACE_BREADCRUMB[APP.currentPage] &&
+        IW_WORKSPACE_BREADCRUMB[APP.currentPage].listPage) ||
+      APP.currentPage;
+    NAV_GROUPS.forEach(function (g) {
+      // [SIDEBAR-NO-DASHBOARD-LINK] بناءً على طلب المستخدم: بند "لوحة
+      // التحكم" اتشال من السايد بار خالص، والاعتماد بقى فقط على رابط
+      // "لوحة التحكم" الموجود في شريط التنقل (breadcrumb) بالتوب بار
+      // (bc-link في 02_JS_UI_Shell.html، السطر اللي فيه navigate('dashboard')).
+      // القسم فضل موجود جوه NAV_GROUPS نفسه (مش بيتشال من المصفوفة) عشان
+      // منطق تاني بيعتمد عليه فعليًا: findIndex بتاع dashboardIdx في
+      // 01_JS_Core_Auth.html (بيحدد مكان إدراج مجموعتي المحاسبة والموارد
+      // البشرية بعد "لوحة التحكم" مباشرة) وكمان _getPageNavMeta بتاعة
+      // الـ breadcrumb. الحل الآمن: نتجاهل رسم القسم ده بس هنا في
+      // renderLayout من غير ما نمسه في المصفوفة نفسها.
+      if (g.group === "MENU_HOME") return;
+      var isAdmin = APP.currentUser && APP.currentUser.role === "admin";
+      var filteredItems = g.items.filter(function (it) {
+        if (it.adminOnly) return isAdmin;
+        if (it.requiredPerms && it.requiredPerms.length > 0) {
+          return it.requiredPerms.some(function (p) {
+            return canDo(p);
+          });
+        }
+        return true;
+      });
+      if (filteredItems.length === 0) return;
+
+      // ── حالة dropdown: المجموعة لها خاصية dropdown:true ──
+      if (g.dropdown) {
+        var gId = "nav-grp-" + g.group.replace(/\s+/g, "-");
+        // [SIDEBAR-V3 / FIX-DROPDOWN-AUTOOPEN] فرّقنا بين حالتين كانوا
+        // متلخبطين في متغير واحد (isActive) قبل كده:
+        //  - isSubItemActive: الصفحة الحالية بند فرعي جوه المجموعة →
+        //    لازم نفتح القائمة (open) عشان يبان البند المحدد، ده منطقي.
+        //  - isDashboardActive: الصفحة الحالية هي داشبورد القسم نفسه
+        //    (يعني المستخدم دوس على اسم القسم/nav-grp-label اللي بينقّل
+        //    مباشرة من غير ما يفتح القائمة الفرعية أصلاً) → لازم بس نلوّن
+        //    الهيدر (has-active) من غير ما نجبر القائمة تفتح، لأن المستخدم
+        //    مدوسش على السهم. قبل الإصلاح كانت isActive بتحصل true في
+        //    الحالتين وتفتح القائمة تلقائيًا حتى لو مفيش بند فرعي محدد.
+        var isSubItemActive = filteredItems.some(function (it) {
+          return it.page === _sidebarActivePage;
+        });
+        var isDashboardActive =
+          !!g.dashboardPage && g.dashboardPage === _sidebarActivePage;
+        var isActive = isSubItemActive || isDashboardActive;
+        var shouldForceOpen = isSubItemActive;
+        var subItems = filteredItems
+          .map(function (it) {
+            var isItemActive = it.page === _sidebarActivePage;
+            var badge =
+              it.badge && alerts > 0
+                ? '<span class="nav-badge">' + alerts + "</span>"
+                : "";
+            var newBadge = it.isNew
+              ? '<span class="nav-new-badge">NEW</span>'
+              : "";
+            return (
+              '<div class="nav-sub-item' +
+              (isItemActive ? " active" : "") +
+              '" data-page="' +
+              it.page +
+              '" title="' +
+              esc(I18N.t(it.label)) +
+              '"' +
+              (it.partyType ? ' data-party-type="' + it.partyType + '"' : "") +
+              ">" +
+              '<span class="nav-icon" style="font-size:18px;width:26px">' +
+              it.icon +
+              "</span>" +
+              '<span class="sidebar-label" style="flex:1">' +
+              I18N.t(it.label) +
+              "</span>" +
+              newBadge +
+              badge +
+              "</div>"
+            );
+          })
+          .join("");
+
+        // [SIDEBAR-V3] رأس المجموعة بقى منقسم لمنطقتين مستقلتين:
+        //  - .nav-grp-label   → اسم القسم + الأيقونة، الضغط عليها يفتح
+        //                       داشبورد القسم مباشرة (لو g.dashboardPage
+        //                       موجودة). لو القسم لسه معندوش داشبورد،
+        //                       بتتصرف زي الأول (تفتح/تقفل القائمة).
+        //  - .nav-grp-arrow   → السهم بس، الضغط عليه يفتح/يقفل القائمة
+        //                       الفرعية دايماً (مفيش navigate هنا خالص).
+        var hasDashboard = !!g.dashboardPage;
+        navHtml +=
+          '<div class="nav-section">' +
+          '<div class="nav-dropdown" id="' +
+          gId +
+          '-wrap">' +
+          '<div class="nav-item nav-dropdown-toggle nav-grp-toggle' +
+          (isActive ? " has-active" : "") +
+          (shouldForceOpen ? " open" : "") +
+          '" id="' +
+          gId +
+          '-toggle">' +
+          '<div class="nav-grp-label' +
+          (hasDashboard ? " has-dashboard" : "") +
+          '" id="' +
+          gId +
+          '-label" title="' +
+          esc(I18N.t(g.group)) +
+          '"' +
+          (hasDashboard
+            ? ' data-dashboard-page="' + g.dashboardPage + '"'
+            : "") +
+          ">" +
+          '<span class="nav-icon">' +
+          g.icon +
+          "</span>" +
+          '<span class="sidebar-label" style="flex:1">' +
+          I18N.t(g.group) +
+          "</span>" +
+          "</div>" +
+          '<span class="nav-grp-arrow" id="' +
+          gId +
+          '-arrow" title="' +
+          esc(I18N.t(g.group)) +
+          '"><i class="ti ti-chevron-down nav-dropdown-arrow"></i></span>' +
+          "</div>" +
+          '<div class="nav-dropdown-menu' +
+          (shouldForceOpen ? " open" : "") +
+          '" id="' +
+          gId +
+          '-menu"><div class="nav-dropdown-inner">' +
+          subItems +
+          "</div></div></div></div>";
+        return;
+      }
+
+      // ── حالة عادية: عرض مباشر ──
+      var items = filteredItems
+        .map(function (it) {
+          var badge =
+            it.badge && alerts > 0
+              ? '<span class="nav-badge">' + alerts + "</span>"
+              : "";
+          var newBadge = it.isNew
+            ? '<span class="nav-new-badge">NEW</span>'
+            : "";
+          var isActive = it.page === _sidebarActivePage;
+          return (
+            '<div class="nav-item' +
+            (isActive ? " active" : "") +
+            '" data-page="' +
+            it.page +
+            '" title="' +
+            esc(I18N.t(it.label)) +
+            '">' +
+            '<span class="nav-icon">' +
+            it.icon +
+            "</span>" +
+            '<span class="sidebar-label" style="flex:1">' +
+            I18N.t(it.label) +
+            "</span>" +
+            newBadge +
+            badge +
+            "</div>"
+          );
+        })
+        .join("");
+
+      navHtml +=
+        '<div class="nav-section">' +
+        (g.group === "MENU_HOME"
+          ? ""
+          : '<div class="nav-label sidebar-label">' +
+            I18N.t(g.group) +
+            "</div>") +
+        items +
+        "</div>";
+    });
+
+    return (
+      '<div class="app-layout">' +
+      renderTopBar() +
+      '<button class="sidebar-toggle" id="sidebar-toggle" aria-label="' +
+      esc(I18N.t("LBL_MENU")) +
+      '"></button>' +
+      '<div class="sidebar-backdrop" id="sidebar-backdrop"></div>' +
+      '<div class="sidebar" id="main-sidebar">' +
+      // [SIDEBAR-COLLAPSE] زرار طي/فتح السايدبار (ديسكتوب فقط —
+      // مخفي على الموبايل عبر CSS، لأن الموبايل بيستخدم Drawer أصلاً)
+      '<button type="button" class="sidebar-collapse-btn" id="sidebar-collapse-btn" ' +
+      'title="' +
+      esc(I18N.t("LBL_COLLAPSE_SIDEBAR")) +
+      '" aria-label="' +
+      esc(I18N.t("LBL_COLLAPSE_SIDEBAR")) +
+      '" aria-expanded="true">' +
+      '<i class="ti ti-chevron-right" id="sidebar-collapse-icon" aria-hidden="true"></i>' +
+      "</button>" +
+      '<div class="sidebar-head">' +
+      '<div class="sidebar-brand">' +
+      // [FIX-LAZY-CRASH-2026-08-02] _renderSidebarBrand() معرّفة في
+      // 08_JS_Users_Branding.html اللي بتتحمّل ضمن الحزمة المؤجلة
+      // (lazy bundle). لو التحميل فشل أو حصله timeout (شوف
+      // _loadLazyAppBundle في 01_JS_Core_Auth.html)، الدالة مش هتكون
+      // معرّفة وقت renderLayout() فكانت بتوقع "ReferenceError:
+      // _renderSidebarBrand is not defined" وتكسر الشاشة كلها بعد
+      // اللوجين مباشرة. بنعرض بديل بسيط (اسم الشركة الافتراضي) بدل ما
+      // نكسر الصفحة، ونسيب renderPage/silent refresh يحدّثوا الشعار
+      // الحقيقي أول ما الحزمة المؤجلة توصل فعليًا.
+      (typeof _renderSidebarBrand === "function"
+        ? _renderSidebarBrand()
+        : '<div class="sidebar-brand-fallback">' +
+          '<div class="sidebar-brand-fallback-name">MOO.ERP</div>' +
+          '<div class="sidebar-brand-fallback-sub">Enterprise Resource Planning</div>' +
+          "</div>") +
+      "</div>" +
+      '<div class="user-chip">' +
+      '<div class="user-avatar">' +
+      (user.full_name ? user.full_name[0] : "م") +
+      "</div>" +
+      '<div class="user-info">' +
+      '<div class="u-name">' +
+      esc(user.full_name || "") +
+      "</div>" +
+      '<div class="u-role">' +
+      roleLabel(user.role || "") +
+      "</div>" +
+      "</div></div></div>" +
+      '<nav class="sidebar-nav">' +
+      navHtml +
+      "</nav>" +
+      '<div class="sidebar-foot">' +
+      '<button onclick="renderPage(\'user-preferences\')" title="' +
+      esc(I18N.t("LBL_MY_PREFERENCES")) +
+      '" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:9px 14px;background:none;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);font-family:inherit;margin-bottom:8px;transition:.18s" onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'none\'">' +
+      '<i class="ti ti-user-cog" style="font-size:15px;color:var(--accent)"></i><span class="sidebar-label"> ' +
+      I18N.t("LBL_MY_PREFERENCES") +
+      "</span></button>" +
+      '<button class="btn-logout" id="btn-logout" data-testid="btn-logout" title="' +
+      esc(I18N.t("BTN_LOGOUT")) +
+      '" aria-label="' +
+      esc(I18N.t("BTN_LOGOUT")) +
+      '" style="display:inline-flex;align-items:center;justify-content:center;gap:6px"><i class="ti ti-door-exit" style="font-size:20px" aria-hidden="true"></i><span class="sidebar-label">' +
+      I18N.t("BTN_LOGOUT") +
+      "</span></button>" +
+      "</div></div>" +
+      '<div class="content"><div id="refresh-bar" style="position:fixed;top:0;left:0;right:0;height:3px;background:var(--accent);opacity:0;transition:opacity .3s;z-index:9999;animation:none"></div><div id="page-trail"><span id="top-bar-title" data-testid="page-title" aria-label="page-title"></span></div><div id="page-content"></div></div>' +
+      "</div>"
+    );
+  }
+  // ── Top Bar + Notification Dropdown ─────────────────────────
+  function renderTopBar() {
+    var isDark = APP.isDark;
+    return (
+      '<div id="app-top-bar">' +
+      // ── Global Search (في النص) ──
+      '<div class="global-search-wrap" id="global-search-wrap">' +
+      '<div class="global-search-box" id="global-search-box">' +
+      '<i class="ti ti-search gs-icon" style="font-size:18px" aria-hidden="true"></i>' +
+      '<input type="text" id="global-search-input" class="gs-input" ' +
+      'placeholder="بحث شامل... (Alt+S)" autocomplete="off" ' +
+      'oninput="_gsOnInput(this.value)" onfocus="_gsOnFocus()" onblur="_gsOnBlur(event)">' +
+      '<kbd class="gs-kbd" id="gs-kbd">Alt S</kbd>' +
+      '<button class="gs-clear" id="gs-clear" onclick="_gsClear()" style="display:none" title="مسح"><i class="ti ti-x" style="font-size:12px"></i></button>' +
+      "</div>" +
+      // ── شريط فلاتر النوع (مخفي حتى يبدأ البحث) ──
+      '<div class="gs-filter-bar" id="gs-filter-bar" style="display:none">' +
+      '<button class="gs-filter-btn gs-filter-active" data-filter="all" onmousedown="event.preventDefault();_gsSetFilter(\'all\')">الكل <span class="gs-filter-count">0</span></button>' +
+      '<button class="gs-filter-btn" data-filter="item" onmousedown="event.preventDefault();_gsSetFilter(\'item\')"><i class="ti ti-package" style="font-size:11px"></i> أصناف <span class="gs-filter-count" style="display:none">0</span></button>' +
+      '<button class="gs-filter-btn" data-filter="sale_invoice" onmousedown="event.preventDefault();_gsSetFilter(\'sale_invoice\')"><i class="ti ti-receipt" style="font-size:11px"></i> فواتير بيع <span class="gs-filter-count" style="display:none">0</span></button>' +
+      '<button class="gs-filter-btn" data-filter="purchase_invoice" onmousedown="event.preventDefault();_gsSetFilter(\'purchase_invoice\')"><i class="ti ti-receipt-2" style="font-size:11px"></i> فواتير شراء <span class="gs-filter-count" style="display:none">0</span></button>' +
+      '<button class="gs-filter-btn" data-filter="purchase_order" onmousedown="event.preventDefault();_gsSetFilter(\'purchase_order\')"><i class="ti ti-shopping-cart" style="font-size:11px"></i> طلبات شراء <span class="gs-filter-count" style="display:none">0</span></button>' +
+      '<button class="gs-filter-btn" data-filter="production_order" onmousedown="event.preventDefault();_gsSetFilter(\'production_order\')"><i class="ti ti-building-factory-2" style="font-size:11px"></i> أوامر إنتاج <span class="gs-filter-count" style="display:none">0</span></button>' +
+      '<button class="gs-filter-btn" data-filter="shipment" onmousedown="event.preventDefault();_gsSetFilter(\'shipment\')"><i class="ti ti-truck" style="font-size:11px"></i> شحنات <span class="gs-filter-count" style="display:none">0</span></button>' +
+      '<button class="gs-filter-btn" data-filter="transaction" onmousedown="event.preventDefault();_gsSetFilter(\'transaction\')"><i class="ti ti-history" style="font-size:11px"></i> حركات <span class="gs-filter-count" style="display:none">0</span></button>' +
+      '<button class="gs-filter-btn" data-filter="party" onmousedown="event.preventDefault();_gsSetFilter(\'party\')"><i class="ti ti-users" style="font-size:11px"></i> عملاء وموردين <span class="gs-filter-count" style="display:none">0</span></button>' +
+      '<button class="gs-filter-btn" data-filter="employee" onmousedown="event.preventDefault();_gsSetFilter(\'employee\')"><i class="ti ti-id-badge-2" style="font-size:11px"></i> موظفون <span class="gs-filter-count" style="display:none">0</span></button>' +
+      '<button class="gs-filter-btn" data-filter="account" onmousedown="event.preventDefault();_gsSetFilter(\'account\')"><i class="ti ti-book" style="font-size:11px"></i> حسابات <span class="gs-filter-count" style="display:none">0</span></button>' +
+      '<button class="gs-filter-btn" data-filter="page" onmousedown="event.preventDefault();_gsSetFilter(\'page\')"><i class="ti ti-compass" style="font-size:11px"></i> صفحات <span class="gs-filter-count" style="display:none">0</span></button>' +
+      "</div>" +
+      '<div class="gs-dropdown" id="gs-dropdown" style="display:none">' +
+      '<div class="gs-results" id="gs-results"></div>' +
+      "</div>" +
+      "</div>" +
+      // ── الأيقونات على اليسار ──
+      '<div id="notif-backdrop"></div>' +
+      /* ── زر الإشعارات ── */
+      '<button id="notif-bell-btn" title="الإشعارات" aria-label="الإشعارات">' +
+      "<i class='ti ti-bell' style='color:#B91C1C' aria-hidden='true'></i>" +
+      '<span id="notif-count-bubble"></span>' +
+      "</button>" +
+      '<div id="notif-dropdown">' +
+      '<div class="notif-header">' +
+      "<h3 style='display:flex;align-items:center;gap:7px'><i class='ti ti-bell' style='font-size:20px;color:#B91C1C' aria-hidden='true'></i>الإشعارات</h3>" +
+      '<button class="notif-mark-all" id="notif-mark-all-btn">تحديد الكل كمقروء</button>' +
+      "</div>" +
+      '<div class="notif-list" id="notif-list-body"></div>' +
+      '<div class="notif-footer">' +
+      '<button id="notif-go-alerts-btn">عرض كل تنبيهات المخزون ←</button>' +
+      "</div>" +
+      "</div>" +
+      /* ── زر واتساب ── */
+      '<div id="wa-topbar-wrap" style="position:relative">' +
+      '<button id="wa-topbar-btn" title="مركز واتساب" aria-label="مركز واتساب" ' +
+      'style="background:none;border:none;cursor:pointer;padding:6px;border-radius:8px;display:flex;align-items:center;justify-content:center;transition:background 0.2s;position:relative;" ' +
+      "onmouseover=\"this.style.background='var(--bg2)'\" onmouseout=\"this.style.background='none'\">" +
+      '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+      '<path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 00-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z" fill="#25D366"/>' +
+      "</svg>" +
+      '<span id="wa-topbar-badge" style="display:none;position:absolute;top:2px;right:2px;background:#ef4444;color:#fff;font-size:10px;font-weight:700;border-radius:10px;min-width:16px;height:16px;line-height:16px;text-align:center;padding:0 3px;box-shadow:0 1px 4px rgba(0,0,0,0.2)">0</span>' +
+      "</button>" +
+      /* ── القائمة المنسدلة للواتساب ── */
+      '<div id="wa-topbar-dropdown" style="display:none;position:absolute;top:44px;left:0;width:340px;background:var(--bg1);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,0.15);z-index:9999;overflow:hidden;">' +
+      /* رأس القائمة */
+      '<div style="background:linear-gradient(135deg,#25D366,#128C7E);padding:14px 16px;display:flex;align-items:center;gap:10px;">' +
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 00-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>' +
+      '<div style="flex:1">' +
+      '<div style="color:#fff;font-weight:700;font-size:14px">مركز واتساب</div>' +
+      '<div id="wa-topbar-status" style="color:rgba(255,255,255,0.8);font-size:11px">جارٍ التحميل...</div>' +
+      "</div>" +
+      '<div id="wa-topbar-unread" style="background:rgba(255,255,255,0.2);color:#fff;font-size:11px;font-weight:700;border-radius:10px;padding:2px 8px;display:none">0 غير مقروء</div>' +
+      "</div>" +
+      /* آخر المحادثات */
+      '<div id="wa-topbar-conversations" style="max-height:220px;overflow-y:auto;">' +
+      '<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px">' +
+      '<i class="ti ti-message-circle" style="font-size:28px;display:block;margin-bottom:8px;opacity:0.4"></i>' +
+      "لا توجد محادثات حديثة" +
+      "</div>" +
+      "</div>" +
+      /* أزرار الأكشن */
+      '<div style="padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:8px;">' +
+      '<button onclick="WA_HUB&&WA_HUB.openCenter()" style="flex:1;background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;border:none;border-radius:8px;padding:9px 0;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">' +
+      '<i class="ti ti-layout-sidebar-right-expand"></i>فتح المركز' +
+      "</button>" +
+      '<button onclick="WA_HUB&&WA_HUB.openSettings()" style="background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;cursor:pointer" title="إعدادات واتساب">' +
+      '<i class="ti ti-settings"></i>' +
+      "</button>" +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      /* ── زر تحديث البيانات ── */
+      '<button id="global-refresh-btn" title="تحديث البيانات" aria-label="تحديث البيانات" ' +
+      'style="background:none;border:none;cursor:pointer;padding:6px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text2);transition:background 0.2s;" ' +
+      "onmouseover=\"this.style.background='var(--bg2)'\" onmouseout=\"this.style.background='none'\">" +
+      '<i class="ti ti-refresh" id="global-refresh-icon" style="font-size:23px;" aria-hidden="true"></i>' +
+      "</button>" +
+      /* ── زر ملء الشاشة ── */
+      '<button id="fullscreen-btn" title="ملء الشاشة" aria-label="ملء الشاشة" onclick="_toggleFullscreen()" style="background:none;border:none;cursor:pointer;padding:6px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text2);transition:background 0.2s;" onmouseover="this.style.background=\'var(--bg2)\'" onmouseout="this.style.background=\'none\'">' +
+      '<i class="ti ti-maximize" id="fs-icon" style="font-size:23px;" aria-hidden="true"></i>' +
+      "</button>" +
+      /* ── Pill الوضع الليلي ── */
+      '<div class="theme-toggle" id="theme-toggle" title="' +
+      (isDark ? "تفعيل الوضع النهاري" : "تفعيل الوضع الليلي") +
+      '">' +
+      '<div class="theme-pill-opt ' +
+      (isDark ? "active-dark" : "") +
+      '" id="pill-dark"><i class="ti ti-moon" aria-hidden="true"></i></div>' +
+      '<div class="theme-pill-opt ' +
+      (!isDark ? "active-light" : "") +
+      '" id="pill-light"><i class="ti ti-sun" aria-hidden="true"></i></div>' +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // §MODULE-DASHBOARDS — لوحات تحكم المودلات
+  // ═══════════════════════════════════════════════════════════════
+
+  // ── لوحة المخزون ──────────────────────────────────────────────
+  function renderInventoryDashboard() {
+    var html = _renderPageHeader(
+      "المخزون",
+      "نظرة عامة على الأصناف والمخازن والأرصدة",
+      {
+        bgIcon: "ti-package",
+        bgColor: "var(--teal-soft)",
+        iconColor: "var(--teal)",
+      },
+      "",
+    );
+    html += '<div class="stat-grid">';
+    html += statCard(
+      iconBadge("ti-package", "var(--teal-soft)", "var(--teal)"),
+      "إجمالي الأصناف",
+      '<span id="invd-stat-items">...</span>',
+      "صنف",
+      "",
+    );
+    html += statCard(
+      iconBadge(
+        "ti-building-warehouse",
+        "var(--accent-soft)",
+        "var(--primary)",
+      ),
+      "المخازن",
+      '<span id="invd-stat-warehouses">...</span>',
+      "مخزن",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-folders", "var(--purple-soft)", "var(--purple)"),
+      "المجموعات",
+      '<span id="invd-stat-groups">...</span>',
+      "مجموعة",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-alert-triangle", "var(--warning-soft)", "var(--warning)"),
+      "تحت الحد الأدنى",
+      '<span id="invd-stat-lowstock">...</span>',
+      "صنف",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-moon", "var(--danger-soft)", "var(--danger)"),
+      "أصناف راكدة",
+      '<span id="invd-stat-dormant">...</span>',
+      "صنف",
+      "",
+    );
+    html += statCard(
+      iconBadge(
+        "ti-currency-pound",
+        "var(--success-soft)",
+        "var(--success-dark)",
+      ),
+      "قيمة المخزون",
+      '<span id="invd-stat-value">...</span>',
+      "EGP",
+      "",
+    );
+    html += "</div>";
+
+    // Quick links
+    html += '<div class="card" style="margin-top:24px">';
+    html +=
+      '<h4 style="margin-bottom:16px;display:flex;align-items:center;gap:8px"><i class="ti ti-bolt" style="color:var(--warning)"></i> وصول سريع</h4>';
+    html += '<div style="display:flex;gap:12px;flex-wrap:wrap">';
+    var links = [
+      { page: "items", icon: "ti-package", label: "الأصناف", color: "#0E7490" },
+      {
+        page: "warehouses",
+        icon: "ti-building-warehouse",
+        label: "المخازن",
+        color: "#1D4ED8",
+      },
+      {
+        page: "current_stock",
+        icon: "ti-building-store",
+        label: "المخزون الحالي",
+        color: "#166534",
+      },
+      {
+        page: "stocktake",
+        icon: "ti-clipboard-check",
+        label: "جرد المخزون",
+        color: "#0F766E",
+      },
+      {
+        page: "opening_stock",
+        icon: "ti-archive",
+        label: "أرصدة أول المدة",
+        color: "#374151",
+      },
+      {
+        page: "low_stock",
+        icon: "ti-alert-triangle",
+        label: "تحت الحد الأدنى",
+        color: "#92400E",
+      },
+    ];
+    links.forEach(function (l) {
+      html +=
+        '<button class="btn btn-outline btn-sm" onclick="renderPage(\'' +
+        l.page +
+        '\')" style="display:flex;align-items:center;gap:6px">' +
+        '<i class="ti ' +
+        l.icon +
+        '" style="color:' +
+        l.color +
+        '"></i>' +
+        l.label +
+        "</button>";
+    });
+    html += "</div></div>";
+
+    // Top items table
+    html += '<div class="card" style="margin-top:16px">';
+    html +=
+      '<h4 style="margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="ti ti-list" style="color:var(--primary)"></i> الأصناف الأعلى رصيداً</h4>';
+    html +=
+      '<div class="table-wrap"><table class="table"><thead><tr><th>الصنف</th><th>المجموعة</th><th style="text-align:center">الرصيد</th><th>الوحدة</th></tr></thead>';
+    html +=
+      '<tbody id="invd-top-items">' +
+      _loadingRow(4) +
+      "</tbody></table></div></div>";
+
+    return html;
+  }
+
+  // ── لوحة الحركات ──────────────────────────────────────────────
+  function renderTransactionsDashboard() {
+    var html = _renderPageHeader(
+      "الحركات",
+      "نظرة عامة على حركات المخزون والتحويلات",
+      {
+        bgIcon: "ti-arrows-exchange",
+        bgColor: "var(--accent-soft)",
+        iconColor: "var(--primary)",
+      },
+      "",
+    );
+    html += '<div class="stat-grid">';
+    html += statCard(
+      iconBadge("ti-download", "var(--success-soft)", "var(--success-dark)"),
+      "وارد اليوم",
+      '<span id="txd-stat-in">...</span>',
+      "عملية",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-upload", "var(--danger-soft)", "var(--danger)"),
+      "صادر اليوم",
+      '<span id="txd-stat-out">...</span>',
+      "عملية",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-arrows-exchange", "var(--purple-soft)", "var(--purple)"),
+      "تحويلات اليوم",
+      '<span id="txd-stat-transfer">...</span>',
+      "عملية",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-history", "var(--warning-soft)", "var(--warning)"),
+      "إجمالي الحركات",
+      '<span id="txd-stat-total">...</span>',
+      "حركة",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-truck", "var(--teal-soft)", "var(--teal)"),
+      "شحنات معلقة",
+      '<span id="txd-stat-shipping">...</span>',
+      "شحنة",
+      "",
+    );
+    html += statCard(
+      iconBadge(
+        "ti-clipboard-check",
+        "var(--success-soft)",
+        "var(--success-dark)",
+      ),
+      "جرد منتهي",
+      '<span id="txd-stat-stocktake">...</span>',
+      "عملية",
+      "",
+    );
+    html += "</div>";
+
+    html += '<div class="card" style="margin-top:24px">';
+    html +=
+      '<h4 style="margin-bottom:16px;display:flex;align-items:center;gap:8px"><i class="ti ti-bolt" style="color:var(--warning)"></i> وصول سريع</h4>';
+    html += '<div style="display:flex;gap:12px;flex-wrap:wrap">';
+    var links = [
+      {
+        page: "tx_in",
+        icon: "ti-download",
+        label: "إذن وارد",
+        color: "#166534",
+      },
+      {
+        page: "tx_out",
+        icon: "ti-upload",
+        label: "إذن صادر",
+        color: "#DC2626",
+      },
+      {
+        page: "tx_transfer",
+        icon: "ti-arrows-exchange",
+        label: "تحويل",
+        color: "#5B21B6",
+      },
+      {
+        page: "transactions",
+        icon: "ti-history",
+        label: "سجل الحركات",
+        color: "#374151",
+      },
+      {
+        page: "statement",
+        icon: "ti-search",
+        label: "كشف صنف",
+        color: "#166634",
+      },
+      { page: "shipping", icon: "ti-truck", label: "الشحن", color: "#9A3412" },
+    ];
+    links.forEach(function (l) {
+      html +=
+        '<button class="btn btn-outline btn-sm" onclick="renderPage(\'' +
+        l.page +
+        '\')" style="display:flex;align-items:center;gap:6px">' +
+        '<i class="ti ' +
+        l.icon +
+        '" style="color:' +
+        l.color +
+        '"></i>' +
+        l.label +
+        "</button>";
+    });
+    html += "</div></div>";
+
+    html += '<div class="card" style="margin-top:16px">';
+    html +=
+      '<h4 style="margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="ti ti-history" style="color:var(--primary)"></i> آخر الحركات</h4>';
+    html +=
+      '<div class="table-wrap"><table class="table"><thead><tr><th>النوع</th><th>الصنف</th><th>المخزن</th><th style="text-align:center">الكمية</th><th>التاريخ</th></tr></thead>';
+    html +=
+      '<tbody id="txd-recent-tx">' +
+      _loadingRow(5) +
+      "</tbody></table></div></div>";
+
+    return html;
+  }
+
+  // ── لوحة المبيعات ─────────────────────────────────────────────
+  function renderSalesDashboard() {
+    var html = _renderPageHeader(
+      "المبيعات",
+      "نظرة عامة على فواتير البيع والعملاء",
+      {
+        bgIcon: "ti-cash",
+        bgColor: "var(--success-soft)",
+        iconColor: "var(--success)",
+      },
+      "",
+    );
+    html += '<div class="stat-grid">';
+    html += statCard(
+      iconBadge("ti-file-invoice", "var(--success-soft)", "var(--success)"),
+      "فواتير البيع",
+      '<span id="sld-stat-invoices">...</span>',
+      "فاتورة",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-currency-pound", "var(--accent-soft)", "var(--primary)"),
+      "إجمالي المبيعات",
+      '<span id="sld-stat-total">...</span>',
+      "EGP",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-users", "var(--warning-soft)", "var(--warning)"),
+      "العملاء النشطون",
+      '<span id="sld-stat-customers">...</span>',
+      "عميل",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-file-minus", "var(--danger-soft)", "var(--danger)"),
+      "مرتجعات البيع",
+      '<span id="sld-stat-returns">...</span>',
+      "مرتجع",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-clock", "var(--purple-soft)", "var(--purple)"),
+      "فواتير اليوم",
+      '<span id="sld-stat-today">...</span>',
+      "فاتورة",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-send", "var(--teal-soft)", "var(--teal)"),
+      "كتالوجات مُرسلة",
+      '<span id="sld-stat-catalog">...</span>',
+      "إرسال",
+      "",
+    );
+    html += "</div>";
+
+    html += '<div class="card" style="margin-top:24px">';
+    html +=
+      '<h4 style="margin-bottom:16px;display:flex;align-items:center;gap:8px"><i class="ti ti-bolt" style="color:var(--warning)"></i> وصول سريع</h4>';
+    html += '<div style="display:flex;gap:12px;flex-wrap:wrap">';
+    var links = [
+      {
+        page: "sale-invoices",
+        icon: "ti-file-invoice",
+        label: "فواتير البيع",
+        color: "#2563EB",
+      },
+      {
+        page: "sale-returns",
+        icon: "ti-file-minus",
+        label: "مرتجع البيع",
+        color: "#DC2626",
+      },
+      {
+        page: "customers",
+        icon: "ti-users",
+        label: "العملاء",
+        color: "#2563EB",
+      },
+      {
+        page: "customer_statement",
+        icon: "ti-history",
+        label: "كشف حساب العميل",
+        color: "#0369A1",
+      },
+      {
+        page: "catalog_send",
+        icon: "ti-send",
+        label: "إرسال كتالوج",
+        color: "#059669",
+      },
+      {
+        page: "sales_summary",
+        icon: "ti-chart-bar",
+        label: "تقرير المبيعات",
+        color: "#374151",
+      },
+    ];
+    links.forEach(function (l) {
+      html +=
+        '<button class="btn btn-outline btn-sm" onclick="renderPage(\'' +
+        l.page +
+        '\')" style="display:flex;align-items:center;gap:6px">' +
+        '<i class="ti ' +
+        l.icon +
+        '" style="color:' +
+        l.color +
+        '"></i>' +
+        l.label +
+        "</button>";
+    });
+    html += "</div></div>";
+
+    html += '<div class="card-grid two-col" style="margin-top:16px">';
+    html +=
+      '<div class="card"><h4 style="margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="ti ti-file-invoice" style="color:var(--success)"></i> آخر فواتير البيع</h4>';
+    html +=
+      '<div class="table-wrap"><table class="table"><thead><tr><th>الرقم</th><th>العميل</th><th style="text-align:center">الإجمالي</th><th>التاريخ</th></tr></thead>';
+    html +=
+      '<tbody id="sld-recent-invoices">' +
+      _loadingRow(4) +
+      "</tbody></table></div></div>";
+    html +=
+      '<div class="card"><h4 style="margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="ti ti-trophy" style="color:var(--warning)"></i> أعلى العملاء</h4>';
+    html += '<div id="sld-top-customers">' + _loadingInline() + "</div></div>";
+    html += "</div>";
+
+    return html;
+  }
+
+  // ── لوحة المشتريات ────────────────────────────────────────────
+  function renderPurchasesDashboard() {
+    var html = _renderPageHeader(
+      "المشتريات",
+      "نظرة عامة على فواتير الشراء والموردين",
+      {
+        bgIcon: "ti-shopping-cart",
+        bgColor: "var(--purple-soft)",
+        iconColor: "var(--purple)",
+      },
+      "",
+    );
+    html += '<div class="stat-grid">';
+    html += statCard(
+      iconBadge("ti-file-invoice", "var(--purple-soft)", "var(--purple)"),
+      "فواتير الشراء",
+      '<span id="pud-stat-invoices">...</span>',
+      "فاتورة",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-currency-pound", "var(--danger-soft)", "var(--danger)"),
+      "إجمالي المشتريات",
+      '<span id="pud-stat-total">...</span>',
+      "EGP",
+      "",
+    );
+    html += statCard(
+      iconBadge(
+        "ti-building-community",
+        "var(--accent-soft)",
+        "var(--primary)",
+      ),
+      "الموردون النشطون",
+      '<span id="pud-stat-suppliers">...</span>',
+      "مورد",
+      "",
+    );
+    html += statCard(
+      iconBadge(
+        "ti-clipboard-list",
+        "var(--success-soft)",
+        "var(--success-dark)",
+      ),
+      "أوامر الشراء",
+      '<span id="pud-stat-po">...</span>',
+      "أمر",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-file-minus", "var(--warning-soft)", "var(--warning)"),
+      "مرتجعات الشراء",
+      '<span id="pud-stat-returns">...</span>',
+      "مرتجع",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-clock", "var(--teal-soft)", "var(--teal)"),
+      "فواتير اليوم",
+      '<span id="pud-stat-today">...</span>',
+      "فاتورة",
+      "",
+    );
+    html += "</div>";
+
+    html += '<div class="card" style="margin-top:24px">';
+    html +=
+      '<h4 style="margin-bottom:16px;display:flex;align-items:center;gap:8px"><i class="ti ti-bolt" style="color:var(--warning)"></i> وصول سريع</h4>';
+    html += '<div style="display:flex;gap:12px;flex-wrap:wrap">';
+    var links = [
+      {
+        page: "purchase-orders",
+        icon: "ti-clipboard-list",
+        label: "أوامر الشراء",
+        color: "#7C3AED",
+      },
+      {
+        page: "purchase-invoices",
+        icon: "ti-file-invoice",
+        label: "فواتير الشراء",
+        color: "#5B21B6",
+      },
+      {
+        page: "purchase-returns",
+        icon: "ti-file-minus",
+        label: "مرتجع الشراء",
+        color: "#7C3AED",
+      },
+      {
+        page: "suppliers",
+        icon: "ti-building-community",
+        label: "الموردون",
+        color: "#7C3AED",
+      },
+      {
+        page: "supplier_statement",
+        icon: "ti-history",
+        label: "كشف حساب المورد",
+        color: "#5B21B6",
+      },
+      {
+        page: "purchase_summary",
+        icon: "ti-chart-bar",
+        label: "تقرير المشتريات",
+        color: "#374151",
+      },
+    ];
+    links.forEach(function (l) {
+      html +=
+        '<button class="btn btn-outline btn-sm" onclick="renderPage(\'' +
+        l.page +
+        '\')" style="display:flex;align-items:center;gap:6px">' +
+        '<i class="ti ' +
+        l.icon +
+        '" style="color:' +
+        l.color +
+        '"></i>' +
+        l.label +
+        "</button>";
+    });
+    html += "</div></div>";
+
+    html += '<div class="card-grid two-col" style="margin-top:16px">';
+    html +=
+      '<div class="card"><h4 style="margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="ti ti-file-invoice" style="color:#7C3AED"></i> آخر فواتير الشراء</h4>';
+    html +=
+      '<div class="table-wrap"><table class="table"><thead><tr><th>الرقم</th><th>المورد</th><th style="text-align:center">الإجمالي</th><th>التاريخ</th></tr></thead>';
+    html +=
+      '<tbody id="pud-recent-invoices">' +
+      _loadingRow(4) +
+      "</tbody></table></div></div>";
+    html +=
+      '<div class="card"><h4 style="margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="ti ti-building-community" style="color:#7C3AED"></i> أعلى الموردين</h4>';
+    html += '<div id="pud-top-suppliers">' + _loadingInline() + "</div></div>";
+    html += "</div>";
+
+    return html;
+  }
+
+  // ── لوحة الإنتاج ──────────────────────────────────────────────
+  function renderProductionDashboard() {
+    var html = _renderPageHeader(
+      "الإنتاج",
+      "نظرة عامة على أوامر الإنتاج والمصنع",
+      {
+        bgIcon: "ti-building-factory-2",
+        bgColor: "var(--warning-soft)",
+        iconColor: "var(--warning)",
+      },
+      "",
+    );
+    html += '<div class="stat-grid">';
+    html += statCard(
+      iconBadge(
+        "ti-building-factory-2",
+        "var(--warning-soft)",
+        "var(--warning)",
+      ),
+      "أوامر الإنتاج",
+      '<span id="prd-stat-orders">...</span>',
+      "أمر",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-clock", "var(--accent-soft)", "var(--primary)"),
+      "قيد التنفيذ",
+      '<span id="prd-stat-inprogress">...</span>',
+      "أمر",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-check", "var(--success-soft)", "var(--success-dark)"),
+      "منتهي",
+      '<span id="prd-stat-done">...</span>',
+      "أمر",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-upload", "var(--purple-soft)", "var(--purple)"),
+      "صرف للمصنع",
+      '<span id="prd-stat-dispatch">...</span>',
+      "عملية",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-package-import", "var(--teal-soft)", "var(--teal)"),
+      "استلام منتج تام",
+      '<span id="prd-stat-fgrecv">...</span>',
+      "عملية",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-cut", "var(--danger-soft)", "var(--danger)"),
+      "بيانات القص",
+      '<span id="prd-stat-cutting">...</span>',
+      "بيان",
+      "",
+    );
+    html += "</div>";
+
+    html += '<div class="card" style="margin-top:24px">';
+    html +=
+      '<h4 style="margin-bottom:16px;display:flex;align-items:center;gap:8px"><i class="ti ti-bolt" style="color:var(--warning)"></i> وصول سريع</h4>';
+    html += '<div style="display:flex;gap:12px;flex-wrap:wrap">';
+    var links = [
+      {
+        page: "production",
+        icon: "ti-building-factory-2",
+        label: "أوامر الإنتاج",
+        color: "#92400E",
+      },
+      {
+        page: "dispatch",
+        icon: "ti-upload",
+        label: "صرف للمصنع",
+        color: "#1E40AF",
+      },
+      {
+        page: "fg_receive",
+        icon: "ti-package-import",
+        label: "استلام منتج تام",
+        color: "#0E7490",
+      },
+      {
+        page: "factory_return",
+        icon: "ti-arrow-back-up",
+        label: "مرتجع المصنع",
+        color: "#9A3412",
+      },
+      {
+        page: "cutting_statement",
+        icon: "ti-cut",
+        label: "بيان القص",
+        color: "#9F1239",
+      },
+      // [MOVE-TO-REPORTS] "تقارير الإنتاج" اتشالت من هنا برضو — بقت
+      // موجودة بس في شاشة "التقارير" الرئيسية.
+    ];
+    links.forEach(function (l) {
+      html +=
+        '<button class="btn btn-outline btn-sm" onclick="renderPage(\'' +
+        l.page +
+        '\')" style="display:flex;align-items:center;gap:6px">' +
+        '<i class="ti ' +
+        l.icon +
+        '" style="color:' +
+        l.color +
+        '"></i>' +
+        l.label +
+        "</button>";
+    });
+    html += "</div></div>";
+
+    html += '<div class="card" style="margin-top:16px">';
+    html +=
+      '<h4 style="margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="ti ti-list" style="color:var(--primary)"></i> آخر أوامر الإنتاج</h4>';
+    html +=
+      '<div class="table-wrap"><table class="table"><thead><tr><th>الكود</th><th>الصنف</th><th style="text-align:center">الكمية</th><th>الحالة</th><th>التاريخ</th></tr></thead>';
+    html +=
+      '<tbody id="prd-recent-orders">' +
+      _loadingRow(5) +
+      "</tbody></table></div></div>";
+
+    return html;
+  }
+
+  // ── لوحة الشحن ────────────────────────────────────────────────
+  function renderShippingDashboard() {
+    var html = _renderPageHeader(
+      "الشحن والتسليم",
+      "نظرة عامة على الشحنات وحالات التسليم",
+      {
+        bgIcon: "ti-truck",
+        bgColor: "var(--orange-soft)",
+        iconColor: "var(--orange)",
+      },
+      "",
+    );
+    html += '<div class="stat-grid">';
+    html += statCard(
+      iconBadge("ti-truck", "var(--orange-soft)", "var(--orange)"),
+      "إجمالي الشحنات",
+      '<span id="shpd-stat-total">...</span>',
+      "شحنة",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-clock", "var(--accent-soft)", "var(--primary)"),
+      "معلقة",
+      '<span id="shpd-stat-pending">...</span>',
+      "شحنة",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-check", "var(--success-soft)", "var(--success-dark)"),
+      "مُسلَّمة",
+      '<span id="shpd-stat-delivered">...</span>',
+      "شحنة",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-x", "var(--danger-soft)", "var(--danger)"),
+      "مُرتجعة",
+      '<span id="shpd-stat-returned">...</span>',
+      "شحنة",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-map-pin", "var(--purple-soft)", "var(--purple)"),
+      "مناطق التوصيل",
+      '<span id="shpd-stat-zones">...</span>',
+      "منطقة",
+      "",
+    );
+    html += statCard(
+      iconBadge("ti-currency-pound", "var(--teal-soft)", "var(--teal)"),
+      "إجمالي رسوم الشحن",
+      '<span id="shpd-stat-fees">...</span>',
+      "EGP",
+      "",
+    );
+    html += "</div>";
+
+    html += '<div class="card" style="margin-top:24px">';
+    html +=
+      '<h4 style="margin-bottom:16px;display:flex;align-items:center;gap:8px"><i class="ti ti-bolt" style="color:var(--warning)"></i> وصول سريع</h4>';
+    html += '<div style="display:flex;gap:12px;flex-wrap:wrap">';
+    var links = [
+      {
+        page: "shipping",
+        icon: "ti-truck",
+        label: "الشحن والتسليم",
+        color: "#9A3412",
+      },
+      {
+        page: "transactions",
+        icon: "ti-history",
+        label: "سجل الحركات",
+        color: "#374151",
+      },
+    ];
+    links.forEach(function (l) {
+      html +=
+        '<button class="btn btn-outline btn-sm" onclick="renderPage(\'' +
+        l.page +
+        '\')" style="display:flex;align-items:center;gap:6px">' +
+        '<i class="ti ' +
+        l.icon +
+        '" style="color:' +
+        l.color +
+        '"></i>' +
+        l.label +
+        "</button>";
+    });
+    html += "</div></div>";
+
+    html += '<div class="card" style="margin-top:16px">';
+    html +=
+      '<h4 style="margin-bottom:12px;display:flex;align-items:center;gap:8px"><i class="ti ti-truck" style="color:var(--primary)"></i> آخر الشحنات</h4>';
+    html +=
+      '<div class="table-wrap"><table class="table"><thead><tr><th>المرجع</th><th>العميل</th><th>المنطقة</th><th style="text-align:center">الحالة</th><th>التاريخ</th></tr></thead>';
+    html +=
+      '<tbody id="shpd-recent">' +
+      _loadingRow(5) +
+      "</tbody></table></div></div>";
+
+    return html;
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  function renderDashboard() {
+    // [Executive Dashboard Upgrade] — التصميم الجديد بالكامل منقول لملف
+    // 17_JS_ExecutiveDashboard.html (دالة renderExecutiveDashboard).
+    // الكود القديم باقٍ تحت بأسماء _legacy_ كمرجع فقط ولن يُستدعى تلقائياً.
+    if (typeof renderExecutiveDashboard === "function") {
+      return renderExecutiveDashboard();
+    }
+    // fallback نادر لو الملف الجديد لسه مش متضمّن في Index.html
+    return '<div class="empty-state"><p>تعذر تحميل لوحة التحكم — تأكد من تضمين 17_JS_ExecutiveDashboard.html</p></div>';
+  }
+</script>

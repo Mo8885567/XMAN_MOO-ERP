@@ -1,0 +1,4606 @@
+<script>
+  // ══════════════════════════════════════════════════════════════════════════
+  // 19_JS_WhatsApp.html — وحدة واتساب الموحّدة لنظام MOO.ERP
+  // ──────────────────────────────────────────────────────────────────────────
+  //
+  //  ═══ القسم الأول: الأساسيات ═══
+  //  §WA-1   WA_CONFIG          — إعدادات الواتساب من APP.companySettings
+  //  §WA-2   WA_PHONE           — تطبيع أرقام الهاتف + التحقق من صحتها
+  //  §WA-3   WA_TPL             — محرك القوالب + حل الـ Placeholders
+  //  §WA-4   WA_PROVIDER        — طبقة المزوّد (Direct wa.me / Cloud API)
+  //  §WA-5   WA_MODAL           — نافذة الإرسال القابلة لإعادة الاستخدام
+  //  §WA-6   WA_LOG             — تسجيل العمليات عبر AuditLog
+  //  §WA-7   WA_TEMPLATES_PAGE  — شاشة إدارة القوالب
+  //  §WA-8   WA_SETTINGS_SECTION — قسم الإعدادات في system_settings
+  //  §WA-9   WA_ATTACH          — دوال الربط مع الشاشات الخارجية
+  //  §WA-10  WA_LOGS_PAGE       — شاشة سجل الواتساب (Communication Logs)
+  //  §WA-11  WA_CUSTOMER_TIMELINE — تايملاين تواصل العميل
+  //
+  //  ═══ القسم الثاني: مركز المحادثات ═══
+  //  §WA-HUB    WA_HUB          — المتحكم الرئيسي + Top Bar Dropdown
+  //  §WA-STATE  WA_STATE        — حالة التطبيق المركزية (cache + polling)
+  //  §WA-CENTER WA_CENTER       — شاشة مركز المحادثات الكاملة
+  //  §WA-CPANEL WA_CPANEL       — لوحة بيانات العميل الجانبية
+  //
+  //  ═══ القسم الثالث: الذكاء الاصطناعي ═══
+  //  §AI-1   WA_AI_CONFIG       — إعدادات محرك الـ AI
+  //  §AI-2   WA_AI_INTENT       — كشف النية (14 intent) من نص الرسالة
+  //  §AI-3   WA_AI_RESP         — بناء الردود من بيانات ERP
+  //  §AI-4   WA_AI_ENGINE       — المحرك الرئيسي (processMessage)
+  //  §AI-5   WA_AI_SUGGEST      — اقتراح ردود للموظف (Agent Assist)
+  //  §AI-6   WA_AI_PAGE         — شاشة إعدادات الذكاء الاصطناعي
+  //
+  //  ═══ القسم الرابع: الأتمتة ═══
+  //  §WF-1   WA_WORKFLOW_TYPES  — أنواع Triggers وActions المتاحة
+  //  §WF-2   WA_WORKFLOW_ENGINE — تشغيل الـ Workflows تلقائياً
+  //  §WF-3   renderWhatsappWorkflowsPage — شاشة إدارة الـ Workflows
+  //  §WF-4   WA_WF_UI           — واجهة مستخدم الـ Workflows
+  //
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-1  WA_CONFIG — قراءة إعدادات الواتساب من Settings Sheet
+  // ─────────────────────────────────────────────────────────────
+  var WA_CONFIG = (function () {
+    /** قراءة الإعدادات من APP.companySettings لحظة الاستدعاء (لا كاش ثابت) */
+    function get() {
+      var s = APP && APP.companySettings ? APP.companySettings : {};
+      return {
+        enabled: s.wa_enabled !== false && s.wa_enabled !== "false",
+        defaultPhone: String(s.wa_default_phone || ""),
+        defaultCountryCode: String(s.wa_country_code || "20"),
+        allowEdit: s.wa_allow_edit !== false && s.wa_allow_edit !== "false",
+        logSends: s.wa_log_sends !== false && s.wa_log_sends !== "false",
+        openNewTab:
+          s.wa_open_new_tab !== false && s.wa_open_new_tab !== "false",
+        provider: String(s.wa_provider || "direct"), // "direct" | future: "cloud_api" | "twilio"
+        apiToken: String(s.wa_api_token || ""),
+        currency: String(s.currency || s.wa_currency || "ج.م"),
+        companyName: String(s.company_name || ""),
+      };
+    }
+
+    function isEnabled() {
+      return get().enabled;
+    }
+
+    return { get: get, isEnabled: isEnabled };
+  })();
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-2  WA_PHONE — تطبيع وتحقق أرقام الهاتف
+  // ─────────────────────────────────────────────────────────────
+  var WA_PHONE = (function () {
+    /**
+     * ينظّف الرقم من كل شيء غير رقم
+     * ثم يضيف كود الدولة الافتراضي لو مطلوب
+     */
+    function normalize(raw, countryCode) {
+      if (!raw) return "";
+      var digits = String(raw).replace(/\D/g, "");
+      if (!digits) return "";
+
+      var cc = String(
+        countryCode || WA_CONFIG.get().defaultCountryCode || "20",
+      );
+
+      // لو بيبدأ بـ + أو بكود الدولة نفسه — نزيل الـ 00 المحتملة
+      if (digits.startsWith("00")) digits = digits.substring(2);
+      // لو الرقم يبدأ بـ 0 (محلي) نحذف الصفر ونضيف كود الدولة
+      if (digits.startsWith("0")) digits = cc + digits.substring(1);
+      // لو الرقم لا يبدأ بكود الدولة أصلاً نضيفه
+      if (!digits.startsWith(cc)) digits = cc + digits;
+
+      return digits;
+    }
+
+    /**
+     * التحقق من صحة الرقم بعد التطبيع:
+     * يجب أن يكون 10-15 رقماً
+     */
+    function isValid(normalized) {
+      if (!normalized) return false;
+      return /^\d{10,15}$/.test(normalized);
+    }
+
+    /** يختار أفضل رقم هاتف من كائن بيانات العميل */
+    function bestPhone(customerObj) {
+      if (!customerObj) return "";
+      return String(
+        customerObj.phone || customerObj.mobile || customerObj.whatsapp || "",
+      ).trim();
+    }
+
+    /** يبني رابط wa.me */
+    function buildLink(normalizedPhone, encodedMsg) {
+      var base = "https://wa.me/" + normalizedPhone;
+      return encodedMsg ? base + "?text=" + encodedMsg : base;
+    }
+
+    return {
+      normalize: normalize,
+      isValid: isValid,
+      bestPhone: bestPhone,
+      buildLink: buildLink,
+    };
+  })();
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-3  WA_TPL — محرك القوالب + حل الـ Placeholders
+  // ─────────────────────────────────────────────────────────────
+  var WA_TPL = (function () {
+    /** القوالب الافتراضية المدمجة — تُستخدم لو لم يجد قوالب مخصصة */
+    var BUILTIN = {
+      general_message: {
+        code: "general_message",
+        name: "رسالة عامة",
+        category: "general_message",
+        body: "السلام عليكم ورحمة الله\nأستاذ/ة {{customer_name}}،\n\nنتواصل معكم من شركة {{company_name}}.\n\n{{custom_message}}\n\nشكراً لتعاملكم معنا ",
+        active: true,
+      },
+      invoice_message: {
+        code: "invoice_message",
+        name: "إشعار فاتورة",
+        category: "invoice_message",
+        body: "السلام عليكم ورحمة الله\nأستاذ/ة {{customer_name}}،\n\nنفيدكم بأنه تم إصدار فاتورة بيع باسمكم:\n\n رقم الفاتورة: {{invoice_number}}\n التاريخ: {{invoice_date}}\n الإجمالي: {{invoice_total}} {{currency}}\n\n{{custom_message}}\n\nشكراً لتعاملكم مع {{company_name}} ",
+        active: true,
+      },
+      payment_reminder: {
+        code: "payment_reminder",
+        name: "تذكير بالسداد",
+        category: "payment_reminder",
+        body: "السلام عليكم ورحمة الله\nأستاذ/ة {{customer_name}}،\n\nنُذكّركم بأن لديكم مديونية مستحقة لدى {{company_name}}:\n\n المبلغ المستحق: {{balance_due}} {{currency}}\n\nنأمل السداد في أقرب وقت ممكن.\nللاستفسار أو ترتيب الدفع تواصلوا معنا.\n\nشكراً ",
+        active: true,
+      },
+      statement_message: {
+        code: "statement_message",
+        name: "كشف حساب",
+        category: "statement_message",
+        body: "السلام عليكم ورحمة الله\nأستاذ/ة {{customer_name}}،\n\nنُرسل إليكم كشف حساب الفترة: {{statement_period}}\n\n الرصيد الحالي: {{balance_due}} {{currency}}\n\n{{custom_message}}\n\nللاستفسار نحن في خدمتكم دائماً.\nشركة {{company_name}} ",
+        active: true,
+      },
+      sales_order_message: {
+        code: "sales_order_message",
+        name: "تأكيد طلب",
+        category: "sales_order_message",
+        body: "السلام عليكم ورحمة الله\nأستاذ/ة {{customer_name}}،\n\nتم استلام طلبكم وجاري التنفيذ:\n\n رقم الطلب: {{sales_order_number}}\n\n{{custom_message}}\n\nشكراً لثقتكم في {{company_name}} ",
+        active: true,
+      },
+      delivery_update: {
+        code: "delivery_update",
+        name: "تحديث الشحن",
+        category: "delivery_update",
+        body: "السلام عليكم ورحمة الله\nأستاذ/ة {{customer_name}}،\n\nنُحيطكم علماً بتحديث شحنتكم:\n\n {{custom_message}}\n\nللاستفسار تواصلوا معنا.\nشركة {{company_name}} ",
+        active: true,
+      },
+      catalog_share_link: {
+        code: "catalog_share_link",
+        name: "مشاركة لينك كتالوج",
+        category: "catalog_share_link",
+        body: "أهلاً {{customer_name}} \n\nتفضل كتالوج المنتجات المخصص لك:\n\n{{document_link}}\n\nنتشرف بخدمتك ",
+        active: true,
+      },
+      custom: {
+        code: "custom",
+        name: "رسالة مخصصة",
+        category: "custom",
+        body: "{{custom_message}}",
+        active: true,
+      },
+    };
+
+    /** تُعيد قائمة القوالب: المخصصة من Settings أولاً، ثم المدمجة كـ fallback */
+    function getAll() {
+      var s = APP && APP.companySettings ? APP.companySettings : {};
+      try {
+        if (s.wa_templates) {
+          var parsed =
+            typeof s.wa_templates === "string"
+              ? JSON.parse(s.wa_templates)
+              : s.wa_templates;
+          if (Array.isArray(parsed) && parsed.length) return parsed;
+        }
+      } catch (e) {
+        /* تجاهل خطأ parse */
+      }
+      return Object.values(BUILTIN);
+    }
+
+    /** تُعيد قوالب فعّالة فقط */
+    function getActive() {
+      return getAll().filter(function (t) {
+        return t.active !== false;
+      });
+    }
+
+    /** تُعيد قالباً بالكود أو الاسم */
+    function find(codeOrName) {
+      var all = getAll();
+      return (
+        all.find(function (t) {
+          return t.code === codeOrName || t.name === codeOrName;
+        }) || null
+      );
+    }
+
+    /** تُعيد القالب الافتراضي لنوع معيّن */
+    function getDefault(category) {
+      var s = APP && APP.companySettings ? APP.companySettings : {};
+      var defaultCodes = {
+        invoice_message: s.wa_tpl_invoice || "invoice_message",
+        payment_reminder: s.wa_tpl_reminder || "payment_reminder",
+        statement_message: s.wa_tpl_statement || "statement_message",
+        sales_order_message: s.wa_tpl_order || "sales_order_message",
+        delivery_update: s.wa_tpl_delivery || "delivery_update",
+        general_message: s.wa_tpl_general || "general_message",
+      };
+      var code = defaultCodes[category] || category;
+      return find(code) || BUILTIN[category] || BUILTIN.general_message;
+    }
+
+    /**
+     * يحلّ الـ Placeholders في نص القالب
+     * @param {string} body   - نص القالب
+     * @param {Object} data   - بيانات السياق
+     * @returns {string}      - النص النهائي بعد حل الـ Placeholders
+     */
+    function resolve(body, data) {
+      if (!body) return "";
+      var d = data || {};
+      var cfg = WA_CONFIG.get();
+
+      var replacements = {
+        "{{customer_name}}": d.customer_name || d.party || "",
+        "{{customer_code}}": d.customer_code || "",
+        "{{customer_phone}}": d.customer_phone || d.phone || "",
+        "{{company_name}}": d.company_name || cfg.companyName || "",
+        "{{branch_name}}": d.branch_name || "",
+        "{{invoice_number}}": d.invoice_number || d.invoice_id || "",
+        "{{invoice_date}}": d.invoice_date || "",
+        "{{invoice_total}}": d.invoice_total || "",
+        "{{invoice_balance}}": d.invoice_balance || "",
+        "{{quotation_number}}": d.quotation_number || "",
+        "{{quotation_total}}": d.quotation_total || "",
+        "{{sales_order_number}}": d.sales_order_number || d.order_id || "",
+        "{{statement_period}}": d.statement_period || "",
+        "{{balance_due}}": d.balance_due || d.balance || "",
+        "{{currency}}": d.currency || cfg.currency || "ج.م",
+        "{{custom_message}}": d.custom_message || "",
+        "{{document_link}}": d.document_link || "",
+      };
+
+      var result = body;
+      Object.keys(replacements).forEach(function (key) {
+        var val = String(replacements[key]);
+        // نحذف الـ placeholder بالكامل لو القيمة فارغة (بدون أسطر إضافية)
+        if (!val) {
+          result = result.replace(
+            new RegExp(key.replace(/[{}]/g, "\\$&") + "\\s*\\n?", "g"),
+            "",
+          );
+        } else {
+          result = result.replace(
+            new RegExp(key.replace(/[{}]/g, "\\$&"), "g"),
+            val,
+          );
+        }
+      });
+
+      // تنظيف أسطر فارغة متكررة
+      result = result.replace(/\n{3,}/g, "\n\n").trim();
+      return result;
+    }
+
+    return {
+      getAll: getAll,
+      getActive: getActive,
+      find: find,
+      getDefault: getDefault,
+      resolve: resolve,
+      BUILTIN: BUILTIN,
+    };
+  })();
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-4  WA_PROVIDER — طبقة مزوّد الإرسال (قابلة للتمديد)
+  // ─────────────────────────────────────────────────────────────
+  var WA_PROVIDER = (function () {
+    /**
+     * المزوّد الحالي: Direct wa.me link
+     * الهيكل مُصمَّم بحيث يمكن إضافة "cloud_api" و "twilio" مستقبلاً
+     * بدون تغيير الـ UI أو الـ settings layers
+     */
+    var providers = {
+      direct: {
+        name: "رابط واتساب المباشر",
+        code: "direct",
+        send: function (normalizedPhone, message, opts) {
+          var encoded = encodeURIComponent(message);
+          var link = WA_PHONE.buildLink(normalizedPhone, encoded);
+          var openNew =
+            opts && opts.openNewTab !== undefined
+              ? opts.openNewTab
+              : WA_CONFIG.get().openNewTab;
+
+          if (openNew) {
+            window.open(link, "_blank");
+          } else {
+            window.open(link);
+          }
+          return { success: true, method: "direct", phone: normalizedPhone };
+        },
+      },
+
+      // ── مزوّد مستقبلي: WhatsApp Cloud API ──────────────────
+      // cloud_api: {
+      //   name: "WhatsApp Cloud API",
+      //   code: "cloud_api",
+      //   send: function(normalizedPhone, message, opts) {
+      //     // سيستدعي backend function عبر _gsr()
+      //     // _gsr("sendWhatsAppCloudAPI", [normalizedPhone, message], { ... });
+      //   }
+      // },
+    };
+
+    /** يُرسل الرسالة عبر المزوّد المُهيّأ */
+    function send(normalizedPhone, message, opts) {
+      var cfg = WA_CONFIG.get();
+      var provider = providers[cfg.provider] || providers.direct;
+      return provider.send(normalizedPhone, message, opts);
+    }
+
+    function getAvailableProviders() {
+      return Object.values(providers).map(function (p) {
+        return { code: p.code, name: p.name };
+      });
+    }
+
+    return { send: send, getAvailableProviders: getAvailableProviders };
+  })();
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-5  WA_MODAL — نافذة الإرسال القابلة لإعادة الاستخدام
+  // ─────────────────────────────────────────────────────────────
+  var WA_MODAL = (function () {
+    var _current = null; // بيانات الـ session الحالي
+
+    /**
+     * يفتح نافذة إرسال واتساب
+     *
+     * @param {Object} opts
+     *   customer_name   {string}  اسم العميل
+     *   phone           {string}  رقم الهاتف (اختياري)
+     *   customer_id     {string}  معرّف العميل (للـ log)
+     *   category        {string}  نوع الرسالة (invoice_message | payment_reminder | ...)
+     *   context_data    {Object}  بيانات السياق للـ Placeholders
+     *   source_type     {string}  مصدر الاستدعاء (customer | invoice | statement | ...)
+     *   source_id       {string}  معرّف المصدر
+     */
+    function open(opts) {
+      opts = opts || {};
+
+      if (!WA_CONFIG.isEnabled()) {
+        NotificationEngine.warning("ميزة الواتساب غير مفعّلة — فعّلها من إعدادات النظام > واتساب");
+        return;
+      }
+      if (!canDo("sendWhatsapp")) {
+        NotificationEngine.error("ليس لديك صلاحية إرسال واتساب");
+        return;
+      }
+
+      var cfg = WA_CONFIG.get();
+      var category = opts.category || "general_message";
+      var tpl = WA_TPL.getDefault(category);
+      var templates = WA_TPL.getActive();
+
+      // بناء بيانات السياق الكاملة
+      var ctx = Object.assign(
+        {
+          company_name: cfg.companyName,
+          currency: cfg.currency,
+        },
+        opts.context_data || {},
+      );
+
+      var initialPhone = WA_PHONE.normalize(
+        opts.phone || "",
+        cfg.defaultCountryCode,
+      );
+      var initialMsg = WA_TPL.resolve(tpl.body, ctx);
+
+      _current = {
+        opts: opts,
+        ctx: ctx,
+        tpl: tpl,
+        cfg: cfg,
+        rawPhone: opts.phone || "",
+        normPhone: initialPhone,
+      };
+
+      // قائمة القوالب
+      var tplOptions = templates
+        .map(function (t) {
+          var sel = t.code === tpl.code ? " selected" : "";
+          return (
+            '<option value="' +
+            esc(t.code) +
+            '"' +
+            sel +
+            ">" +
+            esc(t.name) +
+            "</option>"
+          );
+        })
+        .join("");
+
+      // تحذير الرقم
+      var phoneWarning = "";
+      if (!initialPhone) {
+        phoneWarning =
+          '<div class="wa-phone-warning"><i class="ti ti-alert-triangle"></i> لم يُعثر على رقم هاتف — يرجى إدخاله يدوياً</div>';
+      } else if (!WA_PHONE.isValid(initialPhone)) {
+        phoneWarning =
+          '<div class="wa-phone-warning"><i class="ti ti-alert-triangle"></i> الرقم قد يكون غير صحيح — تحقق منه</div>';
+      }
+
+      var html =
+        '<div class="wa-modal" id="wa-modal-root">' +
+        // رأس النافذة
+        '<div class="wa-modal-header">' +
+        '<div class="wa-modal-title">' +
+        '<svg width="22" height="22" viewBox="0 0 24 24" fill="#25D366" style="flex-shrink:0"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.126.556 4.12 1.523 5.847L0 24l6.332-1.494A11.945 11.945 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.793 9.793 0 01-5.023-1.378l-.36-.213-3.727.879.936-3.606-.235-.37A9.793 9.793 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182S21.818 6.57 21.818 12 17.43 21.818 12 21.818z"/></svg>' +
+        "<span>إرسال واتساب</span>" +
+        "</div>" +
+        '<button class="wa-modal-close" onclick="WA_MODAL.close()" title="إغلاق">×</button>' +
+        "</div>" +
+        // جسم النافذة
+        '<div class="wa-modal-body">' +
+        // معلومات العميل
+        (opts.customer_name
+          ? '<div class="wa-customer-info"><i class="ti ti-user-circle" style="color:var(--accent)"></i> <b>' +
+            esc(opts.customer_name) +
+            "</b></div>"
+          : "") +
+        // رقم الهاتف
+        '<div class="wa-field">' +
+        '<label class="wa-label"> رقم الهاتف (بالصيغة الدولية)</label>' +
+        '<input type="tel" id="wa-phone-input" class="input" value="' +
+        esc(initialPhone) +
+        '" ' +
+        'placeholder="مثال: 201001234567" ' +
+        (cfg.allowEdit ? "" : "readonly ") +
+        'oninput="WA_MODAL._onPhoneChange(this.value)" dir="ltr">' +
+        phoneWarning +
+        "</div>" +
+        // اختيار القالب
+        '<div class="wa-field">' +
+        '<label class="wa-label"> نوع الرسالة</label>' +
+        '<select id="wa-tpl-select" class="input" onchange="WA_MODAL._onTplChange(this.value)">' +
+        tplOptions +
+        "</select>" +
+        "</div>" +
+        // نص إضافي
+        '<div class="wa-field">' +
+        '<label class="wa-label"> نص إضافي (اختياري)</label>' +
+        '<textarea id="wa-custom-text" class="input" rows="2" placeholder="أضف ملاحظة أو رسالة خاصة..." oninput="WA_MODAL._onCustomTextChange(this.value)"></textarea>' +
+        "</div>" +
+        // معاينة الرسالة النهائية
+        '<div class="wa-field">' +
+        '<label class="wa-label"> معاينة الرسالة</label>' +
+        '<div class="wa-preview" id="wa-preview">' +
+        _escapeHtml(initialMsg) +
+        "</div>" +
+        '<button class="wa-copy-btn" onclick="WA_MODAL._copyMessage()" title="نسخ الرسالة">' +
+        '<i class="ti ti-copy"></i> نسخ</button>' +
+        "</div>" +
+        "</div>" +
+        // أزرار الإجراء
+        '<div class="wa-modal-footer">' +
+        '<button class="btn btn-secondary" onclick="WA_MODAL.close()">إلغاء</button>' +
+        '<button class="btn wa-send-btn" id="wa-send-btn" onclick="WA_MODAL.send()">' +
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="white" style="flex-shrink:0"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.126.556 4.12 1.523 5.847L0 24l6.332-1.494A11.945 11.945 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.793 9.793 0 01-5.023-1.378l-.36-.213-3.727.879.936-3.606-.235-.37A9.793 9.793 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182S21.818 6.57 21.818 12 17.43 21.818 12 21.818z"/></svg>' +
+        " فتح واتساب" +
+        "</button>" +
+        "</div>" +
+        "</div>";
+
+      openDrawer(html, 520);
+    }
+
+    function _escapeHtml(str) {
+      return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\n/g, "<br>");
+    }
+
+    function _buildCurrentMessage() {
+      if (!_current) return "";
+      var customText =
+        (document.getElementById("wa-custom-text") || {}).value || "";
+      var ctxWithCustom = Object.assign({}, _current.ctx, {
+        custom_message: customText,
+      });
+      return WA_TPL.resolve(_current.tpl.body, ctxWithCustom);
+    }
+
+    function _updatePreview() {
+      var el = document.getElementById("wa-preview");
+      if (el) el.innerHTML = _escapeHtml(_buildCurrentMessage());
+    }
+
+    function _onPhoneChange(val) {
+      if (!_current) return;
+      var norm = WA_PHONE.normalize(val, _current.cfg.defaultCountryCode);
+      _current.normPhone = norm;
+      var btn = document.getElementById("wa-send-btn");
+      if (btn) btn.disabled = !WA_PHONE.isValid(norm);
+    }
+
+    function _onTplChange(code) {
+      if (!_current) return;
+      var tpl = WA_TPL.find(code);
+      if (!tpl) return;
+      _current.tpl = tpl;
+      _updatePreview();
+    }
+
+    function _onCustomTextChange() {
+      _updatePreview();
+    }
+
+    function _copyMessage() {
+      var msg = _buildCurrentMessage();
+      if (navigator.clipboard) {
+        navigator.clipboard
+          .writeText(msg)
+          .then(function () {
+            NotificationEngine.success("تم نسخ الرسالة ");
+          })
+          .catch(function () {
+            _fallbackCopy(msg);
+          });
+      } else {
+        _fallbackCopy(msg);
+      }
+    }
+
+    function _fallbackCopy(text) {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try {
+        document.execCommand("copy");
+        NotificationEngine.success("تم نسخ الرسالة ");
+      } catch (e) {
+        NotificationEngine.warning("تعذّر النسخ تلقائياً");
+      }
+      document.body.removeChild(ta);
+    }
+
+    function send() {
+      if (!_current) return;
+
+      var phoneInput =
+        (document.getElementById("wa-phone-input") || {}).value || "";
+      var normPhone = WA_PHONE.normalize(
+        phoneInput,
+        _current.cfg.defaultCountryCode,
+      );
+
+      if (!WA_PHONE.isValid(normPhone)) {
+        NotificationEngine.error("رقم الهاتف غير صالح — تحقق من الرقم");
+        return;
+      }
+
+      var message = _buildCurrentMessage();
+      if (!message.trim()) {
+        NotificationEngine.warning("الرسالة فارغة");
+        return;
+      }
+
+      // إرسال عبر المزوّد
+      WA_PROVIDER.send(normPhone, message, {
+        openNewTab: _current.cfg.openNewTab,
+      });
+
+      // تسجيل الإرسال
+      if (_current.cfg.logSends) {
+        WA_LOG.logSend({
+          customer_id: _current.opts.customer_id || "",
+          customer_name: _current.opts.customer_name || "",
+          phone: normPhone,
+          template_code: _current.tpl.code,
+          template_name: _current.tpl.name,
+          message: message,
+          source_type: _current.opts.source_type || "manual",
+          source_id: _current.opts.source_id || "",
+          provider: _current.cfg.provider,
+        });
+      }
+
+      NotificationEngine.success("تم فتح واتساب ");
+      close();
+    }
+
+    function close() {
+      _current = null;
+      closeDrawer();
+    }
+
+    return {
+      open: open,
+      close: close,
+      send: send,
+      _onPhoneChange: _onPhoneChange,
+      _onTplChange: _onTplChange,
+      _onCustomTextChange: _onCustomTextChange,
+      _copyMessage: _copyMessage,
+    };
+  })();
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-6  WA_LOG — تسجيل عمليات الإرسال في AuditLog
+  // ─────────────────────────────────────────────────────────────
+  var WA_LOG = (function () {
+    function logSend(data) {
+      try {
+        if (!APP.currentUser) return;
+        // نسجّل في AuditLog عبر الـ backend
+        _gsr(
+          "logWhatsappSend",
+          [data, APP.currentUser.username, SESSION.token],
+          {
+            label: "WA_LOG.logSend",
+            onSuccess: function () {
+              /* صامت */
+            },
+            onError: function () {
+              /* صامت — الـ log لا يعطّل الإرسال */
+            },
+          },
+        );
+      } catch (e) {
+        console.warn("[WA_LOG] لم يُسجَّل الإرسال:", e.message);
+      }
+    }
+
+    return { logSend: logSend };
+  })();
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-7  WA_TEMPLATES_PAGE — شاشة إدارة القوالب
+  // ─────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // [COLUMN-ENGINE] تعريف أعمدة جدول قوالب واتساب كـ Metadata بدل
+  // <th> ثابتة (راجع 34_JS_ColumnEngine.html). rowKey="code" — نفس
+  // المعرّف المستخدم سابقًا في data-id، وكل قالب (افتراضي أو مخصص)
+  // له code إلزامي دائمًا.
+  // ─────────────────────────────────────────────────────────────
+  var WA_TPL_CATEGORY_LABELS = {
+    general_message: "رسالة عامة",
+    invoice_message: "فاتورة",
+    payment_reminder: "تذكير سداد",
+    statement_message: "كشف حساب",
+    sales_order_message: "طلب بيع",
+    delivery_update: "تحديث شحن",
+    catalog_share_link: "مشاركة كتالوج",
+    custom: "مخصص",
+  };
+
+  var _waTplColumnsRegistered = false;
+
+  function _waTplRegisterColumns() {
+    if (_waTplColumnsRegistered) return;
+    _waTplColumnsRegistered = true;
+    ColumnEngine.register(
+      "whatsapp_templates",
+      [
+        {
+          key: "name",
+          label: "اسم القالب",
+          type: "text",
+          width: 220,
+          frozen: "right",
+          format: function (v, row) {
+            return (
+              "<b>" +
+              esc(row.name || row.code) +
+              '</b><div style="font-size:11px;color:var(--text3)">' +
+              esc(row.code || "") +
+              "</div>"
+            );
+          },
+        },
+        {
+          key: "category",
+          label: "الفئة",
+          type: "text",
+          width: 130,
+          format: function (v) {
+            return esc(WA_TPL_CATEGORY_LABELS[v] || v || "—");
+          },
+        },
+        {
+          key: "body",
+          label: "نص الرسالة",
+          type: "text",
+          width: 320,
+          format: function (v) {
+            var s = String(v || "");
+            return esc(s.substring(0, 80) + (s.length > 80 ? "…" : ""));
+          },
+        },
+        {
+          key: "active",
+          label: "الحالة",
+          type: "text",
+          width: 100,
+          format: function (v) {
+            return v !== false
+              ? '<span class="badge badge-success">فعّال</span>'
+              : '<span class="badge badge-neutral">معطّل</span>';
+          },
+        },
+      ],
+      {
+        rowKey: "code",
+        title: "قوالب واتساب",
+        contextMenuType: "whatsapp_templates",
+      },
+    );
+  }
+
+  function _waTplRenderTable() {
+    var container = document.getElementById("wa-tpl-ce-container");
+    if (!container) return;
+    _waTplRegisterColumns();
+    ColumnEngine.renderTable(
+      "whatsapp_templates",
+      container,
+      WA_TPL.getAll(),
+      {},
+    );
+  }
+
+  function renderWhatsappTemplatesPage() {
+    if (!canDo("manageWhatsappTemplates")) {
+      return '<div style="padding:40px;text-align:center;color:#ef4444;font-size:18px"> ليس لديك صلاحية إدارة قوالب واتساب</div>';
+    }
+    return (
+      '<div class="page-header">' +
+      "<div>" +
+      '<h2 style="display:flex;align-items:center;gap:10px">' +
+      '<span style="background:#25D366;color:#fff;border-radius:10px;width:38px;height:38px;display:flex;align-items:center;justify-content:center">' +
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.126.556 4.12 1.523 5.847L0 24l6.332-1.494A11.945 11.945 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.793 9.793 0 01-5.023-1.378l-.36-.213-3.727.879.936-3.606-.235-.37A9.793 9.793 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182S21.818 6.57 21.818 12 17.43 21.818 12 21.818z"/></svg>' +
+      "</span>" +
+      "<span>قوالب واتساب</span>" +
+      "</h2>" +
+      '<p class="page-subtitle">إدارة قوالب رسائل الواتساب المُرسَلة من شاشات النظام المختلفة</p>' +
+      "</div>" +
+      '<div class="header-actions">' +
+      '<button class="btn btn-primary" onclick="openWhatsappTemplateEditor(null)">' +
+      '<i class="ti ti-plus"></i> قالب جديد</button>' +
+      "</div>" +
+      "</div>" +
+      // جدول القوالب — الآن عبر ColumnEngine (Dynamic Columns)
+      '<div class="card">' +
+      '<div id="wa-tpl-ce-container" style="padding:4px"></div>' +
+      "</div>"
+    );
+  }
+
+  function bindWhatsappTemplatesPage() {
+    _waTplRenderTable();
+  }
+
+  function openWhatsappTemplateEditor(idx) {
+    var templates = WA_TPL.getAll();
+    var t = idx !== null && idx >= 0 ? templates[idx] : null;
+
+    var CATEGORY_OPTIONS = [
+      ["general_message", "رسالة عامة"],
+      ["invoice_message", "فاتورة"],
+      ["payment_reminder", "تذكير سداد"],
+      ["statement_message", "كشف حساب"],
+      ["sales_order_message", "طلب بيع"],
+      ["delivery_update", "تحديث شحن"],
+      ["catalog_share_link", "مشاركة لينك كتالوج"],
+      ["custom", "مخصص"],
+    ];
+
+    var catOptions = CATEGORY_OPTIONS.map(function (pair) {
+      var sel = t && t.category === pair[0] ? " selected" : "";
+      return (
+        '<option value="' + pair[0] + '"' + sel + ">" + pair[1] + "</option>"
+      );
+    }).join("");
+
+    var html =
+      '<div class="drawer-title">' +
+      (t ? "تعديل قالب" : "قالب جديد") +
+      "</div>" +
+      '<div class="form-body">' +
+      '<div class="form-group"><label>اسم القالب *</label>' +
+      '<input type="text" id="wtpl-name" class="input" value="' +
+      esc(t ? t.name || "" : "") +
+      '" placeholder="مثال: تذكير الدفع الشهري"></div>' +
+      '<div class="form-group"><label>كود القالب (بالإنجليزية) *</label>' +
+      '<input type="text" id="wtpl-code" class="input" data-allow-alpha="true" value="' +
+      esc(t ? t.code || "" : "") +
+      '" placeholder="مثال: monthly_reminder" dir="ltr"></div>' +
+      '<div class="form-group"><label>الفئة</label>' +
+      '<select id="wtpl-category" class="input">' +
+      catOptions +
+      "</select></div>" +
+      '<div class="form-group"><label>نص الرسالة *</label>' +
+      '<textarea id="wtpl-body" class="input" rows="8" placeholder="أكتب نص القالب هنا... استخدم {{customer_name}} و {{company_name}} وغيرها">' +
+      esc(t ? t.body || "" : "") +
+      "</textarea>" +
+      '<div style="font-size:11px;color:var(--text3);margin-top:4px">Placeholders المتاحة: {{customer_name}} {{invoice_number}} {{invoice_total}} {{invoice_date}} {{balance_due}} {{currency}} {{company_name}} {{statement_period}} {{custom_message}}</div></div>' +
+      '<div class="form-group">' +
+      '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
+      '<input type="checkbox" id="wtpl-active"' +
+      (t && t.active === false ? "" : " checked") +
+      ">" +
+      " قالب فعّال</label></div>" +
+      "</div>" +
+      '<div class="drawer-actions">' +
+      '<button class="btn btn-secondary" onclick="closeDrawer()">إلغاء</button>' +
+      '<button class="btn btn-primary" onclick="saveWhatsappTemplate(' +
+      (idx !== null ? idx : -1) +
+      ')"> حفظ</button>' +
+      "</div>";
+
+    openDrawer(html, 520);
+  }
+
+  function saveWhatsappTemplate(idx) {
+    var name = (document.getElementById("wtpl-name") || {}).value || "";
+    var code = (document.getElementById("wtpl-code") || {}).value || "";
+    var category =
+      (document.getElementById("wtpl-category") || {}).value || "custom";
+    var body = (document.getElementById("wtpl-body") || {}).value || "";
+    var active =
+      (document.getElementById("wtpl-active") || {}).checked !== false;
+
+    if (!name.trim() || !code.trim() || !body.trim()) {
+      NotificationEngine.error("يرجى ملء جميع الحقول المطلوبة *");
+      return;
+    }
+
+    var templates = WA_TPL.getAll();
+    var newTpl = {
+      name: name.trim(),
+      code: code.trim(),
+      category: category,
+      body: body.trim(),
+      active: active,
+    };
+
+    if (idx >= 0 && templates[idx]) {
+      templates[idx] = newTpl;
+    } else {
+      templates.push(newTpl);
+    }
+
+    _saveWhatsappTemplates(templates);
+  }
+
+  function deleteWhatsappTemplate(idx) {
+    confirmDelete("حذف القالب", "هل تريد حذف هذا القالب؟", function () {
+      var templates = WA_TPL.getAll();
+      templates.splice(idx, 1);
+      _saveWhatsappTemplates(templates);
+    });
+  }
+
+  function _saveWhatsappTemplates(templates) {
+    var payload = { wa_templates: JSON.stringify(templates) };
+    _gsr(
+      "saveCompanySettings",
+      [payload, APP.currentUser.username, SESSION.token],
+      {
+        label: "saveWhatsappTemplates",
+        onSuccess: function (r) {
+          APP.companySettings = APP.companySettings || {};
+          APP.companySettings.wa_templates = JSON.stringify(templates);
+          NotificationEngine.success("تم حفظ القوالب ");
+          closeDrawer();
+          // إعادة رسم الجدول عبر ColumnEngine
+          _waTplRenderTable();
+        },
+        onError: function (r) {
+          NotificationEngine.error("خطأ في الحفظ: " + r.message);
+        },
+      },
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-8  WA_SETTINGS_SECTION — قسم الإعدادات
+  // (يُضخّ كـ HTML section داخل renderSystemSettings)
+  // ─────────────────────────────────────────────────────────────
+  function renderWhatsappSettingsSection() {
+    var s = APP && APP.companySettings ? APP.companySettings : {};
+    var cfg = WA_CONFIG.get();
+
+    var providerOptions = WA_PROVIDER.getAvailableProviders()
+      .map(function (p) {
+        return (
+          '<option value="' +
+          esc(p.code) +
+          '"' +
+          (cfg.provider === p.code ? " selected" : "") +
+          ">" +
+          esc(p.name) +
+          "</option>"
+        );
+      })
+      .join("");
+
+    var tplDefaults = [
+      ["wa_tpl_invoice", "قالب فاتورة البيع الافتراضي", "invoice_message"],
+      ["wa_tpl_reminder", "قالب تذكير السداد الافتراضي", "payment_reminder"],
+      ["wa_tpl_statement", "قالب كشف الحساب الافتراضي", "statement_message"],
+      ["wa_tpl_order", "قالب طلب البيع الافتراضي", "sales_order_message"],
+      ["wa_tpl_delivery", "قالب تحديث الشحن الافتراضي", "delivery_update"],
+    ];
+
+    var templates = WA_TPL.getActive();
+
+    function buildTplSelect(key, defaultCode) {
+      var cur = s[key] || defaultCode;
+      var options = templates
+        .map(function (t) {
+          return (
+            '<option value="' +
+            esc(t.code) +
+            '"' +
+            (t.code === cur ? " selected" : "") +
+            ">" +
+            esc(t.name) +
+            "</option>"
+          );
+        })
+        .join("");
+      return (
+        '<select id="sf-' + key + '" class="input">' + options + "</select>"
+      );
+    }
+
+    return (
+      '<div class="settings-card">' +
+      '<div class="settings-card-header">' +
+      '<div class="settings-card-header-icon" style="background:rgba(37,211,102,.12)">' +
+      '<svg width="22" height="22" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.126.556 4.12 1.523 5.847L0 24l6.332-1.494A11.945 11.945 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.793 9.793 0 01-5.023-1.378l-.36-.213-3.727.879.936-3.606-.235-.37A9.793 9.793 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182S21.818 6.57 21.818 12 17.43 21.818 12 21.818z"/></svg>' +
+      "</div>" +
+      "<div><h3>إعدادات واتساب</h3><p>إعداد وتفعيل خدمة إرسال رسائل واتساب</p></div>" +
+      "</div>" +
+      '<div class="settings-card-body">' +
+      // ── التفعيل العام ──
+      '<div class="ops-section-label"><i class="ti ti-toggle-right"></i> الإعدادات العامة</div>' +
+      '<div class="ops-toggles-list">' +
+      _settingsToggleV2(
+        "wa_enabled",
+        "ti-brand-whatsapp",
+        "#25D366",
+        "rgba(37,211,102,.08)",
+        "تفعيل خدمة الواتساب",
+        "يُظهر أزرار الواتساب في جميع شاشات النظام المتوافقة",
+        cfg.enabled,
+        "",
+      ) +
+      _settingsToggleV2(
+        "wa_allow_edit",
+        "ti-edit",
+        "#0369A1",
+        "rgba(3,105,161,.08)",
+        "السماح بتعديل الرسالة قبل الإرسال",
+        "يتيح للمستخدم تعديل نص الرسالة المُولَّدة قبل فتح واتساب",
+        cfg.allowEdit,
+        "",
+      ) +
+      _settingsToggleV2(
+        "wa_log_sends",
+        "ti-history",
+        "#7C3AED",
+        "rgba(124,58,237,.08)",
+        "تسجيل عمليات الإرسال في سجل التدقيق",
+        "يُسجَّل كل إرسال واتساب في AuditLog مع بيانات العميل والرسالة",
+        cfg.logSends,
+        "",
+      ) +
+      _settingsToggleV2(
+        "wa_open_new_tab",
+        "ti-external-link",
+        "#374151",
+        "rgba(55,65,81,.08)",
+        "فتح واتساب في تبويب جديد",
+        "يفتح رابط wa.me في تبويب جديد بدلاً من نفس التبويب",
+        cfg.openNewTab,
+        "",
+      ) +
+      "</div>" +
+      // ── بيانات الاتصال ──
+      '<div class="ops-divider"></div>' +
+      '<div class="ops-section-label"><i class="ti ti-phone"></i> بيانات الاتصال</div>' +
+      '<div class="settings-fields-grid">' +
+      '<div class="settings-field">' +
+      '<label><span class="field-icon"><i class="ti ti-phone" style="color:#25D366"></i></span> رقم واتساب الشركة الافتراضي</label>' +
+      '<input type="tel" id="sf-wa_default_phone" class="input" value="' +
+      esc(cfg.defaultPhone) +
+      '" placeholder="مثال: 201001234567" dir="ltr">' +
+      '<div class="ops-field-hint">يُستخدم كرقم مرجعي عند إرسال الرسائل (اختياري)</div>' +
+      "</div>" +
+      '<div class="settings-field">' +
+      '<label><span class="field-icon"><i class="ti ti-world" style="color:#0369A1"></i></span> كود الدولة الافتراضي</label>' +
+      '<input type="text" id="sf-wa_country_code" class="input" value="' +
+      esc(cfg.defaultCountryCode) +
+      '" placeholder="20" maxlength="5" dir="ltr">' +
+      '<div class="ops-field-hint">يُضاف تلقائياً للأرقام المحلية (مصر = 20 / السعودية = 966)</div>' +
+      "</div>" +
+      "</div>" +
+      // ── المزوّد ──
+      '<div class="ops-divider"></div>' +
+      '<div class="ops-section-label"><i class="ti ti-cloud"></i> مزوّد الإرسال</div>' +
+      '<div class="settings-fields-grid">' +
+      '<div class="settings-field">' +
+      "<label>طريقة الإرسال</label>" +
+      '<select id="sf-wa_provider" class="input">' +
+      providerOptions +
+      "</select>" +
+      '<div class="ops-field-hint">حالياً: رابط wa.me المباشر (فتح واتساب بالمتصفح). المرفقات تُرسَل كرابط مشاركة داخل نص الرسالة.</div>' +
+      "</div>" +
+      "</div>" +
+      // ── قوالب افتراضية لكل مستند ──
+      '<div class="ops-divider"></div>' +
+      '<div class="ops-section-label"><i class="ti ti-template"></i> القوالب الافتراضية للمستندات</div>' +
+      '<div class="settings-fields-grid">' +
+      tplDefaults
+        .map(function (item) {
+          return (
+            '<div class="settings-field"><label>' +
+            item[1] +
+            "</label>" +
+            buildTplSelect(item[0], item[2]) +
+            "</div>"
+          );
+        })
+        .join("") +
+      "</div>" +
+      // ── رابط لإدارة القوالب ──
+      '<div style="margin-top:16px">' +
+      '<button class="btn btn-secondary" onclick="navigate(\'whatsapp_templates\')">' +
+      '<i class="ti ti-template"></i> إدارة قوالب الواتساب' +
+      "</button>" +
+      "</div>" +
+      // ── حفظ ──
+      '<div class="settings-save-bar" style="margin-top:24px">' +
+      '<span class="save-hint" id="save-hint-whatsapp">ℹ️ احفظ الإعدادات بعد التعديل</span>' +
+      '<button class="btn btn-primary" onclick="saveWhatsappSettings()"> حفظ إعدادات الواتساب</button>' +
+      "</div>" +
+      "</div>" + // settings-card-body
+      "</div>" // settings-card
+    );
+  }
+
+  function saveWhatsappSettings() {
+    var s = APP && APP.companySettings ? APP.companySettings : {};
+
+    var payload = {
+      wa_enabled: _getToggleVal("wa_enabled"),
+      wa_allow_edit: _getToggleVal("wa_allow_edit"),
+      wa_log_sends: _getToggleVal("wa_log_sends"),
+      wa_open_new_tab: _getToggleVal("wa_open_new_tab"),
+      wa_default_phone: (_v("sf-wa_default_phone") || "").trim(),
+      wa_country_code: (_v("sf-wa_country_code") || "20").trim(),
+      wa_provider: _v("sf-wa_provider") || "direct",
+      wa_tpl_invoice: _v("sf-wa_tpl_invoice") || "",
+      wa_tpl_reminder: _v("sf-wa_tpl_reminder") || "",
+      wa_tpl_statement: _v("sf-wa_tpl_statement") || "",
+      wa_tpl_order: _v("sf-wa_tpl_order") || "",
+      wa_tpl_delivery: _v("sf-wa_tpl_delivery") || "",
+    };
+
+    _gsr(
+      "saveCompanySettings",
+      [payload, APP.currentUser.username, SESSION.token],
+      {
+        label: "saveWhatsappSettings",
+        onSuccess: function () {
+          Object.assign(APP.companySettings, payload);
+          NotificationEngine.success("تم حفظ إعدادات الواتساب ");
+          var hint = document.getElementById("save-hint-whatsapp");
+          if (hint) hint.textContent = " تم الحفظ";
+        },
+        onError: function (r) {
+          NotificationEngine.error("خطأ في الحفظ: " + r.message);
+        },
+      },
+    );
+  }
+
+  /** مساعد: يجيب قيمة toggle من DOM — يقرأ checkbox بـ id="sf-{key}" */
+  function _getToggleVal(key) {
+    var el = document.getElementById("sf-" + key);
+    if (el && el.type === "checkbox") return el.checked;
+    // fallback: يجيب من APP.companySettings
+    var s = APP && APP.companySettings ? APP.companySettings : {};
+    return s[key] !== false && s[key] !== "false";
+  }
+
+  /** مساعد: قيمة input */
+  function _v(id) {
+    var el = document.getElementById(id);
+    return el ? el.value : "";
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-9  WA_ATTACH — دوال الربط مع الشاشات الخارجية
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * sendCatalogShareLink — يُستخدم من شاشة "إرسال كتالوج لعميل" (07_JS_Shipping_Colors_Excel.html)
+   * بدلاً من بناء رابط wa.me مباشرة وبدون قالب أو تسجيل.
+   *
+   * ملاحظة: هذه المشاركة مقصودة بلا رقم هاتف محدد (الموظف يفتح واتساب
+   * ويختار جهة الاتصال بنفسه) — لذلك لا تستخدم WA_MODAL، لكنها تمر
+   * عبر نفس طبقات القوالب + المزوّد + التسجيل تماماً كباقي تدفقات الواتساب.
+   *
+   * @param {string} clientName  اسم العميل (حقل حر من الشاشة)
+   * @param {string} url         لينك الكتالوج المخصص
+   * @param {string} [customerId] معرف عميل حقيقي إن وُجد (اختياري)
+   */
+  function sendCatalogShareLink(clientName, url, customerId) {
+    if (!WA_CONFIG.isEnabled()) {
+      NotificationEngine.warning("ميزة الواتساب غير مفعّلة — فعّلها من إعدادات النظام > واتساب");
+      return;
+    }
+    if (!canDo("sendWhatsapp")) {
+      NotificationEngine.error("ليس لديك صلاحية إرسال واتساب");
+      return;
+    }
+    if (!url) {
+      NotificationEngine.warning("اختر مخزن أو مجموعة أولاً");
+      return;
+    }
+
+    var cfg = WA_CONFIG.get();
+    var name = clientName || "العميل";
+    var tpl = WA_TPL.getDefault("catalog_share_link");
+    var message = WA_TPL.resolve(tpl.body, {
+      customer_name: name,
+      document_link: url,
+      company_name: cfg.companyName,
+    });
+
+    // إرسال عبر طبقة المزوّد الموحّدة — بلا رقم محدد (مشاركة لأي جهة اتصال)
+    WA_PROVIDER.send("", message, { openNewTab: true });
+
+    // تسجيل في سجل الواتساب الموحّد
+    if (cfg.logSends) {
+      WA_LOG.logSend({
+        customer_id: customerId || "",
+        customer_name: name,
+        phone: "",
+        template_code: tpl.code,
+        template_name: tpl.name,
+        message: message,
+        source_type: "catalog_share",
+        source_id: customerId || "",
+        provider: cfg.provider,
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-10  WA_LOGS_PAGE — شاشة سجل الواتساب (Communication Logs)
+  // ─────────────────────────────────────────────────────────────
+
+  var WA_SOURCE_TYPE_LABELS = {
+    invoice: "فاتورة",
+    customer: "عميل (عام)",
+    statement: "كشف حساب",
+    payment_reminder: "تذكير سداد",
+    catalog_share: "مشاركة كتالوج",
+    catalog_public: "كتالوج عام",
+    catalog_public_cart: "كتالوج عام (سلة)",
+    catalog_public_item: "كتالوج عام (منتج)",
+    manual: "يدوي",
+  };
+
+  var _waLogsState = { filters: {}, loadedRows: [] };
+
+  function renderWhatsappLogsPage() {
+    if (!canDo("viewWhatsappLogs")) {
+      return '<div style="padding:40px;text-align:center;color:#ef4444;font-size:18px"> ليس لديك صلاحية عرض سجل الواتساب</div>';
+    }
+
+    var sourceOptions = Object.keys(WA_SOURCE_TYPE_LABELS)
+      .map(function (k) {
+        return (
+          '<option value="' +
+          esc(k) +
+          '">' +
+          esc(WA_SOURCE_TYPE_LABELS[k]) +
+          "</option>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div class="page-header">' +
+      "<div>" +
+      '<h2 style="display:flex;align-items:center;gap:10px">' +
+      '<span style="background:#25D366;color:#fff;border-radius:10px;width:38px;height:38px;display:flex;align-items:center;justify-content:center">' +
+      '<i class="ti ti-message-circle"></i>' +
+      "</span>" +
+      "<span>سجل الواتساب</span>" +
+      "</h2>" +
+      '<p class="page-subtitle">كل عمليات إرسال ومشاركة الواتساب من النظام — داخلية وعامة</p>' +
+      "</div>" +
+      '<div class="header-actions">' +
+      '<button class="btn btn-secondary" onclick="_waLogsRefresh()">' +
+      '<i class="ti ti-refresh"></i> تحديث</button>' +
+      "</div>" +
+      "</div>" +
+      // ── شريط الفلاتر ──
+      '<div class="card" style="padding:16px;margin-bottom:14px">' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;align-items:end">' +
+      '<div><label class="wa-label" style="font-size:11px">من تاريخ</label>' +
+      '<input type="date" id="wal-from" class="input" onchange="_waLogsApplyFilters()"></div>' +
+      '<div><label class="wa-label" style="font-size:11px">إلى تاريخ</label>' +
+      '<input type="date" id="wal-to" class="input" onchange="_waLogsApplyFilters()"></div>' +
+      '<div><label class="wa-label" style="font-size:11px">نوع المصدر</label>' +
+      '<select id="wal-source" class="input" onchange="_waLogsApplyFilters()">' +
+      '<option value="">الكل</option>' +
+      sourceOptions +
+      "</select></div>" +
+      '<div style="grid-column:span 2"><label class="wa-label" style="font-size:11px">بحث (اسم/رقم/رسالة)</label>' +
+      '<input type="text" id="wal-search" class="input" placeholder="ابحث..." oninput="_waLogsDebouncedSearch()"></div>' +
+      '<div><button class="btn btn-outline" style="width:100%" onclick="_waLogsClearFilters()"> مسح الفلاتر</button></div>' +
+      "</div>" +
+      "</div>" +
+      // ── الجدول — عبر ColumnEngine (Dynamic Columns) ──
+      '<div class="card">' +
+      '<div id="wal-ce-container" style="padding:4px;min-height:80px;display:flex;align-items:center;justify-content:center"><span class="spinner"></span></div>' +
+      '<div style="padding:14px;text-align:center" id="wal-summary"></div>' +
+      "</div>"
+    );
+  }
+
+  function bindWhatsappLogsPage() {
+    _waLogsState.filters = {};
+    _waLogsFetch();
+  }
+
+  function _waLogsApplyFilters() {
+    _waLogsState.filters.dateFrom = _v("wal-from") || "";
+    _waLogsState.filters.dateTo = _v("wal-to") || "";
+    _waLogsState.filters.source_type = _v("wal-source") || "";
+    _waLogsFetch();
+  }
+
+  var _waLogsSearchTimer = null;
+  function _waLogsDebouncedSearch() {
+    clearTimeout(_waLogsSearchTimer);
+    _waLogsSearchTimer = setTimeout(function () {
+      _waLogsState.filters.search = _v("wal-search") || "";
+      _waLogsFetch();
+    }, 350);
+  }
+
+  function _waLogsClearFilters() {
+    ["wal-from", "wal-to", "wal-source", "wal-search"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.value = "";
+    });
+    _waLogsState.filters = {};
+    _waLogsFetch();
+  }
+
+  function _waLogsRefresh() {
+    _waLogsFetch();
+  }
+
+  function _waLogsFetch() {
+    var container = document.getElementById("wal-ce-container");
+    if (container)
+      container.innerHTML =
+        '<div style="padding:30px;text-align:center"><span class="spinner"></span></div>';
+
+    _gsr(
+      "getWhatsappLogs",
+      [APP.currentUser.username, _waLogsState.filters, SESSION.token],
+      {
+        label: "getWhatsappLogs",
+        onSuccess: function (res) {
+          _waLogsState.loadedRows = res.data || [];
+          _renderWaLogRows(_waLogsState.loadedRows);
+          var summary = document.getElementById("wal-summary");
+          if (summary)
+            summary.textContent =
+              "إجمالي السجلات المطابقة: " + (res.total || 0);
+        },
+        onError: function (r) {
+          if (container)
+            container.innerHTML =
+              '<div style="padding:30px;text-align:center;color:#ef4444">' +
+              esc(r.message || "خطأ في جلب السجل") +
+              "</div>";
+        },
+      },
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // [COLUMN-ENGINE] تعريف أعمدة سجل الواتساب كـ Metadata. rowKey="id"
+  // (WA-LOG-xxxxx) — نفس المعرّف المستخدم أصلًا في قائمة السياق
+  // whatsapp_log (راجع 20_JS_ContextMenu.html).
+  // ─────────────────────────────────────────────────────────────
+  var _waLogColumnsRegistered = false;
+
+  function _waLogRegisterColumns() {
+    if (_waLogColumnsRegistered) return;
+    _waLogColumnsRegistered = true;
+    ColumnEngine.register(
+      "whatsapp_log",
+      [
+        {
+          key: "created_at",
+          label: "التاريخ",
+          type: "date",
+          width: 140,
+          frozen: "right",
+          format: function (v) {
+            return v
+              ? '<span style="font-size:11px;white-space:nowrap">' +
+                  esc(fmtDateTime(v)) +
+                  "</span>"
+              : "—";
+          },
+        },
+        {
+          key: "customer_name",
+          label: "العميل/الطرف",
+          type: "text",
+          width: 160,
+          format: function (v) {
+            return "<b>" + esc(v || "—") + "</b>";
+          },
+        },
+        {
+          key: "phone_used",
+          label: "الهاتف",
+          type: "text",
+          width: 130,
+          format: function (v) {
+            return (
+              '<span class="mono" dir="ltr" style="font-size:11px">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "template_name",
+          label: "القالب",
+          type: "text",
+          width: 150,
+          format: function (v, row) {
+            return esc(v || row.template_code || "—");
+          },
+        },
+        {
+          key: "source_type",
+          label: "المصدر",
+          type: "text",
+          width: 140,
+          format: function (v, row) {
+            var label = WA_SOURCE_TYPE_LABELS[v] || v || "—";
+            var publicBadge =
+              row.is_public === "TRUE" || row.is_public === true
+                ? ' <span class="badge badge-neutral" style="font-size:10px">عام</span>'
+                : "";
+            return esc(label) + publicBadge;
+          },
+        },
+        {
+          key: "sent_by",
+          label: "بواسطة",
+          type: "text",
+          width: 120,
+          format: function (v) {
+            return esc(v || "—");
+          },
+        },
+        {
+          key: "rendered_message",
+          label: "المعاينة",
+          type: "text",
+          width: 280,
+          format: function (v) {
+            var s = String(v || "");
+            return (
+              '<span style="font-size:12px;color:var(--text2)" title="' +
+              esc(s) +
+              '">' +
+              esc(s.substring(0, 60)) +
+              (s.length > 60 ? "…" : "") +
+              "</span>"
+            );
+          },
+        },
+      ],
+      { rowKey: "id", title: "سجل الواتساب", contextMenuType: "whatsapp_log" },
+    );
+  }
+
+  function _renderWaLogRows(rows) {
+    var container = document.getElementById("wal-ce-container");
+    if (!container) return;
+    _waLogRegisterColumns();
+    ColumnEngine.renderTable("whatsapp_log", container, rows || [], {});
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-10B  إجراءات القائمة السياقية لسجل الواتساب
+  // (عرض التفاصيل / إعادة الإرسال / حذف من السجل)
+  // مربوطة من 20_JS_ContextMenu.html عبر whatsapp_log context type:
+  // ctx_viewWALog / ctx_resendWALog / ctx_deleteWALog
+  // ─────────────────────────────────────────────────────────────
+
+  /** يدوّر على سجل بمعرّفه — من الكاش المحمّل حاليًا في شاشة السجل */
+  function _waLogFindById(id) {
+    return (_waLogsState.loadedRows || []).find(function (r) {
+      return r.id === id;
+    });
+  }
+
+  /** عرض التفاصيل — نافذة للقراءة فقط بكل بيانات السجل */
+  function ctx_viewWALog(id) {
+    var row = _waLogFindById(id);
+    if (!row) {
+      NotificationEngine.warning("السجل غير موجود (رُبما تم حذفه أو تحتاج تحديث الصفحة)");
+      return;
+    }
+    var dateStr = row.created_at
+      ? fmtDateTime(row.created_at)
+      : "—";
+    var sourceLabel = WA_SOURCE_TYPE_LABELS[row.source_type] || row.source_type || "—";
+    var statusMap = {
+      opened: '<span class="badge badge-info">تم الفتح</span>',
+      sent: '<span class="badge badge-success">تم الإرسال</span>',
+      failed: '<span class="badge badge-danger">فشل</span>',
+    };
+    var statusBadge = statusMap[row.status] || esc(row.status || "—");
+
+    var rows = [
+      ["المعرّف", '<span class="mono">' + esc(row.id) + "</span>"],
+      ["التاريخ", esc(dateStr)],
+      ["بواسطة", esc(row.sent_by || "—")],
+      ["العميل/الطرف", esc(row.customer_name || "—")],
+      [
+        "الهاتف",
+        '<span class="mono" dir="ltr">' + esc(row.phone_used || "—") + "</span>",
+      ],
+      ["القالب", esc(row.template_name || row.template_code || "—")],
+      ["المصدر", esc(sourceLabel) + (row.source_id ? " (" + esc(row.source_id) + ")" : "")],
+      ["الحالة", statusBadge],
+      [
+        "عام (كتالوج)",
+        row.is_public === "TRUE" || row.is_public === true ? "نعم" : "لا",
+      ],
+    ];
+
+    var body =
+      '<div class="wa-log-detail">' +
+      rows
+        .map(function (r) {
+          return (
+            '<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">' +
+            '<div style="min-width:120px;color:var(--text3);font-size:12px;font-weight:700">' +
+            r[0] +
+            "</div><div style=\"flex:1;font-size:13px\">" +
+            r[1] +
+            "</div></div>"
+          );
+        })
+        .join("") +
+      '<div style="margin-top:14px">' +
+      '<div style="color:var(--text3);font-size:12px;font-weight:700;margin-bottom:6px">نص الرسالة</div>' +
+      '<div style="background:var(--surface2);border-radius:10px;padding:12px;white-space:pre-wrap;font-size:13px;line-height:1.7">' +
+      esc(row.rendered_message || "—") +
+      "</div></div>" +
+      (canDo("sendWhatsapp")
+        ? '<div style="margin-top:16px;display:flex;justify-content:flex-end">' +
+          '<button class="btn btn-success" onclick="closeModal();ctx_resendWALog(\'' +
+          esc(row.id) +
+          "')\"><i class=\"ti ti-refresh\"></i> إعادة الإرسال</button></div>"
+        : "") +
+      "</div>";
+
+    openModal("تفاصيل رسالة واتساب", body);
+  }
+
+  /** إعادة الإرسال — يفتح رابط واتساب بنفس نص الرسالة الأصلي ويسجّل عملية جديدة */
+  function ctx_resendWALog(id) {
+    if (!canDo("sendWhatsapp")) {
+      NotificationEngine.error("ليس لديك صلاحية إرسال واتساب");
+      return;
+    }
+    var row = _waLogFindById(id);
+    if (!row) {
+      NotificationEngine.warning("السجل غير موجود (رُبما تحتاج تحديث الصفحة)");
+      return;
+    }
+    var phone = WA_PHONE.normalize(row.phone_used || "");
+    if (!WA_PHONE.isValid(phone)) {
+      NotificationEngine.warning("لا يوجد رقم هاتف صالح لإعادة الإرسال — افتح الرسالة من مصدرها الأصلي");
+      return;
+    }
+    var message = row.rendered_message || "";
+    WA_PROVIDER.send(phone, message, {});
+
+    _gsr(
+      "logWhatsappSend",
+      [
+        {
+          customer_id: row.customer_id || "",
+          customer_name: row.customer_name || "",
+          phone: row.phone_used || "",
+          template_code: row.template_code || "",
+          template_name: row.template_name || "",
+          message: message,
+          source_type: "manual",
+          source_id: row.id,
+          provider: "direct",
+        },
+        APP.currentUser.username,
+        typeof SESSION !== "undefined" ? SESSION.token : null,
+      ],
+      {
+        label: "ctx_resendWALog",
+        onSuccess: function () {
+          NotificationEngine.success("تم فتح واتساب لإعادة الإرسال وتسجيل العملية");
+          if (typeof _waLogsFetch === "function") _waLogsFetch();
+        },
+        onError: function () {
+          // الفتح نفسه نجح بالفعل — فشل التسجيل فقط ليس خطأ حرجًا للمستخدم
+        },
+      },
+    );
+  }
+
+  /** حذف من السجل — حذف نهائي بعد تأكيد، ويتطلب صلاحية manageWhatsappTemplates */
+  function ctx_deleteWALog(id) {
+    if (!canDo("manageWhatsappTemplates")) {
+      NotificationEngine.error("ليس لديك صلاحية حذف سجلات الواتساب");
+      return;
+    }
+    var row = _waLogFindById(id);
+    confirmDelete(
+      "حذف من سجل الواتساب",
+      "هل أنت متأكد من حذف هذا السجل" +
+        (row && row.customer_name ? " الخاص بـ «" + row.customer_name + "»" : "") +
+        "؟ لا يمكن التراجع عن هذا الإجراء.",
+      function () {
+        _gsr(
+          "deleteWhatsappLog",
+          [
+            id,
+            APP.currentUser.username,
+            typeof SESSION !== "undefined" ? SESSION.token : null,
+          ],
+          {
+            label: "ctx_deleteWALog",
+            onSuccess: function (res) {
+              if (res && res.success) {
+                NotificationEngine.success("تم حذف السجل بنجاح");
+                if (typeof _waLogsFetch === "function") _waLogsFetch();
+              } else {
+                NotificationEngine.error((res && res.message) || "تعذر حذف السجل");
+              }
+            },
+            onError: function (result) {
+              NotificationEngine.error("خطأ: " + result.message);
+            },
+          },
+        );
+      },
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-11  WA_CUSTOMER_TIMELINE — تايملاين تواصل الواتساب لعميل محدد
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * يُعيد HTML لبطاقة "تواصل الواتساب" — تُستخدم داخل شاشة كشف حساب العميل
+   * (renderPartyMovements في Templates.html). البطاقة تُحمَّل بشكل كسول (lazy)
+   * بعد رسم الصفحة عبر loadCustomerWaTimeline().
+   */
+  function renderCustomerWaTimelineCard(customerId) {
+    if (!canDo("viewWhatsappLogs") && !canDo("sendWhatsapp")) return "";
+    return (
+      '<div class="card" style="padding:20px;margin-top:14px">' +
+      '<h3 style="font-size:14px;font-weight:700;margin:0 0 12px;display:flex;align-items:center;gap:8px">' +
+      '<i class="ti ti-message-circle" style="color:#25D366"></i>' +
+      "آخر تواصلات الواتساب</h3>" +
+      '<div id="cust-wa-timeline-' +
+      esc(customerId) +
+      '">' +
+      '<div style="text-align:center;padding:16px"><span class="spinner"></span></div>' +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  /** يُحمِّل آخر سجلات واتساب لعميل معيّن ويرسمها داخل العنصر المخصص */
+  function loadCustomerWaTimeline(customerId) {
+    if (!customerId) return;
+    if (!canDo("viewWhatsappLogs") && !canDo("sendWhatsapp")) return;
+    var target = document.getElementById("cust-wa-timeline-" + customerId);
+    if (!target) return;
+
+    _gsr(
+      "getWhatsappLogs",
+      [
+        APP.currentUser.username,
+        { customer_id: customerId, limit: 8 },
+        SESSION.token,
+      ],
+      {
+        label: "loadCustomerWaTimeline",
+        onSuccess: function (res) {
+          target.innerHTML = _renderWaTimelineList(res.data || []);
+        },
+        onError: function () {
+          target.innerHTML =
+            '<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">تعذّر تحميل السجل</div>';
+        },
+      },
+    );
+  }
+
+  function _renderWaTimelineList(rows) {
+    if (!rows || !rows.length) {
+      return '<div style="text-align:center;padding:16px;color:var(--text3);font-size:12px">لا توجد رسائل واتساب مسجَّلة لهذا العميل بعد</div>';
+    }
+    return (
+      '<div style="display:flex;flex-direction:column;gap:8px">' +
+      rows
+        .map(function (r) {
+          var d = r.created_at
+            ? fmtDateTime(r.created_at)
+            : "—";
+          var srcLabel =
+            WA_SOURCE_TYPE_LABELS[r.source_type] || r.source_type || "—";
+          return (
+            '<div style="display:flex;align-items:flex-start;gap:10px;padding:10px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">' +
+            '<div style="width:28px;height:28px;border-radius:50%;background:rgba(37,211,102,.12);display:flex;align-items:center;justify-content:center;flex-shrink:0">' +
+            '<i class="ti ti-brand-whatsapp" style="color:#25D366;font-size:14px"></i></div>' +
+            '<div style="flex:1;min-width:0">' +
+            '<div style="font-size:12px;font-weight:600;color:var(--text)">' +
+            esc(srcLabel) +
+            ' <span style="color:var(--text3);font-weight:400">— ' +
+            esc(r.sent_by || "") +
+            "</span></div>" +
+            '<div style="font-size:11px;color:var(--text3);margin-top:2px">' +
+            esc(d) +
+            "</div>" +
+            '<div style="font-size:12px;color:var(--text2);margin-top:4px;white-space:pre-wrap">' +
+            esc(String(r.rendered_message || "").substring(0, 140)) +
+            (String(r.rendered_message || "").length > 140 ? "…" : "") +
+            "</div>" +
+            "</div></div>"
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  /**
+   * يُنشئ زر واتساب مخصصاً — يُستخدم من الشاشات الخارجية
+   * @param {Object} opts  نفس opts لـ WA_MODAL.open
+   * @param {string} label نص الزر (اختياري)
+   * @param {string} style كلاسات CSS إضافية (اختياري)
+   */
+  function renderWaButton(opts, label, style) {
+    if (!WA_CONFIG.isEnabled()) return "";
+    if (!canDo("sendWhatsapp")) return "";
+    var optsJson = JSON.stringify(opts || {}).replace(/"/g, "&quot;");
+    return (
+      '<button class="btn wa-inline-btn ' +
+      (style || "") +
+      '" ' +
+      'onclick="WA_MODAL.open(' +
+      optsJson +
+      ')" ' +
+      'title="إرسال واتساب">' +
+      '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.126.556 4.12 1.523 5.847L0 24l6.332-1.494A11.945 11.945 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.793 9.793 0 01-5.023-1.378l-.36-.213-3.727.879.936-3.606-.235-.37A9.793 9.793 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182S21.818 6.57 21.818 12 17.43 21.818 12 21.818z"/></svg> ' +
+      esc(label || "واتساب") +
+      "</button>"
+    );
+  }
+
+  /**
+   * يُنشئ زر واتساب لـ Customer كأيقونة صغيرة (للقوائم)
+   */
+  function renderWaIconBtn(opts) {
+    if (!WA_CONFIG.isEnabled()) return "";
+    if (!canDo("sendWhatsapp")) return "";
+    var optsJson = JSON.stringify(opts || {}).replace(/"/g, "&quot;");
+    return (
+      '<button class="wa-icon-btn" onclick="event.stopPropagation();WA_MODAL.open(' +
+      optsJson +
+      ')" title="إرسال واتساب">' +
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.126.556 4.12 1.523 5.847L0 24l6.332-1.494A11.945 11.945 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.793 9.793 0 01-5.023-1.378l-.36-.213-3.727.879.936-3.606-.235-.37A9.793 9.793 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182S21.818 6.57 21.818 12 17.43 21.818 12 21.818z"/></svg>' +
+      "</button>"
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // §WA-CENTER  مركز المحادثات — مدمج من 19b_JS_WA_Center.html
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 19b_JS_WA_Center.html — مركز محادثات واتساب — MOO.ERP
+  // ──────────────────────────────────────────────────────────────────────────
+  //
+  //  §WA-HUB    WA_HUB    — المتحكم الرئيسي (Top Bar dropdown + navigation)
+  //  §WA-STATE  WA_STATE  — حالة التطبيق المركزية (conversations, messages, cache)
+  //  §WA-CENTER WA_CENTER — شاشة مركز المحادثات الكاملة
+  //  §WA-CPANEL WA_CPANEL — لوحة بيانات العميل الجانبية
+  //
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-STATE — حالة التطبيق المركزية
+  // ─────────────────────────────────────────────────────────────
+  var WA_STATE = (function () {
+    var _state = {
+      conversations: [],
+      currentConvId: null,
+      messages: {}, // { [conv_id]: [...] }
+      customerData: {}, // { [customer_id]: {...} }
+      unreadTotal: 0,
+      fingerprints: {}, // لمنع re-render غير ضروري
+      pollTimer: null,
+      isLoading: false,
+    };
+
+    function get(key) {
+      return key ? _state[key] : _state;
+    }
+    function set(key, val) {
+      _state[key] = val;
+    }
+
+    function fingerprint(key, data) {
+      var fp =
+        String(JSON.stringify(data)).length +
+        (data && data.length ? data.length : 0);
+      var changed = fp !== _state.fingerprints[key];
+      _state.fingerprints[key] = fp;
+      return changed;
+    }
+
+    function destroy() {
+      if (_state.pollTimer) {
+        clearInterval(_state.pollTimer);
+        _state.pollTimer = null;
+      }
+      _state.conversations = [];
+      _state.messages = {};
+      _state.customerData = {};
+      _state.currentConvId = null;
+    }
+
+    return { get: get, set: set, fingerprint: fingerprint, destroy: destroy };
+  })();
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-HUB — المتحكم الرئيسي
+  // ─────────────────────────────────────────────────────────────
+  var WA_HUB = (function () {
+    /** تبديل ظهور/إخفاء dropdown */
+    function toggleDropdown() {
+      var dd = document.getElementById("wa-topbar-dropdown");
+      if (!dd) return;
+      var isOpen = dd.style.display !== "none";
+      dd.style.display = isOpen ? "none" : "block";
+      if (!isOpen) _refreshDropdown();
+    }
+
+    function closeDropdown() {
+      var dd = document.getElementById("wa-topbar-dropdown");
+      if (dd) dd.style.display = "none";
+    }
+
+    /** تحديث محتوى Dropdown */
+    function _refreshDropdown() {
+      // تحديث badge العداد
+      _gsr("getWAUnreadCount", [APP.currentUser.username, SESSION.token], {
+        onSuccess: function (res) {
+          if (!res || !res.data) return;
+          var count = res.data.count || 0;
+          WA_STATE.set("unreadTotal", count);
+          _updateTopBarBadge(count);
+          // تحديث عنصر غير مقروء في القائمة
+          var el = document.getElementById("wa-topbar-unread");
+          if (el) {
+            el.textContent = count + " غير مقروء";
+            el.style.display = count > 0 ? "block" : "none";
+          }
+          // تحديث حالة الاتصال
+          var statusEl = document.getElementById("wa-topbar-status");
+          if (statusEl) statusEl.textContent = "متصل ";
+        },
+        onError: function () {
+          var statusEl = document.getElementById("wa-topbar-status");
+          if (statusEl) statusEl.textContent = "غير متصل";
+        },
+      });
+
+      // تحميل آخر المحادثات
+      _gsr(
+        "getWAConversations",
+        [APP.currentUser.username, { limit: 5 }, SESSION.token],
+        {
+          onSuccess: function (res) {
+            if (!res || !res.data) return;
+            _renderDropdownConversations(res.data);
+          },
+        },
+      );
+    }
+
+    function _renderDropdownConversations(conversations) {
+      var el = document.getElementById("wa-topbar-conversations");
+      if (!el) return;
+      if (!conversations || conversations.length === 0) {
+        el.innerHTML =
+          '<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">' +
+          '<i class="ti ti-message-circle" style="font-size:26px;display:block;margin-bottom:6px;opacity:0.4"></i>' +
+          "لا توجد محادثات حديثة</div>";
+        return;
+      }
+      el.innerHTML = conversations
+        .map(function (c) {
+          var unread = Number(c.unread_count || 0);
+          var time = c.last_message_time
+            ? _fmtRelTime(new Date(c.last_message_time))
+            : "";
+          return (
+            "<div onclick=\"WA_HUB.openConversation('" +
+            esc(c.id) +
+            "')\" " +
+            'style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background 0.15s" ' +
+            "onmouseover=\"this.style.background='var(--bg2)'\" onmouseout=\"this.style.background=''\"> " +
+            '<div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#25D366,#128C7E);display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;font-weight:700;flex-shrink:0">' +
+            (c.customer_name ? c.customer_name.charAt(0).toUpperCase() : "?") +
+            "</div>" +
+            '<div style="flex:1;min-width:0">' +
+            '<div style="font-size:13px;font-weight:' +
+            (unread > 0 ? "700" : "500") +
+            ';color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
+            esc(c.customer_name || c.customer_phone || "غير معروف") +
+            "</div>" +
+            '<div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
+            esc((c.last_message || "").substring(0, 40)) +
+            "</div>" +
+            "</div>" +
+            (time
+              ? '<div style="font-size:10px;color:var(--text3);white-space:nowrap">' +
+                time +
+                "</div>"
+              : "") +
+            (unread > 0
+              ? '<span style="background:#25D366;color:#fff;font-size:10px;font-weight:700;border-radius:10px;min-width:18px;height:18px;line-height:18px;text-align:center;padding:0 4px">' +
+                unread +
+                "</span>"
+              : "") +
+            "</div>"
+          );
+        })
+        .join("");
+    }
+
+    function _updateTopBarBadge(count) {
+      var badge = document.getElementById("wa-topbar-badge");
+      if (!badge) return;
+      if (count > 0) {
+        badge.textContent = count > 99 ? "99+" : count;
+        badge.style.display = "block";
+      } else {
+        badge.style.display = "none";
+      }
+    }
+
+    /** فتح مركز المحادثات */
+    function openCenter() {
+      closeDropdown();
+      if (typeof openWhatsappHubTab === "function") {
+        openWhatsappHubTab("center");
+      } else {
+        navigate("whatsapp_center"); // fallback لو ملف الـ hub مش محمّل
+      }
+    }
+
+    /** فتح محادثة مباشرة */
+    function openConversation(convId) {
+      closeDropdown();
+      WA_STATE.set("currentConvId", convId);
+      if (typeof openWhatsappHubTab === "function") {
+        openWhatsappHubTab("center");
+      } else {
+        navigate("whatsapp_center"); // fallback لو ملف الـ hub مش محمّل
+      }
+    }
+
+    /** فتح إعدادات واتساب */
+    function openSettings() {
+      closeDropdown();
+      navigate("system_settings");
+    }
+
+    /** تحديث الـ badge دورياً */
+    function startPolling() {
+      if (WA_STATE.get("pollTimer")) return; // لا نبدأ مرتين
+      var timer = setInterval(function () {
+        _gsr("getWAUnreadCount", [APP.currentUser.username, SESSION.token], {
+          onSuccess: function (res) {
+            if (res && res.data) _updateTopBarBadge(res.data.count || 0);
+          },
+        });
+      }, 60 * 1000); // كل دقيقة
+      WA_STATE.set("pollTimer", timer);
+    }
+
+    function stopPolling() {
+      var timer = WA_STATE.get("pollTimer");
+      if (timer) {
+        clearInterval(timer);
+        WA_STATE.set("pollTimer", null);
+      }
+    }
+
+    // [REFACTOR-P2] _fmtRelTime اتنقلت لـ Core_Utilities.html (Global)
+
+    return {
+      toggleDropdown: toggleDropdown,
+      closeDropdown: closeDropdown,
+      openCenter: openCenter,
+      openConversation: openConversation,
+      openSettings: openSettings,
+      startPolling: startPolling,
+      stopPolling: stopPolling,
+    };
+  })();
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-CENTER — شاشة مركز المحادثات الكاملة
+  // ─────────────────────────────────────────────────────────────
+
+  /** Render شاشة مركز المحادثات */
+  function renderWhatsappCenterPage() {
+    if (!canDo("viewWhatsappCenter")) {
+      return (
+        '<div style="padding:40px;text-align:center;color:var(--text3)">' +
+        '<i class="ti ti-lock" style="font-size:48px;display:block;margin-bottom:16px"></i>' +
+        "<p>ليس لديك صلاحية فتح مركز المحادثات</p></div>"
+      );
+    }
+
+    return (
+      '<div class="wa-center-page" id="wa-center-page">' +
+      // ── شريط الأدوات العلوي ──
+      '<div class="wa-center-topbar">' +
+      '<div style="display:flex;align-items:center;gap:12px">' +
+      '<div style="width:36px;height:36px;background:linear-gradient(135deg,#25D366,#128C7E);border-radius:10px;display:flex;align-items:center;justify-content:center">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 00-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>' +
+      "</div>" +
+      "<div>" +
+      '<h2 style="margin:0;font-size:16px;font-weight:700;color:var(--text1)">مركز محادثات واتساب</h2>' +
+      '<div style="font-size:12px;color:var(--text3)" id="wa-center-status">جارٍ التحميل...</div>' +
+      "</div>" +
+      "</div>" +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+      (canDo("manageWhatsappWorkflows")
+        ? '<button onclick="WA_CENTER.openWorkflows()" class="wa-center-action-btn" title="الأتمتة"><i class="ti ti-settings-automation"></i></button>'
+        : "") +
+      (canDo("manageWhatsappGateway")
+        ? '<button onclick="WA_GATEWAY.open()" class="wa-center-action-btn" title="ربط واتساب (QR)"><i class="ti ti-qrcode"></i></button>'
+        : "") +
+      '<button onclick="WA_CENTER.refresh()" class="wa-center-action-btn" title="تحديث" id="wa-center-refresh-btn"><i class="ti ti-refresh"></i></button>' +
+      "</div>" +
+      "</div>" +
+      // ── الجسم الثلاثي الأعمدة ──
+      '<div class="wa-center-body">' +
+      // عمود 1: قائمة المحادثات
+      '<div class="wa-conv-sidebar" id="wa-conv-sidebar">' +
+      // شريط البحث والفلاتر
+      '<div class="wa-conv-search-wrap">' +
+      '<div class="wa-conv-search-box">' +
+      '<i class="ti ti-search" style="font-size:14px;color:var(--text3)"></i>' +
+      '<input id="wa-conv-search" type="text" placeholder="بحث في المحادثات..." class="wa-conv-search-input" oninput="WA_CENTER.onSearch(this.value)">' +
+      "</div>" +
+      '<div class="wa-conv-filters">' +
+      '<button class="wa-filter-btn active" data-filter="all" onclick="WA_CENTER.setFilter(\'all\', this)">الكل</button>' +
+      '<button class="wa-filter-btn" data-filter="open" onclick="WA_CENTER.setFilter(\'open\', this)">مفتوحة</button>' +
+      '<button class="wa-filter-btn" data-filter="needs_human" onclick="WA_CENTER.setFilter(\'needs_human\', this)"><span style="color:#f59e0b">●</span> تحتاج رد</button>' +
+      "</div>" +
+      "</div>" +
+      // قائمة المحادثات
+      '<div class="wa-conv-list" id="wa-conv-list">' +
+      '<div class="wa-conv-loading" id="wa-conv-loading">' +
+      '<div class="wa-spinner"></div>' +
+      "<span>جارٍ تحميل المحادثات...</span>" +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // عمود 2: منطقة الرسائل
+      '<div class="wa-chat-main" id="wa-chat-main">' +
+      '<div class="wa-chat-empty" id="wa-chat-empty">' +
+      '<div style="text-align:center;color:var(--text3)">' +
+      '<svg width="64" height="64" viewBox="0 0 24 24" fill="none" style="opacity:0.2;margin-bottom:16px"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 00-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z" fill="currentColor"/></svg>' +
+      '<p style="font-size:15px;font-weight:600;margin:0 0 8px">اختر محادثة للبدء</p>' +
+      '<p style="font-size:13px;margin:0">اختر من القائمة على اليمين</p>' +
+      "</div>" +
+      "</div>" +
+      // رأس المحادثة الحالية (مخفي في البداية)
+      '<div class="wa-chat-header" id="wa-chat-header" style="display:none">' +
+      '<div class="wa-chat-contact-info" id="wa-chat-contact-info"></div>' +
+      '<div style="display:flex;gap:6px">' +
+      (canDo("viewWhatsappCustomerData")
+        ? '<button onclick="WA_CENTER.toggleCustomerPanel()" class="wa-center-action-btn" title="بيانات العميل" id="wa-customer-panel-toggle"><i class="ti ti-user-circle"></i></button>'
+        : "") +
+      (canDo("deleteWhatsappConversation")
+        ? '<button onclick="WA_CENTER.deleteCurrentConversation()" class="wa-center-action-btn wa-center-danger-btn" title="حذف المحادثة"><i class="ti ti-trash"></i></button>'
+        : "") +
+      "</div>" +
+      "</div>" +
+      // منطقة الرسائل
+      '<div class="wa-messages-area" id="wa-messages-area" style="display:none">' +
+      '<div class="wa-messages-list" id="wa-messages-list"></div>' +
+      "</div>" +
+      // شريط الإدخال
+      '<div class="wa-input-bar" id="wa-input-bar" style="display:none">' +
+      // اقتراحات الذكاء الاصطناعي
+      '<div class="wa-ai-suggestions" id="wa-ai-suggestions"></div>' +
+      '<div class="wa-input-row">' +
+      (canDo("sendWhatsappFiles")
+        ? '<button class="wa-input-attach-btn" onclick="WA_CENTER.openAttachMenu()" title="إرفاق"><i class="ti ti-paperclip" style="font-size:18px"></i></button>'
+        : "") +
+      '<textarea id="wa-msg-input" class="wa-msg-input" placeholder="اكتب رسالة..." rows="1" ' +
+      'oninput="WA_CENTER.onInputChange(this)" ' +
+      'onkeydown="WA_CENTER.onInputKeydown(event)"></textarea>' +
+      '<button id="wa-send-btn" class="wa-send-btn" onclick="WA_CENTER.sendMessage()" title="إرسال">' +
+      '<i class="ti ti-send" style="font-size:18px"></i>' +
+      "</button>" +
+      "</div>" +
+      // Quick Actions
+      '<div class="wa-quick-actions" id="wa-quick-actions">' +
+      (canDo("viewWhatsappStatement")
+        ? '<button class="wa-quick-btn" onclick="WA_CENTER.quickSendStatement()"><i class="ti ti-file-invoice"></i> كشف حساب</button>'
+        : "") +
+      '<button class="wa-quick-btn" onclick="WA_CENTER.quickSendCatalog()"><i class="ti ti-shopping-bag"></i> الكتالوج</button>' +
+      '<button class="wa-quick-btn" onclick="WA_CENTER.openTemplates()"><i class="ti ti-template"></i> قوالب</button>' +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // عمود 3: لوحة العميل (مخفية افتراضياً)
+      '<div class="wa-customer-panel" id="wa-customer-panel" style="display:none">' +
+      '<div id="wa-customer-panel-content"></div>' +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  /** ربط أحداث شاشة مركز المحادثات */
+  function bindWhatsappCenterPage() {
+    if (!canDo("viewWhatsappCenter")) return;
+
+    // تحميل المحادثات
+    WA_CENTER.refresh();
+
+    // إذا كان هناك محادثة محددة مسبقاً
+    var pendingConv = WA_STATE.get("currentConvId");
+    if (pendingConv) {
+      setTimeout(function () {
+        WA_CENTER.openConversation(pendingConv);
+        WA_STATE.set("currentConvId", null);
+      }, 600);
+    }
+
+    // بدء Polling كل 30 ثانية
+    _waStartCenterPolling();
+  }
+
+  function _waUnbindCenter() {
+    _waStopCenterPolling();
+  }
+
+  // [WA-POLL-UNIFY] بيستخدم createTabPolling() الموحّدة (Core_Utilities.html)
+  // بدل setInterval يدوي مكرر — نفس السلوك بالظبط (30 ثانية + فحص DOM
+  // + إيقاف ذاتي)، الفرق بس إن الكود بقى مصدر واحد بدل نسختين.
+  var _waCenterPoller = createTabPolling({
+    intervalMs: 30 * 1000,
+    domId: "wa-center-page",
+    callback: function () {
+      WA_CENTER.silentRefreshConversations();
+    },
+  });
+
+  function _waStartCenterPolling() {
+    _waCenterPoller.start();
+  }
+
+  function _waStopCenterPolling() {
+    _waCenterPoller.stop();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-CENTER — Object منطق الشاشة
+  // ─────────────────────────────────────────────────────────────
+  var WA_CENTER = (function () {
+    var _currentFilter = "all";
+    var _searchQuery = "";
+    var _showCustomerPanel = false;
+
+    /** تحميل قائمة المحادثات */
+    function refresh() {
+      var listEl = document.getElementById("wa-conv-list");
+      var loadingEl = document.getElementById("wa-conv-loading");
+      if (loadingEl) loadingEl.style.display = "flex";
+
+      var btn = document.getElementById("wa-center-refresh-btn");
+      if (btn)
+        btn.innerHTML =
+          '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i>';
+
+      _gsr(
+        "getWAConversations",
+        [
+          APP.currentUser.username,
+          {
+            status: _currentFilter === "all" ? null : _currentFilter,
+            search: _searchQuery || null,
+            limit: 80,
+          },
+          SESSION.token,
+        ],
+        {
+          onSuccess: function (res) {
+            if (btn) btn.innerHTML = '<i class="ti ti-refresh"></i>';
+            if (loadingEl) loadingEl.style.display = "none";
+            if (!res || !res.data) return;
+
+            var conversations = res.data;
+            WA_STATE.set("conversations", conversations);
+
+            // تحديث حالة الاتصال
+            var statusEl = document.getElementById("wa-center-status");
+            if (statusEl)
+              statusEl.textContent = conversations.length + " محادثة";
+
+            // Render القائمة
+            if (WA_STATE.fingerprint("convList", conversations)) {
+              _renderConversationList(conversations, listEl);
+            }
+          },
+          onError: function (err) {
+            if (btn) btn.innerHTML = '<i class="ti ti-refresh"></i>';
+            if (loadingEl) loadingEl.style.display = "none";
+            if (listEl)
+              listEl.innerHTML =
+                '<div style="padding:20px;text-align:center;color:var(--error);font-size:13px">فشل تحميل المحادثات</div>';
+          },
+        },
+      );
+    }
+
+    function silentRefreshConversations() {
+      _gsr(
+        "getWAConversations",
+        [APP.currentUser.username, { limit: 80 }, SESSION.token],
+        {
+          onSuccess: function (res) {
+            if (!res || !res.data) return;
+            var conversations = res.data;
+            if (WA_STATE.fingerprint("convList", conversations)) {
+              WA_STATE.set("conversations", conversations);
+              var listEl = document.getElementById("wa-conv-list");
+              if (listEl) _renderConversationList(conversations, listEl);
+            }
+            // تحديث الـ badge
+            var unread = conversations.reduce(function (sum, c) {
+              return sum + Number(c.unread_count || 0);
+            }, 0);
+            WA_HUB._updateTopBarBadge && WA_HUB._updateTopBarBadge(unread);
+          },
+        },
+      );
+    }
+
+    function _renderConversationList(conversations, container) {
+      var el = container || document.getElementById("wa-conv-list");
+      if (!el) return;
+
+      if (!conversations || conversations.length === 0) {
+        el.innerHTML =
+          '<div class="wa-empty-conv">' +
+          '<i class="ti ti-message-off" style="font-size:36px;opacity:0.3;display:block;margin-bottom:8px"></i>' +
+          '<div style="font-size:13px;color:var(--text3)">لا توجد محادثات</div>' +
+          "</div>";
+        return;
+      }
+
+      var currentId = WA_STATE.get("currentConvId");
+      el.innerHTML = conversations
+        .map(function (c) {
+          var unread = Number(c.unread_count || 0);
+          var isActive = String(c.id) === String(currentId);
+          var initials = (c.customer_name || c.customer_phone || "?")
+            .charAt(0)
+            .toUpperCase();
+          var time = c.last_message_time
+            ? _fmtRelTime(new Date(c.last_message_time))
+            : "";
+          var statusDot =
+            c.status === "needs_human"
+              ? '<span style="width:8px;height:8px;border-radius:50%;background:#f59e0b;display:inline-block;margin-left:4px"></span>'
+              : "";
+
+          return (
+            '<div class="wa-conv-item' +
+            (isActive ? " active" : "") +
+            '" ' +
+            'data-conv-id="' +
+            esc(c.id) +
+            '" ' +
+            "onclick=\"WA_CENTER.openConversation('" +
+            esc(c.id) +
+            "')\">" +
+            '<div class="wa-conv-avatar">' +
+            initials +
+            "</div>" +
+            '<div class="wa-conv-info">' +
+            '<div class="wa-conv-name">' +
+            statusDot +
+            esc(c.customer_name || c.customer_phone || "غير معروف") +
+            "</div>" +
+            '<div class="wa-conv-preview">' +
+            esc((c.last_message || "").substring(0, 45)) +
+            "</div>" +
+            "</div>" +
+            '<div class="wa-conv-meta">' +
+            (time ? '<div class="wa-conv-time">' + time + "</div>" : "") +
+            (unread > 0
+              ? '<span class="wa-conv-badge">' + unread + "</span>"
+              : "") +
+            "</div>" +
+            "</div>"
+          );
+        })
+        .join("");
+    }
+
+    /** فتح محادثة */
+    function openConversation(convId) {
+      WA_STATE.set("currentConvId", convId);
+
+      // تحديث التحديد في القائمة
+      document.querySelectorAll(".wa-conv-item").forEach(function (el) {
+        el.classList.toggle("active", el.dataset.convId === String(convId));
+      });
+
+      // إخفاء الشاشة الفارغة
+      var emptyEl = document.getElementById("wa-chat-empty");
+      var headerEl = document.getElementById("wa-chat-header");
+      var messagesEl = document.getElementById("wa-messages-area");
+      var inputEl = document.getElementById("wa-input-bar");
+      if (emptyEl) emptyEl.style.display = "none";
+      if (headerEl) headerEl.style.display = "flex";
+      if (messagesEl) messagesEl.style.display = "flex";
+      if (inputEl) inputEl.style.display = "block";
+
+      // البحث عن بيانات المحادثة
+      var conversations = WA_STATE.get("conversations");
+      var conv = conversations.find(function (c) {
+        return String(c.id) === String(convId);
+      });
+
+      // تحديث رأس المحادثة
+      _renderChatHeader(conv);
+
+      // تحميل الرسائل
+      _loadMessages(convId);
+
+      // تحديد كمقروء
+      _gsr(
+        "markWAMessagesRead",
+        [APP.currentUser.username, convId, SESSION.token],
+        {
+          onSuccess: function () {
+            // تحديث العداد في القائمة
+            var badge = document.querySelector(
+              '.wa-conv-item[data-conv-id="' + convId + '"] .wa-conv-badge',
+            );
+            if (badge) badge.remove();
+          },
+        },
+      );
+
+      // تحميل بيانات العميل إذا كانت اللوحة مفتوحة
+      if (_showCustomerPanel && conv && conv.customer_id) {
+        _loadCustomerData(conv.customer_id);
+      }
+    }
+
+    function _renderChatHeader(conv) {
+      var el = document.getElementById("wa-chat-contact-info");
+      if (!el) return;
+      if (!conv) {
+        el.innerHTML = "";
+        return;
+      }
+
+      var initials = (conv.customer_name || conv.customer_phone || "?")
+        .charAt(0)
+        .toUpperCase();
+      el.innerHTML =
+        '<div class="wa-chat-avatar">' +
+        initials +
+        "</div>" +
+        "<div>" +
+        '<div style="font-size:14px;font-weight:700;color:var(--text1)">' +
+        esc(conv.customer_name || conv.customer_phone || "غير معروف") +
+        "</div>" +
+        '<div style="font-size:12px;color:var(--text3)">' +
+        esc(conv.customer_phone || "") +
+        (conv.assigned_to && conv.assigned_to !== APP.currentUser.username
+          ? " · مسنَد لـ " + esc(conv.assigned_to)
+          : "") +
+        "</div>" +
+        "</div>";
+    }
+
+    function _loadMessages(convId, page) {
+      var listEl = document.getElementById("wa-messages-list");
+      if (!listEl) return;
+
+      if (!page || page === 1) {
+        listEl.innerHTML =
+          '<div class="wa-msg-loading"><div class="wa-spinner"></div></div>';
+      }
+
+      _gsr(
+        "getWAMessages",
+        [APP.currentUser.username, convId, page || 1, SESSION.token],
+        {
+          onSuccess: function (res) {
+            if (!res || !res.data) return;
+            var messages = res.data;
+
+            // Cache الرسائل
+            var cached = WA_STATE.get("messages");
+            if (!page || page === 1) {
+              cached[convId] = messages;
+            } else {
+              cached[convId] = messages.concat(cached[convId] || []);
+            }
+
+            _renderMessages(messages, page);
+
+            // اقتراحات AI
+            if (messages.length > 0) {
+              var lastMsg = messages[messages.length - 1];
+              if (lastMsg.direction === "in") {
+                _renderAISuggestions(lastMsg.content);
+              }
+            }
+          },
+          onError: function () {
+            if (listEl)
+              listEl.innerHTML =
+                '<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px">لا توجد رسائل بعد</div>';
+          },
+        },
+      );
+    }
+
+    function _renderMessages(messages, page) {
+      var listEl = document.getElementById("wa-messages-list");
+      if (!listEl) return;
+
+      if (!messages || messages.length === 0) {
+        listEl.innerHTML =
+          '<div style="padding:30px;text-align:center;color:var(--text3);font-size:13px">' +
+          '<i class="ti ti-message-circle" style="font-size:30px;display:block;margin-bottom:10px;opacity:0.3"></i>' +
+          "لا توجد رسائل في هذه المحادثة بعد</div>";
+        return;
+      }
+
+      var html = messages
+        .map(function (msg) {
+          var isOut = msg.direction === "out";
+          var timeStr = msg.timestamp ? fmtTime(new Date(msg.timestamp)) : "";
+          var statusIcon = isOut
+            ? msg.status === "read"
+              ? ""
+              : msg.status === "delivered"
+                ? ""
+                : ""
+            : "";
+          var statusColor =
+            msg.status === "read" ? "#25D366" : "rgba(255,255,255,0.6)";
+
+          return (
+            '<div class="wa-msg-wrap ' +
+            (isOut ? "wa-msg-out" : "wa-msg-in") +
+            '">' +
+            '<div class="wa-msg-bubble ' +
+            (isOut ? "wa-bubble-out" : "wa-bubble-in") +
+            '">' +
+            (msg.is_ai
+              ? '<div class="wa-msg-ai-badge"> ذكاء اصطناعي</div>'
+              : "") +
+            '<div class="wa-msg-content">' +
+            esc(msg.content || "") +
+            "</div>" +
+            '<div class="wa-msg-meta">' +
+            '<span class="wa-msg-time">' +
+            timeStr +
+            "</span>" +
+            (isOut
+              ? '<span style="color:' +
+                statusColor +
+                ';font-size:11px">' +
+                statusIcon +
+                "</span>"
+              : "") +
+            "</div>" +
+            "</div>" +
+            "</div>"
+          );
+        })
+        .join("");
+
+      if (page && page > 1) {
+        listEl.insertAdjacentHTML("afterbegin", html);
+      } else {
+        listEl.innerHTML = html;
+        // scroll للأسفل
+        setTimeout(function () {
+          listEl.scrollTop = listEl.scrollHeight;
+        }, 50);
+      }
+    }
+
+    function _renderAISuggestions(lastIncomingMsg) {
+      if (typeof WA_AI === "undefined") return;
+      var el = document.getElementById("wa-ai-suggestions");
+      if (!el) return;
+
+      var intent = WA_AI.detectIntent(lastIncomingMsg);
+      var suggestions = [];
+
+      if (intent.name === "balance_inquiry")
+        suggestions = ["إرسال كشف الحساب", "الرصيد الحالي"];
+      else if (intent.name === "order_status")
+        suggestions = ["حالة الطلب", "تفاصيل الشحنة"];
+      else if (intent.name === "price_inquiry")
+        suggestions = ["إرسال الكتالوج", "عرض الأسعار"];
+      else if (intent.name === "human_request") suggestions = ["تحويل لموظف"];
+
+      if (suggestions.length === 0) {
+        el.style.display = "none";
+        return;
+      }
+
+      el.style.display = "flex";
+      el.innerHTML =
+        '<span style="font-size:11px;color:var(--text3);margin-left:6px"></span>' +
+        suggestions
+          .map(function (s) {
+            return (
+              '<button class="wa-ai-chip" onclick="WA_CENTER.fillInput(\'' +
+              esc(s) +
+              "')\">" +
+              esc(s) +
+              "</button>"
+            );
+          })
+          .join("");
+    }
+
+    var _pendingWAAttachment = null;
+
+    /** إرسال رسالة */
+    function sendMessage() {
+      var input = document.getElementById("wa-msg-input");
+      if (!input || !input.value.trim()) return;
+
+      var content = input.value.trim();
+      var convId = WA_STATE.get("currentConvId");
+      if (!convId) return;
+
+      var conversations = WA_STATE.get("conversations");
+      var conv = conversations.find(function (c) {
+        return String(c.id) === String(convId);
+      });
+
+      // إضافة الرسالة للـ UI فوراً (Optimistic UI)
+      var attachment = _pendingWAAttachment;
+      var tempMsg = {
+        id: "tmp_" + Date.now(),
+        conversation_id: convId,
+        direction: "out",
+        content: content,
+        type: attachment ? "media" : "text",
+        timestamp: new Date().toISOString(),
+        status: "sent",
+        sent_by: APP.currentUser.username,
+        is_ai: false,
+        media_url: attachment ? attachment.media_url : "",
+        media_type: attachment ? attachment.media_type : "",
+      };
+      var cached = WA_STATE.get("messages");
+      if (!cached[convId]) cached[convId] = [];
+      cached[convId].push(tempMsg);
+      _renderMessages(cached[convId]);
+
+      input.value = "";
+      input.style.height = "auto";
+      var aiSug = document.getElementById("wa-ai-suggestions");
+      if (aiSug) aiSug.style.display = "none";
+
+      // إرسال للـ backend
+      _gsr(
+        "saveWAMessage",
+        [
+          APP.currentUser.username,
+          {
+            conversation_id: convId,
+            content: content,
+            type: attachment ? "media" : "text",
+            customer_id: conv ? conv.customer_id : "",
+            customer_name: conv ? conv.customer_name : "",
+            phone: conv ? conv.customer_phone : "",
+            media_url: attachment ? attachment.media_url : "",
+            media_type: attachment ? attachment.media_type : "",
+          },
+          SESSION.token,
+        ],
+        {
+          onSuccess: function () {
+            // تحديث قائمة المحادثات
+            setTimeout(silentRefreshConversations, 500);
+          },
+          onError: function (err) {
+            NotificationEngine.error("فشل إرسال الرسالة");
+          },
+        },
+      );
+      _pendingWAAttachment = null;
+    }
+
+    /** تحميل بيانات العميل */
+    function _loadCustomerData(customerId) {
+      var panelEl = document.getElementById("wa-customer-panel-content");
+      if (!panelEl) return;
+
+      // من الـ cache أولاً
+      var cached = WA_STATE.get("customerData");
+      if (cached[customerId]) {
+        WA_CPANEL.render(cached[customerId]);
+        return;
+      }
+
+      panelEl.innerHTML =
+        '<div style="padding:20px;text-align:center"><div class="wa-spinner"></div></div>';
+
+      _gsr(
+        "getWACustomerData",
+        [APP.currentUser.username, customerId, SESSION.token],
+        {
+          onSuccess: function (res) {
+            if (!res || !res.data) return;
+            cached[customerId] = res.data;
+            WA_CPANEL.render(res.data);
+          },
+          onError: function () {
+            panelEl.innerHTML =
+              '<div style="padding:16px;color:var(--text3);font-size:13px;text-align:center">لا يمكن تحميل بيانات العميل</div>';
+          },
+        },
+      );
+    }
+
+    function toggleCustomerPanel() {
+      _showCustomerPanel = !_showCustomerPanel;
+      var panelEl = document.getElementById("wa-customer-panel");
+      var toggleBtn = document.getElementById("wa-customer-panel-toggle");
+      if (panelEl) panelEl.style.display = _showCustomerPanel ? "flex" : "none";
+      if (toggleBtn)
+        toggleBtn.style.background = _showCustomerPanel
+          ? "var(--accent-soft)"
+          : "";
+
+      if (_showCustomerPanel) {
+        var convId = WA_STATE.get("currentConvId");
+        var conversations = WA_STATE.get("conversations");
+        var conv = conversations.find(function (c) {
+          return String(c.id) === String(convId);
+        });
+        if (conv && conv.customer_id) _loadCustomerData(conv.customer_id);
+      }
+    }
+
+    function deleteCurrentConversation() {
+      var convId = WA_STATE.get("currentConvId");
+      if (!convId) return;
+
+      confirmDelete(
+        "حذف المحادثة",
+        "هل تريد حذف هذه المحادثة؟ لا يمكن التراجع.",
+        function () {
+          _gsr(
+            "deleteWAConversation",
+            [APP.currentUser.username, convId, SESSION.token],
+            {
+              onSuccess: function () {
+                NotificationEngine.success("تم حذف المحادثة");
+                // إعادة ضبط العرض
+                WA_STATE.set("currentConvId", null);
+                var emptyEl = document.getElementById("wa-chat-empty");
+                var headerEl = document.getElementById("wa-chat-header");
+                var messagesEl = document.getElementById("wa-messages-area");
+                var inputEl = document.getElementById("wa-input-bar");
+                if (emptyEl) emptyEl.style.display = "flex";
+                if (headerEl) headerEl.style.display = "none";
+                if (messagesEl) messagesEl.style.display = "none";
+                if (inputEl) inputEl.style.display = "none";
+                // إعادة تحميل القائمة
+                refresh();
+              },
+              onError: function (err) {
+                NotificationEngine.error("فشل حذف المحادثة");
+              },
+            },
+          );
+        },
+      );
+    }
+
+    function quickSendStatement() {
+      var convId = WA_STATE.get("currentConvId");
+      if (!convId) return NotificationEngine.warning("اختر محادثة أولاً");
+      var conversations = WA_STATE.get("conversations");
+      var conv = conversations.find(function (c) {
+        return String(c.id) === String(convId);
+      });
+      if (!conv || !conv.customer_phone)
+        return NotificationEngine.warning("لا يوجد رقم هاتف للعميل");
+      // فتح نافذة WA لإرسال كشف الحساب
+      if (typeof WA_MODAL !== "undefined") {
+        WA_MODAL.open({
+          phone: conv.customer_phone,
+          templateCode: "account_statement",
+          customerId: conv.customer_id,
+        });
+      }
+    }
+
+    function quickSendCatalog() {
+      var convId = WA_STATE.get("currentConvId");
+      if (!convId) return NotificationEngine.warning("اختر محادثة أولاً");
+      var conversations = WA_STATE.get("conversations");
+      var conv = conversations.find(function (c) {
+        return String(c.id) === String(convId);
+      });
+      if (!conv) return;
+      if (typeof sendCatalogShareLink === "function") {
+        sendCatalogShareLink(
+          conv.customer_name,
+          window.location.origin + "/catalog",
+          conv.customer_id,
+        );
+      }
+    }
+
+    function openTemplates() {
+      var convId = WA_STATE.get("currentConvId");
+      var conversations = WA_STATE.get("conversations");
+      var conv = convId
+        ? conversations.find(function (c) {
+            return String(c.id) === String(convId);
+          })
+        : null;
+      var phone = conv ? conv.customer_phone : "";
+      if (typeof WA_MODAL !== "undefined") WA_MODAL.open({ phone: phone });
+    }
+
+    function openWorkflows() {
+      if (typeof renderWhatsappWorkflowsPage === "function") {
+        openStyledDrawer({
+          title: "أتمتة واتساب",
+          icon: "ti-settings-automation",
+          width: "860px",
+          content: renderWhatsappWorkflowsPage(),
+          onBind:
+            typeof bindWhatsappWorkflowsPage === "function"
+              ? bindWhatsappWorkflowsPage
+              : null,
+        });
+      }
+    }
+
+    function openAttachMenu() {
+      if (!WA_STATE.get("currentConvId"))
+        return NotificationEngine.warning("اختر محادثة أولاً");
+      if (typeof canDo === "function" && !canDo("sendWhatsappFiles"))
+        return NotificationEngine.error(" ليس لديك صلاحية إرفاق الملفات");
+
+      var input = document.createElement("input");
+      input.type = "file";
+      input.style.display = "none";
+      // أنواع شائعة: صور، PDF، مستندات — أي نوع آخر مسموح أيضاً لكن بحد 10MB
+      input.accept = "image/*,.pdf,.doc,.docx,.xls,.xlsx,application/pdf";
+      document.body.appendChild(input);
+
+      input.addEventListener("change", function () {
+        var file = input.files && input.files[0];
+        document.body.removeChild(input);
+        if (!file) return;
+
+        if (file.size > 10 * 1024 * 1024) {
+          NotificationEngine.error("حجم الملف أكبر من 10 ميجابايت");
+          return;
+        }
+
+        NotificationEngine.loading("جاري رفع الملف...");
+        var reader = new FileReader();
+        reader.onload = function () {
+          // reader.result بصيغة data:mime;base64,XXXX — نأخذ الجزء بعد الفاصلة
+          var base64 = String(reader.result).split(",")[1] || "";
+          _gsr(
+            "uploadWAAttachment",
+            [base64, file.name, file.type, APP.currentUser.username, SESSION.token],
+            {
+              label: "uploadWAAttachment",
+              onSuccess: function (res) {
+                if (!res || !res.success || !res.data) {
+                  finishLoadingToast((res && res.message) || "فشل رفع الملف", "error");
+                  return;
+                }
+                var inputEl = document.getElementById("wa-msg-input");
+                var linkLine =
+                  " " + res.data.name + "\n" + res.data.url + "\n";
+                if (inputEl) {
+                  inputEl.value = linkLine + (inputEl.value || "");
+                  inputEl.focus();
+                }
+                // نخزّن بيانات المرفق مؤقتاً حتى تُرسَل الرسالة التالية
+                _pendingWAAttachment = {
+                  media_url: res.data.url,
+                  media_type: res.data.mime_type || file.type || "",
+                };
+                finishLoadingToast("تم رفع الملف — الرابط جاهز داخل الرسالة", "success");
+              },
+              onError: function (result) {
+                finishLoadingToast("خطأ في رفع الملف: " + result.message, "error");
+              },
+            },
+          );
+        };
+        reader.onerror = function () {
+          finishLoadingToast("تعذّرت قراءة الملف", "error");
+        };
+        reader.readAsDataURL(file);
+      });
+
+      input.click();
+    }
+
+    function setFilter(filter, btn) {
+      _currentFilter = filter;
+      document.querySelectorAll(".wa-filter-btn").forEach(function (b) {
+        b.classList.remove("active");
+      });
+      if (btn) btn.classList.add("active");
+      refresh();
+    }
+
+    function onSearch(val) {
+      _searchQuery = val;
+      clearTimeout(_waSearchTimer);
+      _waSearchTimer = setTimeout(function () {
+        refresh();
+      }, 400);
+    }
+
+    var _waSearchTimer = null;
+
+    function onInputChange(textarea) {
+      textarea.style.height = "auto";
+      textarea.style.height = Math.min(textarea.scrollHeight, 120) + "px";
+    }
+
+    function onInputKeydown(e) {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    }
+
+    function fillInput(text) {
+      var input = document.getElementById("wa-msg-input");
+      if (input) {
+        input.value = text;
+        input.focus();
+      }
+    }
+
+    // [REFACTOR-P2] _fmtRelTime اتنقلت لـ Core_Utilities.html (Global)
+
+    return {
+      refresh: refresh,
+      silentRefreshConversations: silentRefreshConversations,
+      openConversation: openConversation,
+      toggleCustomerPanel: toggleCustomerPanel,
+      deleteCurrentConversation: deleteCurrentConversation,
+      quickSendStatement: quickSendStatement,
+      quickSendCatalog: quickSendCatalog,
+      openTemplates: openTemplates,
+      openWorkflows: openWorkflows,
+      openAttachMenu: openAttachMenu,
+      setFilter: setFilter,
+      onSearch: onSearch,
+      onInputChange: onInputChange,
+      onInputKeydown: onInputKeydown,
+      fillInput: fillInput,
+      sendMessage: sendMessage,
+    };
+  })();
+
+  // ─────────────────────────────────────────────────────────────
+  // §WA-CPANEL — لوحة بيانات العميل الجانبية
+  // ─────────────────────────────────────────────────────────────
+  var WA_CPANEL = (function () {
+    function render(data) {
+      var el = document.getElementById("wa-customer-panel-content");
+      if (!el || !data) return;
+
+      var balance = Number(data.balance || 0);
+      var balanceColor =
+        balance > 0 ? "#ef4444" : balance < 0 ? "#22c55e" : "var(--text1)";
+      var balanceLabel = balance > 0 ? "مديونية" : balance < 0 ? "دائن" : "صفر";
+
+      el.innerHTML =
+        // رأس العميل
+        '<div class="wa-cpanel-header">' +
+        '<div class="wa-cpanel-avatar">' +
+        (data.name || "؟").charAt(0).toUpperCase() +
+        "</div>" +
+        "<div>" +
+        '<div class="wa-cpanel-name">' +
+        esc(data.name || "") +
+        "</div>" +
+        '<div class="wa-cpanel-code">' +
+        esc(data.code || "") +
+        "</div>" +
+        "</div>" +
+        "</div>" +
+        // الرصيد
+        '<div class="wa-cpanel-section">' +
+        '<div class="wa-cpanel-section-title">الرصيد الحالي</div>' +
+        '<div class="wa-cpanel-balance" style="color:' +
+        balanceColor +
+        '">' +
+        formatMoney(Math.abs(balance), { decimals: 0 }) +
+        '<span class="wa-cpanel-balance-label">' +
+        balanceLabel +
+        "</span>" +
+        "</div>" +
+        '<div style="display:flex;gap:6px;margin-top:8px">' +
+        '<button class="wa-cpanel-btn" onclick="navigate(\'accounting\')" title="عرض كشف الحساب كاملاً">' +
+        '<i class="ti ti-file-text"></i> كشف الحساب' +
+        "</button>" +
+        "</div>" +
+        "</div>" +
+        // آخر الفواتير
+        (data.lastInvoices && data.lastInvoices.length > 0
+          ? '<div class="wa-cpanel-section">' +
+            '<div class="wa-cpanel-section-title">آخر الفواتير</div>' +
+            data.lastInvoices
+              .map(function (inv) {
+                return (
+                  '<div class="wa-cpanel-row">' +
+                  '<span class="wa-cpanel-row-label">' +
+                  esc(String(inv.id || "").substring(0, 8)) +
+                  "</span>" +
+                  '<span class="wa-cpanel-row-value">' +
+                  (inv.total ? formatMoney(inv.total, { decimals: 0 }) : "") +
+                  "</span>" +
+                  "</div>"
+                );
+              })
+              .join("") +
+            "</div>"
+          : "") +
+        // آخر الطلبات
+        (data.lastOrders && data.lastOrders.length > 0
+          ? '<div class="wa-cpanel-section">' +
+            '<div class="wa-cpanel-section-title">آخر الطلبات</div>' +
+            data.lastOrders
+              .map(function (ord) {
+                return (
+                  '<div class="wa-cpanel-row">' +
+                  '<span class="wa-cpanel-row-label">' +
+                  esc(String(ord.id || "").substring(0, 8)) +
+                  "</span>" +
+                  '<span class="wa-cpanel-row-value">' +
+                  esc(ord.type || "") +
+                  "</span>" +
+                  "</div>"
+                );
+              })
+              .join("") +
+            "</div>"
+          : "") +
+        // أزرار العمليات السريعة
+        '<div class="wa-cpanel-section">' +
+        '<div class="wa-cpanel-section-title">عمليات سريعة</div>' +
+        '<div style="display:flex;flex-direction:column;gap:6px">' +
+        '<button class="wa-cpanel-action-btn" onclick="navigate(\'invoices\')">' +
+        '<i class="ti ti-file-invoice"></i> الفواتير' +
+        "</button>" +
+        '<button class="wa-cpanel-action-btn" onclick="navigate(\'transactions\')">' +
+        '<i class="ti ti-package"></i> أوامر الشراء/البيع' +
+        "</button>" +
+        "</div>" +
+        "</div>";
+    }
+
+    return { render: render };
+  })();
+
+  // ─────────────────────────────────────────────────────────────
+  // تسجيل الشاشة في renderPage / bindPage
+  // ─────────────────────────────────────────────────────────────
+  // يتم الاستدعاء من 02_JS_UI_Shell.html عبر switch(page)
+  // الدوال المطلوبة: renderWhatsappCenterPage + bindWhatsappCenterPage
+
+  // بدء polling الـ Top Bar Badge بعد تحميل النظام
+  if (typeof APP !== "undefined" && APP.currentUser) {
+    WA_HUB.startPolling();
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // §WA-AI  الذكاء الاصطناعي — مدمج من 19c_JS_WA_AI.html
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 19c_JS_WA_AI.html — محرك الذكاء الاصطناعي لواتساب — MOO.ERP
+  // ──────────────────────────────────────────────────────────────────────────
+  //
+  //  §AI-1  WA_AI_CONFIG  — إعدادات المحرك
+  //  §AI-2  WA_AI_INTENT  — كشف النية من نص الرسالة
+  //  §AI-3  WA_AI_RESP    — بناء الرد بناءً على النية وبيانات ERP
+  //  §AI-4  WA_AI_ENGINE  — المحرك الرئيسي (معالجة رسالة كاملة)
+  //  §AI-5  WA_AI_SUGGEST — اقتراح ردود للموظف (Agent Assist)
+  //  §AI-6  WA_AI_PAGE    — شاشة إعدادات الذكاء الاصطناعي
+  //
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+  // §AI-1  WA_AI_CONFIG
+  // ─────────────────────────────────────────────────────────────
+  var WA_AI = (function () {
+    // ── الإعدادات ──────────────────────────────────────────────
+    var _cfg = {
+      enabled: false,
+      confidenceThreshold: 0.72,
+      maxAutoRepliesPerConv: 3,
+      workingHoursOnly: false,
+      workingHoursFrom: 9,
+      workingHoursTo: 18,
+      welcomeEnabled: true,
+      escalationMsg:
+        "شكراً على تواصلك معنا \nسيتواصل معك أحد موظفينا خريباً.",
+      offHoursMsg:
+        "شكراً على رسالتك! \nحالياً خارج أوقات العمل. سنرد عليك غداً إن شاء الله.",
+      welcomeMsg:
+        "مرحباً {customer_name}! \nأنا المساعد الذكي لـ {company_name}.\nكيف يمكنني مساعدتك؟",
+    };
+
+    function getConfig() {
+      var s = APP && APP.companySettings ? APP.companySettings : {};
+      _cfg.enabled = s.wa_ai_enabled === true || s.wa_ai_enabled === "true";
+      _cfg.confidenceThreshold = Number(s.wa_ai_confidence || 0.72);
+      _cfg.maxAutoRepliesPerConv = Number(s.wa_ai_max_replies || 3);
+      _cfg.workingHoursOnly =
+        s.wa_ai_working_hours === true || s.wa_ai_working_hours === "true";
+      _cfg.workingHoursFrom = Number(s.wa_ai_hours_from || 9);
+      _cfg.workingHoursTo = Number(s.wa_ai_hours_to || 18);
+      if (s.wa_ai_escalation_msg) _cfg.escalationMsg = s.wa_ai_escalation_msg;
+      if (s.wa_ai_off_hours_msg) _cfg.offHoursMsg = s.wa_ai_off_hours_msg;
+      if (s.wa_ai_welcome_msg) _cfg.welcomeMsg = s.wa_ai_welcome_msg;
+      return _cfg;
+    }
+
+    function isEnabled() {
+      return getConfig().enabled;
+    }
+
+    function isWorkingHours() {
+      var cfg = getConfig();
+      if (!cfg.workingHoursOnly) return true;
+      var h = new Date().getHours();
+      return h >= cfg.workingHoursFrom && h < cfg.workingHoursTo;
+    }
+
+    // ── §AI-2  كشف النية ──────────────────────────────────────
+    var _intentMap = [
+      // مالية
+      {
+        name: "balance_inquiry",
+        confidence: 0.85,
+        keywords: [
+          "رصيد",
+          "مديونية",
+          "كام عليّ",
+          "ديني",
+          "كم عليا",
+          "باقي",
+          "مستحق",
+          "المبلغ",
+          "بكام",
+        ],
+      },
+      {
+        name: "invoice_inquiry",
+        confidence: 0.85,
+        keywords: [
+          "فاتورة",
+          "فواتير",
+          "invoice",
+          "رقم الفاتورة",
+          "فاتورتي",
+          "الفاتورة",
+        ],
+      },
+      {
+        name: "statement_request",
+        confidence: 0.88,
+        keywords: [
+          "كشف حساب",
+          "statement",
+          "كشف الحساب",
+          "تقرير حسابي",
+          "بعت لي",
+          "ابعت",
+        ],
+      },
+      {
+        name: "payment_inquiry",
+        confidence: 0.82,
+        keywords: [
+          "دفعة",
+          "دفعت",
+          "سداد",
+          "payment",
+          "وصل",
+          "الدفع",
+          "قسط",
+          "تحويل",
+        ],
+      },
+      {
+        name: "overdue_inquiry",
+        confidence: 0.8,
+        keywords: [
+          "متأخر",
+          "متأخرات",
+          "المتأخر",
+          "overdue",
+          "الديون",
+          "المديونية الكلية",
+        ],
+      },
+      // لوجستية
+      {
+        name: "order_status",
+        confidence: 0.85,
+        keywords: [
+          "طلب",
+          "أوردر",
+          "order",
+          "طلبيتي",
+          "طلبيتى",
+          "أمر",
+          "طلباتي",
+          "الأوردر",
+        ],
+      },
+      {
+        name: "shipment_tracking",
+        confidence: 0.88,
+        keywords: [
+          "شحنة",
+          "تتبع",
+          "tracking",
+          "وصلت",
+          "الشحن",
+          "التوصيل",
+          "فين",
+          "وصل",
+          "الأوردر",
+        ],
+      },
+      {
+        name: "delivery_date",
+        confidence: 0.82,
+        keywords: [
+          "تسليم",
+          "موعد",
+          "امتى",
+          "delivery",
+          "متى",
+          "التسليم",
+          "موعد الاستلام",
+        ],
+      },
+      {
+        name: "stock_inquiry",
+        confidence: 0.8,
+        keywords: ["متاح", "موجود", "stock", "مخزون", "في المخزن", "عندكم"],
+      },
+      // تسويقية
+      {
+        name: "price_inquiry",
+        confidence: 0.83,
+        keywords: ["سعر", "بكام", "price", "أسعار", "سعره", "بقد إيه", "تكلفة"],
+      },
+      {
+        name: "quote_request",
+        confidence: 0.86,
+        keywords: [
+          "عرض سعر",
+          "تسعيرة",
+          "offer",
+          "quote",
+          "أسعرلي",
+          "عايز تسعير",
+        ],
+      },
+      {
+        name: "catalog_request",
+        confidence: 0.82,
+        keywords: [
+          "كتالوج",
+          "catalog",
+          "منتجات",
+          "الأصناف",
+          "البضاعة",
+          "قائمة أسعار",
+        ],
+      },
+      // خدمة عملاء
+      {
+        name: "human_request",
+        confidence: 1.0,
+        keywords: [
+          "موظف",
+          "مسؤول",
+          "حد بشري",
+          "تكلم",
+          "بكلمني",
+          "شكوى",
+          "مشكلة",
+          "مدير",
+          "الإدارة",
+        ],
+      },
+      {
+        name: "greeting",
+        confidence: 0.7,
+        keywords: [
+          "هلو",
+          "هاي",
+          "أهلاً",
+          "أهلا",
+          "سلام",
+          "مرحبا",
+          "مرحباً",
+          "صباح",
+          "مساء",
+          "السلام",
+        ],
+      },
+      {
+        name: "thanks",
+        confidence: 0.7,
+        keywords: [
+          "شكرا",
+          "شكراً",
+          "تسلم",
+          "الله يعطيك",
+          "ممتاز",
+          "تمام",
+          "اوكي",
+        ],
+      },
+    ];
+
+    function detectIntent(message) {
+      if (!message) return { name: "unknown", confidence: 0 };
+      var msg = String(message)
+        .toLowerCase()
+        .replace(/[أإآ]/g, "ا")
+        .replace(/ة/g, "ه")
+        .replace(/ى/g, "ي");
+
+      for (var i = 0; i < _intentMap.length; i++) {
+        var intent = _intentMap[i];
+        for (var j = 0; j < intent.keywords.length; j++) {
+          var kw = intent.keywords[j]
+            .replace(/[أإآ]/g, "ا")
+            .replace(/ة/g, "ه")
+            .replace(/ى/g, "ي");
+          if (msg.indexOf(kw) !== -1) {
+            return {
+              name: intent.name,
+              confidence: intent.confidence,
+              keyword: intent.keywords[j],
+            };
+          }
+        }
+      }
+      return { name: "unknown", confidence: 0 };
+    }
+
+    // ── §AI-3  بناء الرد ──────────────────────────────────────
+    function buildResponse(intent, customer, erpData) {
+      var cfg = getConfig();
+      var data = erpData || {};
+      var name = customer ? customer.name || "عزيزي العميل" : "عزيزي العميل";
+
+      switch (intent.name) {
+        case "greeting":
+          return (
+            "أهلاً وسهلاً " +
+            name +
+            "! \n" +
+            "يسعدنا تواصلك معنا. كيف يمكنني مساعدتك اليوم؟\n\n" +
+            "يمكنني مساعدتك في:\n• رصيدك وكشف حسابك \n• حالة طلباتك \n• أسعار المنتجات "
+          );
+
+        case "thanks":
+          return "العفو " + name + " \nدائماً في خدمتك. هل تحتاج أي شيء آخر؟";
+
+        case "balance_inquiry":
+          if (data.balance === undefined || data.balance === null) return null;
+          var bal = Number(data.balance);
+          if (bal > 0)
+            return (
+              "رصيدك الحالي: *" +
+              formatMoney(bal, { decimals: 0 }) +
+              "* (مديونية عليك) \n\nللاطلاع على التفاصيل، يمكنني إرسال كشف الحساب الكامل. هل تريد ذلك؟"
+            );
+          if (bal < 0)
+            return (
+              "رصيدك الحالي: *" +
+              formatMoney(Math.abs(bal), { decimals: 0 }) +
+              "* (دائن لديك) \n\nهل تحتاج أي شيء آخر؟"
+            );
+          return "رصيدك الحالي *صفر* \nلا توجد مستحقات عليك. هل تحتاج أي شيء آخر؟";
+
+        case "statement_request":
+          // يحتاج إرسال PDF — نرجع null ونعالجه منفصلاً
+          return null;
+
+        case "payment_inquiry":
+          if (!data.lastPayment) return null;
+          var p = data.lastPayment;
+          return (
+            "آخر دفعة مسجلة:\n*المبلغ:* " +
+            formatMoney(p.amount || 0, { decimals: 0 }) +
+            "\n*التاريخ:* " +
+            (p.date || "") +
+            "\n*الحالة:* تم الاستلام "
+          );
+
+        case "order_status":
+          if (!data.lastOrder) return null;
+          var o = data.lastOrder;
+          return (
+            "آخر طلب لك:\n*رقم الطلب:* " +
+            (o.id || "") +
+            "\n*التاريخ:* " +
+            (o.date || "") +
+            "\n*الحالة:* " +
+            _translateStatus(o.status) +
+            "\n\nهل تحتاج تفاصيل أكثر؟"
+          );
+
+        case "shipment_tracking":
+          if (!data.lastShipment) return null;
+          var sh = data.lastShipment;
+          return (
+            "حالة شحنتك:\n*رقم الشحنة:* " +
+            (sh.id || "") +
+            "\n*الوجهة:* " +
+            (sh.destination || "") +
+            "\n*الحالة:* " +
+            _translateStatus(sh.status) +
+            " "
+          );
+
+        case "delivery_date":
+          if (!data.lastOrder) return null;
+          return (
+            "موعد التسليم المتوقع: *" +
+            (data.lastOrder.delivery_date || "قيد التحديد") +
+            "*\n\nللاستفسار عن موعد أكثر دقة، يمكنك التحدث مع موظفينا."
+          );
+
+        case "price_inquiry":
+          return "يسعدنا إرسال قائمة أسعارنا الحديثة! \n\nيمكنني إرسال كتالوجنا الكامل بجميع المنتجات والأسعار. هل تريد ذلك؟";
+
+        case "quote_request":
+          return "بكل سرور! سأحتاج بعض التفاصيل لتحضير عرض السعر:\n• المنتجات المطلوبة\n• الكميات\n• موعد التسليم المطلوب\n\nأو يمكنني تحويلك لأحد موظفينا مباشرة.";
+
+        case "catalog_request":
+          // يتم إرسال رابط الكتالوج
+          return null;
+
+        case "human_request":
+          return null; // دائماً escalate
+
+        default:
+          return null;
+      }
+    }
+
+    function _translateStatus(status) {
+      var map = {
+        pending: "قيد الانتظار ⏳",
+        processing: "جارٍ التنفيذ ",
+        shipped: "تم الشحن ",
+        delivered: "تم التسليم ",
+        cancelled: "ملغي ",
+        completed: "مكتمل ",
+        open: "مفتوح",
+        closed: "مغلق",
+      };
+      return map[String(status).toLowerCase()] || String(status || "غير محدد");
+    }
+
+    function buildEscalationResponse(reason) {
+      var cfg = getConfig();
+      return cfg.escalationMsg + (reason ? "\n\n_(" + reason + ")_" : "");
+    }
+
+    function buildOffHoursResponse() {
+      return getConfig().offHoursMsg;
+    }
+
+    function buildWelcomeResponse(customerName, companyName) {
+      var cfg = getConfig();
+      return cfg.welcomeMsg
+        .replace("{customer_name}", customerName || "عزيزنا العميل")
+        .replace("{company_name}", companyName || "");
+    }
+
+    // ── §AI-4  المحرك الرئيسي ─────────────────────────────────
+    /**
+     * processMessage — معالجة رسالة واردة كاملة
+     * @returns { action: "reply"|"escalate"|"ignore", message: string, intent: object }
+     */
+    function processMessage(message, customer, erpData, autoReplyCount) {
+      var cfg = getConfig();
+
+      // AI غير مفعّل
+      if (!cfg.enabled) return { action: "ignore" };
+
+      // خارج ساعات العمل
+      if (!isWorkingHours()) {
+        return {
+          action: "reply",
+          message: buildOffHoursResponse(),
+          intent: { name: "off_hours" },
+          is_ai: true,
+        };
+      }
+
+      // تجاوز الحد الأقصى للردود الآلية
+      if (Number(autoReplyCount || 0) >= cfg.maxAutoRepliesPerConv) {
+        return {
+          action: "escalate",
+          message: buildEscalationResponse("تجاوز الحد الأقصى للردود الآلية"),
+          intent: { name: "max_replies_reached" },
+          is_ai: true,
+        };
+      }
+
+      // كشف النية
+      var intent = detectIntent(message);
+
+      // ثقة منخفضة → تحويل لموظف
+      if (
+        intent.confidence < cfg.confidenceThreshold ||
+        intent.name === "unknown"
+      ) {
+        return {
+          action: "escalate",
+          message: buildEscalationResponse("لم أفهم طلبك بشكل كافٍ"),
+          intent: intent,
+          is_ai: true,
+        };
+      }
+
+      // طلب تحويل صريح → تحويل فوري
+      if (intent.name === "human_request") {
+        return {
+          action: "escalate",
+          message: buildEscalationResponse("طلب العميل التحدث مع موظف"),
+          intent: intent,
+          is_ai: true,
+        };
+      }
+
+      // بناء الرد
+      var response = buildResponse(intent, customer, erpData);
+
+      // لا يوجد رد → تحويل لموظف
+      if (!response) {
+        return {
+          action: "escalate",
+          message: buildEscalationResponse("البيانات المطلوبة غير متاحة"),
+          intent: intent,
+          is_ai: true,
+        };
+      }
+
+      return {
+        action: "reply",
+        message: response,
+        intent: intent,
+        is_ai: true,
+      };
+    }
+
+    // ── §AI-5  اقتراح ردود للموظف ─────────────────────────────
+    function suggestReplies(lastIncomingMsg, customer, erpData) {
+      var intent = detectIntent(lastIncomingMsg || "");
+      var suggestions = [];
+      var data = erpData || {};
+
+      // اقتراحات عامة دائمة
+      var always = [
+        { label: "قوالب الرسائل", icon: "ti-template", action: "templates" },
+      ];
+
+      // اقتراحات حسب النية
+      if (
+        intent.name === "balance_inquiry" ||
+        intent.name === "statement_request"
+      ) {
+        if (canDo("viewWhatsappStatement")) {
+          suggestions.push({
+            label: "إرسال كشف الحساب",
+            icon: "ti-file-invoice",
+            action: "send_statement",
+          });
+        }
+        if (data.balance !== undefined) {
+          suggestions.push({
+            label: "إرسال الرصيد",
+            icon: "ti-currency-pound",
+            action: "send_balance",
+          });
+        }
+      }
+
+      if (
+        intent.name === "order_status" ||
+        intent.name === "shipment_tracking"
+      ) {
+        suggestions.push({
+          label: "حالة الطلب",
+          icon: "ti-package",
+          action: "send_order_status",
+        });
+      }
+
+      if (
+        intent.name === "price_inquiry" ||
+        intent.name === "catalog_request"
+      ) {
+        suggestions.push({
+          label: "إرسال الكتالوج",
+          icon: "ti-shopping-bag",
+          action: "send_catalog",
+        });
+      }
+
+      if (intent.name === "quote_request") {
+        suggestions.push({
+          label: "إرسال عرض سعر",
+          icon: "ti-file-text",
+          action: "send_quote",
+        });
+      }
+
+      if (intent.name === "human_request" || intent.name === "unknown") {
+        suggestions.push({
+          label: "تحويل لموظف",
+          icon: "ti-user-plus",
+          action: "escalate",
+        });
+      }
+
+      return suggestions.concat(always);
+    }
+
+    // ── §AI-6  شاشة إعدادات الذكاء الاصطناعي ─────────────────
+    function renderAISettingsSection() {
+      var cfg = getConfig();
+      return (
+        '<div class="wa-ai-settings">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">' +
+        '<div style="width:36px;height:36px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px"></div>' +
+        '<div><div style="font-weight:700;font-size:15px">إعدادات الرد الآلي (AI)</div>' +
+        '<div style="font-size:12px;color:var(--text3)">تحكم في سلوك المساعد الذكي</div></div>' +
+        "</div>" +
+        // تفعيل/تعطيل
+        '<div class="wa-ai-setting-row">' +
+        "<label>تفعيل الرد الآلي</label>" +
+        '<label class="toggle-switch">' +
+        '<input type="checkbox" id="wa-ai-enabled" ' +
+        (cfg.enabled ? "checked" : "") +
+        ' onchange="WA_AI.saveAISetting()">' +
+        '<span class="toggle-slider"></span></label>' +
+        "</div>" +
+        // ساعات العمل فقط
+        '<div class="wa-ai-setting-row">' +
+        "<label>الرد في ساعات العمل فقط</label>" +
+        '<label class="toggle-switch">' +
+        '<input type="checkbox" id="wa-ai-working-hours" ' +
+        (cfg.workingHoursOnly ? "checked" : "") +
+        ' onchange="WA_AI.saveAISetting()">' +
+        '<span class="toggle-slider"></span></label>' +
+        "</div>" +
+        // عتبة الثقة
+        '<div class="wa-ai-setting-row" style="flex-direction:column;align-items:flex-start">' +
+        "<label>عتبة الثقة (الحد الأدنى للرد)</label>" +
+        '<input type="range" id="wa-ai-confidence" min="50" max="95" step="5" value="' +
+        Math.round(cfg.confidenceThreshold * 100) +
+        '" ' +
+        "oninput=\"document.getElementById('wa-ai-conf-val').textContent=this.value+'%'\" " +
+        'onchange="WA_AI.saveAISetting()" style="width:100%;margin:8px 0">' +
+        '<span id="wa-ai-conf-val" style="font-size:12px;color:var(--text3)">' +
+        Math.round(cfg.confidenceThreshold * 100) +
+        "%</span>" +
+        "</div>" +
+        // أقصى عدد ردود
+        '<div class="wa-ai-setting-row">' +
+        "<label>أقصى ردود آلية للمحادثة</label>" +
+        '<input type="number" id="wa-ai-max-replies" value="' +
+        cfg.maxAutoRepliesPerConv +
+        '" min="1" max="10" ' +
+        'class="form-input" style="width:70px" onchange="WA_AI.saveAISetting()">' +
+        "</div>" +
+        // رسالة التحويل
+        '<div class="wa-ai-setting-row" style="flex-direction:column;align-items:flex-start">' +
+        "<label>رسالة التحويل لموظف</label>" +
+        '<textarea id="wa-ai-escalation-msg" rows="3" class="form-input" style="width:100%;margin-top:6px" onchange="WA_AI.saveAISetting()">' +
+        esc(cfg.escalationMsg) +
+        "</textarea>" +
+        "</div>" +
+        // رسالة خارج العمل
+        '<div class="wa-ai-setting-row" style="flex-direction:column;align-items:flex-start">' +
+        "<label>رسالة خارج ساعات العمل</label>" +
+        '<textarea id="wa-ai-off-hours-msg" rows="3" class="form-input" style="width:100%;margin-top:6px" onchange="WA_AI.saveAISetting()">' +
+        esc(cfg.offHoursMsg) +
+        "</textarea>" +
+        "</div>" +
+        "</div>"
+      );
+    }
+
+    function saveAISetting() {
+      // تجميع القيم من الـ inputs وحفظها في APP.companySettings
+      var enabled = document.getElementById("wa-ai-enabled");
+      var workHours = document.getElementById("wa-ai-working-hours");
+      var conf = document.getElementById("wa-ai-confidence");
+      var maxReplies = document.getElementById("wa-ai-max-replies");
+      var escMsg = document.getElementById("wa-ai-escalation-msg");
+      var offMsg = document.getElementById("wa-ai-off-hours-msg");
+
+      var updates = {};
+      if (enabled) updates.wa_ai_enabled = enabled.checked;
+      if (workHours) updates.wa_ai_working_hours = workHours.checked;
+      if (conf) updates.wa_ai_confidence = Number(conf.value) / 100;
+      if (maxReplies) updates.wa_ai_max_replies = Number(maxReplies.value);
+      if (escMsg) updates.wa_ai_escalation_msg = escMsg.value;
+      if (offMsg) updates.wa_ai_off_hours_msg = offMsg.value;
+
+      if (typeof saveWhatsappSettings === "function") {
+        // يمكن استدعاء دالة الحفظ الموجودة مع البيانات الجديدة
+        Object.assign(APP.companySettings, updates);
+        NotificationEngine.success("تم حفظ إعدادات الذكاء الاصطناعي");
+      }
+    }
+
+    return {
+      getConfig: getConfig,
+      isEnabled: isEnabled,
+      isWorkingHours: isWorkingHours,
+      detectIntent: detectIntent,
+      buildResponse: buildResponse,
+      buildEscalationResponse: buildEscalationResponse,
+      buildOffHoursResponse: buildOffHoursResponse,
+      buildWelcomeResponse: buildWelcomeResponse,
+      processMessage: processMessage,
+      suggestReplies: suggestReplies,
+      renderAISettingsSection: renderAISettingsSection,
+      saveAISetting: saveAISetting,
+    };
+  })();
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // §WA-WORKFLOW  الأتمتة — مدمج من 19d_JS_WA_Workflow.html
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 19d_JS_WA_Workflow.html — محرك أتمتة واتساب — MOO.ERP
+  // ──────────────────────────────────────────────────────────────────────────
+  //
+  //  §WF-1  WA_WORKFLOW_TYPES  — أنواع الـ Triggers والـ Actions المتاحة
+  //  §WF-2  WA_WORKFLOW_ENGINE — تشغيل الـ Workflow
+  //  §WF-3  renderWhatsappWorkflowsPage — شاشة إدارة الـ Workflows
+  //  §WF-4  bindWhatsappWorkflowsPage
+  //
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+  // §WF-1  أنواع Triggers وActions
+  // ─────────────────────────────────────────────────────────────
+  var WA_WORKFLOW_TYPES = (function () {
+    var triggers = [
+      {
+        id: "new_invoice",
+        label: "فاتورة جديدة",
+        icon: "ti-file-invoice",
+        description: "عند إنشاء فاتورة بيع جديدة",
+      },
+      {
+        id: "invoice_overdue",
+        label: "فاتورة متأخرة",
+        icon: "ti-alert-circle",
+        description: "عند تجاوز الفاتورة تاريخ الاستحقاق",
+      },
+      {
+        id: "payment_received",
+        label: "استلام دفعة",
+        icon: "ti-cash",
+        description: "عند تسجيل دفعة جديدة من العميل",
+      },
+      {
+        id: "order_shipped",
+        label: "شحن طلب",
+        icon: "ti-truck",
+        description: "عند تغيير حالة الطلب إلى مشحون",
+      },
+      {
+        id: "order_delivered",
+        label: "استلام طلب",
+        icon: "ti-package-import",
+        description: "عند تأكيد استلام الطلب",
+      },
+      {
+        id: "low_balance",
+        label: "رصيد منخفض",
+        icon: "ti-trending-down",
+        description: "عند تجاوز رصيد العميل حداً معيناً",
+      },
+      {
+        id: "birthday",
+        label: "عيد ميلاد العميل",
+        icon: "ti-cake",
+        description: "في تاريخ ميلاد العميل المسجّل",
+      },
+      {
+        id: "manual",
+        label: "تشغيل يدوي",
+        icon: "ti-player-play",
+        description: "يشغّله الموظف يدوياً من القائمة",
+      },
+      {
+        id: "scheduled",
+        label: "دوري (Scheduled)",
+        icon: "ti-clock",
+        description: "يعمل في وقت محدد بشكل دوري",
+      },
+    ];
+
+    var actions = [
+      {
+        id: "send_text",
+        label: "إرسال رسالة نصية",
+        icon: "ti-message",
+        requiresTemplate: false,
+      },
+      {
+        id: "send_template",
+        label: "إرسال قالب",
+        icon: "ti-template",
+        requiresTemplate: true,
+      },
+      {
+        id: "send_invoice_pdf",
+        label: "إرسال فاتورة PDF",
+        icon: "ti-file-invoice",
+        requiresTemplate: false,
+      },
+      {
+        id: "send_statement",
+        label: "إرسال كشف الحساب",
+        icon: "ti-report",
+        requiresTemplate: false,
+      },
+      {
+        id: "send_catalog",
+        label: "إرسال رابط الكتالوج",
+        icon: "ti-shopping-bag",
+        requiresTemplate: false,
+      },
+      {
+        id: "send_payment_link",
+        label: "إرسال رابط الدفع",
+        icon: "ti-credit-card",
+        requiresTemplate: false,
+      },
+      {
+        id: "assign_agent",
+        label: "تعيين موظف مسؤول",
+        icon: "ti-user-check",
+        requiresTemplate: false,
+      },
+      {
+        id: "add_tag",
+        label: "إضافة تاج للمحادثة",
+        icon: "ti-tag",
+        requiresTemplate: false,
+      },
+      {
+        id: "notify_internal",
+        label: "إشعار داخلي للموظف",
+        icon: "ti-bell",
+        requiresTemplate: false,
+      },
+    ];
+
+    return { triggers: triggers, actions: actions };
+  })();
+
+  // ─────────────────────────────────────────────────────────────
+  // §WF-2  محرك تشغيل الـ Workflow
+  // ─────────────────────────────────────────────────────────────
+  var WA_WORKFLOW_ENGINE = (function () {
+    /**
+     * trigger — يُستدعى عند حدث معين في النظام
+     * @param {string} triggerType — نوع الحدث (new_invoice, order_shipped...)
+     * @param {object} data — بيانات الحدث (customerId, invoiceId...)
+     */
+    function trigger(triggerType, data) {
+      if (!canDo("useWhatsappAutoReply")) return;
+
+      // [WF-EXEC-2026] كانت APP.data.waWorkflows تُملأ فقط عند فتح شاشة إدارة
+      // الـ Workflows (WA_WF_UI) — يعني أي trigger() بيتنادى قبل ما المستخدم
+      // يفتح الشاشة دي ولا مرة كان بيلاقي دايمًا [] ومفيش تنفيذ إطلاقاً.
+      // نضمن هنا تحميلها مرة واحدة (وتخزينها مؤقتًا) قبل أي تنفيذ فعلي.
+      if (APP.data && APP.data.waWorkflows) {
+        _runTrigger(triggerType, data);
+        return;
+      }
+      _gsr("getWAWorkflows", [APP.currentUser.username, SESSION.token], {
+        label: "WA.getWAWorkflows(lazy)",
+        onSuccess: function (result) {
+          APP.data.waWorkflows = (result && result.data) || [];
+          _runTrigger(triggerType, data);
+        },
+        onError: function () {
+          APP.data.waWorkflows = APP.data.waWorkflows || [];
+        },
+      });
+    }
+
+    function _runTrigger(triggerType, data) {
+      // جلب الـ Workflows الفعّالة لهذا الـ trigger
+      var workflows = _getActiveWorkflowsByTrigger(triggerType);
+      if (!workflows || workflows.length === 0) return;
+
+      workflows.forEach(function (wf) {
+        _executeWorkflow(wf, data);
+      });
+    }
+
+    function _getActiveWorkflowsByTrigger(triggerType) {
+      // من APP.data.waWorkflows لو محمّلة
+      var all = APP.data && APP.data.waWorkflows ? APP.data.waWorkflows : [];
+      return all.filter(function (wf) {
+        return (
+          wf.is_active === true &&
+          String(wf.trigger_type) === String(triggerType)
+        );
+      });
+    }
+
+    function _executeWorkflow(workflow, data) {
+      var actions = [];
+      try {
+        actions = JSON.parse(workflow.actions || "[]");
+      } catch (e) {
+        return;
+      }
+
+      var phone = _resolvePhone(data);
+      if (!phone) return; // لا يوجد رقم هاتف → لا نرسل
+
+      actions.forEach(function (action) {
+        _executeAction(action, data, phone, workflow);
+      });
+    }
+
+    function _resolvePhone(data) {
+      if (!data) return null;
+      if (data.phone) return WA_PHONE.normalize(data.phone);
+      if (data.customer_phone) return WA_PHONE.normalize(data.customer_phone);
+      // البحث في Parties
+      if (data.customer_id && APP.data && APP.data.parties) {
+        var party = APP.data.parties.find(function (p) {
+          return String(p.id) === String(data.customer_id);
+        });
+        if (party) return WA_PHONE.normalize(party.phone || party.mobile || "");
+      }
+      return null;
+    }
+
+    function _findConversationByPhone(phone, cb) {
+      if (!phone) return cb(null);
+      _gsr(
+        "getWAConversations",
+        [APP.currentUser.username, { search: phone, limit: 1 }, SESSION.token],
+        {
+          label: "WA.getWAConversations(workflow-lookup)",
+          onSuccess: function (result) {
+            var list = (result && result.data) || [];
+            cb(list.length ? list[0] : null);
+          },
+          onError: function () {
+            cb(null);
+          },
+        },
+      );
+    }
+
+    function _executeAction(action, data, phone, workflow) {
+      var message = "";
+
+      switch (action.type) {
+        case "send_text":
+          message = _resolvePlaceholders(action.content || "", data);
+          break;
+        case "send_template":
+          var tpl = WA_TPL.find(action.template_code);
+          if (tpl) message = WA_TPL.resolve(tpl.body, data);
+          break;
+        case "send_statement":
+          // فتح modal إرسال كشف الحساب
+          if (typeof WA_MODAL !== "undefined") {
+            WA_MODAL.open({
+              phone: phone,
+              templateCode: "account_statement",
+              customerId: data.customer_id,
+            });
+          }
+          return;
+        case "send_catalog":
+          if (typeof sendCatalogShareLink === "function") {
+            sendCatalogShareLink(
+              data.customer_name,
+              window.location.origin + "/catalog",
+              data.customer_id,
+            );
+          }
+          return;
+        case "notify_internal":
+          var msg = _resolvePlaceholders(
+            action.content || "تنبيه workflow: " + workflow.name,
+            data,
+          );
+          if (typeof NS !== "undefined" && NS.push) {
+            NS.push({ type: "info", message: msg });
+          }
+          return;
+        case "assign_agent":
+        case "add_tag":
+          // [WF-EXEC-2026] الإجراءان دول بيعدّلوا محادثة CommHub (assigned_to
+          // / labels)، فمحتاجين conversation_id فعلي — لو العميل ماعندوش
+          // محادثة واتساب موجودة بالفعل (لسه مبعتش رسالة) بنتجاهل بهدوء بدل
+          // ما نعمل محادثة وهمية بس عشان تاج/تعيين.
+          _findConversationByPhone(phone, function (conv) {
+            if (!conv) return;
+            var fields =
+              action.type === "assign_agent"
+                ? { assigned_to: action.agent || "" }
+                : {
+                    labels: (
+                      (conv.labels ? conv.labels + "," : "") +
+                      (action.tag || "")
+                    )
+                      .split(",")
+                      .filter(Boolean)
+                      .filter(function (v, i, arr) {
+                        return arr.indexOf(v) === i;
+                      })
+                      .join(","),
+                  };
+            _gsr(
+              "updateCommHubConversation",
+              [APP.currentUser.username, conv.conversation_id, fields, SESSION.token],
+              { label: "WA.updateCommHubConversation(workflow)" },
+            );
+          });
+          return;
+        case "send_invoice_pdf":
+        case "send_payment_link":
+          // [WF-EXEC-2026] مفيش مولّد PDF فواتير أو روابط دفع فعلي في النظام
+          // حاليًا (راجع ملاحظات المرحلة 3) — بدل ما الإجراء يختفي بصمت،
+          // نحوّله لتنبيه داخلي للموظف المسؤول بدل تنفيذ وهمي.
+          if (typeof NS !== "undefined" && NS.push) {
+            NS.push({
+              type: "warning",
+              message:
+                "Workflow «" +
+                workflow.name +
+                "»: إجراء «" +
+                (action.type === "send_invoice_pdf"
+                  ? "إرسال فاتورة PDF"
+                  : "إرسال رابط الدفع") +
+                "» غير مفعّل بعد — يحتاج إرسال يدوي للعميل " +
+                (data.customer_name || phone),
+            });
+          }
+          return;
+        default:
+          return;
+      }
+
+      if (!message) return;
+
+      // إرسال عبر WA_PROVIDER
+      WA_PROVIDER.send(phone, message, {
+        source_type: "workflow",
+        source_id: workflow.id,
+        customer_id: data.customer_id || "",
+        customer_name: data.customer_name || "",
+        template_name: action.template_code || workflow.name,
+      });
+    }
+
+    function _resolvePlaceholders(text, data) {
+      var d = data || {};
+      return text
+        .replace(/{customer_name}/g, d.customer_name || "العميل")
+        .replace(
+          /{amount}/g,
+          d.amount ? formatMoney(d.amount, { decimals: 0 }) : "",
+        )
+        .replace(/{invoice_id}/g, d.invoice_id || d.id || "")
+        .replace(/{order_id}/g, d.order_id || d.id || "")
+        .replace(/{date}/g, d.date || fmtDate(new Date()))
+        .replace(/{due_date}/g, d.due_date || "")
+        .replace(
+          /{balance}/g,
+          d.balance ? formatMoney(d.balance, { decimals: 0 }) : "",
+        )
+        .replace(
+          /{company_name}/g,
+          (APP.companySettings && APP.companySettings.company_name) || "",
+        );
+    }
+
+    return { trigger: trigger };
+  })();
+
+  // ─────────────────────────────────────────────────────────────
+  // §WF-3  شاشة إدارة الـ Workflows
+  // ─────────────────────────────────────────────────────────────
+  function renderWhatsappWorkflowsPage() {
+    if (!canDo("manageWhatsappWorkflows")) {
+      return (
+        '<div style="padding:40px;text-align:center;color:var(--text3)">' +
+        '<i class="ti ti-lock" style="font-size:40px;display:block;margin-bottom:12px"></i>' +
+        "<p>ليس لديك صلاحية إدارة الأتمتة</p></div>"
+      );
+    }
+
+    var workflows =
+      APP.data && APP.data.waWorkflows ? APP.data.waWorkflows : [];
+
+    return (
+      '<div class="wa-workflows-page">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">' +
+      "<div>" +
+      '<h3 style="margin:0;font-size:16px;font-weight:700">أتمتة واتساب (Workflows)</h3>' +
+      '<p style="margin:4px 0 0;font-size:12px;color:var(--text3)">أنشئ قواعد إرسال تلقائي مرتبطة بأحداث النظام</p>' +
+      "</div>" +
+      '<button class="btn-primary" onclick="WA_WF_UI.newWorkflow()" style="gap:6px;display:flex;align-items:center">' +
+      '<i class="ti ti-plus"></i> Workflow جديد' +
+      "</button>" +
+      "</div>" +
+      // قائمة الـ Workflows
+      '<div id="wa-workflows-list">' +
+      (workflows.length === 0
+        ? _renderEmptyWorkflows()
+        : workflows.map(_renderWorkflowCard).join("")) +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function _renderEmptyWorkflows() {
+    return (
+      '<div style="text-align:center;padding:40px 20px;color:var(--text3)">' +
+      '<i class="ti ti-settings-automation" style="font-size:48px;display:block;margin-bottom:16px;opacity:0.3"></i>' +
+      '<p style="font-size:14px;font-weight:600;margin:0 0 8px">لا توجد Workflows بعد</p>' +
+      '<p style="font-size:13px;margin:0 0 20px">أنشئ أول Workflow لأتمتة رسائل واتساب</p>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;max-width:500px;margin:0 auto">' +
+      _quickTemplates()
+        .map(function (t) {
+          return (
+            '<button class="wa-workflow-quick-btn" onclick="WA_WF_UI.newWorkflowFromTemplate(\'' +
+            t.id +
+            "')\">" +
+            '<i class="ti ' +
+            t.icon +
+            '"></i> ' +
+            t.label +
+            "</button>"
+          );
+        })
+        .join("") +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function _quickTemplates() {
+    return [
+      { id: "welcome", label: "رسالة ترحيب", icon: "ti-hand-finger" },
+      { id: "invoice", label: "إرسال فاتورة", icon: "ti-file-invoice" },
+      { id: "payment_due", label: "تذكير بالسداد", icon: "ti-cash" },
+      { id: "shipped", label: "إشعار شحن", icon: "ti-truck" },
+      { id: "delivered", label: "إشعار استلام", icon: "ti-package-import" },
+    ];
+  }
+
+  function _renderWorkflowCard(wf) {
+    var triggerTypes = WA_WORKFLOW_TYPES.triggers;
+    var trigger = triggerTypes.find(function (t) {
+      return t.id === wf.trigger_type;
+    }) || { label: wf.trigger_type, icon: "ti-bolt" };
+
+    var actions = [];
+    try {
+      actions = JSON.parse(wf.actions || "[]");
+    } catch (e) {}
+
+    return (
+      '<div class="wa-workflow-card ' +
+      (wf.is_active ? "active" : "inactive") +
+      '">' +
+      '<div class="wa-workflow-card-header">' +
+      '<div style="display:flex;align-items:center;gap:10px">' +
+      '<div class="wa-workflow-icon ' +
+      (wf.is_active ? "" : "inactive") +
+      '">' +
+      '<i class="ti ' +
+      trigger.icon +
+      '"></i>' +
+      "</div>" +
+      "<div>" +
+      '<div style="font-weight:700;font-size:14px">' +
+      esc(wf.name || "") +
+      "</div>" +
+      '<div style="font-size:12px;color:var(--text3)">عند: ' +
+      trigger.label +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+      '<label class="toggle-switch" title="' +
+      (wf.is_active ? "تعطيل" : "تفعيل") +
+      '">' +
+      '<input type="checkbox" ' +
+      (wf.is_active ? "checked" : "") +
+      " onchange=\"WA_WF_UI.toggleWorkflow('" +
+      esc(wf.id) +
+      "', this.checked)\">" +
+      '<span class="toggle-slider"></span></label>' +
+      (wf.trigger_type === "manual"
+        ? "<button onclick=\"WA_WF_UI.runManual('" +
+          esc(wf.id) +
+          '\')" class="wa-center-action-btn" title="تشغيل الآن على عميل معيّن"><i class="ti ti-player-play"></i></button>'
+        : "") +
+      "<button onclick=\"WA_WF_UI.editWorkflow('" +
+      esc(wf.id) +
+      '\')" class="wa-center-action-btn" title="تعديل"><i class="ti ti-edit"></i></button>' +
+      "<button onclick=\"WA_WF_UI.deleteWorkflow('" +
+      esc(wf.id) +
+      '\')" class="wa-center-action-btn wa-center-danger-btn" title="حذف"><i class="ti ti-trash"></i></button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="wa-workflow-actions-list">' +
+      actions
+        .map(function (a) {
+          var actionType = WA_WORKFLOW_TYPES.actions.find(function (t) {
+            return t.id === a.type;
+          }) || { label: a.type, icon: "ti-bolt" };
+          return (
+            '<span class="wa-action-chip"><i class="ti ' +
+            actionType.icon +
+            '"></i> ' +
+            actionType.label +
+            "</span>"
+          );
+        })
+        .join("") +
+      "</div>" +
+      (wf.last_run
+        ? '<div style="font-size:11px;color:var(--text3);padding:0 14px 10px">آخر تشغيل: ' +
+          fmtDateTime(wf.last_run) +
+          "</div>"
+        : "") +
+      "</div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §WF-4  واجهة مستخدم الـ Workflows
+  // ─────────────────────────────────────────────────────────────
+  var WA_WF_UI = (function () {
+    var _editingId = null;
+
+    function newWorkflow() {
+      _openEditor(null);
+    }
+
+    function newWorkflowFromTemplate(templateId) {
+      var templates = {
+        welcome: {
+          name: "رسالة ترحيب للعملاء الجدد",
+          trigger_type: "manual",
+          actions: JSON.stringify([
+            {
+              type: "send_text",
+              content:
+                "أهلاً وسهلاً {customer_name}! \nيسعدنا انضمامك لعائلة {company_name}.\nنحن هنا دائماً لخدمتك.",
+            },
+          ]),
+        },
+        invoice: {
+          name: "إرسال فاتورة تلقائياً",
+          trigger_type: "new_invoice",
+          actions: JSON.stringify([
+            { type: "send_template", template_code: "invoice_created" },
+          ]),
+        },
+        payment_due: {
+          name: "تذكير بسداد المستحقات",
+          trigger_type: "invoice_overdue",
+          actions: JSON.stringify([
+            {
+              type: "send_text",
+              content:
+                "تذكير: يوجد مستحقات بقيمة {balance} متأخرة على حسابك.\nيرجى السداد في أقرب وقت. ",
+            },
+          ]),
+        },
+        shipped: {
+          name: "إشعار شحن الطلب",
+          trigger_type: "order_shipped",
+          actions: JSON.stringify([
+            {
+              type: "send_text",
+              content:
+                "طلبك رقم {order_id} في الطريق إليك! \nموعد التسليم المتوقع: {due_date}",
+            },
+          ]),
+        },
+        delivered: {
+          name: "تأكيد استلام الطلب",
+          trigger_type: "order_delivered",
+          actions: JSON.stringify([
+            {
+              type: "send_text",
+              content:
+                "شكراً {customer_name}! \nتم استلام طلبك بنجاح.\nنتمنى أن تكون راضياً عن خدمتنا.",
+            },
+          ]),
+        },
+      };
+
+      var tpl = templates[templateId];
+      if (tpl) _openEditor(null, tpl);
+    }
+
+    function editWorkflow(id) {
+      var workflows =
+        APP.data && APP.data.waWorkflows ? APP.data.waWorkflows : [];
+      var wf = workflows.find(function (w) {
+        return String(w.id) === String(id);
+      });
+      if (wf) _openEditor(id, wf);
+    }
+
+    function _openEditor(id, prefill) {
+      _editingId = id;
+      var pf = prefill || {};
+      var triggerOptions = WA_WORKFLOW_TYPES.triggers
+        .map(function (t) {
+          return (
+            '<option value="' +
+            t.id +
+            '" ' +
+            (pf.trigger_type === t.id ? "selected" : "") +
+            ">" +
+            t.label +
+            "</option>"
+          );
+        })
+        .join("");
+
+      var actions = [];
+      try {
+        actions = JSON.parse(pf.actions || "[]");
+      } catch (e) {}
+
+      var html =
+        '<div style="padding:4px 0">' +
+        '<div class="form-group">' +
+        '<label class="form-label">اسم الـ Workflow</label>' +
+        '<input type="text" id="wf-name" class="form-input" value="' +
+        esc(pf.name || "") +
+        '" placeholder="مثال: تذكير بالسداد">' +
+        "</div>" +
+        '<div class="form-group">' +
+        '<label class="form-label">حدث التشغيل (Trigger)</label>' +
+        '<select id="wf-trigger" class="form-input"><option value="">اختر...</option>' +
+        triggerOptions +
+        "</select>" +
+        "</div>" +
+        '<div class="form-group">' +
+        '<label class="form-label">الإجراءات (Actions)</label>' +
+        '<div id="wf-actions-list">' +
+        (actions.length > 0
+          ? actions
+              .map(function (a, idx) {
+                return _renderActionRow(a, idx);
+              })
+              .join("")
+          : '<div style="color:var(--text3);font-size:13px;padding:8px 0">لا توجد إجراءات. أضف إجراءً من الزر أدناه.</div>') +
+        "</div>" +
+        '<button onclick="WA_WF_UI.addAction()" class="btn-secondary" style="margin-top:8px;gap:6px;display:flex;align-items:center">' +
+        '<i class="ti ti-plus"></i> إضافة إجراء' +
+        "</button>" +
+        "</div>" +
+        '<div class="form-group">' +
+        '<label class="form-label">الحالة</label>' +
+        '<label class="toggle-switch"><input type="checkbox" id="wf-active" ' +
+        (pf.is_active !== false ? "checked" : "") +
+        '><span class="toggle-slider"></span></label>' +
+        "</div>" +
+        '<div style="display:flex;gap:10px;margin-top:16px">' +
+        '<button class="btn-primary" onclick="WA_WF_UI.saveWorkflow()" style="flex:1">حفظ الـ Workflow</button>' +
+        '<button class="btn-secondary" onclick="closeDrawer()">إلغاء</button>' +
+        "</div>" +
+        "</div>";
+
+      openStyledDrawer({
+        title: id ? "تعديل Workflow" : "Workflow جديد",
+        icon: "ti-settings-automation",
+        color: "#6366f1",
+        width: "560px",
+        content: html,
+      });
+    }
+
+    function _renderActionRow(action, idx) {
+      var actionOptions = WA_WORKFLOW_TYPES.actions
+        .map(function (a) {
+          return (
+            '<option value="' +
+            a.id +
+            '" ' +
+            (action.type === a.id ? "selected" : "") +
+            ">" +
+            a.label +
+            "</option>"
+          );
+        })
+        .join("");
+
+      return (
+        '<div class="wa-action-row" id="wf-action-' +
+        idx +
+        '">' +
+        '<select class="form-input" style="width:160px;flex-shrink:0" onchange="WA_WF_UI.onActionTypeChange(' +
+        idx +
+        ', this.value)">' +
+        '<option value="">اختر إجراء...</option>' +
+        actionOptions +
+        "</select>" +
+        '<input type="text" class="form-input" style="flex:1" placeholder="محتوى الرسالة أو كود القالب" ' +
+        'value="' +
+        esc(action.content || action.template_code || "") +
+        '" ' +
+        'id="wf-action-content-' +
+        idx +
+        '">' +
+        '<button onclick="WA_WF_UI.removeAction(' +
+        idx +
+        ')" class="wa-center-action-btn wa-center-danger-btn">' +
+        '<i class="ti ti-x"></i></button>' +
+        "</div>"
+      );
+    }
+
+    function addAction() {
+      var list = document.getElementById("wf-actions-list");
+      if (!list) return;
+      var idx = list.children.length;
+      list.insertAdjacentHTML("beforeend", _renderActionRow({}, idx));
+    }
+
+    function removeAction(idx) {
+      var el = document.getElementById("wf-action-" + idx);
+      if (el) el.remove();
+    }
+
+    function onActionTypeChange(idx, type) {
+      var contentInput = document.getElementById("wf-action-content-" + idx);
+      if (!contentInput) return;
+      var actionDef = WA_WORKFLOW_TYPES.actions.find(function (a) {
+        return a.id === type;
+      });
+      if (actionDef && actionDef.requiresTemplate) {
+        contentInput.placeholder = "كود القالب (مثال: invoice_created)";
+      } else {
+        contentInput.placeholder =
+          "نص الرسالة — يمكن استخدام {customer_name} {amount} إلخ";
+      }
+    }
+
+    function saveWorkflow() {
+      var name = document.getElementById("wf-name");
+      var trigger = document.getElementById("wf-trigger");
+      var active = document.getElementById("wf-active");
+
+      if (!name || !name.value.trim())
+        return NotificationEngine.error("اسم الـ Workflow مطلوب");
+      if (!trigger || !trigger.value)
+        return NotificationEngine.error("يجب اختيار حدث التشغيل");
+
+      // تجميع الإجراءات
+      var actions = [];
+      var rows = document.querySelectorAll(".wa-action-row");
+      rows.forEach(function (row, idx) {
+        var typeSelect = row.querySelector("select");
+        var contentInput = document.getElementById("wf-action-content-" + idx);
+        if (typeSelect && typeSelect.value) {
+          var a = { type: typeSelect.value };
+          if (contentInput && contentInput.value.trim()) {
+            var actionDef = WA_WORKFLOW_TYPES.actions.find(function (x) {
+              return x.id === a.type;
+            });
+            if (actionDef && actionDef.requiresTemplate) {
+              a.template_code = contentInput.value.trim();
+            } else {
+              a.content = contentInput.value.trim();
+            }
+          }
+          actions.push(a);
+        }
+      });
+
+      var wfData = {
+        id: _editingId || "WF_" + Date.now(),
+        name: name.value.trim(),
+        trigger_type: trigger.value,
+        actions: JSON.stringify(actions),
+        is_active: active ? active.checked : true,
+        created_by: APP.currentUser.username,
+      };
+
+      // حفظ في Backend
+      _gsr(
+        "saveWAWorkflow",
+        [APP.currentUser.username, wfData, SESSION.token],
+        {
+          onSuccess: function () {
+            NotificationEngine.success("تم حفظ الـ Workflow");
+            closeDrawer();
+            // تحديث القائمة
+            if (!APP.data.waWorkflows) APP.data.waWorkflows = [];
+            var idx = APP.data.waWorkflows.findIndex(function (w) {
+              return String(w.id) === String(wfData.id);
+            });
+            if (idx >= 0) APP.data.waWorkflows[idx] = wfData;
+            else APP.data.waWorkflows.push(wfData);
+            // إعادة render الشاشة
+            var listEl = document.getElementById("wa-workflows-list");
+            if (listEl) {
+              var wfs = APP.data.waWorkflows || [];
+              listEl.innerHTML =
+                wfs.length === 0
+                  ? _renderEmptyWorkflows()
+                  : wfs.map(_renderWorkflowCard).join("");
+            }
+          },
+          onError: function () {
+            NotificationEngine.error("فشل الحفظ");
+          },
+        },
+      );
+    }
+
+    function toggleWorkflow(id, active) {
+      var workflows =
+        APP.data && APP.data.waWorkflows ? APP.data.waWorkflows : [];
+      var wf = workflows.find(function (w) {
+        return String(w.id) === String(id);
+      });
+      if (!wf) return;
+      wf.is_active = active;
+      _gsr("saveWAWorkflow", [APP.currentUser.username, wf, SESSION.token], {
+        onSuccess: function () {
+          NotificationEngine.success(active ? "تم تفعيل الـ Workflow" : "تم تعطيل الـ Workflow");
+        },
+      });
+    }
+
+    function deleteWorkflow(id) {
+      confirmDelete(
+        "حذف Workflow",
+        "هل تريد حذف هذا الـ Workflow؟",
+        function () {
+          _gsr(
+            "deleteWAWorkflow",
+            [id, APP.currentUser.username, SESSION.token],
+            {
+              label: "WA.deleteWAWorkflow",
+              onSuccess: function () {
+                if (APP.data && APP.data.waWorkflows) {
+                  APP.data.waWorkflows = APP.data.waWorkflows.filter(
+                    function (w) {
+                      return String(w.id) !== String(id);
+                    },
+                  );
+                }
+                var listEl = document.getElementById("wa-workflows-list");
+                if (listEl) {
+                  var wfs = APP.data.waWorkflows || [];
+                  listEl.innerHTML =
+                    wfs.length === 0
+                      ? _renderEmptyWorkflows()
+                      : wfs.map(_renderWorkflowCard).join("");
+                }
+                NotificationEngine.success("تم حذف الـ Workflow");
+              },
+              onError: function (result) {
+                NotificationEngine.error(result.message || "فشل حذف الـ Workflow");
+              },
+            },
+          );
+        },
+      );
+    }
+
+    // [WF-EXEC-2026] تشغيل يدوي لـ Workflow نوعه "manual" على عميل معيّن.
+    // بيدوّر على العميل بالاسم أو الهاتف من APP.data.customers، ولو مش لاقي
+    // ولا واحد مطابق بيقبل الإدخال كرقم هاتف مباشر.
+    function runManual(id) {
+      var q = prompt("اسم العميل أو رقم الهاتف اللي هتشغّل عليه الـ Workflow:");
+      if (!q) return;
+      q = q.trim();
+      var customer = (APP.data.customers || []).find(function (c) {
+        return (
+          c.name === q ||
+          c.phone === q ||
+          c.mobile === q ||
+          String(c.id) === q
+        );
+      });
+      var phone = customer
+        ? customer.phone || customer.mobile || ""
+        : q.replace(/[^0-9+]/g, "").length >= 8
+          ? q
+          : "";
+      if (!phone) {
+        NotificationEngine.error(
+          "محتاج رقم هاتف صحيح — اكتب الرقم مباشرة أو اسم عميل مسجّل برقم هاتف",
+        );
+        return;
+      }
+      WA_WORKFLOW_ENGINE.trigger("manual", {
+        customer_id: customer ? customer.id : "",
+        customer_name: customer ? customer.name : q,
+        phone: phone,
+      });
+      NotificationEngine.success("جاري التشغيل...");
+    }
+
+    return {
+      newWorkflow: newWorkflow,
+      newWorkflowFromTemplate: newWorkflowFromTemplate,
+      editWorkflow: editWorkflow,
+      saveWorkflow: saveWorkflow,
+      toggleWorkflow: toggleWorkflow,
+      deleteWorkflow: deleteWorkflow,
+      runManual: runManual,
+      addAction: addAction,
+      removeAction: removeAction,
+      onActionTypeChange: onActionTypeChange,
+    };
+  })();
+
+  function bindWhatsappWorkflowsPage() {
+    // [FIX-AUDIT-2026] كانت قائمة الـ Workflows تعتمد فقط على APP.data.waWorkflows
+    // في الذاكرة، فتختفي بمجرد تحديث الصفحة. الآن نجلبها من الباك اند عند فتح
+    // الدرج مباشرة.
+    var listEl = document.getElementById("wa-workflows-list");
+    if (listEl) {
+      listEl.innerHTML =
+        '<p style="color:var(--text3);text-align:center;padding:20px">' +
+        I18N.t("MSG_LOADING_ELLIPSIS") +
+        "</p>";
+    }
+    _gsr("getWAWorkflows", [APP.currentUser.username, SESSION.token], {
+      label: "WA.getWAWorkflows",
+      onSuccess: function (result) {
+        APP.data.waWorkflows = result.data || [];
+        var el = document.getElementById("wa-workflows-list");
+        if (el) {
+          var wfs = APP.data.waWorkflows;
+          el.innerHTML =
+            wfs.length === 0
+              ? _renderEmptyWorkflows()
+              : wfs.map(_renderWorkflowCard).join("");
+        }
+      },
+      onError: function (result) {
+        if (listEl)
+          listEl.innerHTML =
+            '<p style="color:var(--danger);text-align:center;padding:20px">' +
+            (result.message || "فشل تحميل قواعد الأتمتة") +
+            "</p>";
+      },
+    });
+  }
+</script>

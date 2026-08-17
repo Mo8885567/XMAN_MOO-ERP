@@ -1,0 +1,153 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 43_JS_NumberEngine.html — محرك الأرقام الموحّد (NumberEngine)
+  // ═══════════════════════════════════════════════════════════════════
+  // [NUMBER-ENGINE-DESIGN] لا يوجد محرك أرقام مركزي سابق في المشروع —
+  // كل شاشة كانت تنسّق العملة/النسب بمنطقها الخاص (toFixed/toLocaleString
+  // متفرقة). هذا الملف هو المرجع الوحيد لأي تنسيق/تحليل رقم، ويقرأ
+  // إعداداته (العملة، الفواصل) من PreferenceService فقط — نفس مبدأ
+  // DateEngine.
+  //
+  //   NumberEngine.currency(1234.5)        // "1,234.50 ج.م"
+  //   NumberEngine.decimal(1234.567, 2)    // "1,234.57"
+  //   NumberEngine.percentage(0.156)        // "15.6%"
+  //   NumberEngine.parse("1,234.50")        // 1234.5
+  //   NumberEngine.round(1234.567, 2)       // 1234.57
+  // ═══════════════════════════════════════════════════════════════════
+
+  var NumberEngine = (function () {
+    "use strict";
+
+    var CURRENCY_SYMBOLS = {
+      EGP: "ج.م",
+      USD: "$",
+      EUR: "€",
+      SAR: "ر.س",
+      AED: "د.إ",
+    };
+
+    function _pref(key, def) {
+      try {
+        return typeof PreferenceService !== "undefined"
+          ? PreferenceService.get(key, def)
+          : def;
+      } catch (e) {
+        return def;
+      }
+    }
+
+    function _decimals() {
+      return Number(_pref("currency_decimals", 2));
+    }
+
+    function _currencyCode() {
+      return _pref("currency", "EGP") || "EGP";
+    }
+
+    // ── فاصلة الآلاف يدويًا (بدون Intl، متسق دايمًا بصرف النظر عن لغة
+    // المتصفح الفعلية للمستخدم — نفس فلسفة fmtDate اللي بيقرأ التفضيل
+    // المخزَّن بدل ما يعتمد على locale المتصفح) ──────────────────────
+    function _groupThousands(intPart) {
+      var neg = intPart.charAt(0) === "-";
+      if (neg) intPart = intPart.substring(1);
+      var out = "";
+      for (var i = 0; i < intPart.length; i++) {
+        if (i > 0 && (intPart.length - i) % 3 === 0) out += ",";
+        out += intPart.charAt(i);
+      }
+      return (neg ? "-" : "") + out;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §1 — Parsing
+    // ══════════════════════════════════════════════════════════════════
+    /** parse — يقبل أي نص مُنسَّق (فواصل آلاف/عملة/نسبة) ويرجّعه رقم صافي */
+    function parse(val) {
+      if (val === null || val === undefined || val === "") return 0;
+      if (typeof val === "number") return val;
+      var s = String(val)
+        .replace(/[^\d.\-]/g, "") // إزالة أي رمز عملة/فاصلة آلاف/نسبة
+        .trim();
+      var n = parseFloat(s);
+      return isNaN(n) ? 0 : n;
+    }
+
+    function isValidNumber(val) {
+      if (val === null || val === undefined || val === "") return false;
+      return !isNaN(parseFloat(val)) && isFinite(val);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §2 — Rounding
+    // ══════════════════════════════════════════════════════════════════
+    function round(val, decimals) {
+      var n = parse(val);
+      var d = decimals === undefined ? _decimals() : decimals;
+      var factor = Math.pow(10, d);
+      return Math.round((n + Number.EPSILON) * factor) / factor;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §3 — Formatting
+    // ══════════════════════════════════════════════════════════════════
+    function decimal(val, decimals) {
+      var n = round(val, decimals);
+      var d = decimals === undefined ? _decimals() : decimals;
+      var neg = n < 0;
+      var parts = Math.abs(n).toFixed(d).split(".");
+      var out = _groupThousands(parts[0]) + (parts[1] ? "." + parts[1] : "");
+      return (neg ? "-" : "") + out;
+    }
+
+    function currency(val, currencyCode) {
+      var code = currencyCode || _currencyCode();
+      var symbol = CURRENCY_SYMBOLS[code] || code;
+      return decimal(val) + " " + symbol;
+    }
+
+    function percentage(val, decimals) {
+      // يقبل 0.156 (كسر) أو 15.6 (نسبة جاهزة) — لو <=1 يتحول تلقائيًا لنسبة
+      var n = parse(val);
+      var pct = Math.abs(n) <= 1 ? n * 100 : n;
+      return decimal(pct, decimals === undefined ? 1 : decimals) + "%";
+    }
+
+    /** exchangeRate — دقة أعلى (تفضيل النظام: 4 خانات عشرية للصرف) */
+    function exchangeRate(val) {
+      return decimal(val, Number(_pref("exchange_rate_decimals", 4)));
+    }
+
+    function taxAmount(val) {
+      return decimal(val, Number(_pref("tax_decimals", 2)));
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §4 — Localization helpers
+    // ══════════════════════════════════════════════════════════════════
+    function currencySymbol(currencyCode) {
+      var code = currencyCode || _currencyCode();
+      return CURRENCY_SYMBOLS[code] || code;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §5 — أرقام سالبة/موجبة للعرض (زي فروقات الجرد/كشوف الحساب)
+    // ══════════════════════════════════════════════════════════════════
+    function withSign(val, decimals) {
+      var n = round(val, decimals);
+      return (n > 0 ? "+" : "") + decimal(n, decimals);
+    }
+
+    return {
+      parse: parse,
+      isValidNumber: isValidNumber,
+      round: round,
+      decimal: decimal,
+      currency: currency,
+      currencySymbol: currencySymbol,
+      percentage: percentage,
+      exchangeRate: exchangeRate,
+      taxAmount: taxAmount,
+      withSign: withSign,
+    };
+  })();
+</script>

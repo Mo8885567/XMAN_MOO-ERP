@@ -1,0 +1,4519 @@
+<script>
+  // ───────────────────────────────────────────────────────────────
+  // JS_Production.html — جزء 5/10 من JavaScript.html الأصلي
+  // النطاق الأصلي: سطر 11609–15050 | تقارير وتنبيهات + أوامر التشغيل + الصرف للمصنع
+  // ───────────────────────────────────────────────────────────────
+
+  // التقارير والتنبيهات — Reports & Alerts
+  // ─────────────────────────────────────────────────────────────
+
+  // ── تحديث حالة أمر الإنتاج ─────────────────────────────────
+  function updatePOStatus(id, newStatus) {
+    if (!id || !newStatus) return;
+
+    var order = (APP.data.productionOrders || []).find(function (o) {
+      return o.id === id;
+    });
+
+    if (!order) {
+      NotificationEngine.error("أمر الإنتاج غير موجود");
+      return;
+    }
+
+    var confirmMsg = "";
+    if (newStatus === "done") {
+      confirmMsg = "هل تريد إغلاق هذا الأمر وتسجيل تاريخ الإغلاق الآن؟";
+    } else if (newStatus === "cancelled") {
+      confirmMsg = "هل تريد إلغاء أمر الإنتاج؟";
+    } else if (newStatus === "inprogress") {
+      confirmMsg = "هل تريد بدء تنفيذ هذا الأمر؟";
+    }
+
+    showConfirm({
+      icon: "ti-refresh",
+      iconColor: "#2563eb",
+      title: "تأكيد تغيير الحالة",
+      message: confirmMsg,
+      confirmText: newStatus === "done" ? "نعم، أغلق الأمر" : "تأكيد",
+      confirmClass: newStatus === "done" ? "btn-success" : "btn-primary",
+      freezeMessage:
+        newStatus === "cancelled"
+          ? "⏳ جاري الإلغاء..."
+          : newStatus === "done"
+            ? "⏳ جاري الإغلاق..."
+            : "⏳ جاري التحديث...",
+      onConfirm: function (unfreezeUI) {
+        var btns = document.querySelectorAll(
+          "button[onclick*=\"updatePOStatus('" + id + '"]',
+        );
+        if (btns.length)
+          btns.forEach(function (b) {
+            b.disabled = true;
+          });
+
+        _gsr("updateProductionOrderStatus", [id, newStatus], {
+          label: "updateProductionOrderStatus",
+          onSuccess: function (res) {
+            if (typeof unfreezeUI === "function") unfreezeUI();
+            if (btns.length)
+              btns.forEach(function (b) {
+                b.disabled = false;
+              });
+            NotificationEngine.success(res.message || " تم تحديث الحالة بنجاح");
+            reloadAfterMutation(function () {
+              renderPage("production");
+            });
+          },
+          onError: function (res) {
+            if (typeof unfreezeUI === "function") unfreezeUI();
+            if (btns.length)
+              btns.forEach(function (b) {
+                b.disabled = false;
+              });
+            NotificationEngine.error("خطأ في الاتصال: " + (res.message || res));
+          },
+        });
+      },
+    });
+  }
+
+  // المستخدمون — Users
+  // ============================================================
+  // [REFACTOR] نُقلت دوال editUser / delUser / openUserModal إلى 08_JS_Users_Branding.html
+  // لا تضف كود هنا — راجع ملف المستخدمين
+
+  // ─────────────────────────────────────────────────────────────
+  // §PROD-DASH  لوحة تحكم الإنتاج
+  // ─────────────────────────────────────────────────────────────
+  function bindProductionDashboard() {
+    ensureExtendedData(function () {
+      var _set = function (id, val) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = val;
+      };
+      var orders =
+        APP.data.productionOrders || APP.data.production_orders || [];
+      var dispatches = APP.data.dispatches || [];
+      var fgRecv = APP.data.fgReceive || APP.data.fg_receive || [];
+      var cutting =
+        APP.data.cuttingStatements || APP.data.cutting_statements || [];
+
+      var statusCounts = { inprogress: 0, done: 0 };
+      orders.forEach(function (o) {
+        var st = (o.status || "").toUpperCase();
+        if (st === "IN_PROGRESS" || st === "INPROGRESS" || st === "قيد التنفيذ")
+          statusCounts.inprogress++;
+        if (
+          st === "DONE" ||
+          st === "COMPLETED" ||
+          st === "منتهي" ||
+          st === "مكتمل"
+        )
+          statusCounts.done++;
+      });
+
+      _set("prd-stat-orders", orders.length);
+      _set("prd-stat-inprogress", statusCounts.inprogress);
+      _set("prd-stat-done", statusCounts.done);
+      _set("prd-stat-dispatch", dispatches.length);
+      _set("prd-stat-fgrecv", fgRecv.length);
+      _set("prd-stat-cutting", cutting.length);
+
+      // Recent orders
+      var tbody = document.getElementById("prd-recent-orders");
+      if (tbody) {
+        var recent = orders.slice(-8).reverse();
+        var stColor = function (st) {
+          st = (st || "").toUpperCase();
+          if (st === "DONE" || st === "COMPLETED") return "#10b981";
+          if (st === "IN_PROGRESS" || st === "INPROGRESS") return "#f59e0b";
+          if (st === "CANCELLED" || st === "ملغي") return "#ef4444";
+          return "#6b7280";
+        };
+        tbody.innerHTML = !recent.length
+          ? '<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--text3)">لا توجد أوامر</td></tr>'
+          : recent
+              .map(function (o) {
+                return (
+                  "<tr><td style='font-weight:700;color:var(--primary)'>" +
+                  esc(o.ref || o.code || o.id || "") +
+                  "</td>" +
+                  "<td>" +
+                  esc(o.item_name || o.item || "") +
+                  "</td>" +
+                  "<td style='text-align:center;font-weight:700'>" +
+                  parseFloat(o.qty || 0).toLocaleString() +
+                  "</td>" +
+                  "<td><span style='color:" +
+                  stColor(o.status) +
+                  ";font-weight:600'>" +
+                  esc(o.status || "") +
+                  "</span></td>" +
+                  "<td style='color:var(--text3);font-size:12px'>" +
+                  (o.date || o.created_at || "").slice(0, 10) +
+                  "</td></tr>"
+                );
+              })
+              .join("");
+      }
+    });
+  }
+
+  var PO_STATUS_BADGE = {
+    pending: "badge-warning",
+    inprogress: "badge-blue",
+    done: "badge-success",
+    cancelled: "badge-danger",
+  };
+  var PO_STATUS_LABEL = {
+    pending: "معلق",
+    inprogress: "قيد التصنيع",
+    done: "مكتمل",
+    cancelled: "ملغي",
+  };
+  function _poItemName(productId) {
+    var item = (APP.data.items || []).find(function (i) {
+      return i.id === productId;
+    });
+    return item ? item.name : productId;
+  }
+  function _poItemCode(productId) {
+    var item = (APP.data.items || []).find(function (i) {
+      return i.id === productId;
+    });
+    return item ? item.code || item.id : productId;
+  }
+
+  // [COLUMN-ENGINE] تعريف أعمدة جدول أوامر الإنتاج — مرة واحدة فقط.
+  // القائمة السياقية (production_orders) كانت جاهزة بالفعل (كانت
+  // مربوطة يدويًا بـ CTX.register على #po-table tbody)، فقط استبدلناها
+  // بـ contextMenuType التلقائي الموحّد مع باقي الشاشات.
+  var _prodColumnsRegistered = false;
+  function _prodRegisterColumns() {
+    if (_prodColumnsRegistered) return;
+    _prodColumnsRegistered = true;
+    ColumnEngine.register(
+      "production_orders",
+      [
+        {
+          key: "id",
+          label: "رقم الأمر",
+          type: "text",
+          width: 150,
+          frozen: "right",
+          format: function (v) {
+            return (
+              '<span class="mono" style="color:var(--accent);font-weight:700">' +
+              esc(v || "") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "product_id",
+          label: "المنتج",
+          type: "text",
+          width: 240,
+          format: function (v) {
+            return (
+              '<div style="display:flex;align-items:center;gap:8px;flex-wrap:nowrap">' +
+              '<span style="font-weight:600;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">' +
+              esc(_poItemName(v || "")) +
+              "</span>" +
+              '<span style="display:inline-block;background:var(--accent-soft,rgba(37,99,235,.1));color:var(--accent);font-family:monospace;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;letter-spacing:.4px;border:1px solid rgba(37,99,235,.2);white-space:nowrap;flex-shrink:0">' +
+              esc(_poItemCode(v || "")) +
+              "</span></div>"
+            );
+          },
+        },
+        {
+          key: "patron_number",
+          label: "الباترون",
+          type: "text",
+          width: 100,
+          align: "center",
+          format: function (v) {
+            return (
+              '<span style="font-weight:700;color:var(--accent)">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "quantity",
+          label: "الكمية المستهدفة",
+          type: "number",
+          width: 130,
+          align: "center",
+          format: function (v) {
+            return "<b>" + Number(v || 0) + "</b>";
+          },
+        },
+        {
+          key: "date",
+          label: "تاريخ الفتح",
+          type: "date",
+          width: 120,
+        },
+        {
+          key: "status",
+          label: "الحالة",
+          type: "badge",
+          width: 100,
+          format: function (v) {
+            return (
+              '<span class="badge ' +
+              (PO_STATUS_BADGE[v] || "badge-blue") +
+              '">' +
+              (PO_STATUS_LABEL[v] || esc(v)) +
+              "</span>"
+            );
+          },
+        },
+        // [COLUMN-ENGINE-FULL-FIELDS] حقول موجودة في صف أمر الإنتاج فعليًا
+        // (_buildPORow في Code_17b_ProductionOrders.gs) لكنها لم تكن معروضة
+        // كأعمدة اختيارية. sizes_json (ألوان/مقاسات) بيانات متداخلة معقدة
+        // مش عمود مسطّح مناسب — تُعرض من تفاصيل الأمر نفسه.
+        {
+          key: "user",
+          label: "أنشئ بواسطة",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "fabric_meters",
+          label: "أمتار القماش",
+          type: "number",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "lining_meters",
+          label: "أمتار البطانة",
+          type: "number",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "closed_at",
+          label: "تاريخ الإغلاق",
+          type: "date",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "notes",
+          label: "ملاحظات",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+      ],
+      {
+        rowKey: "id",
+        title: "أوامر الإنتاج",
+        contextMenuType: "production_orders",
+      },
+    );
+  }
+
+  function _renderProductionOrdersTableCE(rows) {
+    var container = document.getElementById("po-ce-container");
+    if (!container) return;
+    _prodRegisterColumns();
+    ColumnEngine.renderTable("production_orders", container, rows || []);
+  }
+
+  function bindProduction() {
+    // فلترة حسب الحالة — بتعيد رسم الجدول عبر ColumnEngine ببيانات
+    // مفلترة فقط؛ البحث النصي بقى مدمج داخل شريط أدوات المحرك نفسه.
+    function applyFilter() {
+      var st = document.getElementById("po-filter")
+        ? document.getElementById("po-filter").value
+        : "";
+      var orders = (APP.data.productionOrders || []).slice().reverse();
+      var rows = st
+        ? orders.filter(function (o) {
+            return o.status === st;
+          })
+        : orders;
+      _renderProductionOrdersTableCE(rows);
+    }
+    applyFilter();
+    var filterEl = document.getElementById("po-filter");
+    if (filterEl) filterEl.addEventListener("change", applyFilter);
+    if (window.AppSelect) {
+      AppSelect.upgrade("po-filter", {
+        icon: "ti-filter",
+        placeholder: "كل الحالات",
+      });
+    }
+
+    // ── New Order Button → Modal ─────────────────────────────
+    var btn = document.getElementById("btn-add-po");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      var today = (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().split("T")[0]);
+
+      // فلتر فوري من APP.data بدون call للباك إند
+      var warehouses = APP.data.warehouses || [];
+      var groups = APP.data.groups || [];
+      var items = APP.data.items || [];
+
+      // المجموعات المرتبطة بمخازن من نوع "تام"
+      var fgGroupIds = groups
+        .filter(function (g) {
+          return warehouses.some(function (w) {
+            return (
+              String(w.type || "")
+                .trim()
+                .startsWith("تام") &&
+              (String(g.warehouse_id) === String(w.id) ||
+                String(g.warehouse_id) === String(w.name))
+            );
+          });
+        })
+        .map(function (g) {
+          return String(g.id);
+        });
+
+      // الأصناف المرتبطة بالمجموعات دي
+      var fgItems = items.filter(function (i) {
+        return fgGroupIds.indexOf(String(i.group)) !== -1;
+      });
+
+      _openPOModal(today, fgItems);
+    });
+  }
+
+  // ── Size Preset Button Style Helper (global scope) ──────
+  function _sizePresetBtnStyle(variant) {
+    var base =
+      "cursor:pointer;border-radius:20px;font-size:11px;font-weight:700;padding:4px 12px;transition:all .15s;font-family:var(--font-main);";
+    if (variant === "outline") {
+      return (
+        base +
+        "background:transparent;border:1.5px dashed var(--border);color:var(--text2);"
+      );
+    }
+    return (
+      base +
+      "background:var(--surface3);border:1.5px solid var(--border);color:var(--text2);"
+    );
+  }
+
+  // ── _openPOModal — يُستدعى بعد رجوع البيانات من الباك إند ──
+  function _openPOModal(today, fgItems) {
+    // توليد رقم أمر تلقائي
+    var existingOrders = APP.data.productionOrders || [];
+    var nowDate = new Date();
+    var yy = String(nowDate.getFullYear()).slice(-2);
+    var mm = String(nowDate.getMonth() + 1).padStart(2, "0");
+    var nextSeq = String(existingOrders.length + 1).padStart(3, "0");
+    var autoOrderNum = "PO-" + yy + "-" + mm + "-" + nextSeq;
+
+    var itemSelectOpts = fgItems.length
+      ? itemOpts(fgItems)
+      : "<option disabled>لا توجد أصناف في مخازن المنتجات التامة</option>";
+
+    // ── دالة بناء صف لون ──────────────────────────────────────
+    function colorRowHtml(code, name, qty) {
+      code = code || "";
+      name = name || "";
+      qty = qty || 0;
+      return (
+        "<tr>" +
+        '<td style="padding:5px 8px;width:44px;text-align:center">' +
+        '<input class="input po-color-code" type="text" value="' +
+        code +
+        '" placeholder="#HEX أو كود" ' +
+        'style="width:80px;padding:3px 6px;font-size:12px;font-family:monospace;text-align:center">' +
+        "</td>" +
+        '<td style="padding:5px 8px">' +
+        '<input class="input po-color-name" type="text" value="' +
+        name +
+        '" placeholder="اسم اللون" ' +
+        'style="width:100%;padding:3px 8px;font-size:13px">' +
+        "</td>" +
+        '<td style="padding:5px 8px;width:90px">' +
+        '<input class="input po-color-qty" type="number" min="0" value="' +
+        qty +
+        '" ' +
+        'style="width:75px;padding:3px 8px;text-align:center;font-size:13px">' +
+        "</td>" +
+        '<td style="padding:5px 8px;width:36px;text-align:center">' +
+        '<button type="button" onclick="removePOColorRow(this)" ' +
+        'style="background:none;border:none;cursor:pointer;color:var(--danger);font-size:16px;line-height:1"></button>' +
+        "</td>" +
+        "</tr>"
+      );
+    }
+
+    // ── بناء Custom Dropdown للمنتج التام (نفس شكل رصيد أول المدة) ──
+    function _groupFGItems(items) {
+      var groups = {};
+      var order = [];
+      items.forEach(function (i) {
+        var code = String(i.code || i.id || "");
+        var prefix = code.replace(/\d+.*$/, "").trim() || "أخرى";
+        if (!groups[prefix]) {
+          groups[prefix] = [];
+          order.push(prefix);
+        }
+        groups[prefix].push(i);
+      });
+      return { groups: groups, order: order };
+    }
+
+    function buildPOItemDropdown() {
+      var grouped = _groupFGItems(fgItems);
+      var optHtml = grouped.order
+        .map(function (prefix) {
+          var rows = grouped.groups[prefix]
+            .map(function (i) {
+              return (
+                '<div class="os-id-opt" data-id="' +
+                esc(i.id) +
+                '" data-code="' +
+                esc(i.code || i.id) +
+                '" data-name="' +
+                esc(i.name) +
+                '">' +
+                '<span class="os-id-opt-name">' +
+                esc(i.name) +
+                "</span>" +
+                '<span class="os-id-opt-code">' +
+                esc(i.code || i.id) +
+                "</span>" +
+                "</div>"
+              );
+            })
+            .join("");
+          return (
+            '<div class="os-id-group">' +
+            '<div class="os-id-group-label">' +
+            esc(prefix) +
+            "</div>" +
+            rows +
+            '<div class="os-id-divider"></div>' +
+            "</div>"
+          );
+        })
+        .join("");
+      if (!fgItems.length)
+        optHtml =
+          '<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">لا توجد أصناف في مخازن المنتجات التامة</div>';
+      return (
+        '<div class="os-item-dropdown" id="po-item-wrap">' +
+        '<input type="hidden" id="po-item" value="">' +
+        '<div class="os-id-trigger" id="po-id-trigger" tabindex="0">' +
+        '<span class="os-id-arrow">▼</span>' +
+        '<span class="os-id-placeholder">— اختر المنتج —</span>' +
+        "</div>" +
+        '<div class="os-id-panel" id="po-id-panel">' +
+        '<div class="os-id-search-bar"><input type="text" id="po-id-search" placeholder=" بحث..."></div>' +
+        '<div id="po-id-list">' +
+        optHtml +
+        "</div>" +
+        "</div></div>"
+      );
+    }
+
+    function bindPOItemDropdown() {
+      var trigger = document.getElementById("po-id-trigger");
+      var panel = document.getElementById("po-id-panel");
+      var hidden = document.getElementById("po-item");
+      var listWrap = document.getElementById("po-id-list");
+      var searchEl = document.getElementById("po-id-search");
+      if (!trigger || !panel || !hidden) return;
+
+      // [ARCH-AUDIT-2026-07-17] موحّد عبر Core_UIManagers.initSearchableIdPanel
+      var _panelApi = initSearchableIdPanel(trigger, panel, searchEl);
+      var openPanel = _panelApi.openPanel;
+      var closePanel = _panelApi.closePanel;
+
+      trigger.addEventListener("click", function (e) {
+        e.stopPropagation();
+        panel.classList.contains("os-id-open") ? closePanel() : openPanel();
+      });
+      trigger.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          panel.classList.contains("os-id-open") ? closePanel() : openPanel();
+        }
+        if (e.key === "Escape") closePanel();
+      });
+      if (searchEl) {
+        searchEl.addEventListener("input", function () {
+          var q = searchEl.value.trim().toLowerCase();
+          var opts = listWrap.querySelectorAll(".os-id-opt");
+          opts.forEach(function (opt) {
+            var name = (opt.dataset.name || "").toLowerCase();
+            var code = (opt.dataset.code || "").toLowerCase();
+            opt.style.display =
+              !q || name.includes(q) || code.includes(q) ? "" : "none";
+          });
+          listWrap.querySelectorAll(".os-id-group").forEach(function (g) {
+            var visible = Array.from(g.querySelectorAll(".os-id-opt")).some(
+              function (o) {
+                return o.style.display !== "none";
+              },
+            );
+            g.style.display = visible ? "" : "none";
+          });
+        });
+      }
+      listWrap.addEventListener("click", function (e) {
+        var opt = e.target.closest(".os-id-opt");
+        if (!opt) return;
+        var code = opt.dataset.code;
+        var name = opt.dataset.name;
+        var selectedId = opt.dataset.id; // ← id الصنف لجلب الألوان
+        hidden.value = code;
+        var tw = trigger.querySelector(
+          ".os-id-selected-wrap, .os-id-placeholder",
+        );
+        if (tw)
+          tw.outerHTML =
+            '<div class="os-id-selected-wrap"><span class="os-id-sel-name">' +
+            esc(name) +
+            '</span><span class="os-id-sel-code">' +
+            esc(code) +
+            "</span></div>";
+        listWrap.querySelectorAll(".os-id-opt").forEach(function (o) {
+          o.classList.remove("os-id-selected");
+        });
+        opt.classList.add("os-id-selected");
+        closePanel();
+
+        // ── تعبئة ألوان الصنف تلقائياً في جدول الألوان والكميات ──
+        if (selectedId) {
+          var itemColors = getItemColors(selectedId);
+          if (itemColors && itemColors.length) {
+            // مسح الجدول الحالي
+            var tbody = document.getElementById("po-colors-tbody");
+            if (tbody) {
+              tbody.innerHTML = "";
+              // إضافة ألوان الصنف
+              itemColors.forEach(function (c) {
+                window.addPOColorRow(c.code || "", c.name, 0);
+              });
+              // تحديث إجمالي الكميات
+              var disp = document.getElementById("po-total-qty-display");
+              if (disp) disp.textContent = "0";
+              // إعادة بناء جدول المقاسات بالألوان الجديدة تلقائياً
+              setTimeout(function () {
+                if (currentPresetSizes) {
+                  buildSizesTableFromPreset(currentPresetSizes);
+                }
+              }, 80);
+            }
+          }
+        }
+        // ──────────────────────────────────────────────────────────────
+      });
+      document.addEventListener("click", function (e) {
+        if (!e.target.closest("#po-item-wrap")) closePanel();
+      });
+    }
+
+    openStyledDrawer({
+      title: "إنشاء أمر إنتاج جديد",
+      subtitle: "تشغيل وتتبع أوامر التصنيع",
+      icon: "ti-settings",
+      color: "purple",
+      width: 860,
+      body:
+        '<div style="padding:24px 28px">' +
+        // ══ القسم 1: البيانات الأولية ══════════════════════════
+        '<div style="background:var(--surface2);border-radius:12px;padding:16px;margin-bottom:14px">' +
+        '<div style="font-weight:700;color:var(--text1);margin-bottom:14px;font-size:13px;display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border);padding-bottom:10px">' +
+        '<span style="font-size:15px"></span> البيانات الأولية لأمر الإنتاج' +
+        "</div>" +
+        // Row 1: رقم الأمر + تاريخ الفتح + رقم الباترون
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">' +
+        // رقم الأمر (auto)
+        "<div>" +
+        '<label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px">رقم الأمر</label>' +
+        '<input class="input" id="po-order-num" type="text" value="' +
+        autoOrderNum +
+        '" ' +
+        'style="font-family:monospace;font-weight:700;font-size:13px;color:var(--accent);background:var(--surface3)" readonly>' +
+        "</div>" +
+        // تاريخ الفتح
+        "<div>" +
+        '<label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px">تاريخ الفتح</label>' +
+        '<input class="input" id="po-date" type="date" value="' +
+        today +
+        '">' +
+        "</div>" +
+        // رقم الباترون
+        "<div>" +
+        '<label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px">رقم الباترون <span style="color:var(--danger)">*</span></label>' +
+        '<input class="input" id="po-patron" type="text" placeholder="مثال: P-1042">' +
+        "</div></div>" +
+        // Row 2: المنتج (عريض) + الكمية المطلوبة
+        '<div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">' +
+        // المنتج
+        "<div>" +
+        '<label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px">المنتج <span style="color:var(--danger)">*</span></label>' +
+        buildPOItemDropdown() +
+        "</div>" +
+        // الكمية المطلوبة
+        "<div>" +
+        '<label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px">الكمية المستهدفة</label>' +
+        '<input class="input" id="po-target-qty" type="number" min="0" value="0" ' +
+        'style="font-weight:700;font-size:16px;text-align:center;color:var(--accent)">' +
+        '<div style="text-align:center;font-size:10px;color:var(--text3);margin-top:3px">قطعة</div>' +
+        "</div>" +
+        "</div></div>" +
+        // ══ القسم 3: الألوان ══════════════════════════════════════
+        '<div style="background:var(--surface2);border-radius:12px;padding:16px;margin-bottom:14px">' +
+        '<div style="font-weight:700;color:var(--text1);font-size:13px;display:flex;align-items:center;gap:6px;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:10px">' +
+        '<span style="font-size:15px"></span> الألوان' +
+        '<span style="margin-right:auto;font-size:11px;font-weight:400;color:var(--text3)">تُجلب تلقائياً من بيانات الصنف</span>' +
+        "</div>" +
+        '<div id="po-colors-chips" style="display:flex;flex-wrap:wrap;gap:8px;min-height:44px;align-items:center">' +
+        '<span id="po-colors-empty-msg" style="color:var(--text3);font-size:13px">اختر المنتج أولاً لتظهر ألوانه تلقائياً </span>' +
+        "</div>" +
+        // جدول الألوان المخفي (للحفظ)
+        '<table style="display:none"><tbody id="po-colors-tbody"></tbody></table>' +
+        "</div>" +
+        // ══ القسم 4: توزيع المقاسات ══════════════════════════════
+        '<div style="background:var(--surface2);border-radius:12px;padding:16px;margin-bottom:14px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:10px">' +
+        '<div style="font-weight:700;color:var(--text1);font-size:13px;display:flex;align-items:center;gap:6px">' +
+        '<span style="font-size:15px"></span> توزيع المقاسات</div>' +
+        '<div style="display:flex;align-items:center;gap:8px">' +
+        '<input type="number" id="po-sizes-count" min="1" max="20" value="4" class="input" ' +
+        'style="width:65px;padding:4px 8px;text-align:center;font-weight:700;display:none">' +
+        '<button type="button" id="po-sizes-build-btn" class="btn btn-ghost btn-xs" style="padding:5px 14px;display:none">بناء ↺</button>' +
+        "</div></div>" +
+        // ── جداول المقاسات الجاهزة ─────────────────────────────
+        '<div id="po-size-presets-wrap" style="margin-bottom:14px">' +
+        '<div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">اختر جدول مقاسات جاهز:</div>' +
+        // صف رجالي
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">' +
+        '<span style="font-size:11px;font-weight:700;color:var(--text2);min-width:60px;text-align:right">رجالي:</span>' +
+        '<button type="button" class="po-preset-btn" id="po-preset-men3" data-sizes="L,XL,XXL" style="' +
+        _sizePresetBtnStyle() +
+        '">L — XL — XXL</button>' +
+        '<button type="button" class="po-preset-btn" id="po-preset-men4" data-sizes="L,XL,XXL,3XL" style="' +
+        _sizePresetBtnStyle() +
+        '">L — XL — XXL — 3XL</button>' +
+        "</div>" +
+        // صف أطفالي
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">' +
+        '<span style="font-size:11px;font-weight:700;color:var(--text2);min-width:60px;text-align:right">أطفالي:</span>' +
+        '<button type="button" class="po-preset-btn" id="po-preset-kids-s" data-sizes="2,4,6,8" style="' +
+        _sizePresetBtnStyle() +
+        '">2 — 4 — 6 — 8</button>' +
+        '<button type="button" class="po-preset-btn" id="po-preset-kids-l" data-sizes="10,12,14,16" style="' +
+        _sizePresetBtnStyle() +
+        '">10 — 12 — 14 — 16</button>' +
+        "</div>" +
+        // شريط المقاسات المحددة الحالية
+        '<div id="po-selected-preset-bar" style="display:none;margin-top:8px;padding:8px 12px;background:var(--accent-soft,rgba(37,99,235,.08));border:1.5px solid var(--accent);border-radius:8px;align-items:center;gap:8px;flex-wrap:wrap">' +
+        '<span style="font-size:11px;font-weight:700;color:var(--accent)"> المقاسات المختارة:</span>' +
+        '<span id="po-selected-preset-labels" style="font-size:12px;font-weight:700;color:var(--text1)"></span>' +
+        '<button type="button" id="po-clear-preset-btn" style="margin-right:auto;background:none;border:none;cursor:pointer;color:var(--text3);font-size:12px"> تغيير</button>' +
+        "</div>" +
+        "</div>" +
+        // ── جدول المقاسات ────────────────────────────────────────
+        '<div id="po-sizes-table-wrap" style="overflow-x:auto"></div>' +
+        "</div>" +
+        // ══ القسم 5: ملاحظات ══════════════════════════════════════
+        '<div style="background:var(--surface2);border-radius:12px;padding:16px;margin-bottom:14px">' +
+        '<label style="font-size:12px;font-weight:700;color:var(--text2);display:flex;align-items:center;gap:5px;margin-bottom:8px">' +
+        "<span></span> ملاحظات</label>" +
+        '<textarea class="input" id="po-notes" rows="2" placeholder="ملاحظات اختيارية..." ' +
+        'style="width:100%;resize:vertical;font-family:var(--font-main);font-size:13px;line-height:1.6"></textarea>' +
+        "</div>" +
+        "</div>" +
+        "</div>" +
+        "</div>",
+      footer:
+        '<button class="btn btn-outline" onclick="closeStyledDrawer()">إلغاء</button>' +
+        '<button class="btn btn-primary" id="save-po-btn"> حفظ أمر الإنتاج</button>',
+      onReady: function () {
+        // ── helpers ────────────────────────────────────────────────
+        function updateTotalDisplay() {
+          var inputs = document.querySelectorAll(".po-color-qty");
+          var total = 0;
+          inputs.forEach(function (inp) {
+            total += Number(inp.value) || 0;
+          });
+          var disp = document.getElementById("po-total-qty-display");
+          if (disp) disp.textContent = total;
+        }
+        document
+          .getElementById("po-colors-tbody")
+          .addEventListener("input", updateTotalDisplay);
+
+        // ── دوال الـ chips للألوان ──────────────────────────────────
+        function renderColorChips() {
+          var chipsWrap = document.getElementById("po-colors-chips");
+          var emptyMsg = document.getElementById("po-colors-empty-msg");
+          var rows = document.querySelectorAll(
+            "#po-colors-tbody tr.po-color-row",
+          );
+          if (!chipsWrap) return;
+
+          // احذف الـ chips القديمة (غير رسالة الفراغ)
+          Array.from(chipsWrap.children).forEach(function (el) {
+            if (el.id !== "po-colors-empty-msg") el.remove();
+          });
+
+          if (!rows.length) {
+            if (emptyMsg) emptyMsg.style.display = "";
+            return;
+          }
+          if (emptyMsg) emptyMsg.style.display = "none";
+
+          rows.forEach(function (tr) {
+            var code = (tr.querySelector(".po-color-code") || {}).value || "";
+            var name =
+              (tr.querySelector(".po-color-name") || {}).value || "لون";
+
+            // ── جلب الـ hex تلقائياً من CSS_COLOR_MAP أو colorNameToHex ──
+            var hex = "";
+            if (CSS_COLOR_MAP) {
+              hex =
+                CSS_COLOR_MAP[name] || CSS_COLOR_MAP[name.toLowerCase()] || "";
+            }
+            if (!hex && typeof colorNameToHex === "function") {
+              hex = colorNameToHex(name) || "";
+            }
+            // fallback: لو الكود نفسه hex
+            if (
+              !hex &&
+              code &&
+              (code.startsWith("#") || /^[0-9A-Fa-f]{6}$/.test(code))
+            ) {
+              hex = code.startsWith("#") ? code : "#" + code;
+            }
+            var dotBg = hex || "var(--border)";
+
+            var chip = document.createElement("div");
+            chip.style.cssText =
+              "display:inline-flex;align-items:center;gap:7px;background:var(--surface3);border:1.5px solid var(--border);border-radius:20px;padding:5px 12px 5px 7px;cursor:default";
+            chip.innerHTML =
+              '<span style="width:22px;height:22px;border-radius:50%;flex-shrink:0;background:' +
+              esc(dotBg) +
+              ';border:2px solid rgba(0,0,0,.15);box-shadow:0 1px 3px rgba(0,0,0,.12);display:inline-block"></span>' +
+              '<span style="font-size:13px;font-weight:600;color:var(--text1)">' +
+              esc(name) +
+              "</span>";
+            chip.classList.add("po-chip");
+            chipsWrap.appendChild(chip);
+          });
+        }
+
+        // ربط الـ custom dropdown للمنتج التام
+        bindPOItemDropdown();
+
+        // ── جدول المقاسات (يُعاد توجيهه للنظام الجديد) ────────────
+        function buildSizesTable(n) {
+          // لو في preset محدد → استخدمه
+          if (currentPresetSizes) {
+            buildSizesTableFromPreset(currentPresetSizes);
+            return;
+          }
+          // وإلا → مقاسات مرقّمة
+          n = Math.max(1, Math.min(20, parseInt(n) || 4));
+          var arr = [];
+          for (var i = 1; i <= n; i++) arr.push("مقاس " + i);
+          buildSizesTableFromPreset(arr);
+        }
+
+        function recalcSizes() {
+          var wrap = document.getElementById("po-sizes-table-wrap");
+          if (!wrap) return;
+          var rows = wrap.querySelectorAll("tbody tr");
+          var colTotals = {};
+          var grand = 0;
+          rows.forEach(function (row) {
+            var rowTotal = 0;
+            row.querySelectorAll(".po-size-qty").forEach(function (inp) {
+              var v = Number(inp.value) || 0;
+              var col = inp.dataset.sizeIdx;
+              rowTotal += v;
+              colTotals[col] = (colTotals[col] || 0) + v;
+              grand += v;
+            });
+            var rt = row.querySelector(".po-size-row-total");
+            if (rt) rt.textContent = rowTotal;
+          });
+          wrap.querySelectorAll(".po-size-col-total").forEach(function (td) {
+            td.textContent = colTotals[td.dataset.col] || 0;
+          });
+          var gt = document.getElementById("po-sizes-grand-total");
+          if (gt) gt.textContent = grand;
+        }
+
+        // ── منطق جداول المقاسات الجاهزة ──────────────────────────
+        var currentPresetSizes = null; // المقاسات المختارة حالياً
+
+        function applyPreset(sizesArr) {
+          currentPresetSizes = sizesArr;
+          // تحديث شريط المقاسات المختارة
+          var bar = document.getElementById("po-selected-preset-bar");
+          var labelsEl = document.getElementById("po-selected-preset-labels");
+          if (bar && labelsEl) {
+            labelsEl.textContent = sizesArr.join(" | ");
+            bar.style.display = "flex";
+          }
+          // إخفاء الوضع اليدوي لو كان مفتوح
+          var customWrap = document.getElementById("po-custom-count-wrap");
+          if (customWrap) customWrap.style.display = "none";
+          // تمييز الزر المحدد
+          document.querySelectorAll(".po-preset-btn").forEach(function (b) {
+            b.style.background = "var(--surface3)";
+            b.style.borderColor = "var(--border)";
+            b.style.color = "var(--text2)";
+          });
+          // بناء الجدول بالمقاسات الجديدة
+          buildSizesTableFromPreset(sizesArr);
+        }
+
+        function buildSizesTableFromPreset(sizesArr) {
+          // ── جلب ألوان الصنف المختار تلقائياً ──────────────────────
+          var colorRows = [];
+          var selectedItemId =
+            (document.getElementById("po-item") || {}).value || "";
+          // حاول أولاً من بيانات الصنف مباشرة
+          if (selectedItemId) {
+            var itemColors = getItemColors(selectedItemId);
+            if (itemColors && itemColors.length) {
+              itemColors.forEach(function (c) {
+                colorRows.push({ code: c.code || "", name: c.name || "" });
+              });
+            }
+          }
+          // الاحتياطي: من صفوف الألوان المحفوظة في الـ tbody
+          if (!colorRows.length) {
+            document
+              .querySelectorAll("#po-colors-tbody tr.po-color-row")
+              .forEach(function (tr) {
+                var code =
+                  (tr.querySelector(".po-color-code") || {}).value || "";
+                var name =
+                  (tr.querySelector(".po-color-name") || {}).value || "";
+                if (code || name) colorRows.push({ code: code, name: name });
+              });
+          }
+          if (!colorRows.length) colorRows = [{ code: "", name: "لون 1" }];
+
+          // ── رأس الجدول ──────────────────────────────────────────────
+          var headerCells =
+            '<th style="padding:6px 8px;font-size:11px;font-weight:600;color:var(--text2);text-align:right;min-width:90px">اللون \\ المقاس</th>' +
+            sizesArr
+              .map(function (s) {
+                return (
+                  '<th style="padding:6px 10px;text-align:center;min-width:70px;background:var(--accent-soft,rgba(37,99,235,.1));color:var(--accent);font-size:12px;font-weight:700">' +
+                  '<span style="display:block;padding:3px 6px;background:var(--accent);color:#fff;border-radius:8px;font-size:11px">' +
+                  esc(s) +
+                  "</span></th>"
+                );
+              })
+              .join("");
+
+          // ── صفوف الألوان — عرض بصري فقط بدون إدخال أرقام ──────────
+          var bodyRows = colorRows
+            .map(function (clr) {
+              // استخراج لون الـ hex من CSS_COLOR_MAP أو من الكود مباشرة
+              var hex = "";
+              if (CSS_COLOR_MAP) {
+                hex =
+                  CSS_COLOR_MAP[clr.name] ||
+                  CSS_COLOR_MAP[(clr.name || "").toLowerCase()] ||
+                  "";
+              }
+              if (
+                !hex &&
+                clr.code &&
+                (clr.code.startsWith("#") || /^[0-9A-Fa-f]{6}$/.test(clr.code))
+              ) {
+                hex = clr.code.startsWith("#") ? clr.code : "#" + clr.code;
+              }
+
+              // دائرة اللون المرئية
+              var colorDot = hex
+                ? '<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:' +
+                  esc(hex) +
+                  ';border:1.5px solid rgba(0,0,0,.18);margin-left:6px;vertical-align:middle;flex-shrink:0"></span>'
+                : '<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:var(--border);border:1.5px solid rgba(0,0,0,.1);margin-left:6px;vertical-align:middle;flex-shrink:0"></span>';
+
+              // خلايا المقاسات — للعرض البصري فقط، بدون inputs
+              var cells = sizesArr
+                .map(function () {
+                  return (
+                    '<td style="padding:6px 4px;text-align:center">' +
+                    '<div style="width:60px;height:28px;margin:auto;background:var(--surface3);border:1.5px dashed var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center">' +
+                    '<span style="font-size:11px;color:var(--text3)">—</span>' +
+                    "</div></td>"
+                  );
+                })
+                .join("");
+
+              return (
+                '<tr style="border-bottom:1px solid var(--border)">' +
+                '<td style="padding:6px 10px;font-size:12px;font-weight:700;white-space:nowrap">' +
+                '<div style="display:flex;align-items:center">' +
+                colorDot +
+                '<span style="color:var(--text1)">' +
+                esc(clr.name || "") +
+                "</span>" +
+                "</div></td>" +
+                cells +
+                "</tr>"
+              );
+            })
+            .join("");
+
+          var wrap = document.getElementById("po-sizes-table-wrap");
+          if (!wrap) return;
+          wrap.innerHTML =
+            '<div style="font-size:11px;color:var(--text3);margin-bottom:6px;padding:6px 8px;background:var(--surface3);border-radius:6px;display:flex;align-items:center;gap:6px">' +
+            "<span>ℹ️</span>" +
+            "<span>هذا الجدول مرجع بصري للمقاسات والألوان — الكميات تُدخل في مرحلة الإنتاج الفعلي</span>" +
+            "</div>" +
+            '<table style="width:100%;border-collapse:collapse;font-family:var(--font-main)">' +
+            '<thead><tr style="background:var(--surface3)">' +
+            headerCells +
+            "</tr></thead>" +
+            "<tbody>" +
+            bodyRows +
+            "</tbody>" +
+            "</table>";
+        }
+
+        // أزرار الجداول الجاهزة
+        document.querySelectorAll(".po-preset-btn").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var sizesStr = this.dataset.sizes;
+            if (!sizesStr) return;
+            var sizesArr = sizesStr.split(",").map(function (s) {
+              return s.trim();
+            });
+            // تمييز الزر المحدد
+            document.querySelectorAll(".po-preset-btn").forEach(function (b) {
+              b.style.background = "var(--surface3)";
+              b.style.borderColor = "var(--border)";
+              b.style.color = "var(--text2)";
+            });
+            this.style.background = "var(--accent)";
+            this.style.borderColor = "var(--accent)";
+            this.style.color = "#fff";
+            applyPreset(sizesArr);
+          });
+        });
+
+        // زر إلغاء الاختيار
+        var clearPresetBtn = document.getElementById("po-clear-preset-btn");
+        if (clearPresetBtn) {
+          clearPresetBtn.addEventListener("click", function () {
+            currentPresetSizes = null;
+            var bar = document.getElementById("po-selected-preset-bar");
+            if (bar) bar.style.display = "none";
+            document.querySelectorAll(".po-preset-btn").forEach(function (b) {
+              b.style.background = "var(--surface3)";
+              b.style.borderColor = "var(--border)";
+              b.style.color = "var(--text2)";
+            });
+            document.getElementById("po-sizes-table-wrap").innerHTML =
+              '<div style="text-align:center;padding:24px;color:var(--text3);font-size:13px">اختر جدول مقاسات من الأعلى لبناء الجدول</div>';
+          });
+        }
+
+        // تعيين رسالة انتظار في الجدول
+        (function () {
+          var wrap = document.getElementById("po-sizes-table-wrap");
+          if (wrap)
+            wrap.innerHTML =
+              '<div style="text-align:center;padding:24px;color:var(--text3);font-size:13px"> اختر جدول مقاسات من الأعلى لبناء الجدول</div>';
+        })();
+
+        // إعادة بناء جدول المقاسات لما يتغير الألوان
+        document
+          .getElementById("po-colors-tbody")
+          .addEventListener("change", function () {
+            if (currentPresetSizes) {
+              setTimeout(function () {
+                buildSizesTableFromPreset(currentPresetSizes);
+              }, 100);
+            }
+          });
+
+        window.addPOColorRow = function (code, name, qty) {
+          var tbody = document.getElementById("po-colors-tbody");
+          var tr = document.createElement("tr");
+          tr.className = "po-color-row";
+          tr.style.display = "none"; // مخفي — البيانات تُحفظ هنا فقط
+          code = code || "";
+          name = name || "";
+          qty = qty || 0;
+          tr.innerHTML =
+            '<td><input class="po-color-code" type="text" value="' +
+            esc(code) +
+            '"></td>' +
+            '<td><input class="po-color-name" type="text" value="' +
+            esc(name) +
+            '"></td>' +
+            '<td><input class="po-color-qty" type="number" min="0" value="' +
+            qty +
+            '"></td>';
+          tbody.appendChild(tr);
+          renderColorChips();
+          updateTotalDisplay();
+          // إعادة بناء جدول المقاسات
+          setTimeout(function () {
+            if (currentPresetSizes) {
+              buildSizesTableFromPreset(currentPresetSizes);
+            }
+          }, 80);
+        };
+
+        window.removePOColorRow = function (chipOrBtn) {
+          // chipOrBtn = عنصر الـ chip أو زر داخله
+          var chip =
+            chipOrBtn &&
+            chipOrBtn.classList &&
+            chipOrBtn.classList.contains("po-chip")
+              ? chipOrBtn
+              : chipOrBtn
+                ? chipOrBtn.closest(".po-chip")
+                : null;
+          if (!chip) return;
+          var idx = parseInt(chip.dataset.idx);
+          var rows = document.querySelectorAll(
+            "#po-colors-tbody tr.po-color-row",
+          );
+          if (!isNaN(idx) && rows[idx]) rows[idx].remove();
+          renderColorChips();
+          updateTotalDisplay();
+          setTimeout(function () {
+            if (currentPresetSizes) {
+              buildSizesTableFromPreset(currentPresetSizes);
+            }
+          }, 80);
+        };
+
+        // ── Save ───────────────────────────────────────────────────
+        document
+          .getElementById("save-po-btn")
+          .addEventListener("click", function () {
+            var productId = itemCodeToId(
+              document.getElementById("po-item").value,
+            );
+            var patronNum = document.getElementById("po-patron").value.trim();
+            var fabricM = 0;
+            var liningM = 0;
+            var notes = document.getElementById("po-notes").value;
+            var targetQty =
+              parseInt(document.getElementById("po-target-qty").value) || 0;
+            var orderNum = document.getElementById("po-order-num").value.trim();
+            var responsible = APP.currentUser
+              ? APP.currentUser.full_name || APP.currentUser.username || ""
+              : "";
+            var status = "قيد التصنيع";
+
+            // جمع بيانات جدول المقاسات
+            var sizeLabels =
+              currentPresetSizes && currentPresetSizes.length
+                ? currentPresetSizes
+                : Array.from(document.querySelectorAll(".po-size-label")).map(
+                    function (inp) {
+                      return inp.value.trim();
+                    },
+                  );
+            var sizesTable = [];
+            document
+              .querySelectorAll("#po-sizes-table-wrap tbody tr")
+              .forEach(function (row) {
+                var colorCell = row.querySelector("td:first-child");
+                var colorName = colorCell ? colorCell.textContent.trim() : "";
+                var qtys = {};
+                row.querySelectorAll(".po-size-qty").forEach(function (inp) {
+                  var idx = parseInt(inp.dataset.sizeIdx);
+                  qtys[sizeLabels[idx] || "مقاس " + (idx + 1)] =
+                    Number(inp.value) || 0;
+                });
+                var rowTotal = Object.values(qtys).reduce(function (a, b) {
+                  return a + b;
+                }, 0);
+                if (rowTotal > 0)
+                  sizesTable.push({
+                    color: colorName,
+                    sizes: qtys,
+                    total: rowTotal,
+                  });
+              });
+
+            var colors = [];
+            var rows = document.querySelectorAll(
+              "#po-colors-tbody tr.po-color-row",
+            );
+            rows.forEach(function (tr) {
+              var code = tr.querySelector(".po-color-code").value.trim();
+              var name = tr.querySelector(".po-color-name").value.trim();
+              var qty = Number(tr.querySelector(".po-color-qty").value) || 0;
+              // نضيف كل الألوان (حتى qty=0) عشان نحتفظ بقائمة الألوان كاملة
+              if (code || name)
+                colors.push({
+                  size: code || name,
+                  color_code: code,
+                  color_name: name,
+                  qty: qty,
+                });
+            });
+            var totalQty = colors.reduce(function (s, r) {
+              return s + r.qty;
+            }, 0);
+            // لو مفيش ألوان بكمية → خذ من حقل الكمية المطلوبة
+            if (!totalQty) totalQty = targetQty;
+
+            if (!productId) {
+              NotificationEngine.error("اختر المنتج");
+              return;
+            }
+            if (!patronNum) {
+              NotificationEngine.error("أدخل رقم الباترون");
+              return;
+            }
+            var order = {
+              order_number: orderNum,
+              product_id: productId,
+              quantity: totalQty,
+              target_quantity: targetQty,
+              patron_number: patronNum,
+              fabric_meters: fabricM,
+              lining_meters: liningM,
+              sizes: colors,
+              sizes_table: sizesTable,
+              sizes_labels: sizeLabels,
+              notes: notes,
+              status: status,
+              responsible: responsible,
+              user: APP.currentUser.username || "", // BUG-6 FIX: username لـ _checkPermission,
+              sessionToken: SESSION.token,
+            };
+
+            // [SE-ROLLOUT] عبر SaveEngine.run بدل _freezeUI/_gsr اليدوي.
+            SaveEngine.run({
+              screen: "Production.Order",
+              entity: "production_order",
+              buttonId: "save-po-btn",
+              closeFn: closeModal,
+              data: order,
+              fn: "addProductionOrder",
+              params: [order],
+              onSuccess: function (r) {
+                NotificationEngine.success(r.message);
+                reloadAfterMutation(function () {
+                  renderPage("production");
+                });
+              },
+            });
+          });
+      },
+    });
+  }
+
+  // ── تعديل أمر إنتاج ─────────────────────────────────────────
+  function editPO(id) {
+    var order = (APP.data.productionOrders || []).find(function (o) {
+      return o.id === id;
+    });
+    if (!order) {
+      NotificationEngine.error("أمر الإنتاج غير موجود");
+      return;
+    }
+
+    var today = (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().split("T")[0]);
+    var warehouses = APP.data.warehouses || [];
+    var groups = APP.data.groups || [];
+    var items = APP.data.items || [];
+
+    var fgGroupIds = groups
+      .filter(function (g) {
+        return warehouses.some(function (w) {
+          return (
+            String(w.type || "")
+              .trim()
+              .startsWith("تام") &&
+            (String(g.warehouse_id) === String(w.id) ||
+              String(g.warehouse_id) === String(w.name))
+          );
+        });
+      })
+      .map(function (g) {
+        return String(g.id);
+      });
+
+    var fgItems = items.filter(function (i) {
+      return fgGroupIds.indexOf(String(i.group)) !== -1;
+    });
+
+    // إذا الصنف الحالي مش في fgItems أضفه
+    if (
+      !fgItems.find(function (i) {
+        return i.id === order.product_id;
+      })
+    ) {
+      var cur = items.find(function (i) {
+        return i.id === order.product_id;
+      });
+      if (cur) fgItems = [cur].concat(fgItems);
+    }
+
+    // استخراج الألوان والبيانات الحالية
+    var currentColors = [];
+    var oldSizesData = {};
+    var oldSizesLabels = [];
+    try {
+      var sizesRaw = order.sizes_json ? JSON.parse(order.sizes_json) : [];
+      if (sizesRaw && !Array.isArray(sizesRaw) && sizesRaw.colors) {
+        currentColors = sizesRaw.colors || [];
+        oldSizesData = sizesRaw;
+        oldSizesLabels = sizesRaw.sizes_labels || [];
+      } else if (Array.isArray(sizesRaw)) {
+        currentColors = sizesRaw;
+      }
+    } catch (e) {
+      currentColors = [];
+    }
+
+    // ── بناء Custom Dropdown للمنتج التام ──────────────────────────
+    function buildPOItemDropdownEdit(selectedId) {
+      var grouped = (function () {
+        var grps = {},
+          ord = [];
+        fgItems.forEach(function (i) {
+          var code = String(i.code || i.id || "");
+          var prefix = code.replace(/\d+.*$/, "").trim() || "أخرى";
+          if (!grps[prefix]) {
+            grps[prefix] = [];
+            ord.push(prefix);
+          }
+          grps[prefix].push(i);
+        });
+        return { groups: grps, order: ord };
+      })();
+      var selItem = selectedId
+        ? fgItems.find(function (i) {
+            return i.id === selectedId;
+          })
+        : null;
+      var optHtml = grouped.order
+        .map(function (prefix) {
+          var rows = grouped.groups[prefix]
+            .map(function (i) {
+              var isSel = i.id === selectedId ? " os-id-selected" : "";
+              return (
+                '<div class="os-id-opt' +
+                isSel +
+                '" data-id="' +
+                esc(i.id) +
+                '" data-code="' +
+                esc(i.code || i.id) +
+                '" data-name="' +
+                esc(i.name) +
+                '">' +
+                '<span class="os-id-opt-name">' +
+                esc(i.name) +
+                "</span>" +
+                '<span class="os-id-opt-code">' +
+                esc(i.code || i.id) +
+                "</span></div>"
+              );
+            })
+            .join("");
+          return (
+            '<div class="os-id-group"><div class="os-id-group-label">' +
+            esc(prefix) +
+            "</div>" +
+            rows +
+            '<div class="os-id-divider"></div></div>'
+          );
+        })
+        .join("");
+      if (!fgItems.length)
+        optHtml =
+          '<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">لا توجد أصناف في مخازن المنتجات التامة</div>';
+      var triggerInner = selItem
+        ? '<div class="os-id-selected-wrap"><span class="os-id-sel-name">' +
+          esc(selItem.name) +
+          '</span><span class="os-id-sel-code">' +
+          esc(selItem.code || selItem.id) +
+          "</span></div>"
+        : '<span class="os-id-placeholder">— اختر المنتج —</span>';
+      return (
+        '<div class="os-item-dropdown" id="po-item-wrap">' +
+        '<input type="hidden" id="po-item" value="' +
+        esc(selItem ? selItem.code || selItem.id : "") +
+        '">' +
+        '<div class="os-id-trigger" id="po-id-trigger" tabindex="0"><span class="os-id-arrow">▼</span>' +
+        triggerInner +
+        "</div>" +
+        '<div class="os-id-panel" id="po-id-panel">' +
+        '<div class="os-id-search-bar"><input type="text" id="po-id-search" placeholder=" بحث..."></div>' +
+        '<div id="po-id-list">' +
+        optHtml +
+        "</div></div></div>"
+      );
+    }
+
+    // ── بناء HTML الـ modal (نفس شاشة الإضافة) ─────────────────────
+    openDrawer(
+      '<div class="modal-box" style="max-width:760px;width:100%">' +
+        '<div class="modal-header">' +
+        '<div class="modal-header-left">' +
+        '<div class="modal-icon icon-purple"><i class="ti ti-settings" style="font-size:20px"></i></div>' +
+        '<div><h2>تعديل أمر إنتاج <span style="color:var(--accent);font-size:14px;font-family:monospace">' +
+        esc(id) +
+        '</span></h2><div class="modal-header-sub">تعديل بيانات أمر التصنيع</div></div>' +
+        "</div>" +
+        '<button class="modal-close" onclick="closeDrawer()"><i class="ti ti-x"></i></button>' +
+        "</div>" +
+        '<div style="padding:24px 28px;max-height:82vh;overflow-y:auto">' +
+        // ══ القسم 1: البيانات الأولية ══════════════════════════════
+        '<div style="background:var(--surface2);border-radius:12px;padding:16px;margin-bottom:14px">' +
+        '<div style="font-weight:700;color:var(--text1);margin-bottom:14px;font-size:13px;display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border);padding-bottom:10px">' +
+        '<span style="font-size:15px"></span> البيانات الأولية لأمر الإنتاج' +
+        "</div>" +
+        // Row 1: رقم الأمر + تاريخ الفتح + رقم الباترون
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">' +
+        // رقم الأمر (readonly)
+        "<div>" +
+        '<label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px">رقم الأمر</label>' +
+        '<input class="input" id="po-order-num" type="text" value="' +
+        esc(order.id || "") +
+        '" ' +
+        'style="font-family:monospace;font-weight:700;font-size:13px;color:var(--accent);background:var(--surface3)" readonly>' +
+        "</div>" +
+        // تاريخ الفتح
+        "<div>" +
+        '<label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px">تاريخ الفتح</label>' +
+        '<input class="input" id="po-date" type="date" value="' +
+        (order.date ? order.date.split("T")[0] : today) +
+        '">' +
+        "</div>" +
+        // رقم الباترون
+        "<div>" +
+        '<label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px">رقم الباترون <span style="color:var(--danger)">*</span></label>' +
+        '<input class="input" id="po-patron" type="text" value="' +
+        esc(order.patron_number || "") +
+        '" placeholder="مثال: P-1042">' +
+        "</div></div>" +
+        // Row 2: المنتج (عريض) + الكمية المطلوبة
+        '<div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">' +
+        "<div>" +
+        '<label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px">المنتج <span style="color:var(--danger)">*</span></label>' +
+        buildPOItemDropdownEdit(order.product_id) +
+        "</div>" +
+        "<div>" +
+        '<label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px">الكمية المطلوبة</label>' +
+        '<input class="input" id="po-target-qty" type="number" min="0" value="' +
+        Number(order.quantity || 0) +
+        '" ' +
+        'style="font-weight:700;font-size:16px;text-align:center;color:var(--accent)">' +
+        '<div style="text-align:center;font-size:10px;color:var(--text3);margin-top:3px">قطعة</div>' +
+        "</div></div></div>" +
+        // ══ القسم 2: الألوان ════════════════════════════════════════
+        '<div style="background:var(--surface2);border-radius:12px;padding:16px;margin-bottom:14px">' +
+        '<div style="font-weight:700;color:var(--text1);font-size:13px;display:flex;align-items:center;gap:6px;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:10px">' +
+        '<span style="font-size:15px"></span> الألوان' +
+        '<span style="margin-right:auto;font-size:11px;font-weight:400;color:var(--text3)">تُجلب تلقائياً من بيانات الصنف</span>' +
+        "</div>" +
+        '<div id="po-colors-chips" style="display:flex;flex-wrap:wrap;gap:8px;min-height:44px;align-items:center">' +
+        '<span id="po-colors-empty-msg" style="color:var(--text3);font-size:13px">اختر المنتج أولاً لتظهر ألوانه تلقائياً </span>' +
+        "</div>" +
+        '<table style="display:none"><tbody id="po-colors-tbody"></tbody></table>' +
+        "</div>" +
+        // ══ القسم 3: توزيع المقاسات ════════════════════════════════
+        '<div style="background:var(--surface2);border-radius:12px;padding:16px;margin-bottom:14px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:10px">' +
+        '<div style="font-weight:700;color:var(--text1);font-size:13px;display:flex;align-items:center;gap:6px">' +
+        '<span style="font-size:15px"></span> توزيع المقاسات</div>' +
+        '<div style="display:flex;align-items:center;gap:8px">' +
+        '<input type="number" id="po-sizes-count" min="1" max="20" value="4" class="input" ' +
+        'style="width:65px;padding:4px 8px;text-align:center;font-weight:700;display:none">' +
+        '<button type="button" id="po-sizes-build-btn" class="btn btn-ghost btn-xs" style="padding:5px 14px;display:none">بناء ↺</button>' +
+        "</div></div>" +
+        '<div id="po-size-presets-wrap" style="margin-bottom:14px">' +
+        '<div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">اختر جدول مقاسات جاهز:</div>' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">' +
+        '<span style="font-size:11px;font-weight:700;color:var(--text2);min-width:60px;text-align:right">رجالي:</span>' +
+        '<button type="button" class="po-preset-btn" data-sizes="L,XL,XXL" style="' +
+        _sizePresetBtnStyle() +
+        '">L — XL — XXL</button>' +
+        '<button type="button" class="po-preset-btn" data-sizes="L,XL,XXL,3XL" style="' +
+        _sizePresetBtnStyle() +
+        '">L — XL — XXL — 3XL</button>' +
+        "</div>" +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">' +
+        '<span style="font-size:11px;font-weight:700;color:var(--text2);min-width:60px;text-align:right">أطفالي:</span>' +
+        '<button type="button" class="po-preset-btn" data-sizes="2,4,6,8" style="' +
+        _sizePresetBtnStyle() +
+        '">2 — 4 — 6 — 8</button>' +
+        '<button type="button" class="po-preset-btn" data-sizes="10,12,14,16" style="' +
+        _sizePresetBtnStyle() +
+        '">10 — 12 — 14 — 16</button>' +
+        "</div>" +
+        '<div id="po-selected-preset-bar" style="display:none;margin-top:8px;padding:8px 12px;background:var(--accent-soft,rgba(37,99,235,.08));border:1.5px solid var(--accent);border-radius:8px;align-items:center;gap:8px;flex-wrap:wrap">' +
+        '<span style="font-size:11px;font-weight:700;color:var(--accent)"> المقاسات المختارة:</span>' +
+        '<span id="po-selected-preset-labels" style="font-size:12px;font-weight:700;color:var(--text1)"></span>' +
+        '<button type="button" id="po-clear-preset-btn" style="margin-right:auto;background:none;border:none;cursor:pointer;color:var(--text3);font-size:12px"> تغيير</button>' +
+        "</div></div>" +
+        '<div id="po-sizes-table-wrap" style="overflow-x:auto"></div>' +
+        "</div>" +
+        // ══ القسم 4: ملاحظات ════════════════════════════════════════
+        '<div style="background:var(--surface2);border-radius:12px;padding:16px;margin-bottom:14px">' +
+        '<label style="font-size:12px;font-weight:700;color:var(--text2);display:flex;align-items:center;gap:5px;margin-bottom:8px">' +
+        "<span></span> ملاحظات</label>" +
+        '<textarea class="input" id="po-notes" rows="2" placeholder="ملاحظات اختيارية..." ' +
+        'style="width:100%;resize:vertical;font-family:var(--font-main);font-size:13px;line-height:1.6">' +
+        esc(order.notes || "") +
+        "</textarea>" +
+        "</div>" +
+        "</div>" +
+        '<div class="modal-actions" style="margin-top:10px">' +
+        '<button class="btn btn-outline" onclick="closeDrawer()">إلغاء</button>' +
+        '<button class="btn btn-primary" id="save-po-btn"> حفظ التعديلات</button>' +
+        "</div></div>",
+    );
+
+    // ── helpers ─────────────────────────────────────────────────────
+    function updateTotalDisplay() {
+      var inputs = document.querySelectorAll(".po-color-qty");
+      var total = 0;
+      inputs.forEach(function (inp) {
+        total += Number(inp.value) || 0;
+      });
+      var disp = document.getElementById("po-total-qty-display");
+      if (disp) disp.textContent = total;
+    }
+
+    // ── دوال chips ──────────────────────────────────────────────────
+    function renderColorChips() {
+      var chipsWrap = document.getElementById("po-colors-chips");
+      var emptyMsg = document.getElementById("po-colors-empty-msg");
+      var rows = document.querySelectorAll("#po-colors-tbody tr.po-color-row");
+      if (!chipsWrap) return;
+      Array.from(chipsWrap.children).forEach(function (el) {
+        if (el.id !== "po-colors-empty-msg") el.remove();
+      });
+      if (!rows.length) {
+        if (emptyMsg) emptyMsg.style.display = "";
+        return;
+      }
+      if (emptyMsg) emptyMsg.style.display = "none";
+      rows.forEach(function (tr) {
+        var code = (tr.querySelector(".po-color-code") || {}).value || "";
+        var name = (tr.querySelector(".po-color-name") || {}).value || "لون";
+        var hex = "";
+        if (CSS_COLOR_MAP) {
+          hex = CSS_COLOR_MAP[name] || CSS_COLOR_MAP[name.toLowerCase()] || "";
+        }
+        if (!hex && typeof colorNameToHex === "function") {
+          hex = colorNameToHex(name) || "";
+        }
+        if (
+          !hex &&
+          code &&
+          (code.startsWith("#") || /^[0-9A-Fa-f]{6}$/.test(code))
+        ) {
+          hex = code.startsWith("#") ? code : "#" + code;
+        }
+        var dotBg = hex || "var(--border)";
+        var chip = document.createElement("div");
+        chip.style.cssText =
+          "display:inline-flex;align-items:center;gap:7px;background:var(--surface3);border:1.5px solid var(--border);border-radius:20px;padding:5px 12px 5px 7px;cursor:default";
+        chip.classList.add("po-chip");
+        chip.innerHTML =
+          '<span style="width:22px;height:22px;border-radius:50%;flex-shrink:0;background:' +
+          esc(dotBg) +
+          ';border:2px solid rgba(0,0,0,.15);box-shadow:0 1px 3px rgba(0,0,0,.12);display:inline-block"></span>' +
+          '<span style="font-size:13px;font-weight:600;color:var(--text1)">' +
+          esc(name) +
+          "</span>";
+        chipsWrap.appendChild(chip);
+      });
+    }
+
+    // ── ربط الـ custom dropdown للمنتج التام ────────────────────────
+    (function bindPOItemDropdownEdit() {
+      var trigger = document.getElementById("po-id-trigger");
+      var panel = document.getElementById("po-id-panel");
+      var hidden = document.getElementById("po-item");
+      var listWrap = document.getElementById("po-id-list");
+      var searchEl = document.getElementById("po-id-search");
+      if (!trigger || !panel || !hidden) return;
+
+      // [ARCH-AUDIT-2026-07-17] موحّد عبر Core_UIManagers.initSearchableIdPanel
+      var _panelApiEdit = initSearchableIdPanel(trigger, panel, searchEl);
+      var openPanel = _panelApiEdit.openPanel;
+      var closePanel = _panelApiEdit.closePanel;
+      trigger.addEventListener("click", function (e) {
+        e.stopPropagation();
+        panel.classList.contains("os-id-open") ? closePanel() : openPanel();
+      });
+      trigger.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          panel.classList.contains("os-id-open") ? closePanel() : openPanel();
+        }
+        if (e.key === "Escape") closePanel();
+      });
+      if (searchEl) {
+        searchEl.addEventListener("input", function () {
+          var q = searchEl.value.trim().toLowerCase();
+          listWrap.querySelectorAll(".os-id-opt").forEach(function (opt) {
+            opt.style.display =
+              !q ||
+              (opt.dataset.name || "").toLowerCase().includes(q) ||
+              (opt.dataset.code || "").toLowerCase().includes(q)
+                ? ""
+                : "none";
+          });
+          listWrap.querySelectorAll(".os-id-group").forEach(function (g) {
+            g.style.display = Array.from(g.querySelectorAll(".os-id-opt")).some(
+              function (o) {
+                return o.style.display !== "none";
+              },
+            )
+              ? ""
+              : "none";
+          });
+        });
+      }
+      listWrap.addEventListener("click", function (e) {
+        var opt = e.target.closest(".os-id-opt");
+        if (!opt) return;
+        var code = opt.dataset.code;
+        var name = opt.dataset.name;
+        var selectedId = opt.dataset.id;
+        hidden.value = code;
+        var tw = trigger.querySelector(
+          ".os-id-selected-wrap, .os-id-placeholder",
+        );
+        if (tw)
+          tw.outerHTML =
+            '<div class="os-id-selected-wrap"><span class="os-id-sel-name">' +
+            esc(name) +
+            '</span><span class="os-id-sel-code">' +
+            esc(code) +
+            "</span></div>";
+        listWrap.querySelectorAll(".os-id-opt").forEach(function (o) {
+          o.classList.remove("os-id-selected");
+        });
+        opt.classList.add("os-id-selected");
+        closePanel();
+        // تعبئة ألوان الصنف الجديد تلقائياً
+        if (selectedId) {
+          var itemColors = getItemColors(selectedId);
+          if (itemColors && itemColors.length) {
+            var tbody = document.getElementById("po-colors-tbody");
+            if (tbody) {
+              tbody.innerHTML = "";
+              itemColors.forEach(function (c) {
+                window.addPOColorRow(c.code || "", c.name, 0);
+              });
+              renderColorChips();
+              if (currentPresetSizes)
+                buildSizesTableFromPreset(currentPresetSizes);
+            }
+          }
+        }
+      });
+      document.addEventListener("click", function (e) {
+        if (!e.target.closest("#po-item-wrap")) closePanel();
+      });
+    })();
+
+    // ── جدول المقاسات ───────────────────────────────────────────────
+    var currentPresetSizes = oldSizesLabels.length ? oldSizesLabels : null;
+
+    function buildSizesTableFromPreset(sizesArr) {
+      var colorRows = [];
+      document
+        .querySelectorAll("#po-colors-tbody tr.po-color-row")
+        .forEach(function (tr) {
+          var code = (tr.querySelector(".po-color-code") || {}).value || "";
+          var name = (tr.querySelector(".po-color-name") || {}).value || "";
+          if (code || name) colorRows.push({ code: code, name: name });
+        });
+      if (!colorRows.length) colorRows = [{ code: "", name: "لون 1" }];
+
+      var headerCells =
+        '<th style="padding:6px 8px;font-size:11px;font-weight:600;color:var(--text2);text-align:right;min-width:90px">اللون \\ المقاس</th>' +
+        sizesArr
+          .map(function (s) {
+            return (
+              '<th style="padding:6px 10px;text-align:center;min-width:70px;background:var(--accent-soft,rgba(37,99,235,.1));color:var(--accent);font-size:12px;font-weight:700">' +
+              '<span style="display:block;padding:3px 6px;background:var(--accent);color:#fff;border-radius:8px;font-size:11px">' +
+              esc(s) +
+              "</span></th>"
+            );
+          })
+          .join("");
+
+      var bodyRows = colorRows
+        .map(function (clr) {
+          var hex = "";
+          if (CSS_COLOR_MAP) {
+            hex =
+              CSS_COLOR_MAP[clr.name] ||
+              CSS_COLOR_MAP[(clr.name || "").toLowerCase()] ||
+              "";
+          }
+          if (
+            !hex &&
+            clr.code &&
+            (clr.code.startsWith("#") || /^[0-9A-Fa-f]{6}$/.test(clr.code))
+          ) {
+            hex = clr.code.startsWith("#") ? clr.code : "#" + clr.code;
+          }
+          var colorDot = hex
+            ? '<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:' +
+              esc(hex) +
+              ';border:1.5px solid rgba(0,0,0,.18);margin-left:6px;vertical-align:middle;flex-shrink:0"></span>'
+            : '<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:var(--border);border:1.5px solid rgba(0,0,0,.1);margin-left:6px;vertical-align:middle;flex-shrink:0"></span>';
+          var cells = sizesArr
+            .map(function () {
+              return (
+                '<td style="padding:6px 4px;text-align:center">' +
+                '<div style="width:60px;height:28px;margin:auto;background:var(--surface3);border:1.5px dashed var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center">' +
+                '<span style="font-size:11px;color:var(--text3)">—</span></div></td>'
+              );
+            })
+            .join("");
+          return (
+            '<tr style="border-bottom:1px solid var(--border)">' +
+            '<td style="padding:6px 10px;font-size:12px;font-weight:700;white-space:nowrap">' +
+            '<div style="display:flex;align-items:center">' +
+            colorDot +
+            '<span style="color:var(--text1)">' +
+            esc(clr.name || "") +
+            "</span></div></td>" +
+            cells +
+            "</tr>"
+          );
+        })
+        .join("");
+
+      var wrap = document.getElementById("po-sizes-table-wrap");
+      if (!wrap) return;
+      wrap.innerHTML =
+        '<div style="font-size:11px;color:var(--text3);margin-bottom:6px;padding:6px 8px;background:var(--surface3);border-radius:6px;display:flex;align-items:center;gap:6px">' +
+        "<span>ℹ️</span><span>هذا الجدول مرجع بصري للمقاسات والألوان — الكميات تُدخل في مرحلة الإنتاج الفعلي</span></div>" +
+        '<table style="width:100%;border-collapse:collapse;font-family:var(--font-main)">' +
+        '<thead><tr style="background:var(--surface3)">' +
+        headerCells +
+        "</tr></thead>" +
+        "<tbody>" +
+        bodyRows +
+        "</tbody></table>";
+    }
+
+    function applyPreset(sizesArr) {
+      currentPresetSizes = sizesArr;
+      var bar = document.getElementById("po-selected-preset-bar");
+      var labelsEl = document.getElementById("po-selected-preset-labels");
+      if (bar && labelsEl) {
+        labelsEl.textContent = sizesArr.join(" | ");
+        bar.style.display = "flex";
+      }
+      buildSizesTableFromPreset(sizesArr);
+    }
+
+    // أزرار presets
+    document.querySelectorAll(".po-preset-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var sizesArr = (this.dataset.sizes || "").split(",").map(function (s) {
+          return s.trim();
+        });
+        document.querySelectorAll(".po-preset-btn").forEach(function (b) {
+          b.style.background = "var(--surface3)";
+          b.style.borderColor = "var(--border)";
+          b.style.color = "var(--text2)";
+        });
+        this.style.background = "var(--accent)";
+        this.style.borderColor = "var(--accent)";
+        this.style.color = "#fff";
+        applyPreset(sizesArr);
+      });
+    });
+
+    // زر إلغاء الاختيار
+    var clearPresetBtn = document.getElementById("po-clear-preset-btn");
+    if (clearPresetBtn) {
+      clearPresetBtn.addEventListener("click", function () {
+        currentPresetSizes = null;
+        var bar = document.getElementById("po-selected-preset-bar");
+        if (bar) bar.style.display = "none";
+        document.querySelectorAll(".po-preset-btn").forEach(function (b) {
+          b.style.background = "var(--surface3)";
+          b.style.borderColor = "var(--border)";
+          b.style.color = "var(--text2)";
+        });
+        var wrap = document.getElementById("po-sizes-table-wrap");
+        if (wrap)
+          wrap.innerHTML =
+            '<div style="text-align:center;padding:24px;color:var(--text3);font-size:13px">اختر جدول مقاسات من الأعلى لبناء الجدول</div>';
+      });
+    }
+
+    // ── addPOColorRow / removePOColorRow ────────────────────────────
+    window.addPOColorRow = function (code, name, qty) {
+      var tbody = document.getElementById("po-colors-tbody");
+      var tr = document.createElement("tr");
+      tr.className = "po-color-row";
+      tr.style.display = "none";
+      code = code || "";
+      name = name || "";
+      qty = qty || 0;
+      tr.innerHTML =
+        '<td><input class="po-color-code" type="text" value="' +
+        esc(code) +
+        '"></td>' +
+        '<td><input class="po-color-name" type="text" value="' +
+        esc(name) +
+        '"></td>' +
+        '<td><input class="po-color-qty" type="number" min="0" value="' +
+        qty +
+        '"></td>';
+      tbody.appendChild(tr);
+      renderColorChips();
+      updateTotalDisplay();
+      if (currentPresetSizes) {
+        setTimeout(function () {
+          buildSizesTableFromPreset(currentPresetSizes);
+        }, 80);
+      }
+    };
+
+    window.removePOColorRow = function (chipOrBtn) {
+      var chip =
+        chipOrBtn &&
+        chipOrBtn.classList &&
+        chipOrBtn.classList.contains("po-chip")
+          ? chipOrBtn
+          : chipOrBtn
+            ? chipOrBtn.closest(".po-chip")
+            : null;
+      if (!chip) return;
+      var idx = parseInt(chip.dataset.idx);
+      var rows = document.querySelectorAll("#po-colors-tbody tr.po-color-row");
+      if (!isNaN(idx) && rows[idx]) rows[idx].remove();
+      renderColorChips();
+      updateTotalDisplay();
+      if (currentPresetSizes)
+        setTimeout(function () {
+          buildSizesTableFromPreset(currentPresetSizes);
+        }, 80);
+    };
+
+    // ── تحميل الألوان الحالية من الأمر ─────────────────────────────
+    currentColors.forEach(function (c) {
+      window.addPOColorRow(
+        c.color_code || c.size || "",
+        c.color_name || c.size || "",
+        c.qty || 0,
+      );
+    });
+
+    // لو فيه مقاسات محفوظة → استعادتها وعرض الـ preset bar
+    if (currentPresetSizes && currentPresetSizes.length) {
+      var bar = document.getElementById("po-selected-preset-bar");
+      var labelsEl = document.getElementById("po-selected-preset-labels");
+      if (bar && labelsEl) {
+        labelsEl.textContent = currentPresetSizes.join(" | ");
+        bar.style.display = "flex";
+      }
+      buildSizesTableFromPreset(currentPresetSizes);
+    } else {
+      var wrap = document.getElementById("po-sizes-table-wrap");
+      if (wrap)
+        wrap.innerHTML =
+          '<div style="text-align:center;padding:24px;color:var(--text3);font-size:13px"> اختر جدول مقاسات من الأعلى لبناء الجدول</div>';
+    }
+
+    // ── Save ────────────────────────────────────────────────────────
+    document
+      .getElementById("save-po-btn")
+      .addEventListener("click", function () {
+        var productId = itemCodeToId(document.getElementById("po-item").value);
+        var patronNum = document.getElementById("po-patron").value.trim();
+        var notes = document.getElementById("po-notes").value;
+        var targetQty =
+          parseInt(document.getElementById("po-target-qty").value) || 0;
+
+        // جمع بيانات جدول المقاسات
+        var sizeLabels =
+          currentPresetSizes && currentPresetSizes.length
+            ? currentPresetSizes
+            : Array.from(document.querySelectorAll(".po-size-label")).map(
+                function (inp) {
+                  return inp.value.trim();
+                },
+              );
+        var sizesTable = [];
+        document
+          .querySelectorAll("#po-sizes-table-wrap tbody tr")
+          .forEach(function (row) {
+            var colorCell = row.querySelector("td:first-child");
+            var colorName = colorCell ? colorCell.textContent.trim() : "";
+            var qtys = {};
+            row.querySelectorAll(".po-size-qty").forEach(function (inp) {
+              var idx = parseInt(inp.dataset.sizeIdx);
+              qtys[sizeLabels[idx] || "مقاس " + (idx + 1)] =
+                Number(inp.value) || 0;
+            });
+            var rowTotal = Object.values(qtys).reduce(function (a, b) {
+              return a + b;
+            }, 0);
+            if (rowTotal > 0)
+              sizesTable.push({
+                color: colorName,
+                sizes: qtys,
+                total: rowTotal,
+              });
+          });
+
+        var colors = [];
+        document
+          .querySelectorAll("#po-colors-tbody tr.po-color-row")
+          .forEach(function (tr) {
+            var code = tr.querySelector(".po-color-code").value.trim();
+            var name = tr.querySelector(".po-color-name").value.trim();
+            var qty = Number(tr.querySelector(".po-color-qty").value) || 0;
+            if (code || name)
+              colors.push({
+                size: code || name,
+                color_code: code,
+                color_name: name,
+                qty: qty,
+              });
+          });
+        var totalQty = colors.reduce(function (s, r) {
+          return s + r.qty;
+        }, 0);
+        if (!totalQty) totalQty = targetQty || Number(order.quantity || 0);
+
+        if (!productId) {
+          NotificationEngine.error("اختر المنتج");
+          return;
+        }
+        if (!patronNum) {
+          NotificationEngine.error("أدخل رقم الباترون");
+          return;
+        }
+
+        // [SE-ROLLOUT] عبر SaveEngine.run بدل _freezeUI/_gsr اليدوي.
+        var _updateData = {
+          product_id: productId,
+          quantity: totalQty,
+          target_quantity: targetQty,
+          patron_number: patronNum,
+          fabric_meters: order.fabric_meters || 0,
+          lining_meters: order.lining_meters || 0,
+          sizes: colors,
+          sizes_table: sizesTable.length
+            ? sizesTable
+            : oldSizesData.sizes_table || [],
+          sizes_labels: sizeLabels.length
+            ? sizeLabels
+            : oldSizesData.sizes_labels || [],
+          notes: notes,
+          user: APP.currentUser ? APP.currentUser.username : "",
+          sessionToken: SESSION.token,
+        };
+        SaveEngine.run({
+          screen: "Production.Order",
+          entity: "production_order",
+          recordId: id,
+          buttonId: "save-po-btn",
+          closeFn: closeModal,
+          data: _updateData,
+          fn: "updateProductionOrder",
+          params: [id, _updateData],
+          onSuccess: function (r) {
+            NotificationEngine.success(r.message);
+            reloadAfterMutation(function () {
+              renderPage("production");
+            });
+          },
+        });
+      });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // DISPATCH (صرف للمصنع)
+  // ─────────────────────────────────────────────────────────────
+
+  // ── اختيار أمر الإنتاج في شاشة الصرف ─────────────────────────
+  window.selectDispatchPO = function (poId) {
+    // تحديث الـ hidden input
+    var hidden = document.getElementById("disp-po");
+    if (hidden) hidden.value = poId;
+
+    // تحديث مظهر البطاقات
+    document.querySelectorAll(".po-card").forEach(function (card) {
+      var isSelected = card.dataset.poId === poId;
+      card.style.borderColor = isSelected ? "var(--accent)" : "var(--border)";
+      card.style.background = isSelected
+        ? "var(--accent-soft,rgba(37,99,235,.07))"
+        : "var(--surface2)";
+      card.style.boxShadow = isSelected
+        ? "0 0 0 3px rgba(37,99,235,.15)"
+        : "none";
+    });
+
+    // [إزالة] تم إلغاء بانر "أمر الإنتاج المختار" بناءً على طلب المستخدم
+    // لتجنب تكرار عرض الأمر تحت البطاقات
+  };
+
+  // ════════════════════════════════════════════════════════════════
+  // بيان القص — اختيار أمر الإنتاج (بطاقة click)
+  // ════════════════════════════════════════════════════════════════
+  window.selectCuttingPO = function (poId) {
+    var hidden = document.getElementById("cs-po");
+    if (hidden) hidden.value = poId;
+
+    // تحديث مظهر البطاقات
+    document
+      .querySelectorAll("#cs-po-cards-wrap .po-card")
+      .forEach(function (card) {
+        var isSelected = card.dataset.poId === poId;
+        card.style.borderColor = isSelected
+          ? "var(--danger-soft,#BE123C)"
+          : "var(--border)";
+        card.style.background = isSelected
+          ? "rgba(159,18,57,.06)"
+          : "var(--surface2)";
+        card.style.boxShadow = isSelected
+          ? "0 0 0 3px rgba(159,18,57,.15)"
+          : "none";
+      });
+
+    // إظهار المحتوى وتحميل البيانات
+    var content = document.getElementById("cs-content");
+    if (!content) return;
+    content.style.display = "block";
+
+    var order = (APP.data.productionOrders || []).find(function (o) {
+      return o.id === poId;
+    });
+    if (!order) return;
+
+    // معلومات الهيدر
+    var it = (APP.data.items || []).find(function (i) {
+      return i.id === order.product_id;
+    });
+    var setEl = function (id, val) {
+      var e = document.getElementById(id);
+      if (e) e.textContent = val || "—";
+    };
+    setEl("cs-product-name", it ? it.name : order.product_id);
+    setEl("cs-barcode", it ? it.code || it.id : order.product_id);
+    setEl("cs-patron", order.patron_number || "—");
+    setEl(
+      "cs-order-date",
+      typeof fmtDate === "function" ? fmtDate(order.date) : order.date || "—",
+    );
+
+    // تشغيل حدث change على cs-po لاستكمال باقي المنطق في bindCuttingStatement
+    var evt = new Event("change");
+    var poEl = document.getElementById("cs-po");
+    if (poEl) poEl.dispatchEvent(evt);
+  };
+
+  // ══════════════════════════════════════════════════════════════════════
+  // صرف للمصنع — Row Engine (Dispatch)
+  //  [FIX] كانت bindDispatch و dispAddRow مفقودتين — سبب الـ ReferenceError
+  // ══════════════════════════════════════════════════════════════════════
+
+  var _dispRowCounter = 0;
+
+  // ── dispAddRow — إضافة صف صنف جديد في جدول الصرف ───────────────────────
+  window.dispAddRow = function () {
+    var whVal = (document.getElementById("disp-wh") || {}).value || "";
+    var tbody = document.getElementById("disp-rows");
+    if (!tbody) return;
+
+    _dispRowCounter++;
+    var rid = "disprow-" + _dispRowCounter;
+    var iddUid = "disp-row-item-" + _dispRowCounter;
+    var ccdUid = "disp-row-color-" + _dispRowCounter;
+
+    var filteredItems = [];
+    if (whVal) {
+      var wh = (APP.data.warehouses || []).find(function (w) {
+        return w.id === whVal;
+      });
+      var whName = wh ? wh.name : whVal;
+      filteredItems = (APP.data.items || []).filter(function (item) {
+        if (!item.group) return false;
+        var group = (APP.data.groups || []).find(function (g) {
+          return (
+            String(g.id) === String(item.group) ||
+            String(g.prefix) === String(item.group)
+          );
+        });
+        if (!group || !group.warehouse_id) return false;
+        return group.warehouse_id === whVal || group.warehouse_id === whName;
+      });
+    } else {
+      filteredItems = APP.data.items || [];
+    }
+
+    var tr = document.createElement("tr");
+    tr.id = rid;
+    tr.dataset.iddUid = iddUid;
+    tr.dataset.ccdUid = ccdUid;
+    tr.style.borderBottom = "1px solid var(--border)";
+    tr.innerHTML =
+      '<td style="padding:6px 4px;text-align:center;vertical-align:middle">' +
+      '<span class="disp-row-serial" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;background:var(--accent);color:#fff;border-radius:50%;font-size:11px;font-weight:700">' +
+      _dispRowCounter +
+      "</span></td>" +
+      '<td style="padding:6px 8px;vertical-align:middle"><div id="' +
+      iddUid +
+      '-idd-outer"></div></td>' +
+      '<td style="padding:6px 8px;vertical-align:middle"><div id="' +
+      ccdUid +
+      '-ccd-outer"></div></td>' +
+      '<td style="padding:6px 8px;text-align:center;vertical-align:middle">' +
+      '<input type="number" class="input disp-row-qty" min="1" value="1" style="width:100%;text-align:center;font-weight:700;font-size:15px;color:var(--accent)" oninput="dispUpdateSummary()"></td>' +
+      '<td style="padding:6px 4px;text-align:center;vertical-align:middle">' +
+      '<div style="display:flex;align-items:center;justify-content:center;gap:2px">' +
+      '<button type="button" onclick="dispDuplicateRow(\'' +
+      rid +
+      '\')" style="background:none;border:none;cursor:pointer;padding:4px;border-radius:6px;color:var(--accent);opacity:.7;transition:opacity .15s" title="تكرار" onmouseover="this.style.opacity=\'1\'" onmouseout="this.style.opacity=\'.7\'"><i class="ti ti-copy" style="font-size:15px"></i></button>' +
+      '<button type="button" onclick="dispRemoveRow(\'' +
+      rid +
+      '\')" style="background:none;border:none;cursor:pointer;padding:4px;border-radius:6px;color:var(--danger)" title="حذف"><i class="ti ti-trash" style="font-size:16px"></i></button>' +
+      "</div></td>";
+
+    tbody.appendChild(tr);
+    _dispUpdateScrollLimit();
+
+    _buildItemDropdownWidget(
+      iddUid,
+      filteredItems,
+      "— اختر الصنف —",
+      function (itemId) {
+        _dispRebuildRowColor(ccdUid, itemId, whVal);
+        dispUpdateSummary();
+      },
+    );
+    _dispRebuildRowColor(ccdUid, null, whVal);
+    dispUpdateSummary();
+  };
+
+  function _dispRebuildRowColor(ccdUid, itemId, whVal) {
+    var outer = document.getElementById(ccdUid + "-ccd-outer");
+    if (!outer) return;
+    if (!itemId) {
+      outer.innerHTML = _ccdHTML(
+        ccdUid,
+        [],
+        null,
+        "— اختر الصنف أولاً —",
+        "noitem",
+      );
+      return;
+    }
+    var colors = getItemColors(itemId);
+    if (!colors.length) {
+      outer.innerHTML = _ccdHTML(ccdUid, [], null, "— لا ألوان —", "nocolor");
+      return;
+    }
+    var whName = (function () {
+      if (!whVal) return "";
+      var wh = (APP.data.warehouses || []).find(function (w) {
+        return w.id === whVal || w.name === whVal;
+      });
+      return wh ? wh.name : whVal;
+    })();
+    var colorsForDD = colors.map(function (c) {
+      var name = typeof c === "object" ? c.name : String(c);
+      var code = typeof c === "object" && c.code ? c.code : "";
+      var qty = getColorQtyFiltered(itemId, name, whName);
+      return {
+        name: name + " (رصيد: " + qty + ")",
+        _origName: name,
+        code: code,
+      };
+    });
+    outer.innerHTML = _ccdHTML(
+      ccdUid,
+      colorsForDD,
+      null,
+      "— اختر اللون —",
+      false,
+    );
+    _initCCD(ccdUid, null);
+  }
+
+  function _getDispRowValues(tr) {
+    var iddUid = tr.dataset.iddUid;
+    var ccdUid = tr.dataset.ccdUid;
+    var itemId = iddUid ? _getItemDropdownValue(iddUid) : "";
+    var color = ccdUid
+      ? (function () {
+          var h = document.getElementById(ccdUid);
+          return h ? h.value : "";
+        })()
+      : "";
+    var qty = Number((tr.querySelector(".disp-row-qty") || {}).value || 0);
+    return { itemId: itemId, color: color, qty: qty };
+  }
+
+  window.dispRemoveRow = function (rid) {
+    var tr = document.getElementById(rid);
+    if (tr) tr.remove();
+    document.querySelectorAll("#disp-rows tr").forEach(function (r, i) {
+      var span = r.querySelector(".disp-row-serial");
+      if (span) span.textContent = i + 1;
+    });
+    _dispUpdateScrollLimit();
+    dispUpdateSummary();
+  };
+
+  window.dispDuplicateRow = function (rid) {
+    var srcTr = document.getElementById(rid);
+    if (!srcTr) return;
+    var srcIddUid = srcTr.dataset.iddUid;
+    var srcCcdUid = srcTr.dataset.ccdUid;
+    var srcItemId = _getItemDropdownValue(srcIddUid);
+    var srcColor = (function () {
+      var h = document.getElementById(srcCcdUid);
+      return h ? h.value : "";
+    })();
+    var srcQty = (function () {
+      var inp = srcTr.querySelector(".disp-row-qty");
+      return inp ? inp.value : "1";
+    })();
+    var whVal = (document.getElementById("disp-wh") || {}).value || "";
+    dispAddRow();
+    var tbody = document.getElementById("disp-rows");
+    if (!tbody) return;
+    var newTr = tbody.lastElementChild;
+    if (!newTr) return;
+    var newIddUid = newTr.dataset.iddUid;
+    var newCcdUid = newTr.dataset.ccdUid;
+    var qtyInp = newTr.querySelector(".disp-row-qty");
+    if (qtyInp) qtyInp.value = srcQty;
+    if (srcItemId) {
+      var hiddenItem = document.getElementById(newIddUid);
+      if (hiddenItem) hiddenItem.value = srcItemId;
+      var srcItem = (APP.data.items || []).find(function (i) {
+        return i.id === srcItemId;
+      });
+      var dispEl = document.getElementById(newIddUid + "-idd-disp");
+      if (dispEl && srcItem) {
+        dispEl.className = "os-id-selected-wrap";
+        dispEl.innerHTML =
+          '<span class="os-id-sel-name">' +
+          esc(srcItem.name) +
+          "</span>" +
+          (srcItem.code
+            ? '<span class="os-id-sel-code">' + esc(srcItem.code) + "</span>"
+            : "");
+      }
+      _dispRebuildRowColor(newCcdUid, srcItemId, whVal);
+      if (srcColor) {
+        var hiddenColor = document.getElementById(newCcdUid);
+        if (hiddenColor) hiddenColor.value = srcColor;
+        var ccdDisp = document.getElementById(newCcdUid + "-ccd-disp");
+        if (ccdDisp) {
+          var hex = colorNameToHex(srcColor) || "#e2e8f0";
+          ccdDisp.innerHTML =
+            '<span style="width:14px;height:14px;border-radius:50%;background:' +
+            esc(hex) +
+            ';border:1.5px solid rgba(0,0,0,.13);flex-shrink:0;display:inline-block"></span><span style="color:var(--text)">' +
+            esc(srcColor) +
+            "</span>";
+        }
+      }
+    }
+    dispUpdateSummary();
+  };
+
+  function _dispUpdateScrollLimit() {
+    var table = document.getElementById("disp-items-table");
+    if (!table) return;
+    var wrap = table.parentElement;
+    if (!wrap) return;
+    var rows = document.querySelectorAll("#disp-rows tr");
+    var ROW_H = 54;
+    if (rows.length > 4) {
+      wrap.style.maxHeight = 38 + ROW_H * 4 + "px";
+      wrap.style.overflowY = "auto";
+    } else {
+      wrap.style.maxHeight = "none";
+      wrap.style.overflowY = "visible";
+    }
+    if (rows.length > 4) wrap.scrollTop = wrap.scrollHeight;
+  }
+
+  window.dispUpdateSummary = function () {
+    var rows = document.querySelectorAll("#disp-rows tr");
+    var totalQty = 0;
+    rows.forEach(function (r) {
+      totalQty += Number((r.querySelector(".disp-row-qty") || {}).value || 0);
+    });
+    var elI = document.getElementById("disp-total-items");
+    var elQ = document.getElementById("disp-total-qty");
+    if (elI) elI.textContent = rows.length;
+    if (elQ) elQ.textContent = totalQty;
+  };
+
+  function dispRebuildAllRows() {
+    var whVal = (document.getElementById("disp-wh") || {}).value || "";
+    var wh = (APP.data.warehouses || []).find(function (w) {
+      return w.id === whVal;
+    });
+    var whName = wh ? wh.name : whVal;
+    var filtered = (APP.data.items || []).filter(function (item) {
+      if (!item.group) return false;
+      var group = (APP.data.groups || []).find(function (g) {
+        return (
+          String(g.id) === String(item.group) ||
+          String(g.prefix) === String(item.group)
+        );
+      });
+      if (!group || !group.warehouse_id) return false;
+      return (
+        !whVal || group.warehouse_id === whVal || group.warehouse_id === whName
+      );
+    });
+    document.querySelectorAll("#disp-rows tr").forEach(function (tr) {
+      var iddUid = tr.dataset.iddUid;
+      var ccdUid = tr.dataset.ccdUid;
+      if (!iddUid) return;
+      var prevItemId = _getItemDropdownValue(iddUid);
+      _buildItemDropdownWidget(
+        iddUid,
+        filtered,
+        "— اختر الصنف —",
+        function (itemId) {
+          _dispRebuildRowColor(ccdUid, itemId, whVal);
+          dispUpdateSummary();
+        },
+      );
+      if (
+        prevItemId &&
+        filtered.find(function (i) {
+          return i.id === prevItemId;
+        })
+      ) {
+        var hiddenEl = document.getElementById(iddUid);
+        if (hiddenEl) {
+          hiddenEl.value = prevItemId;
+          var prevItem = filtered.find(function (i) {
+            return i.id === prevItemId;
+          });
+          var disp = document.getElementById(iddUid + "-idd-disp");
+          if (disp && prevItem) {
+            disp.className = "os-id-selected-wrap";
+            disp.innerHTML =
+              '<span class="os-id-sel-name">' +
+              esc(prevItem.name) +
+              "</span>" +
+              (prevItem.code
+                ? '<span class="os-id-sel-code">' +
+                  esc(prevItem.code) +
+                  "</span>"
+                : "");
+          }
+          _dispRebuildRowColor(ccdUid, prevItemId, whVal);
+        }
+      } else {
+        _dispRebuildRowColor(ccdUid, null, whVal);
+      }
+    });
+  }
+
+  // ── bindDispatch — الربط الكامل لصفحة صرف المصنع ───────────────────────
+  function bindDispatch() {
+    _upgradeWhSelect("disp-wh");
+    _dispRowCounter = 0;
+
+    var _dispImgBase64 = null;
+    var _dispImgName = null;
+
+    var imgInput = document.getElementById("disp-img-input");
+    if (imgInput) {
+      imgInput.addEventListener("change", function () {
+        var file = this.files[0];
+        if (!file) return;
+        if (file.size > 8 * 1024 * 1024) {
+          NotificationEngine.error("حجم الصورة أكبر من 8 ميجا");
+          return;
+        }
+        _dispImgName = file.name;
+        var reader = new FileReader();
+        reader.onload = function (e) {
+          _dispImgBase64 = e.target.result.split(",")[1];
+          var thumb = document.getElementById("disp-img-thumb");
+          if (thumb) thumb.src = e.target.result;
+          var preview = document.getElementById("disp-img-preview");
+          if (preview) preview.style.display = "";
+          var zone = document.getElementById("disp-img-zone");
+          if (zone) zone.style.display = "none";
+          var status = document.getElementById("disp-img-upload-status");
+          if (status) status.textContent = " جاهز للرفع مع الحفظ";
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    window.dispClearImage = function () {
+      _dispImgBase64 = null;
+      _dispImgName = null;
+      var preview = document.getElementById("disp-img-preview");
+      if (preview) preview.style.display = "none";
+      var zone = document.getElementById("disp-img-zone");
+      if (zone) zone.style.display = "";
+      var inp = document.getElementById("disp-img-input");
+      if (inp) inp.value = "";
+    };
+
+    function resolveWhName(whIdOrName) {
+      var wh = (APP.data.warehouses || []).find(function (w) {
+        return w.id === whIdOrName || w.name === whIdOrName;
+      });
+      return wh ? wh.name : whIdOrName || "";
+    }
+
+    var whSel = document.getElementById("disp-wh");
+    if (whSel) {
+      whSel.addEventListener("change", function () {
+        dispRebuildAllRows();
+      });
+    }
+
+    dispAddRow();
+
+    var btn = document.getElementById("btn-disp");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      var poVal = (document.getElementById("disp-po") || {}).value || "";
+      var whVal = (document.getElementById("disp-wh") || {}).value || "";
+      var refVal = (document.getElementById("disp-ref") || {}).value || "";
+      var notesVal = (document.getElementById("disp-notes") || {}).value || "";
+
+      if (!poVal) {
+        NotificationEngine.error("يجب اختيار أمر الإنتاج");
+        return;
+      }
+      if (!whVal) {
+        NotificationEngine.error("يجب اختيار مخزن الصرف");
+        return;
+      }
+
+      var rows = document.querySelectorAll("#disp-rows tr");
+      if (!rows.length) {
+        NotificationEngine.error("أضف صنفاً واحداً على الأقل");
+        return;
+      }
+
+      var items = [];
+      var hasError = false;
+      rows.forEach(function (r, idx) {
+        var vals = _getDispRowValues(r);
+        var rowNum = idx + 1;
+        if (!vals.itemId) {
+          NotificationEngine.error("الصف " + rowNum + ": يجب اختيار الصنف");
+          hasError = true;
+          return;
+        }
+        if (!vals.qty || vals.qty < 1) {
+          NotificationEngine.error("الصف " + rowNum + ": الكمية غير صحيحة");
+          hasError = true;
+          return;
+        }
+        var itemColors = getItemColors(vals.itemId);
+        if (itemColors.length && !vals.color) {
+          NotificationEngine.error("الصف " + rowNum + ": يجب اختيار اللون لهذا الصنف");
+          hasError = true;
+          return;
+        }
+        items.push({
+          item_id: vals.itemId,
+          quantity: vals.qty,
+          color: vals.color,
+        });
+      });
+      if (hasError) return;
+
+      var batch = {
+        type: "DISPATCH",
+        from_warehouse: resolveWhName(whVal),
+        notes:
+          (notesVal ? notesVal + " | " : "") +
+          "صرف للمصنع — أمر إنتاج: " +
+          poVal,
+        user: APP.currentUser.username || "",
+        ref: refVal || poVal,
+        production_order_id: poVal,
+        items: items,
+      };
+
+      typeof closeModal === "function" && closeModal();
+
+      function doSave(imageUrl) {
+        if (imageUrl) batch.image_url = imageUrl;
+        // [SE-ROLLOUT] عبر SaveEngine.run بدل _freezeUI/_gsr اليدوي.
+        SaveEngine.run({
+          screen: "Production.Dispatch",
+          entity: "batch_transaction",
+          buttonId: "btn-disp",
+          data: batch,
+          fn: "addBatchTransaction",
+          params: [batch],
+          onSuccess: function (r) {
+            NotificationEngine.success(r.message);
+            reloadAfterMutation(function () {
+              renderPage("dispatch");
+            });
+          },
+        });
+      }
+
+      if (_dispImgBase64 && _dispImgName) {
+        var status = document.getElementById("disp-img-upload-status");
+        if (status) status.textContent = "⏳ جاري رفع الصورة...";
+        _gsr(
+          "uploadImageToDrive",
+          [
+            _dispImgBase64,
+            _dispImgName,
+            "dispatch",
+            { enabled: true, provider: "tinypng" },
+          ],
+          {
+          label: "uploadImageToDrive:dispatch",
+          rawResponse: true,
+          onSuccess: function (r) {
+            var url = r && r.data;
+            if (status) status.textContent = url ? " تم الرفع" : " فشل الرفع";
+            doSave(url || "");
+          },
+          onError: function () {
+            if (status) status.textContent = " فشل رفع الصورة";
+            doSave("");
+          },
+        });
+      } else {
+        doSave("");
+      }
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  ↩️  مرتجع من المصنع — Row Engine (مثل Dispatch)
+  // ══════════════════════════════════════════════════════════════════════
+
+  var _frRowCounter = 0;
+
+  // ── بناء صف صنف جديد ─────────────────────────────────────────────────
+  window.frAddRow = function () {
+    var whVal = (document.getElementById("fr-wh") || {}).value || "";
+    var tbody = document.getElementById("fr-rows");
+    if (!tbody) return;
+
+    _frRowCounter++;
+    var rid = "frow-" + _frRowCounter;
+    var iddUid = "fr-row-item-" + _frRowCounter;
+    var ccdUid = "fr-row-color-" + _frRowCounter;
+
+    // فلترة الأصناف على حسب المخزن المختار
+    var filteredItems = [];
+    if (whVal) {
+      var wh = APP.data.warehouses.find(function (w) {
+        return w.id === whVal;
+      });
+      var whName = wh ? wh.name : whVal;
+      filteredItems = APP.data.items.filter(function (item) {
+        if (!item.group) return false;
+        var group = APP.data.groups.find(function (g) {
+          return (
+            String(g.id) === String(item.group) ||
+            String(g.prefix) === String(item.group)
+          );
+        });
+        if (!group || !group.warehouse_id) return false;
+        return group.warehouse_id === whVal || group.warehouse_id === whName;
+      });
+    } else {
+      // بدون فلترة — كل الأصناف
+      filteredItems = APP.data.items;
+    }
+
+    var tr = document.createElement("tr");
+    tr.id = rid;
+    tr.dataset.iddUid = iddUid;
+    tr.dataset.ccdUid = ccdUid;
+    tr.style.borderBottom = "1px solid var(--border)";
+    tr.innerHTML =
+      '<td style="padding:6px 4px;text-align:center;vertical-align:middle">' +
+      '<span class="fr-row-serial" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;background:#f97316;color:#fff;border-radius:50%;font-size:11px;font-weight:700">' +
+      _frRowCounter +
+      "</span></td>" +
+      '<td style="padding:6px 8px;vertical-align:middle">' +
+      '<div id="' +
+      iddUid +
+      '-idd-outer"></div></td>' +
+      '<td style="padding:6px 8px;vertical-align:middle">' +
+      '<div id="' +
+      ccdUid +
+      '-ccd-outer"></div></td>' +
+      '<td style="padding:6px 8px;text-align:center;vertical-align:middle">' +
+      '<input type="number" class="input fr-row-qty" min="1" value="1" style="width:100%;text-align:center;font-weight:700;font-size:15px;color:#f97316" oninput="frUpdateSummary()"></td>' +
+      '<td style="padding:6px 4px;text-align:center;vertical-align:middle">' +
+      '<div style="display:flex;align-items:center;justify-content:center;gap:2px">' +
+      '<button type="button" onclick="frDuplicateRow(\'' +
+      rid +
+      '\')" style="background:none;border:none;cursor:pointer;padding:4px;border-radius:6px;color:#f97316;opacity:.7;transition:opacity .15s" title="تكرار" onmouseover="this.style.opacity=\'1\'" onmouseout="this.style.opacity=\'.7\'">' +
+      '<i class="ti ti-copy" style="font-size:15px"></i></button>' +
+      '<button type="button" onclick="frRemoveRow(\'' +
+      rid +
+      '\')" style="background:none;border:none;cursor:pointer;padding:4px;border-radius:6px;color:var(--danger)" title="حذف">' +
+      '<i class="ti ti-trash" style="font-size:16px"></i></button>' +
+      "</div></td>";
+
+    tbody.appendChild(tr);
+    _frUpdateScrollLimit();
+
+    _buildItemDropdownWidget(
+      iddUid,
+      filteredItems,
+      "— اختر الصنف —",
+      function (itemId) {
+        _frRowColorChange(tr, ccdUid, itemId, whVal);
+        frUpdateSummary();
+      },
+    );
+    _frRowColorChange(tr, ccdUid, null, whVal);
+    frUpdateSummary();
+  };
+
+  function _frRowColorChange(tr, ccdUid, itemId, whVal) {
+    _frRebuildRowColor(ccdUid, itemId, whVal);
+  }
+
+  function _frRebuildRowColor(ccdUid, itemId, whVal) {
+    var outer = document.getElementById(ccdUid + "-ccd-outer");
+    if (!outer) return;
+    if (!itemId) {
+      outer.innerHTML = _ccdHTML(
+        ccdUid,
+        [],
+        null,
+        "— اختر الصنف أولاً —",
+        "noitem",
+      );
+      return;
+    }
+    var colors = getItemColors(itemId);
+    if (!colors.length) {
+      outer.innerHTML = _ccdHTML(ccdUid, [], null, "— لا ألوان —", "nocolor");
+      return;
+    }
+    var whName = (function () {
+      if (!whVal) return "";
+      var wh = (APP.data.warehouses || []).find(function (w) {
+        return w.id === whVal || w.name === whVal;
+      });
+      return wh ? wh.name : whVal;
+    })();
+    var colorsForDD = colors.map(function (c) {
+      var name = typeof c === "object" ? c.name : String(c);
+      var code = typeof c === "object" && c.code ? c.code : "";
+      var qty = getColorQtyFiltered(itemId, name, whName);
+      return {
+        name: name + " (رصيد: " + qty + ")",
+        _origName: name,
+        code: code,
+      };
+    });
+    outer.innerHTML = _ccdHTML(
+      ccdUid,
+      colorsForDD,
+      null,
+      "— اختر اللون —",
+      false,
+    );
+    _initCCD(ccdUid, null);
+  }
+
+  function _getFrRowValues(tr) {
+    var iddUid = tr.dataset.iddUid;
+    var ccdUid = tr.dataset.ccdUid;
+    var itemId = iddUid ? _getItemDropdownValue(iddUid) : "";
+    var color = ccdUid
+      ? (function () {
+          var h = document.getElementById(ccdUid);
+          return h ? h.value : "";
+        })()
+      : "";
+    var qty = Number((tr.querySelector(".fr-row-qty") || {}).value || 0);
+    return { itemId: itemId, color: color, qty: qty };
+  }
+
+  window.frRemoveRow = function (rid) {
+    var tr = document.getElementById(rid);
+    if (tr) tr.remove();
+    document.querySelectorAll("#fr-rows tr").forEach(function (r, i) {
+      var span = r.querySelector(".fr-row-serial");
+      if (span) span.textContent = i + 1;
+    });
+    _frUpdateScrollLimit();
+    frUpdateSummary();
+  };
+
+  window.frDuplicateRow = function (rid) {
+    var srcTr = document.getElementById(rid);
+    if (!srcTr) return;
+    var srcIddUid = srcTr.dataset.iddUid;
+    var srcCcdUid = srcTr.dataset.ccdUid;
+    var srcItemId = _getItemDropdownValue(srcIddUid);
+    var srcColor = (function () {
+      var h = document.getElementById(srcCcdUid);
+      return h ? h.value : "";
+    })();
+    var srcQty = (function () {
+      var inp = srcTr.querySelector(".fr-row-qty");
+      return inp ? inp.value : "1";
+    })();
+    var whVal = (document.getElementById("fr-wh") || {}).value || "";
+
+    frAddRow();
+
+    var tbody = document.getElementById("fr-rows");
+    if (!tbody) return;
+    var newTr = tbody.lastElementChild;
+    if (!newTr) return;
+    var newIddUid = newTr.dataset.iddUid;
+    var newCcdUid = newTr.dataset.ccdUid;
+
+    var qtyInp = newTr.querySelector(".fr-row-qty");
+    if (qtyInp) qtyInp.value = srcQty;
+
+    if (srcItemId) {
+      var hiddenItem = document.getElementById(newIddUid);
+      if (hiddenItem) hiddenItem.value = srcItemId;
+      var srcItem = APP.data.items.find(function (i) {
+        return i.id === srcItemId;
+      });
+      var dispEl = document.getElementById(newIddUid + "-idd-disp");
+      if (dispEl && srcItem) {
+        dispEl.className = "os-id-selected-wrap";
+        dispEl.innerHTML =
+          '<span class="os-id-sel-name">' +
+          esc(srcItem.name) +
+          "</span>" +
+          (srcItem.code
+            ? '<span class="os-id-sel-code">' + esc(srcItem.code) + "</span>"
+            : "");
+      }
+      _frRowColorChange(newTr, newCcdUid, srcItemId, whVal);
+      if (srcColor) {
+        var hiddenColor = document.getElementById(newCcdUid);
+        if (hiddenColor) hiddenColor.value = srcColor;
+        var ccdDisp = document.getElementById(newCcdUid + "-ccd-disp");
+        if (ccdDisp) {
+          var hex = colorNameToHex(srcColor) || "#e2e8f0";
+          ccdDisp.innerHTML =
+            '<span style="width:14px;height:14px;border-radius:50%;background:' +
+            esc(hex) +
+            ';border:1.5px solid rgba(0,0,0,.13);flex-shrink:0;display:inline-block"></span>' +
+            '<span style="color:var(--text)">' +
+            esc(srcColor) +
+            "</span>";
+        }
+      }
+    }
+    frUpdateSummary();
+  };
+
+  function _frUpdateScrollLimit() {
+    var table = document.getElementById("fr-items-table");
+    if (!table) return;
+    var wrap = table.parentElement;
+    if (!wrap) return;
+    var rows = document.querySelectorAll("#fr-rows tr");
+    var ROW_H = 54;
+    if (rows.length > 4) {
+      wrap.style.maxHeight = 38 + ROW_H * 4 + "px";
+      wrap.style.overflowY = "auto";
+    } else {
+      wrap.style.maxHeight = "none";
+      wrap.style.overflowY = "visible";
+    }
+    if (rows.length > 4) wrap.scrollTop = wrap.scrollHeight;
+  }
+
+  window.frUpdateSummary = function () {
+    var rows = document.querySelectorAll("#fr-rows tr");
+    var totalQty = 0;
+    rows.forEach(function (r) {
+      totalQty += Number((r.querySelector(".fr-row-qty") || {}).value || 0);
+    });
+    var elI = document.getElementById("fr-total-items");
+    var elQ = document.getElementById("fr-total-qty");
+    if (elI) elI.textContent = rows.length;
+    if (elQ) elQ.textContent = totalQty;
+  };
+
+  function frRebuildAllRows() {
+    var whVal = (document.getElementById("fr-wh") || {}).value || "";
+    var wh = APP.data.warehouses.find(function (w) {
+      return w.id === whVal;
+    });
+    var whName = wh ? wh.name : whVal;
+
+    var filtered = APP.data.items.filter(function (item) {
+      if (!item.group) return false;
+      var group = APP.data.groups.find(function (g) {
+        return (
+          String(g.id) === String(item.group) ||
+          String(g.prefix) === String(item.group)
+        );
+      });
+      if (!group || !group.warehouse_id) return false;
+      return (
+        !whVal || group.warehouse_id === whVal || group.warehouse_id === whName
+      );
+    });
+
+    document.querySelectorAll("#fr-rows tr").forEach(function (tr) {
+      var iddUid = tr.dataset.iddUid;
+      var ccdUid = tr.dataset.ccdUid;
+      if (!iddUid) return;
+      var prevItemId = _getItemDropdownValue(iddUid);
+      _buildItemDropdownWidget(
+        iddUid,
+        filtered,
+        "— اختر الصنف —",
+        function (itemId) {
+          _frRowColorChange(tr, ccdUid, itemId, whVal);
+          frUpdateSummary();
+        },
+      );
+      if (
+        prevItemId &&
+        filtered.find(function (i) {
+          return i.id === prevItemId;
+        })
+      ) {
+        var hiddenEl = document.getElementById(iddUid);
+        if (hiddenEl) {
+          hiddenEl.value = prevItemId;
+          var prevItem = filtered.find(function (i) {
+            return i.id === prevItemId;
+          });
+          var disp = document.getElementById(iddUid + "-idd-disp");
+          if (disp && prevItem) {
+            disp.className = "os-id-selected-wrap";
+            disp.innerHTML =
+              '<span class="os-id-sel-name">' +
+              esc(prevItem.name) +
+              "</span>" +
+              (prevItem.code
+                ? '<span class="os-id-sel-code">' +
+                  esc(prevItem.code) +
+                  "</span>"
+                : "");
+          }
+          _frRebuildRowColor(ccdUid, prevItemId, whVal);
+        }
+      } else {
+        _frRebuildRowColor(ccdUid, null, whVal);
+      }
+    });
+  }
+
+  // ── selectFactoryReturnPO — تحديث بانر المعلومات ──────────────────────
+  window.selectFactoryReturnPO = function (poId) {
+    var hidden = document.getElementById("fr-po");
+    if (hidden) hidden.value = poId;
+
+    document.querySelectorAll(".fr-po-card").forEach(function (card) {
+      var isSelected = card.dataset.poId === poId;
+      card.style.borderColor = isSelected ? "#f97316" : "var(--border)";
+      card.style.background = isSelected
+        ? "rgba(249,115,22,.07)"
+        : "var(--surface2)";
+      card.style.boxShadow = isSelected
+        ? "0 0 0 3px rgba(249,115,22,.18)"
+        : "none";
+    });
+
+    // [إزالة] تم إلغاء بانر "أمر الإنتاج المختار" بناءً على طلب المستخدم
+
+    // تحديث مرجع رقم المرجع تلقائياً
+    var refInp = document.getElementById("fr-ref");
+    if (refInp && !refInp.value.trim()) refInp.value = poId;
+  };
+
+  // ── bindFactoryReturn — الربط الكامل ─────────────────────────────────
+  function bindFactoryReturn() {
+    _upgradeWhSelect("fr-wh");
+    _frRowCounter = 0;
+
+    // رفع الصورة
+    var _frImgBase64 = null;
+    var _frImgName = null;
+
+    var imgInput = document.getElementById("fr-img-input");
+    if (imgInput) {
+      imgInput.addEventListener("change", function () {
+        var file = this.files[0];
+        if (!file) return;
+        if (file.size > 8 * 1024 * 1024) {
+          NotificationEngine.error("حجم الصورة أكبر من 8 ميجا");
+          return;
+        }
+        _frImgName = file.name;
+        var reader = new FileReader();
+        reader.onload = function (e) {
+          _frImgBase64 = e.target.result.split(",")[1];
+          var thumb = document.getElementById("fr-img-thumb");
+          if (thumb) thumb.src = e.target.result;
+          var preview = document.getElementById("fr-img-preview");
+          if (preview) preview.style.display = "";
+          var zone = document.getElementById("fr-img-zone");
+          if (zone) zone.style.display = "none";
+          var status = document.getElementById("fr-img-upload-status");
+          if (status) status.textContent = " جاهز للرفع مع الحفظ";
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    window.frClearImage = function () {
+      _frImgBase64 = null;
+      _frImgName = null;
+      var preview = document.getElementById("fr-img-preview");
+      if (preview) preview.style.display = "none";
+      var zone = document.getElementById("fr-img-zone");
+      if (zone) zone.style.display = "";
+      var inp = document.getElementById("fr-img-input");
+      if (inp) inp.value = "";
+    };
+
+    function resolveWhName(whIdOrName) {
+      var wh = APP.data.warehouses.find(function (w) {
+        return w.id === whIdOrName || w.name === whIdOrName;
+      });
+      return wh ? wh.name : whIdOrName || "";
+    }
+
+    // حدث تغيير المخزن
+    var whSel = document.getElementById("fr-wh");
+    if (whSel) {
+      whSel.addEventListener("change", function () {
+        frRebuildAllRows();
+      });
+    }
+
+    // أضف أول صف
+    frAddRow();
+
+    // ── زر التسجيل ───────────────────────────────────────────────────
+    var btn = document.getElementById("btn-fr");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      var poVal = (document.getElementById("fr-po") || {}).value || "";
+      var whVal = (document.getElementById("fr-wh") || {}).value || "";
+      var refVal = (document.getElementById("fr-ref") || {}).value || "";
+      var notesVal = (document.getElementById("fr-notes") || {}).value || "";
+
+      if (!poVal) {
+        NotificationEngine.error("يجب اختيار أمر الإنتاج");
+        return;
+      }
+      if (!whVal) {
+        NotificationEngine.error("يجب اختيار المخزن المستهدف");
+        return;
+      }
+
+      var rows = document.querySelectorAll("#fr-rows tr");
+      if (!rows.length) {
+        NotificationEngine.error("أضف صنفاً واحداً على الأقل");
+        return;
+      }
+
+      var items = [];
+      var hasError = false;
+      rows.forEach(function (r, idx) {
+        var vals = _getFrRowValues(r);
+        var rowNum = idx + 1;
+        if (!vals.itemId) {
+          NotificationEngine.error("الصف " + rowNum + ": يجب اختيار الصنف");
+          hasError = true;
+          return;
+        }
+        if (!vals.qty || vals.qty < 1) {
+          NotificationEngine.error("الصف " + rowNum + ": الكمية غير صحيحة");
+          hasError = true;
+          return;
+        }
+        var itemColors = getItemColors(vals.itemId);
+        if (itemColors.length && !vals.color) {
+          NotificationEngine.error("الصف " + rowNum + ": يجب اختيار اللون لهذا الصنف");
+          hasError = true;
+          return;
+        }
+        items.push({
+          item_id: vals.itemId,
+          quantity: vals.qty,
+          color: vals.color,
+        });
+      });
+      if (hasError) return;
+
+      var batch = {
+        type: "FACTORY_RETURN",
+        to_warehouse: resolveWhName(whVal),
+        notes:
+          (notesVal ? notesVal + " | " : "") +
+          "مرتجع من مصنع — أمر إنتاج: " +
+          poVal,
+        user: APP.currentUser.username || "",
+        ref: refVal || poVal,
+        items: items,
+      };
+
+      closeModal && closeModal();
+
+      function doSave(imageUrl) {
+        if (imageUrl) batch.image_url = imageUrl;
+        // [SE-ROLLOUT] عبر SaveEngine.run بدل _freezeUI/_gsr اليدوي.
+        SaveEngine.run({
+          screen: "Production.FactoryReturn",
+          entity: "batch_transaction",
+          buttonId: "btn-fr",
+          data: batch,
+          fn: "addBatchTransaction",
+          params: [batch],
+          onSuccess: function (r) {
+            NotificationEngine.success(r.message);
+            reloadAfterMutation(function () {
+              renderPage("factory_return");
+            });
+          },
+        });
+      }
+
+      if (_frImgBase64 && _frImgName) {
+        var status = document.getElementById("fr-img-upload-status");
+        if (status) status.textContent = "⏳ جاري رفع الصورة...";
+        _gsr(
+          "uploadImageToDrive",
+          [
+            _frImgBase64,
+            _frImgName,
+            "factory_return",
+            { enabled: true, provider: "tinypng" },
+          ],
+          {
+            label: "uploadImageToDrive:factoryReturn",
+            rawResponse: true,
+            onSuccess: function (r) {
+              var url = r && r.data;
+              if (status)
+                status.textContent = url ? " تم الرفع" : " فشل الرفع";
+              doSave(url || "");
+            },
+            onError: function () {
+              if (status) status.textContent = " فشل رفع الصورة";
+              doSave("");
+            },
+          },
+        );
+      } else {
+        doSave("");
+      }
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // استلام منتج تام — Row Engine (مثل Dispatch)
+  // ══════════════════════════════════════════════════════════════════════
+
+  var _fgRowCounter = 0;
+
+  window.fgAddRow = function () {
+    var toWh = (document.getElementById("fg-to") || {}).value || "";
+    var tbody = document.getElementById("fg-rows");
+    if (!tbody) return;
+
+    _fgRowCounter++;
+    var rid = "fgrow-" + _fgRowCounter;
+    var iddUid = "fg-row-item-" + _fgRowCounter;
+    var ccdUid = "fg-row-color-" + _fgRowCounter;
+
+    // المنتجات التامة فقط — أصناف مخزن التام
+    var fgItems = (APP.data.items || []).filter(function (item) {
+      if (!item.group) return false;
+      var group = (APP.data.groups || []).find(function (g) {
+        return (
+          String(g.id) === String(item.group) ||
+          String(g.prefix) === String(item.group)
+        );
+      });
+      if (!group || !group.warehouse_id) return false;
+      var wh = (APP.data.warehouses || []).find(function (w) {
+        return w.id === group.warehouse_id || w.name === group.warehouse_id;
+      });
+      return (
+        wh &&
+        String(wh.type || "")
+          .trim()
+          .startsWith("تام")
+      );
+    });
+    if (!fgItems.length) fgItems = APP.data.items; // fallback
+
+    var tr = document.createElement("tr");
+    tr.id = rid;
+    tr.dataset.iddUid = iddUid;
+    tr.dataset.ccdUid = ccdUid;
+    tr.style.borderBottom = "1px solid var(--border)";
+    tr.innerHTML =
+      '<td style="padding:6px 4px;text-align:center;vertical-align:middle">' +
+      '<span class="fg-row-serial" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;background:#047857;color:#fff;border-radius:50%;font-size:11px;font-weight:700">' +
+      _fgRowCounter +
+      "</span></td>" +
+      '<td style="padding:6px 8px;vertical-align:middle">' +
+      '<div id="' +
+      iddUid +
+      '-idd-outer"></div></td>' +
+      '<td style="padding:6px 8px;vertical-align:middle">' +
+      '<div id="' +
+      ccdUid +
+      '-ccd-outer"></div></td>' +
+      '<td style="padding:6px 8px;text-align:center;vertical-align:middle">' +
+      '<input type="number" class="input fg-row-qty" min="1" value="1" style="width:100%;text-align:center;font-weight:700;font-size:15px;color:#047857" oninput="fgUpdateSummary()"></td>' +
+      '<td style="padding:6px 4px;text-align:center;vertical-align:middle">' +
+      '<div style="display:flex;align-items:center;justify-content:center;gap:2px">' +
+      '<button type="button" onclick="fgDuplicateRow(\'' +
+      rid +
+      '\')" style="background:none;border:none;cursor:pointer;padding:4px;border-radius:6px;color:#047857;opacity:.7;transition:opacity .15s" title="تكرار" onmouseover="this.style.opacity=\'1\'" onmouseout="this.style.opacity=\'.7\'">' +
+      '<i class="ti ti-copy" style="font-size:15px"></i></button>' +
+      '<button type="button" onclick="fgRemoveRow(\'' +
+      rid +
+      '\')" style="background:none;border:none;cursor:pointer;padding:4px;border-radius:6px;color:var(--danger)" title="حذف">' +
+      '<i class="ti ti-trash" style="font-size:16px"></i></button>' +
+      "</div></td>";
+
+    tbody.appendChild(tr);
+    _fgUpdateScrollLimit();
+
+    _buildItemDropdownWidget(
+      iddUid,
+      fgItems,
+      "— اختر المنتج —",
+      function (itemId) {
+        _fgRebuildRowColor(ccdUid, itemId, toWh);
+        fgUpdateSummary();
+      },
+    );
+    _fgRebuildRowColor(ccdUid, null, toWh);
+    fgUpdateSummary();
+  };
+
+  function _fgRebuildRowColor(ccdUid, itemId, whVal) {
+    var outer = document.getElementById(ccdUid + "-ccd-outer");
+    if (!outer) return;
+    if (!itemId) {
+      outer.innerHTML = _ccdHTML(
+        ccdUid,
+        [],
+        null,
+        "— اختر المنتج أولاً —",
+        "noitem",
+      );
+      return;
+    }
+    var colors = getItemColors(itemId);
+    if (!colors.length) {
+      outer.innerHTML = _ccdHTML(ccdUid, [], null, "— لا ألوان —", "nocolor");
+      return;
+    }
+    var whName = (function () {
+      if (!whVal) return "";
+      var wh = (APP.data.warehouses || []).find(function (w) {
+        return w.id === whVal || w.name === whVal;
+      });
+      return wh ? wh.name : whVal;
+    })();
+    var colorsForDD = colors.map(function (c) {
+      var name = typeof c === "object" ? c.name : String(c);
+      var code = typeof c === "object" && c.code ? c.code : "";
+      var qty = getColorQtyFiltered(itemId, name, whName);
+      return {
+        name: name + " (رصيد: " + qty + ")",
+        _origName: name,
+        code: code,
+      };
+    });
+    outer.innerHTML = _ccdHTML(
+      ccdUid,
+      colorsForDD,
+      null,
+      "— اختر اللون —",
+      false,
+    );
+    _initCCD(ccdUid, null);
+  }
+
+  function _getFgRowValues(tr) {
+    var iddUid = tr.dataset.iddUid;
+    var ccdUid = tr.dataset.ccdUid;
+    var itemId = iddUid ? _getItemDropdownValue(iddUid) : "";
+    var color = ccdUid
+      ? (function () {
+          var h = document.getElementById(ccdUid);
+          return h ? h.value : "";
+        })()
+      : "";
+    var qty = Number((tr.querySelector(".fg-row-qty") || {}).value || 0);
+    return { itemId: itemId, color: color, qty: qty };
+  }
+
+  window.fgRemoveRow = function (rid) {
+    var tr = document.getElementById(rid);
+    if (tr) tr.remove();
+    document.querySelectorAll("#fg-rows tr").forEach(function (r, i) {
+      var span = r.querySelector(".fg-row-serial");
+      if (span) span.textContent = i + 1;
+    });
+    _fgUpdateScrollLimit();
+    fgUpdateSummary();
+  };
+
+  window.fgDuplicateRow = function (rid) {
+    var srcTr = document.getElementById(rid);
+    if (!srcTr) return;
+    var srcIddUid = srcTr.dataset.iddUid;
+    var srcCcdUid = srcTr.dataset.ccdUid;
+    var srcItemId = _getItemDropdownValue(srcIddUid);
+    var srcColor = (function () {
+      var h = document.getElementById(srcCcdUid);
+      return h ? h.value : "";
+    })();
+    var srcQty = (function () {
+      var inp = srcTr.querySelector(".fg-row-qty");
+      return inp ? inp.value : "1";
+    })();
+    var toWh = (document.getElementById("fg-to") || {}).value || "";
+
+    fgAddRow();
+
+    var tbody = document.getElementById("fg-rows");
+    if (!tbody) return;
+    var newTr = tbody.lastElementChild;
+    if (!newTr) return;
+    var newIddUid = newTr.dataset.iddUid;
+    var newCcdUid = newTr.dataset.ccdUid;
+
+    var qtyInp = newTr.querySelector(".fg-row-qty");
+    if (qtyInp) qtyInp.value = srcQty;
+
+    if (srcItemId) {
+      var hiddenItem = document.getElementById(newIddUid);
+      if (hiddenItem) hiddenItem.value = srcItemId;
+      var srcItem = APP.data.items.find(function (i) {
+        return i.id === srcItemId;
+      });
+      var dispEl = document.getElementById(newIddUid + "-idd-disp");
+      if (dispEl && srcItem) {
+        dispEl.className = "os-id-selected-wrap";
+        dispEl.innerHTML =
+          '<span class="os-id-sel-name">' +
+          esc(srcItem.name) +
+          "</span>" +
+          (srcItem.code
+            ? '<span class="os-id-sel-code">' + esc(srcItem.code) + "</span>"
+            : "");
+      }
+      _fgRebuildRowColor(newCcdUid, srcItemId, toWh);
+      if (srcColor) {
+        var hiddenColor = document.getElementById(newCcdUid);
+        if (hiddenColor) hiddenColor.value = srcColor;
+        var ccdDisp = document.getElementById(newCcdUid + "-ccd-disp");
+        if (ccdDisp) {
+          var hex = colorNameToHex(srcColor) || "#e2e8f0";
+          ccdDisp.innerHTML =
+            '<span style="width:14px;height:14px;border-radius:50%;background:' +
+            esc(hex) +
+            ';border:1.5px solid rgba(0,0,0,.13);flex-shrink:0;display:inline-block"></span>' +
+            '<span style="color:var(--text)">' +
+            esc(srcColor) +
+            "</span>";
+        }
+      }
+    }
+    fgUpdateSummary();
+  };
+
+  function _fgUpdateScrollLimit() {
+    var table = document.getElementById("fg-items-table");
+    if (!table) return;
+    var wrap = table.parentElement;
+    if (!wrap) return;
+    var rows = document.querySelectorAll("#fg-rows tr");
+    if (rows.length > 4) {
+      wrap.style.maxHeight = 38 + 54 * 4 + "px";
+      wrap.style.overflowY = "auto";
+    } else {
+      wrap.style.maxHeight = "none";
+      wrap.style.overflowY = "visible";
+    }
+    if (rows.length > 4) wrap.scrollTop = wrap.scrollHeight;
+  }
+
+  window.fgUpdateSummary = function () {
+    var rows = document.querySelectorAll("#fg-rows tr");
+    var totalQty = 0;
+    rows.forEach(function (r) {
+      totalQty += Number((r.querySelector(".fg-row-qty") || {}).value || 0);
+    });
+    var elI = document.getElementById("fg-total-items");
+    var elQ = document.getElementById("fg-total-qty");
+    if (elI) elI.textContent = rows.length;
+    if (elQ) elQ.textContent = totalQty;
+  };
+
+  // ── selectFgPO — تحديث بانر المعلومات + تعبئة تلقائية ───────────────
+  window.selectFgPO = function (poId) {
+    var hidden = document.getElementById("fg-po-ref");
+    if (hidden) hidden.value = poId;
+
+    document.querySelectorAll(".fg-po-card").forEach(function (card) {
+      var isSelected = card.dataset.poId === poId;
+      card.style.borderColor = isSelected ? "#22c55e" : "var(--border)";
+      card.style.background = isSelected
+        ? "rgba(34,197,94,.06)"
+        : "var(--surface2)";
+      card.style.boxShadow = isSelected
+        ? "0 0 0 3px rgba(34,197,94,.15)"
+        : "none";
+    });
+
+    var po = (APP.data.productionOrders || []).find(function (o) {
+      return o.id === poId;
+    });
+    // [إزالة] تم إلغاء بانر "أمر الإنتاج المختار" بناءً على طلب المستخدم
+
+    // تحديث المرجع تلقائياً
+    var refInp = document.getElementById("fg-ref");
+    if (refInp && !refInp.value.trim()) refInp.value = poId;
+
+    // لو في صف واحد فارغ — تعبئ الصنف منه تلقائياً
+    if (po && po.product_id) {
+      var rows = document.querySelectorAll("#fg-rows tr");
+      if (rows.length === 1) {
+        var firstTr = rows[0];
+        var iddUid = firstTr.dataset.iddUid;
+        var ccdUid = firstTr.dataset.ccdUid;
+        if (iddUid && !_getItemDropdownValue(iddUid)) {
+          var preItem = APP.data.items.find(function (i) {
+            return i.id === po.product_id;
+          });
+          if (preItem) {
+            var hiddenEl = document.getElementById(iddUid);
+            if (hiddenEl) hiddenEl.value = po.product_id;
+            var dispEl = document.getElementById(iddUid + "-idd-disp");
+            if (dispEl) {
+              dispEl.className = "os-id-selected-wrap";
+              dispEl.innerHTML =
+                '<span class="os-id-sel-name">' +
+                esc(preItem.name) +
+                "</span>" +
+                (preItem.code
+                  ? '<span class="os-id-sel-code">' +
+                    esc(preItem.code) +
+                    "</span>"
+                  : "");
+            }
+            var toWh = (document.getElementById("fg-to") || {}).value || "";
+            _fgRebuildRowColor(ccdUid, po.product_id, toWh);
+          }
+        }
+      }
+    }
+  };
+
+  // ── bindFgReceive — الربط الكامل ─────────────────────────────────────
+  function bindFgReceive() {
+    _fgRowCounter = 0;
+
+    if (window.AppSelect) {
+      AppSelect.upgrade("fg-to", { icon: "ti-building-warehouse" });
+    }
+
+    // رفع الصورة
+    var _fgImgBase64 = null;
+    var _fgImgName = null;
+
+    var imgInput = document.getElementById("fg-img-input");
+    if (imgInput) {
+      imgInput.addEventListener("change", function () {
+        var file = this.files[0];
+        if (!file) return;
+        if (file.size > 8 * 1024 * 1024) {
+          NotificationEngine.error("حجم الصورة أكبر من 8 ميجا");
+          return;
+        }
+        _fgImgName = file.name;
+        var reader = new FileReader();
+        reader.onload = function (e) {
+          _fgImgBase64 = e.target.result.split(",")[1];
+          var thumb = document.getElementById("fg-img-thumb");
+          if (thumb) thumb.src = e.target.result;
+          var preview = document.getElementById("fg-img-preview");
+          if (preview) preview.style.display = "";
+          var zone = document.getElementById("fg-img-zone");
+          if (zone) zone.style.display = "none";
+          var status = document.getElementById("fg-img-upload-status");
+          if (status) status.textContent = " جاهز للرفع مع الحفظ";
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    window.fgClearImage = function () {
+      _fgImgBase64 = null;
+      _fgImgName = null;
+      var preview = document.getElementById("fg-img-preview");
+      if (preview) preview.style.display = "none";
+      var zone = document.getElementById("fg-img-zone");
+      if (zone) zone.style.display = "";
+      var inp = document.getElementById("fg-img-input");
+      if (inp) inp.value = "";
+    };
+
+    // أضف أول صف
+    fgAddRow();
+
+    // ── زر الاستلام ─────────────────────────────────────────────────
+    var btn = document.getElementById("btn-fg");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      var poVal = (document.getElementById("fg-po-ref") || {}).value || "";
+      var toWh =
+        (document.getElementById("fg-to") || {}).value || "المنتجات التامة";
+      var refVal = (document.getElementById("fg-ref") || {}).value || "";
+      var notesVal = (document.getElementById("fg-notes") || {}).value || "";
+
+      var rows = document.querySelectorAll("#fg-rows tr");
+      if (!rows.length) {
+        NotificationEngine.error("أضف صنفاً واحداً على الأقل");
+        return;
+      }
+
+      var items = [];
+      var hasError = false;
+      rows.forEach(function (r, idx) {
+        var vals = _getFgRowValues(r);
+        var rowNum = idx + 1;
+        if (!vals.itemId) {
+          NotificationEngine.error("الصف " + rowNum + ": يجب اختيار المنتج");
+          hasError = true;
+          return;
+        }
+        if (!vals.qty || vals.qty < 1) {
+          NotificationEngine.error("الصف " + rowNum + ": الكمية غير صحيحة");
+          hasError = true;
+          return;
+        }
+        var itemColors = getItemColors(vals.itemId);
+        if (itemColors.length && !vals.color) {
+          NotificationEngine.error("الصف " + rowNum + ": يجب اختيار اللون لهذا الصنف");
+          hasError = true;
+          return;
+        }
+        items.push({
+          item_id: vals.itemId,
+          quantity: vals.qty,
+          color: vals.color,
+        });
+      });
+      if (hasError) return;
+
+      var batch = {
+        type: "FG_IN",
+        to_warehouse: toWh,
+        notes: notesVal,
+        user: APP.currentUser.username || "",
+        ref: refVal || poVal || "",
+        items: items,
+      };
+
+      closeModal && closeModal();
+
+      function doSave(imageUrl) {
+        if (imageUrl) batch.image_url = imageUrl;
+        // [SE-ROLLOUT] عبر SaveEngine.run بدل _freezeUI/_gsr اليدوي.
+        SaveEngine.run({
+          screen: "Production.FGReceive",
+          entity: "batch_transaction",
+          buttonId: "btn-fg",
+          data: batch,
+          fn: "addBatchTransaction",
+          params: [batch],
+          onSuccess: function (r) {
+            NotificationEngine.success(r.message);
+            reloadAfterMutation(function () {
+              renderPage("fg_receive");
+            });
+          },
+        });
+      }
+
+      if (_fgImgBase64 && _fgImgName) {
+        var status = document.getElementById("fg-img-upload-status");
+        if (status) status.textContent = "⏳ جاري رفع الصورة...";
+        _gsr(
+          "uploadImageToDrive",
+          [
+            _fgImgBase64,
+            _fgImgName,
+            "fg_receive",
+            { enabled: true, provider: "tinypng" },
+          ],
+          {
+          label: "uploadImageToDrive:fgReceive",
+          rawResponse: true,
+          onSuccess: function (r) {
+            var url = r && r.data;
+            if (status) status.textContent = url ? " تم الرفع" : " فشل الرفع";
+            doSave(url || "");
+          },
+          onError: function () {
+            if (status) status.textContent = " فشل رفع الصورة";
+            doSave("");
+          },
+        });
+      } else {
+        doSave("");
+      }
+    });
+  }
+  // ─────────────────────────────────────────────────────────────
+
+  // ── Context Menu Functions — أوامر الإنتاج ──────────────────
+  window.ctx_editProductionOrder = function (id) {
+    editPO(id);
+  };
+  window.ctx_viewProductionOrder = function (id) {
+    editPO(id);
+  };
+  window.ctx_startProduction = function (id) {
+    _ctxChangePOStatus(id, "inprogress", "بدء التصنيع");
+  };
+  window.ctx_completeProduction = function (id) {
+    _ctxChangePOStatus(id, "done", "إغلاق الأمر كمكتمل");
+  };
+  window.ctx_deleteProductionOrder = function (id) {
+    var order = (APP.data.productionOrders || []).find(function (o) {
+      return o.id === id;
+    });
+    if (!order) return NotificationEngine.error("الأمر غير موجود");
+    confirmDelete(
+      "حذف أمر الإنتاج",
+      "حذف أمر الإنتاج " + id + "؟ لا يمكن التراجع.",
+      function () {
+        showLoading && showLoading();
+        _gsr("deleteProductionOrder", [id, APP.currentUser.username], {
+          label: "deleteProductionOrder",
+          onSuccess: function (res) {
+            hideLoading && hideLoading();
+            APP.data.productionOrders = (
+              APP.data.productionOrders || []
+            ).filter(function (o) {
+              return o.id !== id;
+            });
+            NotificationEngine.success("تم حذف الأمر");
+            renderPage(APP.currentPage);
+          },
+          onError: function (res) {
+            hideLoading && hideLoading();
+            NotificationEngine.error((res && res.message) || "فشل الحذف");
+          },
+        });
+      },
+    );
+  };
+  function _ctxChangePOStatus(id, newStatus, label) {
+    var order = (APP.data.productionOrders || []).find(function (o) {
+      return o.id === id;
+    });
+    if (!order) return NotificationEngine.error("الأمر غير موجود");
+    showConfirm({
+      title: label,
+      message: label + " للأمر " + id + "؟",
+      icon: "ti-tools",
+      iconColor: "#2563eb",
+      confirmText: label,
+      confirmClass: "btn-primary",
+      onConfirm: function () {
+        showLoading && showLoading();
+        _gsr("updateProductionOrderStatus", [id, newStatus], {
+          label: "updateProductionOrderStatus:ctx",
+          onSuccess: function (res) {
+            hideLoading && hideLoading();
+            order.status = newStatus;
+            NotificationEngine.success("تم " + label);
+            renderPage(APP.currentPage);
+          },
+          onError: function (res) {
+            hideLoading && hideLoading();
+            NotificationEngine.error((res && res.message) || "فشل تغيير الحالة");
+          },
+        });
+      },
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // §HR-PROD-STAGES [MOVED FROM 12_JS_HR.html] — شاشة مراحل الإنتاج
+  // ─────────────────────────────────────────────────────────────
+  // نُقلت هنا لأن الـ backend بتاعها (Code_17b_ProductionOrders.js)
+  // كان اتنقل من قبل من Code_16_Inventory.js، وده الفرونت إند اللي
+  // بيتماشى معاه منطقيًا — نفس الكود حرفيًا من غير أي تغيير في المنطق.
+  // ═══════════════════════════════════════════════════════════════
+
+  // §HR-PROD-STAGES  مراحل الإنتاج — Production Stages
+  // ═══════════════════════════════════════════════════════════════
+
+  // ── حالة الصفحة ──
+  // [إصلاح P2] كانت perPage ثابتة يدويًا (8) بدون أي علاقة بتفضيل
+  // items_per_page المخزَّن فعليًا — نفس النمط المُطبَّق في 04_JS_Transactions.html.
+  var _PS = {
+    all: [], // كل السجلات المحمّلة
+    filtered: [], // بعد الفلترة
+    page: 1,
+    perPage:
+      typeof PreferenceService !== "undefined"
+        ? PreferenceService.get("items_per_page", 8)
+        : 8,
+    sortCol: "code",
+    sortDir: 1,
+    detailId: null, // المرحلة المفتوحة في Drawer التفاصيل
+    depts: [], // قائمة الأقسام من APP.data
+  };
+
+  // لو المستخدم غيّر "عدد الصفوف الافتراضي" وشاشة مراحل الإنتاج مفتوحة
+  // بالفعل، نطبّق القيمة الجديدة فورًا بدون Refresh
+  if (typeof PreferenceService !== "undefined") {
+    PreferenceService.subscribe("items_per_page", function (newVal) {
+      var n = Number(newVal);
+      if (!n || n < 1) return;
+      _PS.perPage = n;
+      _PS.page = 1;
+      if (document.getElementById("ps-table-body")) {
+        _psRenderTable();
+        _psRenderPagination();
+      }
+    });
+  }
+
+  // ── Bootstrap ──
+  function bindProductionStages() {
+    _psLoadDepts();
+    _psLoadData();
+    _psBindControls();
+  }
+
+  // ── تحميل الأقسام من APP.data ──
+  function _psLoadDepts() {
+    var depts = [];
+    try {
+      depts = (APP.data.departments || []).map(function (d) {
+        return { id: d.id, name: d.name };
+      });
+    } catch (e) {}
+    _PS.depts = depts;
+
+    // ملء قوائم الأقسام — القيمة الفعلية هي معرّف القسم (department_id)
+    var opts = depts
+      .map(function (d) {
+        return '<option value="' + esc(d.id) + '">' + esc(d.name) + "</option>";
+      })
+      .join("");
+
+    ["ps-filter-dept", "ps-f-dept"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      var base =
+        id === "ps-filter-dept"
+          ? '<option value="">' + I18N.t("HR_ALL_DEPARTMENTS") + "</option>"
+          : '<option value="">' + I18N.t("LBL_CHOOSE_DASH") + "</option>";
+      el.innerHTML = base + opts;
+    });
+  }
+
+  // ── تحميل البيانات من الباك إند ──
+  function _psLoadData() {
+    showLoading("جاري تحميل مراحل الإنتاج...");
+    _gsr("getProductionStages", _authArgs(), {
+      label: "HR.getProductionStages",
+      onSuccess: function (result) {
+        hideLoading();
+        _PS.all = result.data || [];
+        _psApplyFilters();
+        _psRenderStats();
+      },
+      onError: function (result) {
+        hideLoading();
+        NotificationEngine.error(result.message || "خطأ في تحميل مراحل الإنتاج");
+      },
+    });
+  }
+
+  // ── ربط الأحداث ──
+  function _psBindControls() {
+    _psOn("ps-btn-add", "click", function () {
+      openPSFormDrawer(null);
+    });
+    _psOn("ps-btn-clear-filters", "click", _psClearFilters);
+    _psOn("ps-btn-export-excel", "click", function () {
+      if (!window.ExportUtil) {
+        NotificationEngine.error("ExportUtil غير محملة");
+        return;
+      }
+      var data = _PS.filtered || _PS.all || [];
+      if (!data.length) {
+        NotificationEngine.warning("لا توجد بيانات للتصدير");
+        return;
+      }
+      var headers = [
+        "كود الموظف",
+        "الاسم",
+        "القسم",
+        "الوحدة",
+        "الراتب الأساسي",
+        "الحوافز",
+        "الخصومات",
+        "الحالة",
+      ];
+      var rows = data.map(function (s) {
+        return [
+          s.code || "",
+          s.name || "",
+          s.department || "",
+          s.unit || "",
+          s.basic_salary || 0,
+          s.incentives || 0,
+          s.deductions || 0,
+          s.status || "",
+        ];
+      });
+      ExportUtil.toExcel(
+        rows,
+        headers,
+        "مراحل_الإنتاج_" + new Date().toISOString().slice(0, 10),
+        "البيانات",
+      );
+    });
+    _psOn("ps-btn-export-pdf", "click", function () {
+      if (!window.ExportUtil) {
+        NotificationEngine.error("ExportUtil غير محملة");
+        return;
+      }
+      var data = _PS.filtered || _PS.all || [];
+      if (!data.length) {
+        NotificationEngine.warning("لا توجد بيانات للتصدير");
+        return;
+      }
+      var headers = [
+        "كود الموظف",
+        "الاسم",
+        "القسم",
+        "الوحدة",
+        "الراتب الأساسي",
+        "الحوافز",
+        "الخصومات",
+        "الحالة",
+      ];
+      var rows = data.map(function (s) {
+        return [
+          s.code || "",
+          s.name || "",
+          s.department || "",
+          s.unit || "",
+          s.basic_salary || 0,
+          s.incentives || 0,
+          s.deductions || 0,
+          s.status || "",
+        ];
+      });
+      ExportUtil.toPrint(
+        rows,
+        headers,
+        "تقرير مراحل الإنتاج",
+        "تاريخ: " + fmtDate(new Date()),
+      );
+    });
+    _psOn("ps-search", "input", _psApplyFilters);
+    _psOn("ps-filter-dept", "change", _psApplyFilters);
+    _psOn("ps-filter-status", "change", _psApplyFilters);
+    _psOn("ps-filter-unit", "change", _psApplyFilters);
+
+    if (window.AppSelect) {
+      AppSelect.upgrade("ps-filter-dept", {
+        icon: "ti-building",
+        searchable: true,
+      });
+      AppSelect.upgrade("ps-filter-status", { icon: "ti-list-check" });
+      AppSelect.upgrade("ps-filter-unit", { icon: "ti-category" });
+    }
+
+    // ضغطة Escape تغلق أي Drawer مفتوح
+    document.addEventListener("keydown", _psEscHandler);
+  }
+
+  function _psOn(id, ev, fn) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener(ev, fn);
+  }
+
+  function _psEscHandler(e) {
+    if (e.key !== "Escape") return;
+    closePSDetailDrawer();
+  }
+
+  // ── إحصائيات ──
+  function _psRenderStats() {
+    var data = _PS.all;
+    var active = data.filter(function (s) {
+      return s.status === "active";
+    }).length;
+    var exec = data.reduce(function (a, s) {
+      return a + (s.executions || 0);
+    }, 0);
+    var cost = data.reduce(function (a, s) {
+      return a + (s.price || 0) * (s.total_qty || 0);
+    }, 0);
+
+    _psSetText("ps-stat-total", data.length);
+    _psSetText("ps-stat-active", active);
+    _psSetText(
+      "ps-stat-exec",
+      NumberEngine.decimal(exec, 0),
+    );
+    _psSetText(
+      "ps-stat-cost",
+      formatMoney(Math.round(cost), { decimals: 0, withSymbol: false }),
+    );
+  }
+
+  // ── فلترة وترتيب ──
+  function _psApplyFilters() {
+    var q = (_psVal("ps-search") || "").toLowerCase();
+    var dept = _psVal("ps-filter-dept");
+    var status = _psVal("ps-filter-status");
+    var unit = _psVal("ps-filter-unit");
+
+    _PS.filtered = _PS.all.filter(function (s) {
+      if (
+        q &&
+        !(
+          (s.name || "").toLowerCase().includes(q) ||
+          (s.code || "").toLowerCase().includes(q) ||
+          (s.department || "").toLowerCase().includes(q)
+        )
+      )
+        return false;
+      if (dept && String(s.department_id) !== String(dept)) return false;
+      if (status && s.status !== status) return false;
+      if (unit && s.unit !== unit) return false;
+      return true;
+    });
+
+    _PS.filtered.sort(function (a, b) {
+      var av = a[_PS.sortCol],
+        bv = b[_PS.sortCol];
+      if (typeof av === "number") return _PS.sortDir * (av - bv);
+      return (
+        _PS.sortDir * String(av || "").localeCompare(String(bv || ""), "ar")
+      );
+    });
+
+    _PS.page = 1;
+    _psRenderTable();
+    _psRenderPagination();
+  }
+
+  function _psClearFilters() {
+    [
+      "ps-search",
+      "ps-filter-dept",
+      "ps-filter-status",
+      "ps-filter-unit",
+    ].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.value = "";
+    });
+    _psApplyFilters();
+  }
+
+  // ── رسم الجدول ──
+  function _psRenderTable() {
+    var tbody = document.getElementById("ps-table-body");
+    if (!tbody) return;
+
+    var start = (_PS.page - 1) * _PS.perPage;
+    var rows = _PS.filtered.slice(start, start + _PS.perPage);
+
+    if (!rows.length) {
+      tbody.innerHTML =
+        '<tr><td colspan="9" style="text-align:center;padding:48px;color:var(--text3)">' +
+        '<div style="font-size:32px;margin-bottom:8px;opacity:.3"><i class="ti ti-mood-empty"></i></div>' +
+        "<p>' + I18N.t('HR_NO_STAGES_MATCH_SEARCH') + '</p></td></tr>";
+      return;
+    }
+
+    tbody.innerHTML = rows
+      .map(function (s) {
+        var badge =
+          s.status === "active"
+            ? '<span class="badge badge-success" style="font-size:11px"><i class="ti ti-circle-filled" style="font-size:8px"></i> ' +
+              I18N.t("HR_ACTIVE_F") +
+              "</span>"
+            : '<span class="badge badge-danger"  style="font-size:11px"><i class="ti ti-circle-filled" style="font-size:8px"></i> ' +
+              I18N.t("HR_SUSPENDED_F") +
+              "</span>";
+
+        return (
+          "<tr>" +
+          '<td><span class="mono" style="font-size:11px;color:#0F766E">' +
+          esc(s.code) +
+          "</span></td>" +
+          "<td><strong style='font-weight:500'>" +
+          esc(s.name) +
+          "</strong>" +
+          (s.description
+            ? '<br><span style="font-size:11px;color:var(--text3)">' +
+              esc(s.description.substring(0, 45)) +
+              (s.description.length > 45 ? "…" : "") +
+              "</span>"
+            : "") +
+          "</td>" +
+          '<td><span class="badge" style="background:#CCFBF1;color:#0F766E;font-size:11px">' +
+          esc(s.department) +
+          "</span></td>" +
+          '<td style="color:var(--text2)">' +
+          esc(s.unit) +
+          "</td>" +
+          '<td class="sensitive-price" style="font-weight:700;color:#1D4ED8">' +
+          formatMoney(s.price, { decimals: 0 }) +
+          "</td>" +
+          '<td style="text-align:center;color:var(--text2)">' +
+          NumberEngine.decimal((s.executions || 0), 0) +
+          "</td>" +
+          "<td>" +
+          badge +
+          "</td>" +
+          '<td style="font-size:11.5px;color:var(--text3)">' +
+          (s.created_at || "—") +
+          "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+  }
+
+  // ── Pagination ──
+  function _psRenderPagination() {
+    var total = _PS.filtered.length;
+    var pages = Math.ceil(total / _PS.perPage) || 1;
+    var start = (_PS.page - 1) * _PS.perPage + 1;
+    var end = Math.min(_PS.page * _PS.perPage, total);
+
+    _psSetText(
+      "ps-pagination-info",
+      "عرض " + start + " - " + end + " من " + total + " مرحلة",
+    );
+
+    var btns = document.getElementById("ps-pagination-btns");
+    if (!btns) return;
+
+    var html =
+      '<button class="btn btn-outline btn-xs" onclick="_psGoPage(' +
+      Math.max(1, _PS.page - 1) +
+      ')" ' +
+      (_PS.page === 1 ? "disabled" : "") +
+      '><i class="ti ti-chevron-right"></i></button>';
+    for (var i = 1; i <= pages; i++) {
+      html +=
+        '<button class="btn btn-xs ' +
+        (i === _PS.page ? "btn-primary" : "btn-outline") +
+        '" onclick="_psGoPage(' +
+        i +
+        ')">' +
+        i +
+        "</button>";
+    }
+    html +=
+      '<button class="btn btn-outline btn-xs" onclick="_psGoPage(' +
+      Math.min(pages, _PS.page + 1) +
+      ')" ' +
+      (_PS.page === pages ? "disabled" : "") +
+      '><i class="ti ti-chevron-left"></i></button>';
+    btns.innerHTML = html;
+  }
+
+  function _psGoPage(p) {
+    _PS.page = p;
+    _psRenderTable();
+    _psRenderPagination();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // §HR-PS-FORM  Drawer الإضافة / التعديل
+  // ═══════════════════════════════════════════════════════════════
+
+  function openPSFormDrawer(id) {
+    var s = id
+      ? _PS.all.find(function (x) {
+          return String(x.id) === String(id);
+        })
+      : null;
+    var isEdit = !!s;
+
+    var deptOptions =
+      '<option value="">' + I18N.t("LBL_CHOOSE_DASH") + "</option>";
+    (_PS.depts || []).forEach(function (d) {
+      deptOptions +=
+        '<option value="' +
+        esc(d.id) +
+        '"' +
+        (s && String(s.department_id) === String(d.id) ? " selected" : "") +
+        ">" +
+        esc(d.name) +
+        "</option>";
+    });
+
+    var V = function (field, fallback) {
+      return s ? esc(s[field] || "") : fallback || "";
+    };
+
+    var body =
+      '<div class="hr-section">' +
+      '<div class="hr-section-title">' +
+      I18N.t("HR_BASIC_DATA") +
+      "</div>" +
+      '<div class="hr-form-row cols-2">' +
+      '<div class="hr-field"><label>' +
+      I18N.t("HR_STAGE_CODE") +
+      '</label><input type="text" id="ps-f-code" data-allow-alpha="true" value="' +
+      V("code") +
+      '" placeholder="' +
+      I18N.t("HR_PH_AUTO_GENERATED") +
+      '"></div>' +
+      '<div class="hr-field"><label>' +
+      I18N.t("HR_STAGE_NAME_REQ") +
+      '</label><input type="text" id="ps-f-name" value="' +
+      V("name") +
+      '" placeholder="' +
+      I18N.t("HR_PH_STAGE_EXAMPLE") +
+      '"></div>' +
+      "</div>" +
+      '<div class="hr-form-row">' +
+      '<div class="hr-field"><label>' +
+      I18N.t("HR_STAGE_DESCRIPTION") +
+      '</label><textarea id="ps-f-desc" rows="2" placeholder="' +
+      I18N.t("HR_PH_DETAILED_DESC") +
+      '">' +
+      V("description") +
+      "</textarea></div>" +
+      "</div>" +
+      "</div>" +
+      '<div class="hr-section">' +
+      '<div class="hr-section-title">' +
+      I18N.t("HR_CLASSIFICATION_PRICING") +
+      "</div>" +
+      '<div class="hr-form-row cols-3">' +
+      '<div class="hr-field"><label>' +
+      I18N.t("HR_DEPARTMENT_REQ") +
+      '</label><select id="ps-f-dept">' +
+      deptOptions +
+      "</select></div>" +
+      '<div class="hr-field"><label>' +
+      I18N.t("HR_UNIT_OF_MEASURE") +
+      '</label><select id="ps-f-unit">' +
+      '<option value="قطعة"' +
+      (!s || s.unit === "قطعة" ? " selected" : "") +
+      ">' + I18N.t('LBL_ITEM') + '</option>" +
+      '<option value="كيلو"' +
+      (s && s.unit === "كيلو" ? " selected" : "") +
+      ">' + I18N.t('HR_UNIT_KG') + '</option>" +
+      '<option value="متر"' +
+      (s && s.unit === "متر" ? " selected" : "") +
+      ">' + I18N.t('HR_UNIT_METER') + '</option>" +
+      '<option value="عبوة"' +
+      (s && s.unit === "عبوة" ? " selected" : "") +
+      ">' + I18N.t('HR_UNIT_PACK') + '</option>" +
+      "</select></div>" +
+      '<div class="hr-field"><label>' +
+      I18N.t("HR_PRICE_PER_UNIT_REQ") +
+      '</label><input type="number" id="ps-f-price" value="' +
+      (s ? Number(s.price || 0) : "") +
+      '" min="0" step="0.01" placeholder="0.00"></div>' +
+      "</div>" +
+      '<div class="hr-form-row cols-2">' +
+      '<div class="hr-field"><label>' +
+      I18N.t("LBL_STATUS") +
+      '</label><select id="ps-f-status">' +
+      '<option value="active"' +
+      (!s || s.status === "active" ? " selected" : "") +
+      ">' + I18N.t('HR_ACTIVE_F') + '</option>" +
+      '<option value="inactive"' +
+      (s && s.status === "inactive" ? " selected" : "") +
+      ">' + I18N.t('HR_SUSPENDED_F') + '</option>" +
+      "</select></div>" +
+      '<div class="hr-field"><label>' +
+      I18N.t("LBL_NOTES") +
+      '</label><input type="text" id="ps-f-notes" value="' +
+      V("notes") +
+      '" placeholder="' +
+      I18N.t("HR_PH_EXTRA_NOTES") +
+      '"></div>' +
+      "</div>" +
+      "</div>" +
+      '<input type="hidden" id="ps-form-id" value="' +
+      (isEdit ? esc(s.id) : "") +
+      '">' +
+      _hrFooter(
+        "ps-form-save-btn",
+        isEdit ? "تحديث المرحلة" : "إضافة المرحلة",
+        "_hrCloseAll()",
+      );
+
+    // ملء قائمة الأقسام لو لسه مش متحمّلة (احتياطي قبل بناء body)
+    if (!_PS.depts || !_PS.depts.length) _psLoadDepts();
+
+    openHRDrawer({
+      title: isEdit ? "تعديل: " + s.name : "مرحلة إنتاج جديدة",
+      subtitle: isEdit ? "كود: " + s.code : "أضف مرحلة وحدد سعرها لكل وحدة",
+      icon: isEdit ? "ti-edit" : "ti-tools",
+      color: "teal",
+      width: 600,
+      body: body,
+    });
+
+    document
+      .getElementById("ps-form-save-btn")
+      .addEventListener("click", savePSForm);
+
+    setTimeout(function () {
+      var el = document.getElementById("ps-f-name");
+      if (el) el.focus();
+    }, 200);
+  }
+
+  function closePSFormDrawer() {
+    _hrCloseAll();
+  }
+
+  function savePSForm() {
+    var id = _psVal("ps-form-id");
+    var isEdit = !!id;
+    var fn = isEdit ? "updateProductionStage" : "addProductionStage";
+
+    SaveEngine.run({
+      screen: "HR.ProductionStage",
+      entity: "production_stage",
+      recordId: id || null,
+      buttonId: "ps-form-save-btn",
+      rules: [
+        { field: "ps-f-name", required: true, label: "اسم المرحلة" },
+        { field: "ps-f-dept", required: true, label: "القسم" },
+        {
+          test: function () {
+            var p = parseFloat(_psVal("ps-f-price"));
+            return !!p && p > 0;
+          },
+          message: "يرجى إدخال سعر صحيح",
+        },
+      ],
+      collect: function () {
+        return {
+          code: _psVal("ps-f-code") || "",
+          name: (_psVal("ps-f-name") || "").trim(),
+          description: _psVal("ps-f-desc") || "",
+          department_id: _psVal("ps-f-dept"),
+          unit: _psVal("ps-f-unit") || "قطعة",
+          price: parseFloat(_psVal("ps-f-price")),
+          status: _psVal("ps-f-status") || "active",
+          notes: _psVal("ps-f-notes") || "",
+        };
+      },
+      fn: fn,
+      params: function (data) {
+        return isEdit ? [id, _authPayload(data)] : [_authPayload(data)];
+      },
+      onSuccess: function () {
+        closePSFormDrawer();
+        _psLoadData();
+      },
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // §HR-PS-DETAIL  Drawer التفاصيل
+  // ═══════════════════════════════════════════════════════════════
+
+  function openPSDetailDrawer(id) {
+    var s = _PS.all.find(function (x) {
+      return String(x.id) === String(id);
+    });
+    if (!s) return;
+    _PS.detailId = id;
+
+    _psSetText("ps-detail-title", s.name);
+    _psSetText("ps-detail-code", s.code + " · " + s.department);
+
+    var totalCost = NumberEngine.currency(s.price * (s.total_qty || 0));
+
+    // بطاقات الإحصائيات
+    var statsHtml =
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px">' +
+      _psInfoCard(
+        NumberEngine.decimal((s.executions || 0), 0),
+        "عدد التنفيذات",
+        "#1D4ED8",
+      ) +
+      _psInfoCard(
+        NumberEngine.decimal((s.total_qty || 0), 0),
+        "إجمالي الكميات (" + s.unit + ")",
+        "#0F766E",
+      ) +
+      _psInfoCard(
+        formatMoney(Number(totalCost), { decimals: 0, withSymbol: false }),
+        "إجمالي التكلفة (ج.م)",
+        "#5B21B6",
+        true,
+      ) +
+      "</div>";
+
+    // بيانات المرحلة
+    var badge =
+      s.status === "active"
+        ? '<span class="badge badge-success">' +
+          I18N.t("HR_ACTIVE_F") +
+          "</span>"
+        : '<span class="badge badge-danger">' +
+          I18N.t("HR_SUSPENDED_F") +
+          "</span>";
+
+    var infoHtml =
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">' +
+      _psDetailItem(
+        "كود المرحلة",
+        '<span class="mono" style="color:#0F766E">' + esc(s.code) + "</span>",
+      ) +
+      _psDetailItem("القسم", esc(s.department)) +
+      _psDetailItem("وحدة القياس", esc(s.unit)) +
+      _psDetailItem(
+        "السعر / وحدة",
+        '<strong class="sensitive-price" style="color:#1D4ED8">' +
+          NumberEngine.currency(Number(s.price)) +
+          "</strong>",
+      ) +
+      _psDetailItem("الحالة", badge) +
+      _psDetailItem("آخر تعديل", esc(s.updated_at || "—")) +
+      "</div>" +
+      (s.description
+        ? '<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:500;color:var(--text3);margin-bottom:5px">' +
+          I18N.t("LBL_DESCRIPTION") +
+          "</div>" +
+          '<div style="font-size:13px;color:var(--text2);line-height:1.6;padding:10px 12px;background:var(--bg2);border-radius:8px;border:1px solid var(--border)">' +
+          esc(s.description) +
+          "</div></div>"
+        : "") +
+      (s.notes
+        ? '<div style="margin-bottom:16px"><div style="font-size:11px;font-weight:500;color:var(--text3);margin-bottom:5px">' +
+          I18N.t("LBL_NOTES") +
+          "</div>" +
+          '<div style="font-size:13px;color:#92400E;padding:8px 12px;background:#FEF3C7;border-radius:8px;border:1px solid #FDE68A"><i class="ti ti-alert-triangle"></i> ' +
+          esc(s.notes) +
+          "</div></div>"
+        : "");
+
+    // الموظفون المرتبطون
+    var emps = s.linked_employees || [];
+    var empsHtml = "";
+    if (emps.length) {
+      var empTotal = emps.reduce(function (a, e) {
+        return a + e.qty;
+      }, 0);
+      empsHtml =
+        emps
+          .map(function (e) {
+            var earned = NumberEngine.currency(e.qty * s.price);
+            return (
+              '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">' +
+              '<div style="width:32px;height:32px;border-radius:50%;background:#CCFBF1;color:#0F766E;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">' +
+              esc(e.initials) +
+              "</div>" +
+              '<div style="flex:1"><div style="font-size:13px;font-weight:500">' +
+              esc(e.name) +
+              "</div>" +
+              '<div style="font-size:11px;color:var(--text3)">' +
+              esc(e.dept) +
+              "</div></div>" +
+              '<div class="sensitive-balance" style="text-align:left;font-size:12px;color:var(--text2)">' +
+              "<div>" +
+              NumberEngine.decimal(e.qty, 0) +
+              " " +
+              esc(s.unit) +
+              " × " +
+              formatMoney(s.price, { decimals: 0 }) +
+              "</div>" +
+              '<div style="font-weight:700;color:#059669">' +
+              formatMoney(earned, { decimals: 0 }) +
+              "</div></div>" +
+              "</div>"
+            );
+          })
+          .join("") +
+        '<div style="display:flex;justify-content:space-between;padding-top:10px;font-size:12.5px;color:var(--text2)">' +
+        "<span>' + I18N.t('HR_TOTAL_EMP_DUES') + '</span>" +
+        '<strong class="sensitive-balance" style="color:#059669">' +
+        formatMoney(Number(totalCost), { decimals: 0 }) +
+        "</strong></div>";
+    } else {
+      empsHtml =
+        '<p style="text-align:center;padding:24px;color:var(--text3);font-size:13px">' +
+        I18N.t("HR_NO_EMPLOYEES_LINKED_TO_STAGE") +
+        "</p>";
+    }
+
+    // تبويبات
+    var tabsHtml =
+      '<div style="display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:16px">' +
+      '<div class="ps-tab ps-tab-active" id="ps-tab-info" onclick="_psSwitchTab(\'info\')" style="padding:7px 14px;font-size:12.5px;font-weight:500;color:#0F766E;border-bottom:2px solid #0F766E;margin-bottom:-1px;cursor:pointer;border-radius:6px 6px 0 0;background:#CCFBF1"><i class="ti ti-info-circle"></i> ' +
+      I18N.t("HR_STAGE_DATA") +
+      "</div>" +
+      '<div class="ps-tab" id="ps-tab-emps" onclick="_psSwitchTab(\'emps\')" style="padding:7px 14px;font-size:12.5px;font-weight:500;color:var(--text3);border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;border-radius:6px 6px 0 0"><i class="ti ti-users"></i> الموظفون المرتبطون (' +
+      emps.length +
+      ")</div>" +
+      "</div>" +
+      '<div id="ps-panel-info">' +
+      infoHtml +
+      "</div>" +
+      '<div id="ps-panel-emps" style="display:none">' +
+      empsHtml +
+      "</div>";
+
+    var body = document.getElementById("ps-detail-body");
+    if (body) body.innerHTML = statsHtml + tabsHtml;
+
+    // زر تعديل في footer
+    var editBtn = document.getElementById("ps-detail-edit-btn");
+    if (editBtn) {
+      editBtn.onclick = function () {
+        closePSDetailDrawer();
+        openPSFormDrawer(id);
+      };
+    }
+
+    _psShowDrawer("ps-detail-drawer");
+  }
+
+  function _psSwitchTab(tab) {
+    var isInfo = tab === "info";
+    var tInfo = document.getElementById("ps-tab-info");
+    var tEmps = document.getElementById("ps-tab-emps");
+    var pInfo = document.getElementById("ps-panel-info");
+    var pEmps = document.getElementById("ps-panel-emps");
+    if (!tInfo) return;
+
+    tInfo.style.color = isInfo ? "#0F766E" : "var(--text3)";
+    tInfo.style.borderBottom = isInfo
+      ? "2px solid #0F766E"
+      : "2px solid transparent";
+    tInfo.style.background = isInfo ? "#CCFBF1" : "transparent";
+    tEmps.style.color = !isInfo ? "#0F766E" : "var(--text3)";
+    tEmps.style.borderBottom = !isInfo
+      ? "2px solid #0F766E"
+      : "2px solid transparent";
+    tEmps.style.background = !isInfo ? "#CCFBF1" : "transparent";
+
+    if (pInfo) pInfo.style.display = isInfo ? "" : "none";
+    if (pEmps) pEmps.style.display = !isInfo ? "" : "none";
+  }
+
+  function closePSDetailDrawer() {
+    _psHideDrawer("ps-detail-drawer");
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // §HR-PS-DELETE  تأكيد الحذف
+  // ═══════════════════════════════════════════════════════════════
+
+  function confirmDeletePS(id) {
+    var s = _PS.all.find(function (x) {
+      return String(x.id) === String(id);
+    });
+    if (!s) return;
+
+    if (s.executions > 0) {
+      openHRDrawer({
+        title: "لا يمكن حذف هذه المرحلة",
+        subtitle: "المرحلة مرتبطة بتنفيذات مسجلة",
+        icon: "ti-alert-triangle",
+        color: "amber",
+        body:
+          '<div style="padding:8px 0">' +
+          '<p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:16px">' +
+          I18N.t("HR_STAGE") +
+          " <strong>" +
+          esc(s.name) +
+          "</strong> ' + I18N.t('HR_LINKED_TO') + ' <strong>" +
+          NumberEngine.decimal((s.executions || 0), 0) +
+          "</strong> عملية تنفيذ." +
+          "<br>' + I18N.t('HR_CANNOT_DELETE_DATA_INTEGRITY') + ' <strong>' + I18N.t('HR_SUSPENDED_F') + '</strong> ' + I18N.t('HR_INSTEAD_OF_THAT') + '</p>" +
+          '<div style="display:flex;gap:8px">' +
+          '<button class="btn btn-primary" onclick="_closeHRDrawer();openPSFormDrawer(\'' +
+          id +
+          '\')"><i class="ti ti-edit"></i> ' +
+          I18N.t("HR_EDIT_STATUS") +
+          "</button>" +
+          '<button class="btn btn-outline" onclick="_closeHRDrawer()">' +
+          I18N.t("BTN_CLOSE") +
+          "</button></div>" +
+          "</div>",
+      });
+      return;
+    }
+
+    openHRDrawer({
+      title: "تأكيد الحذف",
+      subtitle: "هل أنت متأكد من حذف هذه المرحلة؟",
+      icon: "ti-trash",
+      color: "rose",
+      body:
+        '<div style="padding:8px 0">' +
+        '<p style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:16px">' +
+        I18N.t("HR_STAGE_WILL_BE_DELETED") +
+        " <strong>" +
+        esc(s.name) +
+        "</strong> ' + I18N.t('HR_PERMANENTLY_NO_UNDO') + '</p>" +
+        '<div style="display:flex;gap:8px">' +
+        '<button class="btn" style="background:#ef4444;color:#fff;border-color:#ef4444" onclick="_psDoDelete(\'' +
+        id +
+        '\')"><i class="ti ti-trash"></i> ' +
+        I18N.t("HR_YES_DELETE") +
+        "</button>" +
+        '<button class="btn btn-outline" onclick="_closeHRDrawer()">' +
+        I18N.t("BTN_CANCEL") +
+        "</button></div>" +
+        "</div>",
+    });
+  }
+
+  function _psDoDelete(id) {
+    _gsr("deleteProductionStage", [id, _authArgs()[0], _authArgs()[1]], {
+      label: "HR.deleteProductionStage",
+      onSuccess: function (result) {
+        _closeHRDrawer();
+        NotificationEngine.success(result.message || "تم الحذف بنجاح");
+        _psLoadData();
+      },
+      onError: function (result) {
+        _closeHRDrawer();
+        NotificationEngine.error(result.message || "حدث خطأ");
+      },
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // §HR-PS-HELPERS  مساعدات داخلية
+  // ═══════════════════════════════════════════════════════════════
+
+  function _psShowDrawer(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.style.display = "block";
+    requestAnimationFrame(function () {
+      var drawer = el.querySelector(".hr-drawer");
+      if (drawer) {
+        drawer.style.transition = "transform .25s ease";
+        drawer.style.transform = "translateX(0)";
+      }
+    });
+  }
+
+  function _psHideDrawer(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.style.display = "none";
+  }
+
+  function _psInfoCard(num, label, color, sensitive) {
+    return (
+      '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center">' +
+      '<div class="' +
+      (sensitive ? "sensitive-balance" : "") +
+      '" style="font-size:20px;font-weight:700;color:' +
+      color +
+      '">' +
+      num +
+      "</div>" +
+      '<div style="font-size:11px;color:var(--text3);margin-top:3px">' +
+      label +
+      "</div></div>"
+    );
+  }
+
+  function _psDetailItem(label, val) {
+    return (
+      '<div><div style="font-size:11px;font-weight:500;color:var(--text3);margin-bottom:3px">' +
+      label +
+      "</div>" +
+      '<div style="font-size:13.5px;font-weight:500;color:var(--text)">' +
+      val +
+      "</div></div>"
+    );
+  }
+
+  function _psVal(id) {
+    var el = document.getElementById(id);
+    return el ? el.value : "";
+  }
+  function _psSetVal(id, v) {
+    var el = document.getElementById(id);
+    if (el) el.value = v || "";
+  }
+  function _psSetText(id, v) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = v || "";
+  }
+
+  // ── CSS إضافي لشاشة مراحل الإنتاج ──
+  (function () {
+    if (document.getElementById("ps-extra-css")) return;
+    var s = document.createElement("style");
+    s.id = "ps-extra-css";
+    s.textContent = [
+      ".form-row-2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}",
+      ".form-row-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px}",
+      "@media(max-width:600px){.form-row-2,.form-row-3{grid-template-columns:1fr}}",
+    ].join("");
+    document.head.appendChild(s);
+  })();
+
+</script>

@@ -1,0 +1,549 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 38_JS_i18n_Client.html — محرك الترجمة على الفرونت-إند (MOO.ERP i18n)
+  //
+  // يعتمد على _gsr() الموجودة في 31_JS_DataLayer.html — لا يستدعي
+  // google.script.run مباشرة (يلتزم بـ RULE 1 الموثّقة هناك).
+  //
+  // الاستخدام في أي شاشة:
+  //   1) HTML:  <button data-i18n="BTN_SAVE"></button>
+  //             <input data-i18n-placeholder="LBL_SEARCH_PLACEHOLDER">
+  //             <span data-i18n-title="MSG_TOOLTIP_X">
+  //   2) JS:    I18N.t('MSG_SAVE_SUCCESS')   → يرجع النص المترجم كـ string
+  //             I18N.t('MSG_X', {name: y})   → استبدال {{name}} داخل النص
+  //
+  // أي شاشة جديدة تُبنى لاحقًا وتستخدم data-i18n أو I18N.t() تلقائيًا
+  // تدعم تعدد اللغات بدون أي كود إضافي — هذا هو المطلوب في
+  // "المرحلة الثانية عشرة: قابلية التوسع" من خطة العمل.
+  // ═══════════════════════════════════════════════════════════════════
+
+  var I18N = (function () {
+    var _lang = "ar";
+    var _dir = "rtl";
+    var _dict = {};
+    var _availableLanguages = [];
+    var _legacyTextMap = {};
+    var _autoTextCache = {};
+    var _autoTextQueue = {};
+    var _autoTextTimer = null;
+    var AUTO_TEXT_STORAGE_KEY = "moo_erp_i18n_auto_en";
+    var _forced = false;
+    var _ready = false;
+    var _readyCallbacks = [];
+    var _changeListeners = []; // تُستدعى بعد كل تحميل/تبديل لغة (لإعادة بناء قوائم Key→Label الثابتة، مثل ERP_ROLES)
+    var STORAGE_KEY = "moo_erp_lang"; // كاش محلي فقط لتفادي "ومضة" اتجاه خاطئ قبل استجابة السيرفر
+    // [I18N-RESILIENCE-2026-08-05] كاش القاموس الكامل (مش بس lang/dir) —
+    // يُستخدم كـ fallback حقيقي لو نداء getI18nBootstrap فشل مرتين على
+    // التوالي، بدل ما تظهر الشاشة كلها بمفاتيح ⟦بين قوسين⟧.
+    var DICT_STORAGE_KEY = "moo_erp_i18n_dict_cache";
+    var _observer = null;
+
+    // Keep locale decisions in one place.  Rendering modules must use these
+    // helpers instead of hard-coding ar-EG/en-US in reports or grids.
+    function _locale() {
+      return _lang === "ar" ? "ar-EG-u-nu-latn" : "en-US";
+    }
+
+    /** يترجم مفتاحًا؛ يرجع المفتاح نفسه بين قوسين لو غير موجود (يسهّل رصد النواقص أثناء التطوير) */
+    function t(key, vars) {
+      var text = _dict[key];
+      if (text === undefined) {
+        console.warn("[I18N] مفتاح ترجمة مفقود:", key);
+        return "⟦" + key + "⟧";
+      }
+      if (vars) {
+        Object.keys(vars).forEach(function (k) {
+          text = text.replace(
+            new RegExp("{{\\s*" + k + "\\s*}}", "g"),
+            vars[k],
+          );
+        });
+      }
+      return text;
+    }
+
+    /** يطبّق الترجمة على كل عناصر data-i18n* الموجودة حاليًا في الـ DOM (يُستدعى بعد أي render) */
+    function applyToDom(root) {
+      root = root || document;
+      root.querySelectorAll("[data-i18n]").forEach(function (el) {
+        el.textContent = t(el.getAttribute("data-i18n"));
+      });
+      root.querySelectorAll("[data-i18n-html]").forEach(function (el) {
+        el.innerHTML = t(el.getAttribute("data-i18n-html"));
+      });
+      root.querySelectorAll("[data-i18n-placeholder]").forEach(function (el) {
+        el.setAttribute(
+          "placeholder",
+          t(el.getAttribute("data-i18n-placeholder")),
+        );
+      });
+      root.querySelectorAll("[data-i18n-title]").forEach(function (el) {
+        el.setAttribute("title", t(el.getAttribute("data-i18n-title")));
+      });
+      root.querySelectorAll("[data-i18n-value]").forEach(function (el) {
+        el.setAttribute("value", t(el.getAttribute("data-i18n-value")));
+      });
+      root.querySelectorAll("[data-i18n-aria-label]").forEach(function (el) {
+        el.setAttribute(
+          "aria-label",
+          t(el.getAttribute("data-i18n-aria-label")),
+        );
+      });
+      root.querySelectorAll("[data-i18n-alt]").forEach(function (el) {
+        el.setAttribute("alt", t(el.getAttribute("data-i18n-alt")));
+      });
+      _applyLegacyText(root);
+    }
+
+    /**
+     * Transitional coverage for legacy renderers. Only exact text matches
+     * originating from the fallback UI catalogue are replaced. This keeps
+     * user-entered values, database identifiers and arbitrary Arabic content
+     * untouched while existing common labels become English immediately.
+     */
+    function _applyLegacyText(root) {
+      if (!_legacyTextMap || !Object.keys(_legacyTextMap).length || !root)
+        return;
+      var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: function (node) {
+          var parent = node.parentNode;
+          if (
+            !parent ||
+            /^(SCRIPT|STYLE|TEXTAREA|OPTION)$/i.test(parent.nodeName)
+          )
+            return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      });
+      var node;
+      while ((node = walker.nextNode())) {
+        var raw = node.nodeValue;
+        var trimmed = raw.replace(/^\s+|\s+$/g, "");
+        if (_legacyTextMap[trimmed] !== undefined) {
+          node.nodeValue = raw.replace(trimmed, _legacyTextMap[trimmed]);
+        }
+      }
+      if (root.querySelectorAll) {
+        root
+          .querySelectorAll("[title],[placeholder],[aria-label]")
+          .forEach(function (el) {
+            ["title", "placeholder", "aria-label"].forEach(function (attr) {
+              var value = el.getAttribute(attr);
+              if (_legacyTextMap[value] !== undefined)
+                el.setAttribute(attr, _legacyTextMap[value]);
+            });
+          });
+      }
+      _queueUncataloguedLegacyText(root);
+    }
+
+    function _loadAutoTextCache() {
+      try {
+        _autoTextCache = JSON.parse(
+          localStorage.getItem(AUTO_TEXT_STORAGE_KEY) || "{}",
+        );
+      } catch (e) {
+        _autoTextCache = {};
+      }
+    }
+
+    function _saveAutoTextCache() {
+      try {
+        localStorage.setItem(
+          AUTO_TEXT_STORAGE_KEY,
+          JSON.stringify(_autoTextCache),
+        );
+      } catch (e) {}
+    }
+
+    function _queueUncataloguedLegacyText(root) {
+      if (_lang !== "en" || !root || !APP || !APP.currentUser) return;
+      var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: function (node) {
+          var el = node.parentNode;
+          if (!el || /^(SCRIPT|STYLE|TEXTAREA|OPTION|TD)$/i.test(el.nodeName))
+            return NodeFilter.FILTER_REJECT;
+          if (
+            el.closest &&
+            el.closest(
+              "td,[data-i18n-ignore],[data-user-content],.user-content",
+            )
+          )
+            return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      });
+      var node;
+      while ((node = walker.nextNode())) {
+        var text = node.nodeValue.replace(/^\s+|\s+$/g, "");
+        if (
+          !/[\u0600-\u06FF]/.test(text) ||
+          text.length < 2 ||
+          text.length > 180 ||
+          _legacyTextMap[text]
+        )
+          continue;
+        if (_autoTextCache[text])
+          node.nodeValue = node.nodeValue.replace(text, _autoTextCache[text]);
+        else _autoTextQueue[text] = true;
+      }
+      if (_autoTextTimer || !Object.keys(_autoTextQueue).length) return;
+      _autoTextTimer = setTimeout(_flushAutoTextQueue, 120);
+    }
+
+    function _flushAutoTextQueue() {
+      _autoTextTimer = null;
+      var texts = Object.keys(_autoTextQueue).slice(0, 25);
+      texts.forEach(function (text) {
+        delete _autoTextQueue[text];
+      });
+      if (!texts.length || !APP || !APP.currentUser) return;
+      _gsr(
+        "translateLegacyUiText",
+        [APP.currentUser.username, texts, SESSION ? SESSION.token : null],
+        {
+          label: "i18n-legacy-batch",
+          rawResponse: true,
+          onSuccess: function (result) {
+            var translations =
+              (result.data && result.data.translations) ||
+              result.translations ||
+              {};
+            Object.keys(translations).forEach(function (source) {
+              _autoTextCache[source] = translations[source];
+              _legacyTextMap[source] = translations[source];
+            });
+            _saveAutoTextCache();
+            _applyLegacyText(document);
+            if (Object.keys(_autoTextQueue).length)
+              _autoTextTimer = setTimeout(_flushAutoTextQueue, 80);
+          },
+          // A quota or service outage is non-blocking. Candidates remain
+          // eligible on the next render, but we never spin/retry in a loop.
+          onError: function () {},
+        },
+      );
+    }
+
+    /** يضبط اتجاه/لغة الصفحة كاملة (المرحلة السادسة: RTL/LTR تلقائي) */
+    function _applyDirToDocument(lang, dir) {
+      document.documentElement.setAttribute("lang", lang);
+      document.documentElement.setAttribute("dir", dir);
+      document.body &&
+        document.body.classList.toggle("rtl-mode", dir === "rtl");
+      document.body &&
+        document.body.classList.toggle("ltr-mode", dir === "ltr");
+      document.documentElement.style.direction = dir;
+    }
+
+    /** قراءة مبدئية سريعة من التخزين المحلي (قبل ما يرد السيرفر) لتفادي وميض اتجاه خاطئ */
+    function _quickApplyCachedLang() {
+      try {
+        var cached = localStorage.getItem(STORAGE_KEY);
+        if (cached) {
+          var parsed = JSON.parse(cached);
+          _applyDirToDocument(parsed.lang, parsed.dir);
+        }
+      } catch (e) {}
+    }
+
+    // Components are rendered after navigation, modal opening, or async grid
+    // refreshes.  Translate only newly inserted data-i18n nodes; this avoids a
+    // full-page scan on every mutation and leaves user-entered values intact.
+    function _startDomObserver() {
+      if (_observer || !document.body || !window.MutationObserver) return;
+      _observer = new MutationObserver(function (records) {
+        records.forEach(function (record) {
+          record.addedNodes.forEach(function (node) {
+            if (node.nodeType !== 1) return;
+            if (node.hasAttribute && node.hasAttribute("data-i18n"))
+              applyToDom(node.parentNode);
+            else if (node.querySelectorAll) applyToDom(node);
+          });
+        });
+      });
+      _observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    function _notifyLanguageChanged() {
+      _changeListeners.forEach(function (cb) {
+        try {
+          cb();
+        } catch (e) {
+          console.error("[I18N] onChange listener error:", e);
+        }
+      });
+      try {
+        document.dispatchEvent(
+          new CustomEvent("i18n:change", {
+            detail: { lang: _lang, dir: _dir, locale: _locale() },
+          }),
+        );
+      } catch (e) {}
+    }
+
+    /** يحمّل قاموس لغة واحدة فقط من السيرفر (Lazy Loading — المرحلة الحادية عشرة) */
+    function bootstrap(callerUser, sessionToken, onDone) {
+      _quickApplyCachedLang();
+      _bootstrapAttempt(callerUser, sessionToken, onDone, false);
+    }
+
+    /**
+     * [I18N-RESILIENCE-2026-08-05] نداء getI18nBootstrap الفعلي، بمحاولة
+     * إعادة واحدة تلقائية + كاش قاموس كامل محلي (مش بس lang/dir زي قبل).
+     *
+     * المشكلة اللي كانت موجودة: onError القديم كان بيدّعي "استخدام
+     * العربية كافتراضي" لكنه فعليًا كان بيسيب _dict = {} فاضي تمامًا —
+     * فكل مفتاح في الشاشة كان بيظهر بين ⟦قوسين⟧ (زي ما ظهر في شاشة
+     * اللوجين) بدل أي نص عربي حقيقي، لأنه مفيش قاموس عربي مدمج فعليًا
+     * في الفرونت-إند يقدر يرجعله وقت الفشل.
+     *
+     * الحل: 1) محاولة تانية تلقائية فورية (فشل مرة واحدة غالبًا مؤقت —
+     * كولد ستارت/تحميل بطيء، خصوصًا على رابط /dev)، و2) لو المحاولتين
+     * فشلوا، استخدم آخر قاموس نجح فعليًا وكان متخزّن محليًا (لو المتصفح
+     * ده سبق حمّل الشاشة قبل كده بنجاح) بدل قاموس فاضي.
+     */
+    function _bootstrapAttempt(callerUser, sessionToken, onDone, isRetry) {
+      _gsr("getI18nBootstrap", [callerUser, sessionToken], {
+        label: "i18n-bootstrap" + (isRetry ? "-retry" : ""),
+        rawResponse: true,
+        onSuccess: function (result) {
+          var data = result.data;
+          _lang = data.lang;
+          _dir = data.dir;
+          _dict = data.dict;
+          _legacyTextMap = (data.meta && data.meta.legacyTextMap) || {};
+          _loadAutoTextCache();
+          _availableLanguages = data.meta.availableLanguages;
+          _forced = !!data.forced;
+          _ready = true;
+          _applyDirToDocument(_lang, _dir);
+          try {
+            localStorage.setItem(
+              STORAGE_KEY,
+              JSON.stringify({ lang: _lang, dir: _dir }),
+            );
+            // [I18N-RESILIENCE-2026-08-05] كاش القاموس الكامل نفسه (مش بس
+            // lang/dir) — ده اللي بيستخدمه fallback الفشل تحت.
+            localStorage.setItem(
+              DICT_STORAGE_KEY,
+              JSON.stringify({
+                lang: _lang,
+                dir: _dir,
+                dict: _dict,
+                legacyTextMap: _legacyTextMap,
+                availableLanguages: _availableLanguages,
+              }),
+            );
+          } catch (e) {}
+          applyToDom(document);
+          _startDomObserver();
+          _readyCallbacks.forEach(function (cb) {
+            cb();
+          });
+          _readyCallbacks = [];
+          _notifyLanguageChanged();
+          if (typeof onDone === "function") onDone();
+        },
+        onError: function (err) {
+          if (!isRetry) {
+            console.warn(
+              "[I18N] فشلت محاولة تحميل الترجمة الأولى، جاري إعادة المحاولة:",
+              err.message,
+            );
+            _bootstrapAttempt(callerUser, sessionToken, onDone, true);
+            return;
+          }
+          console.error(
+            "[I18N] فشل تحميل الترجمة بعد إعادة المحاولة:",
+            err.message,
+          );
+          var cachedDict = null;
+          try {
+            cachedDict = JSON.parse(
+              localStorage.getItem(DICT_STORAGE_KEY) || "null",
+            );
+          } catch (e) {}
+          if (cachedDict && cachedDict.dict) {
+            console.warn(
+              "[I18N] استخدام آخر قاموس محفوظ محليًا بدل قاموس فاضي.",
+            );
+            _lang = cachedDict.lang || "ar";
+            _dir = cachedDict.dir || "rtl";
+            _dict = cachedDict.dict || {};
+            _legacyTextMap = cachedDict.legacyTextMap || {};
+            _availableLanguages = cachedDict.availableLanguages || [];
+          } else {
+            _lang = "ar";
+            _dir = "rtl";
+            _dict = {};
+            _legacyTextMap = {};
+          }
+          _ready = true;
+          _applyDirToDocument(_lang, _dir);
+          applyToDom(document);
+          _startDomObserver();
+          if (typeof onDone === "function") onDone();
+        },
+      });
+    }
+
+    /** المرحلة الخامسة: تغيير اللغة بدون إعادة تحميل الصفحة */
+    function switchLanguage(
+      callerUser,
+      sessionToken,
+      newLang,
+      onDone,
+      onError,
+    ) {
+      if (_forced) {
+        showAlert && showAlert(t("MSG_LANG_FORCED_BY_ADMIN"), "warning");
+        return;
+      }
+      _gsr("setUserLanguage", [callerUser, newLang, sessionToken], {
+        label: "i18n-switch",
+        rawResponse: true,
+        onSuccess: function (result) {
+          var data = result.data;
+          _lang = data.lang;
+          _dir = data.dir;
+          _dict = data.dict;
+          _legacyTextMap = (data.meta && data.meta.legacyTextMap) || {};
+          _loadAutoTextCache();
+          _applyDirToDocument(_lang, _dir);
+          try {
+            localStorage.setItem(
+              STORAGE_KEY,
+              JSON.stringify({ lang: _lang, dir: _dir }),
+            );
+          } catch (e) {}
+          applyToDom(document);
+          _notifyLanguageChanged();
+          // إعادة رسم الصفحة الحالية إن كان الراوتر متاحًا حتى تُترجم كل النصوص المُولَّدة ديناميكيًا
+          if (typeof render === "function") render();
+          if (typeof onDone === "function") onDone(data);
+        },
+        onError: function (err) {
+          if (typeof onError === "function") onError(err);
+        },
+      });
+    }
+
+    function onReady(cb) {
+      if (_ready) cb();
+      else _readyCallbacks.push(cb);
+    }
+
+    /**
+     * يسجّل دالة تُستدعى تلقائيًا بعد كل تحميل أولي أو تبديل لغة.
+     * يُستخدم من أي ملف يبني قاموس Key→Label ثابت من مفاتيح ترجمة
+     * (مثال: دمج تسميات أدوار في ROLE_LABELS) حتى يُعاد بناؤه باللغة
+     * الصحيحة دائمًا، بدل ما يتجمّد على أول لغة حُمِّلت بها الصفحة.
+     */
+    function onChange(cb) {
+      _changeListeners.push(cb);
+      if (_ready) cb(); // نفّذها فورًا لو القاموس جاهز أصلاً وقت التسجيل
+    }
+
+    return {
+      t: t,
+      applyToDom: applyToDom,
+      bootstrap: bootstrap,
+      switchLanguage: switchLanguage,
+      onReady: onReady,
+      onChange: onChange,
+      isReady: function () {
+        return _ready;
+      },
+      getLang: function () {
+        return _lang;
+      },
+      getDir: function () {
+        return _dir;
+      },
+      isForced: function () {
+        return _forced;
+      },
+      getAvailableLanguages: function () {
+        return _availableLanguages;
+      },
+      getLocale: _locale,
+      formatNumber: function (value, options) {
+        return new Intl.NumberFormat(_locale(), options || {}).format(
+          Number(value || 0),
+        );
+      },
+      formatCurrency: function (value, currency, options) {
+        var opts = options || {};
+        opts.style = "currency";
+        opts.currency = currency || "EGP";
+        return new Intl.NumberFormat(_locale(), opts).format(
+          Number(value || 0),
+        );
+      },
+      formatDate: function (value, options) {
+        var date = value instanceof Date ? value : new Date(value);
+        if (isNaN(date.getTime())) return "";
+        return new Intl.DateTimeFormat(
+          _locale(),
+          options || { year: "numeric", month: "2-digit", day: "2-digit" },
+        ).format(date);
+      },
+      formatDateTime: function (value, options) {
+        var date = value instanceof Date ? value : new Date(value);
+        if (isNaN(date.getTime())) return "";
+        return new Intl.DateTimeFormat(
+          _locale(),
+          options || { dateStyle: "medium", timeStyle: "short" },
+        ).format(date);
+      },
+    };
+  })();
+
+  // ─── مثال جاهز لعنصر تغيير اللغة (استخدمه داخل شاشة الإعدادات أو شريط النظام) ───
+  // بيولّد Select عليه أعلام اللغات + يعمل bind تلقائي لدالة التغيير.
+  function renderLanguageSwitcher(containerId) {
+    var el = document.getElementById(containerId);
+    if (!el) return;
+    var langs = I18N.getAvailableLanguages();
+    var current = I18N.getLang();
+    var options = langs
+      .map(function (l) {
+        return (
+          '<option value="' +
+          l.code +
+          '"' +
+          (l.code === current ? " selected" : "") +
+          ">" +
+          l.flag +
+          " " +
+          l.label +
+          "</option>"
+        );
+      })
+      .join("");
+    el.innerHTML =
+      '<select id="langSwitcherSelect" ' +
+      (I18N.isForced() ? "disabled" : "") +
+      ">" +
+      options +
+      "</select>";
+    var selectEl = document.getElementById("langSwitcherSelect");
+    if (selectEl) {
+      selectEl.addEventListener("change", function () {
+        var newLang = this.value;
+        I18N.switchLanguage(
+          APP.currentUser,
+          SESSION ? SESSION.token : null,
+          newLang,
+          function () {
+            console.log("[I18N] تم تغيير اللغة إلى:", newLang);
+          },
+          function (err) {
+            console.error("[I18N] فشل تغيير اللغة:", err.message);
+          },
+        );
+      });
+    }
+  }
+</script>

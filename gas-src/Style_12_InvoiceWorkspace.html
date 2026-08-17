@@ -1,0 +1,941 @@
+<style>
+  /* ═══════════════════════════════════════════════════════════════
+   Style_12_InvoiceWorkspace.html — شاشة إنشاء الفاتورة/المرتجع (بديل المودال)
+   أُضيف 2026-07-04 — يغطي: فاتورة بيع / فاتورة شراء / مرتجع بيع / مرتجع شراء
+   الشاشة الجديدة صفحة كاملة (مش مودال) بتصميم شبكي كثيف قريب من برامج
+   المحاسبة سطح المكتب (Ready ERP) بناءً على طلب العميل مع صورة مرجعية.
+   يعتمد بالكامل على متغيرات Style_01_Tokens.html — بدون أي لون hex مباشر
+   إلا لتمييز نوع المستند (بيع/شراء/مرتجع) وهي ألوان دلالية موجودة أصلاً
+   في باقي الشاشات (accent/#5B21B6/#DC2626/#7C3AED).
+   ═══════════════════════════════════════════════════════════════ */
+
+  .iw-page {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin: -6px -6px 0;
+  }
+
+  /* ── الشريط العلوي: نوع المستند ── */
+  .iw-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 16px;
+    min-height: 0;
+    border-radius: var(--radius-md);
+    color: #fff;
+    box-shadow: var(--shadow-sm);
+  }
+  .iw-topbar-title-wrap {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .iw-topbar h1 {
+    font-size: 14px;
+    font-weight: 800;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .iw-topbar h1 i {
+    font-size: 15px;
+  }
+  .iw-topbar .iw-topbar-sub {
+    font-size: 11px;
+    opacity: 0.8;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .iw-topbar-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .iw-topbar-actions .btn {
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+  .iw-topbar-actions .btn {
+    background: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #fff;
+  }
+  .iw-topbar-actions .btn:hover {
+    background: rgba(255, 255, 255, 0.26);
+  }
+
+  /* ── شريط أدوات أيقونات (طباعة / استيراد / تصدير...) ──
+      [IW-TOOLBAR-COMPACT] الأزرار كانت عمودية (أيقونة فوق التسمية)
+     وده كان بيخلي الشريط طويل بالطول. بنخليها أفقية (أيقونة + تسمية
+     جنب بعض) مع تقليل الـ padding عشان يبقى الشريط أرفع بكتير. */
+  .iw-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 5px 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .iw-tool-btn {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    padding: 5px 9px;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    color: var(--text2);
+    font-size: 11px;
+    font-weight: 700;
+    font-family: var(--font);
+    transition: background 0.12s ease;
+  }
+  .iw-tool-btn i {
+    font-size: 15px;
+  }
+  .iw-tool-btn:hover:not(:disabled) {
+    background: var(--surface2);
+    color: var(--accent);
+  }
+  .iw-tool-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .iw-tool-sep {
+    width: 1px;
+    align-self: stretch;
+    background: var(--border);
+    margin: 2px 2px;
+  }
+
+  /* ── حقول رأس الفاتورة (شبكتين) ── */
+  .iw-header-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .iw-header-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+  }
+  .iw-field label {
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text3);
+    margin-bottom: 4px;
+  }
+  .iw-field .input,
+  .iw-field select.input {
+    width: 100%;
+    box-sizing: border-box;
+    height: 34px;
+    font-size: 13px;
+  }
+  .iw-field-readonly {
+    height: 34px;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    background: var(--surface2);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-xs);
+    color: var(--text3);
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .iw-payment-toggle {
+    display: flex;
+    gap: 10px;
+    height: 34px;
+    align-items: center;
+  }
+  .iw-payment-toggle label {
+    display: flex !important;
+    align-items: center;
+    gap: 5px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text2);
+    margin: 0 !important;
+    cursor: pointer;
+  }
+
+  /* ── الجسم: شريط جانبي + المحتوى الرئيسي ── */
+  /* [FIX] الشريط الجانبي (الأصناف/المستند/أخرى) كان بيتحط أول عنصر
+     في الـ DOM فبييجي أول عمود (يمين، في RTL) — طلب العميل ينقله
+     لليسار. بنعكس عرض الأعمدة (1fr لليمين، 168px لليسار) ونستخدم
+     order عشان نلوّن كل عنصر في عموده الصح من غير ما نلمس ترتيب
+     الـ HTML/JS الأصلي. */
+  .iw-body {
+    display: grid;
+    grid-template-columns: 1fr 260px;
+    gap: 14px;
+    align-items: stretch;
+  }
+  .iw-body .iw-main {
+    order: 1;
+  }
+  .iw-body .iw-sidebar {
+    order: 2;
+  }
+  /* [PO-FULL-WIDTH] شاشات مالهاش iw-sidebar (زي أمر الشراء) بتاخد
+     العرض الكامل بدل ما تسيب مساحة 260px فاضية كانت محجوزة للسايدبار. */
+  .iw-body.iw-body-full {
+    grid-template-columns: 1fr;
+  }
+  @media (max-width: 900px) {
+    .iw-body {
+      grid-template-columns: 1fr;
+      align-items: start;
+    }
+    .iw-body .iw-main,
+    .iw-body .iw-sidebar {
+      order: initial;
+    }
+    .iw-sidebar {
+      position: static !important;
+      height: auto !important;
+    }
+  }
+
+  /* [IW-SIDEBAR-MATCH-MAIN-HEIGHT] الشريط الجانبي بقى بيمتد بنفس
+     ارتفاع عمود الفاتورة (iw-main) بالظبط، فنهايته بتبقى موازية لصف
+     أزرار الحفظ (iw-actions-bar) اللي هو آخر عنصر جوه iw-main — بدل
+     ما يكون ارتفاعه مربوط بارتفاع الشاشة (100vh) واللي كان بيخليه
+     يقف عند نقطة عشوائية مش لها علاقة بمحتوى الفاتورة. ده بيتحقق
+     تلقائيًا بـ align-items:stretch على iw-body (فوق) + align-self:stretch
+     هنا، من غير ما نحدد height ثابت، فالمتصفح بيسوي ارتفاع العمودين.
+     + sticky عشان يفضل ظاهر وانت بتسكرول، وبيتوقف عن الالتصاق طبيعيًا
+     عند وصوله لآخر iw-main (يعني عند أزرار الحفظ). */
+  .iw-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    position: sticky;
+    top: 8px;
+    align-self: stretch;
+    max-height: calc(100vh - 96px);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-inline-start: 3px solid var(--iw-sb-accent, var(--accent));
+    border-radius: var(--radius-md);
+    padding: 12px 10px;
+    box-shadow: var(--shadow-md);
+    overflow-y: auto;
+  }
+  .iw-sb-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px;
+    flex-shrink: 0;
+  }
+  .iw-sb-title {
+    font-size: 10.5px;
+    font-weight: 800;
+    color: var(--text3);
+    letter-spacing: 0.3px;
+    margin-bottom: 8px;
+    padding: 0 2px;
+  }
+  .iw-sb-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 10px;
+    margin-bottom: 6px;
+    border: none;
+    border-radius: var(--radius-xs);
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+    font-family: var(--font);
+    cursor: pointer;
+    text-align: right;
+    transition:
+      transform 0.1s ease,
+      background 0.12s ease;
+  }
+  .iw-sb-btn:last-child {
+    margin-bottom: 0;
+  }
+  .iw-sb-btn i {
+    font-size: 15px;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+  .iw-sb-btn:hover:not(:disabled) {
+    background: var(--accent-soft);
+    transform: translateX(-2px);
+  }
+  .iw-sb-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .iw-sb-btn.danger i {
+    color: var(--danger);
+  }
+  .iw-sb-btn.success i {
+    color: var(--success);
+  }
+  .iw-sb-btn.purple i {
+    color: var(--purple);
+  }
+
+  /* [IW-SIDEBAR-ITEM-INFO] بانل معلومات الصنف الديناميكي — بيتحدث
+     أوتوماتيك كل ما تختار صنف في جدول بنود الفاتورة (فكرة من شاشة X-MAN
+     المرجعية: رصيد + أسعار + حد الطلب + توزيع الرصيد على المخازن). */
+  .iw-sb-iteminfo-empty {
+    font-size: 11.5px;
+    color: var(--text3);
+    text-align: center;
+    padding: 14px 4px;
+    line-height: 1.6;
+  }
+  .iw-sb-iteminfo-name {
+    font-size: 12.5px;
+    font-weight: 800;
+    color: var(--text);
+    padding: 0 2px 8px;
+    border-bottom: 1px dashed var(--border);
+    margin-bottom: 8px;
+    word-break: break-word;
+  }
+  .iw-sb-iteminfo-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 5px 2px;
+    font-size: 11.5px;
+  }
+  .iw-sb-iteminfo-row + .iw-sb-iteminfo-row {
+    border-top: 1px dashed var(--border);
+  }
+  .iw-sb-iteminfo-row .lbl {
+    color: var(--text3);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .iw-sb-iteminfo-row .val {
+    color: var(--text);
+    font-weight: 800;
+    text-align: left;
+  }
+  .iw-sb-iteminfo-row .val.warn {
+    color: var(--danger);
+  }
+  .iw-sb-iteminfo-row .val.ok {
+    color: var(--success);
+  }
+  .iw-sb-iteminfo-wh-title {
+    font-size: 10px;
+    font-weight: 800;
+    color: var(--text3);
+    margin: 10px 0 4px;
+    padding: 0 2px;
+  }
+  .iw-sb-iteminfo-wh-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 6px;
+    font-size: 11px;
+    border-radius: var(--radius-xs);
+    background: var(--surface2);
+    margin-bottom: 4px;
+  }
+  .iw-sb-iteminfo-wh-row .wh-name {
+    color: var(--text2);
+    font-weight: 600;
+  }
+  .iw-sb-iteminfo-wh-row .wh-qty {
+    color: var(--text);
+    font-weight: 800;
+  }
+
+  /* [IW-SIDEBAR-TABS] تبويبات أعلى السايد بار (إجراءات / معلومات الصنف)
+     فكرة من X-MAN — نفس مساحة السايد بار بتتبدّل بين أكتر من بانل.
+      [IW-SB-TABS-ICON-ONLY] الأزرار الثلاثة بقت أيقونة بس من غير
+     نص (النص بقى tooltip بيظهر عند الهوفر عبر title). */
+  .iw-sb-tabs {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .iw-sb-tab {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 9px 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text3);
+    cursor: pointer;
+  }
+  .iw-sb-tab i {
+    font-size: 18px;
+  }
+  .iw-sb-tab.active {
+    background: var(--iw-sb-accent, var(--accent));
+    border-color: var(--iw-sb-accent, var(--accent));
+    color: #fff;
+  }
+  .iw-sb-tabpanel {
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+  }
+  .iw-sb-tabpanel.active {
+    display: flex;
+  }
+
+  /* ── الجدول الرئيسي ── */
+  .iw-main {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+  }
+  .iw-grid-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+  .iw-grid-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+  }
+  .iw-grid-head h3 {
+    font-size: 13px;
+    font-weight: 800;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .iw-table-wrap {
+    overflow-x: auto;
+  }
+  table.iw-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 1180px;
+    font-size: 12.5px;
+  }
+  table.iw-table thead th {
+    background: var(--surface2);
+    color: var(--text3);
+    font-size: 10.5px;
+    font-weight: 800;
+    text-align: center;
+    padding: 8px 6px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  table.iw-table tbody td {
+    padding: 5px 6px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+    text-align: center;
+  }
+  table.iw-table tbody tr:hover {
+    background: var(--surface2);
+  }
+  table.iw-table .iw-cell-name {
+    text-align: right;
+    min-width: 190px;
+  }
+  .iw-input-cell {
+    width: 100%;
+    box-sizing: border-box;
+    height: 30px;
+    padding: 0 8px;
+    font-size: 12.5px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    font-family: var(--font);
+    color: var(--text);
+    text-align: center;
+  }
+  .iw-cell-name .iw-input-cell {
+    text-align: right;
+  }
+  .iw-input-cell:hover {
+    border-color: var(--border);
+    background: var(--surface2);
+  }
+  .iw-input-cell:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--surface);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .iw-readonly-cell {
+    font-size: 12px;
+    color: var(--text3);
+    font-weight: 600;
+  }
+  .iw-code-pill {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    padding: 2px 6px;
+    border-radius: 5px;
+    font-weight: 700;
+  }
+  .iw-disc-cell {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .iw-disc-cell .iw-input-cell {
+    text-align: center;
+    min-width: 46px;
+  }
+  .iw-disc-cell select.iw-input-cell {
+    min-width: 40px;
+    padding: 0 2px;
+    font-size: 10.5px;
+    cursor: pointer;
+  }
+  .iw-line-total {
+    font-weight: 800;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .iw-row-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--surface2);
+    color: var(--text3);
+    font-size: 10.5px;
+    font-weight: 700;
+  }
+  .iw-row-del {
+    border: none;
+    background: transparent;
+    color: var(--text3);
+    cursor: pointer;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .iw-row-del:hover {
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+  .iw-empty-row td {
+    text-align: center;
+    color: var(--text3);
+    padding: 22px 10px;
+    font-size: 12.5px;
+  }
+  .iw-add-row-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    border-top: 1px solid var(--border);
+    background: var(--surface2);
+  }
+  .iw-add-row-bar .iw-hint {
+    font-size: 11px;
+    color: var(--text3);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  /* ── الشريط السفلي: الإجماليات + الدفع ──
+      [X-MAN-STYLE] توزيع جديد بناءً على مرجع صورة نظام X-MAN اللي
+     بعتها العميل: عمود مصغّر من سطور تفصيلية (label + نقطة فاصلة +
+     قيمة بخط تحتي منقط بدل صناديق) + رقم كبير بارز واحد بس
+     (الصافي المطلوب) عايم بجنب العمود ده بدل الكروت المنفصلة.
+      [X-MAN-LAYOUT-SWAP] بناءً على صورة مرجعية تانية بعتها العميل،
+     الترتيب اتعكس: عمود الإجماليات بقى على الشمال، وجدول طريقة الدفع
+     بقى على اليمين (بدل العكس). بنستخدم order بس من غير ما نلمس
+     ترتيب الـ HTML/JS الأصلي (نفس الطريقة المتبعة في iw-sidebar). */
+  .iw-footer {
+    display: grid;
+    grid-template-columns: 1.4fr 1.1fr;
+    /* [X-MAN-FOOTER-DENSE-FIX] بالـ sparse (الافتراضي) كان عمود
+       الإجماليات (iw-totals-list) بيتنط لصف جديد تحت أزرار الحفظ
+       (iw-actions-bar) بدل ما يقعد جنب جدول الدفع في نفس الصف، لأن
+       المتصفح بيوقف عن الرجوع لملء الخانة الفاضية جنب جدول الدفع
+       أول ما يحط الأزرار (اللي بتاخد الصف كامل) في الصف اللي بعده.
+       dense بيخلي المتصفح يرجع يملى أي خانة فاضية سابقة، فعمود
+       الإجماليات بيرجع يقعد جنب جدول الدفع في نفس الصف، وأزرار الحفظ
+       بترجع تبقى آخر صف (تحت الاتنين مع بعض) مش بينهم. */
+    grid-auto-flow: dense;
+    gap: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 16px;
+  }
+  .iw-footer .iw-payment-grid {
+    order: 1;
+  }
+  .iw-footer .iw-totals-list {
+    order: 2;
+  }
+  @media (max-width: 900px) {
+    .iw-footer {
+      grid-template-columns: 1fr;
+    }
+    .iw-footer .iw-payment-grid,
+    .iw-footer .iw-totals-list {
+      order: initial;
+    }
+    .iw-totals-list {
+      border-inline-start: none !important;
+      padding-inline-start: 0 !important;
+    }
+  }
+  .iw-totals-list {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    /* فاصل رفيع بين عمود الإجماليات وعمود الدفع — دلوقتي عمود
+       الإجماليات بقى على الشمال فبقى الفاصل على حافته اليمين
+       (inline-start) بدل الشمال، عشان يفضل ملاصق لعمود الدفع. */
+    padding-inline-start: 18px;
+    border-inline-start: 1px dashed var(--border);
+  }
+  @media (max-width: 480px) {
+    .iw-totals-list {
+      flex-direction: column;
+      align-items: stretch;
+    }
+  }
+  /* عمود السطور التفصيلية المصغّرة (عدد الأصناف/الإجمالي/الخصم/الضريبة...) */
+  .iw-totals-mini {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .iw-tmr {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+  }
+  .iw-tmr-label {
+    flex-shrink: 0;
+    white-space: nowrap;
+    color: var(--text3);
+    font-weight: 600;
+  }
+  .iw-tmr-dot {
+    width: 4px;
+    height: 4px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--text3);
+    opacity: 0.6;
+  }
+  .iw-tmr-value {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    border-bottom: 1px dashed var(--border);
+    padding-bottom: 3px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .iw-tmr-value-input {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .iw-tmr-value-input .input {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    height: 22px;
+    padding: 0 !important;
+    text-align: left;
+    font-size: 12.5px;
+    font-weight: 700;
+  }
+  .iw-tmr-value-input select.input {
+    flex-shrink: 0;
+    width: auto;
+  }
+  .iw-tmr-suffix {
+    color: var(--text3);
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  /* الرقم الكبير البارز — الصافي المطلوب */
+  .iw-totals-big {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding-inline-start: 8px;
+  }
+  .iw-totals-big-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text3);
+    white-space: nowrap;
+  }
+  .iw-net-display {
+    /* رقم بخط الواجهة العادي (مش مونو) عشان مايحصلش تعارض خطوط بين
+       الرقم والعملة العربية جوه نفس الـ span، مع unicode-bidi عشان
+       ترتيب الرقم/العملة يفضل صحيح مهما كان اتجاه الصفحة. */
+    font-size: 34px;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--accent);
+    font-family: var(--font);
+    white-space: nowrap;
+    unicode-bidi: plaintext;
+  }
+  /* [X-MAN-PAY-TABLE] جدول طريقة الدفع بناءً على الصورة المرجعية:
+     صف عناوين أعمدة (النوع / اسم الحساب / المبلغ) + صف "طريقة الدفع"
+     تحته بنفس الأعمدة، بدل صناديق منفصلة لكل حقل. */
+  .iw-pay-table {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-content: start;
+  }
+  .iw-pay-row {
+    display: grid;
+    grid-template-columns: 76px 72px 1fr 120px;
+    gap: 10px;
+    align-items: center;
+  }
+  .iw-pay-head {
+    color: var(--text3);
+    font-size: 10.5px;
+    font-weight: 700;
+  }
+  .iw-pay-head span {
+    text-align: center;
+  }
+  .iw-pay-head span:first-child {
+    text-align: start;
+  }
+  .iw-pay-row-label {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--text2);
+    white-space: nowrap;
+  }
+  .iw-pay-type {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    height: 34px;
+    background: var(--surface2);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-xs);
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--text2);
+    padding: 0 6px;
+  }
+  .iw-pay-type i {
+    font-size: 15px;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+  .iw-pay-row .input {
+    width: 100%;
+    box-sizing: border-box;
+    height: 34px;
+    font-size: 12.5px;
+  }
+
+  /* ── أزرار الحفظ ──
+      [X-MAN-ACTIONS-IN-CARD] الأزرار بقت جوه نفس كارت الفوتر (تحت
+     جدول طريقة الدفع) بدل ما تكون صف منفصل بره الكارت. عشان كده
+     iw-actions-bar بقى محتاج ياخد عرض الكارت كله جوه iw-footer اللي
+     هو grid بعمودين (grid-column:1/-1)، مع خط فاصل خفيف فوقه. */
+  .iw-footer .iw-actions-bar {
+    grid-column: 1 / -1;
+    margin-top: 4px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border);
+  }
+  .iw-actions-bar {
+    display: flex;
+    justify-content: flex-start;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .iw-actions-bar .btn {
+    height: 42px;
+    padding: 0 20px;
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  /* ── قائمة بحث الصنف داخل الجدول ── */
+  .iw-item-search-wrap {
+    position: relative;
+  }
+  .iw-item-search-list {
+    display: none;
+    position: absolute;
+    z-index: 60;
+    top: calc(100% + 2px);
+    right: 0;
+    left: 0;
+    max-height: 260px;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    box-shadow: var(--shadow-md);
+    text-align: right;
+  }
+  .iw-item-search-list.open {
+    display: block;
+  }
+  .iw-isr-opt {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    font-size: 12.5px;
+    border-bottom: 1px solid var(--border);
+  }
+  .iw-isr-opt:last-child {
+    border-bottom: none;
+  }
+  .iw-isr-opt:hover {
+    background: var(--accent-soft);
+  }
+  .iw-isr-opt .iw-isr-code {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text3);
+  }
+  .iw-isr-empty {
+    padding: 12px;
+    text-align: center;
+    color: var(--text3);
+    font-size: 12px;
+  }
+
+  /* ── آلة حاسبة بسيطة (نافذة منبثقة) ── */
+  /* [UX] كانت بعرض 240px ثابت جوه drawer أكبر بكتير، فبتسيب مساحة فاضية
+     كبيرة حواليها. بقت تملأ عرض الـ drawer (بحد أقصى معقول) وتتمركز
+     رأسيًا، مع أزرار وشاشة أكبر تناسب المساحة المتاحة فعليًا. */
+  .iw-calc {
+    width: 100%;
+    max-width: 460px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - 220px);
+    justify-content: center;
+  }
+  .iw-calc-screen {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 24px 20px;
+    text-align: left;
+    direction: ltr;
+    font-family: var(--font-mono);
+    font-size: 44px;
+    font-weight: 700;
+    margin-bottom: 20px;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .iw-calc-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+  }
+  .iw-calc-btn {
+    height: 72px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: var(--radius-sm);
+    font-size: 24px;
+    font-weight: 700;
+    cursor: pointer;
+    color: var(--text);
+  }
+  .iw-calc-btn:hover {
+    background: var(--surface2);
+  }
+  .iw-calc-btn.op {
+    color: var(--accent);
+  }
+  .iw-calc-btn.eq {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .iw-calc-btn.clear {
+    color: var(--danger);
+    height: 60px;
+    font-size: 20px;
+  }
+</style>

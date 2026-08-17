@@ -1,0 +1,306 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 46_JS_ReportEngine.html — محرك التقارير الموحّد (ReportEngine)
+  // ═══════════════════════════════════════════════════════════════════
+  // [REPORT-ENGINE-DESIGN] منطق التصدير الفعلي (CSV/Excel/طباعة) موجود
+  // بالفعل ومركزي في window.ExportUtil (31_JS_DataLayer.html —
+  // toCSV/toExcel/toPrint، ومكتبة SheetJS مضمّنة في SheetJS_Embedded).
+  // ReportEngine *لا يعيد كتابته* — هو الطبقة الأعلى التي:
+  //   1) توحّد "شكل التقرير" (Filters/Sorting/Grouping/Template/Headers/
+  //      Footers/Company Logo/Page Number/Barcode/QR) قبل ما توصّل
+  //      البيانات النهائية لـ ExportUtil.
+  //   2) توفّر واجهة واحدة (ReportEngine.export(config)) بدل ما كل شاشة
+  //      تستدعي XLSX.writeFile مباشرة (كان مكرر في 8+ ملفات) أو تبني
+  //      نافذة طباعة بمنطقها الخاص.
+  //   3) تسجّل كل عملية طباعة/تصدير عبر AuditEngine تلقائيًا (لو متاحة
+  //      من جهة السيرفر عبر _gsr) — بدل ما كل شاشة تتذكر تعمل ده بنفسها.
+  //
+  //   ReportEngine.exportExcel(rows, headers, "تقرير_المبيعات");
+  //   ReportEngine.exportCSV(rows, headers, "تقرير_المخزون");
+  //   ReportEngine.print({
+  //     title: "تقرير المبيعات الشهري", subtitle: "يوليو 2026",
+  //     columns: [{ key: "date", label: "التاريخ" }, { key: "total", label: "الإجمالي" }],
+  //     rows: salesRows,
+  //     groupBy: "customer",
+  //     showLogo: true, showPageNumber: true,
+  //   });
+  //
+  //   ReportEngine.defineTemplate("invoice_a4", { ... });
+  //   ReportEngine.printTemplate("invoice_a4", data);
+  // ═══════════════════════════════════════════════════════════════════
+
+  var ReportEngine = (function () {
+    "use strict";
+
+    var _templates = {};
+
+    function _rows2D(rows, columns) {
+      // يحوّل مصفوفة كائنات { key: value } إلى مصفوفة مصفوفات (row-major)
+      // بترتيب الأعمدة المطلوب — الشكل اللي بتستهلكه ExportUtil فعليًا.
+      return rows.map(function (r) {
+        return columns.map(function (c) {
+          var v = r[c.key];
+          if (c.format && typeof c.format === "function") return c.format(v, r);
+          return v === null || v === undefined ? "" : v;
+        });
+      });
+    }
+
+    function _headerLabels(columns) {
+      return columns.map(function (c) {
+        return c.label || c.key;
+      });
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §1 — Filters / Sorting / Grouping (يفوّض لـ SearchEngine الموجود)
+    // ══════════════════════════════════════════════════════════════════
+    function _applyDataOps(rows, opts) {
+      var out = rows;
+      if (typeof SearchEngine !== "undefined") {
+        if (opts.filters) out = SearchEngine.advancedFilter(out, opts.filters);
+        if (opts.sort) out = SearchEngine.sort(out, opts.sort);
+      }
+      return out;
+    }
+
+    /** groupRows — يرجع { groupKey: [rows...] } لعرض تقارير مجمّعة */
+    function groupRows(rows, groupByField) {
+      if (!groupByField) return { "": rows };
+      var out = {};
+      rows.forEach(function (r) {
+        var key = r[groupByField] === undefined ? "—" : String(r[groupByField]);
+        if (!out[key]) out[key] = [];
+        out[key].push(r);
+      });
+      return out;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §2 — Export (Excel / CSV) — تفويض لـ ExportUtil
+    // ══════════════════════════════════════════════════════════════════
+    function exportExcel(rows, columns, filename, sheetName) {
+      if (typeof ExportUtil === "undefined") {
+        console.warn("[ReportEngine] ExportUtil غير محملة");
+        return;
+      }
+      var data = _rows2D(rows, columns);
+      ExportUtil.toExcel(data, _headerLabels(columns), filename, sheetName);
+      _logReportAction("EXPORT_EXCEL", filename);
+    }
+
+    function exportCSV(rows, columns, filename) {
+      if (typeof ExportUtil === "undefined") {
+        console.warn("[ReportEngine] ExportUtil غير محملة");
+        return;
+      }
+      var data = _rows2D(rows, columns);
+      ExportUtil.toCSV(data, _headerLabels(columns), filename);
+      _logReportAction("EXPORT_CSV", filename);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §3 — Preview / Print / PDF (المتصفح: "حفظ كـ PDF" من نافذة الطباعة
+    // نفسها — هو نفس الأسلوب المستخدم بالفعل في كل الفواتير/الطباعات
+    // الحالية في المشروع؛ ReportEngine بيوحّد بناء محتوى النافذة فقط)
+    // ══════════════════════════════════════════════════════════════════
+    function _buildReportHTML(config) {
+      var columns = config.columns || [];
+      var rows = _applyDataOps(config.rows || [], config);
+      var groups = groupRows(rows, config.groupBy);
+      var groupKeys = Object.keys(groups);
+
+      function esc(v) {
+        return String(v == null ? "" : v)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function renderTable(groupRowsArr) {
+        var heads = columns
+          .map(function (c) {
+            return "<th>" + esc(c.label || c.key) + "</th>";
+          })
+          .join("");
+        var body = groupRowsArr
+          .map(function (r) {
+            return (
+              "<tr>" +
+              columns
+                .map(function (c) {
+                  var v = c.format ? c.format(r[c.key], r) : r[c.key];
+                  return "<td>" + esc(v) + "</td>";
+                })
+                .join("") +
+              "</tr>"
+            );
+          })
+          .join("");
+        return "<table><thead><tr>" + heads + "</tr></thead><tbody>" + body + "</tbody></table>";
+      }
+
+      var groupsHTML = groupKeys
+        .map(function (key) {
+          var label = config.groupBy && key !== "" ? "<h3 class='grp'>" + esc(key) + "</h3>" : "";
+          return label + renderTable(groups[key]);
+        })
+        .join("");
+
+      var logoHTML =
+        config.showLogo && config.logoUrl
+          ? "<img class='logo' src='" + esc(config.logoUrl) + "'/>"
+          : "";
+      var barcodeHTML =
+        config.barcode ? "<div class='barcode'>" + esc(config.barcode) + "</div>" : "";
+      var qrHTML =
+        config.qrDataUrl ? "<img class='qr' src='" + esc(config.qrDataUrl) + "'/>" : "";
+
+      var printCSS =
+        typeof _getPrintPageCSS === "function" ? _getPrintPageCSS() : "";
+
+      return [
+        "<!DOCTYPE html><html dir='rtl' lang='ar'><head><meta charset='UTF-8'>",
+        "<title>" + esc(config.title || "تقرير") + "</title>",
+        "<style>",
+        printCSS,
+        "body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:12px;margin:20px;color:#1e293b;direction:rtl}",
+        ".hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}",
+        "h1{font-size:18px;margin:0}",
+        "p.sub{color:#64748b;font-size:11px;margin:2px 0 16px}",
+        "h3.grp{background:#eef2ff;padding:6px 10px;margin:18px 0 6px;font-size:13px;border-radius:4px}",
+        "table{width:100%;border-collapse:collapse;margin-top:8px}",
+        "th{background:#1e40af;color:#fff;padding:8px 10px;text-align:right;font-size:11px}",
+        "td{padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:11px}",
+        "tr:nth-child(even) td{background:#f8fafc}",
+        ".logo{max-height:48px}",
+        ".barcode,.qr{margin-top:10px;text-align:center}",
+        ".footer{margin-top:16px;font-size:10px;color:#94a3b8;text-align:center}",
+        "@media print{button{display:none!important}",
+        "  .page-number:after{content:counter(page);}",
+        "}",
+        "</style></head><body>",
+        "<div class='hdr'><div><h1>" + esc(config.title || "تقرير") + "</h1>",
+        config.subtitle ? "<p class='sub'>" + esc(config.subtitle) + "</p>" : "",
+        "</div>" + logoHTML + "</div>",
+        groupsHTML,
+        barcodeHTML,
+        qrHTML,
+        "<div class='footer'>" +
+          "تاريخ الطباعة: " +
+          (typeof DateEngine !== "undefined" ? DateEngine.forReport(new Date()) : new Date().toISOString()) +
+          " — MOO.ERP" +
+          (config.showPageNumber ? " — صفحة <span class='page-number'></span>" : "") +
+          "</div>",
+        "<button onclick='window.print()' style='margin-top:14px;padding:8px 20px;background:#1e40af;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px'>طباعة</button>",
+        "</body></html>",
+      ].join("");
+    }
+
+    /** preview — يفتح نافذة بمحتوى التقرير بدون استدعاء الطباعة تلقائيًا */
+    function preview(config) {
+      var html = _buildReportHTML(config);
+      var w = window.open("", "_blank");
+      if (!w) {
+        if (typeof NotificationEngine !== "undefined") NotificationEngine.warning("فعّل النوافذ المنبثقة");
+        return null;
+      }
+      w.document.write(html);
+      w.document.close();
+      w.focus();
+      return w;
+    }
+
+    /** print — نفس preview لكن يستدعي الطباعة تلقائيًا (زي ExportUtil.toPrint) */
+    function print(config) {
+      var w = preview(config);
+      if (!w) return;
+      if (typeof AS !== "undefined") {
+        try {
+          AS.print();
+        } catch (e) {}
+      }
+      setTimeout(function () {
+        w.print();
+      }, 600);
+      _logReportAction("PRINT", config.title);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §4 — Templates (تعريف مسبق لتقرير قابل لإعادة الاستخدام)
+    // ══════════════════════════════════════════════════════════════════
+    function defineTemplate(name, config) {
+      _templates[name] = config;
+    }
+
+    function printTemplate(name, data) {
+      var tpl = _templates[name];
+      if (!tpl) {
+        console.warn("[ReportEngine] قالب غير معرّف: " + name);
+        return;
+      }
+      var merged = Object.assign({}, tpl, data || {});
+      print(merged);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §5 — Export Configuration (لتذكر آخر إعدادات تصدير الشاشة)
+    // ══════════════════════════════════════════════════════════════════
+    function saveExportConfig(key, config) {
+      try {
+        if (typeof PreferenceService === "undefined") return;
+        var tables = PreferenceService.get("tables", {}) || {};
+        tables[key] = tables[key] || {};
+        tables[key].exportConfig = config;
+        PreferenceService.set("tables", tables);
+      } catch (e) {}
+    }
+
+    function getExportConfig(key) {
+      try {
+        if (typeof PreferenceService === "undefined") return null;
+        var tables = PreferenceService.get("tables", {}) || {};
+        return (tables[key] && tables[key].exportConfig) || null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // §6 — تسجيل تلقائي عبر AuditEngine (لو الشاشة عندها سياق مستخدم متاح)
+    // ══════════════════════════════════════════════════════════════════
+    function _logReportAction(action, details) {
+      try {
+        if (
+          typeof _gsr === "function" &&
+          typeof APP !== "undefined" &&
+          APP.currentUser &&
+          typeof SESSION !== "undefined" &&
+          SESSION.token
+        ) {
+          _gsr(
+            "logReportAction",
+            [APP.currentUser.username, SESSION.token, action, details || ""],
+            { label: "logReportAction", onError: function () {} },
+          );
+        }
+      } catch (e) {
+        /* التسجيل ثانوي — لا يوقف عرض/تصدير التقرير */
+      }
+    }
+
+    return {
+      exportExcel: exportExcel,
+      exportCSV: exportCSV,
+      preview: preview,
+      print: print,
+      groupRows: groupRows,
+      defineTemplate: defineTemplate,
+      printTemplate: printTemplate,
+      saveExportConfig: saveExportConfig,
+      getExportConfig: getExportConfig,
+    };
+  })();
+</script>

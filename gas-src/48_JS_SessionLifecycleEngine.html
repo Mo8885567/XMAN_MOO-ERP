@@ -1,0 +1,406 @@
+<script>
+  // ════════════════════════════════════════════════════════════════
+  // 48_JS_SessionLifecycleEngine.html — [SESSION-LIFECYCLE-P1]
+  //
+  // الهدف: بدل ما تنتهي الجلسة فجأة (قطع مباشر لشاشة اللوجين فوق أي حاجة
+  // كانت مفتوحة)، بيحصل "خروج منظّم" (Graceful Shutdown):
+  //   1) تحذير للمستخدم قبل انتهاء الجلسة بدقيقة (البنية موجودة أصلاً في
+  //      02_JS_UI_Shell.html — SESSION._showIdleWarning) + خيار صريح
+  //      "تسجيل الخروج الآن" بجانب "متابعة الجلسة".
+  //   2) لو محدش استجاب → SessionLifecycle.beginGracefulShutdown() تفحص:
+  //      - عمليات حرجة جارية (حفظ / رفع / تنزيل / تصدير تقرير) عن طريق
+  //        سجل بسيط (registerBusyOp/unregisterBusyOp) — تستنى شوية أو
+  //        تلغي، وتمنع بدء عمليات جديدة بعد بدء الإنهاء.
+  //      - عناصر واجهة مفتوحة (Modal/Drawer/Dropdown/Context Menu/
+  //        Date-Picker/Notif) وتقفلها بالترتيب الصحيح.
+  //      - شاشة فيها تعديلات غير محفوظة (Dirty State) → تُحفظ كمسودة في
+  //        localStorage قبل القفل، مش هتتفقد.
+  //   3) بعد التنظيف الكامل: تنظيف الجلسة (Token) + عرض شاشة "انتهت
+  //      جلستك" مصممة (مش نص Toast يظهر فجأة فوق شاشة اللوجين) توضح
+  //      وجود مسودة محفوظة لو فيه.
+  //   4) بعد تسجيل الدخول تاني: استعادة نفس الصفحة/السجل/الفلاتر لو
+  //      لسه صالحة (SessionLifecycle.restoreAfterLogin — تتنادى من
+  //      02_JS_UI_Shell.html بعد نجاح اللوجين).
+  //
+  // ملاحظة معمارية: الملف ده بيتحمّل بعد Core_UIManagers (فمعاه
+  // closeDrawer/closeStyledDrawer/_closeAllDropdowns/closeNotifDropdown)
+  // وبعد 02_JS_UI_Shell (فمعاه SESSION/_handleSessionExpired/APP).
+  // ════════════════════════════════════════════════════════════════
+
+  var SL_DRAFT_KEY = "wms_session_draft_v1";
+  var SL_UI_STATE_KEY = "wms_session_uistate_v1";
+
+  var SessionLifecycle = (function () {
+    var _busyOps = {}; // id -> label
+    var _busySeq = 0;
+    var _shuttingDown = false;
+
+    // ── §1 سجل العمليات الجارية (Save/Upload/Download/Report/Sync) ──
+    // أي كود عنده عملية حرجة (رفع ملف، تنزيل، توليد تقرير، مزامنة درايف)
+    // ينادي SessionLifecycle.registerBusyOp("upload:item-image") ويحتفظ
+    // بالـ id الراجع، وينادي unregisterBusyOp(id) لما تخلص. SaveEngine
+    // (32_JS_SaveEngine.html) مربوطة بالفعل بهذا السجل لعمليات الحفظ.
+    function registerBusyOp(label) {
+      var id = "op" + ++_busySeq;
+      _busyOps[id] = { label: label, startedAt: Date.now() };
+      return id;
+    }
+    function unregisterBusyOp(id) {
+      delete _busyOps[id];
+    }
+    function hasBusyOps() {
+      return Object.keys(_busyOps).length > 0;
+    }
+    function listBusyOps() {
+      return Object.keys(_busyOps).map(function (k) {
+        return _busyOps[k].label;
+      });
+    }
+    function isShuttingDown() {
+      return _shuttingDown;
+    }
+
+    // ── §2 فحص حالة الواجهة قبل الإغلاق ──────────────────────────
+    function _isOpen(sel) {
+      try {
+        return !!document.querySelector(sel);
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function scanUIState() {
+      return {
+        modal: _isOpen("#modal-root .modal, .modal-overlay .modal"),
+        drawer: _isOpen("#edit-drawer"),
+        dropdown: _isOpen(".os-id-open, .nav-grp-toggle.open"),
+        notifDropdown: _isOpen("#notif-dropdown.open"),
+        contextMenu: _isOpen(".ctx-menu"),
+        datePicker: _isOpen(
+          ".flatpickr-calendar.open, .date-picker-panel.open",
+        ),
+        colorPicker: _isOpen(".color-picker-panel.open"),
+        printPreview: _isOpen("#print-preview-overlay, .print-preview-modal"),
+        sidebarOpenMobile: _isOpen("#main-sidebar.open"),
+      };
+    }
+
+    function anyUIOpen(state) {
+      state = state || scanUIState();
+      for (var k in state) {
+        if (state[k]) return true;
+      }
+      return false;
+    }
+
+    // ── §3 حفظ حالة "غير محفوظة" كمسودة قبل القفل ────────────────
+    // بيعتمد على window._sdCloseGuard (نفس الـ Hook الموجود أصلاً في
+    // Core_UIManagers.html لشاشات الـ Drawer) كإشارة على وجود تعديلات
+    // غير محفوظة. لو الشاشة مسجّلة Guard، بنعتبرها Dirty ونحفظ لقطة
+    // بسيطة (الصفحة الحالية + عنوان الـ URL/hash + أي عناصر فورم ظاهرة)
+    // بدل ما نفقد عمل المستخدم بصمت.
+    function _snapshotOpenForm() {
+      var drawer = document.getElementById("edit-drawer");
+      if (!drawer) return null;
+      var fields = {};
+      drawer.querySelectorAll("input,textarea,select").forEach(function (el) {
+        if (!el.id) return;
+        if (el.type === "password") return;
+        fields[el.id] =
+          el.type === "checkbox" || el.type === "radio"
+            ? el.checked
+            : el.value;
+      });
+      return {
+        page: APP.currentPage,
+        fields: fields,
+        savedAt: Date.now(),
+      };
+    }
+
+    function saveDraftIfDirty() {
+      var isDirty = typeof window._sdCloseGuard === "function";
+      if (!isDirty) return false;
+      var snap = _snapshotOpenForm();
+      if (!snap) return false;
+      try {
+        localStorage.setItem(SL_DRAFT_KEY, JSON.stringify(snap));
+      } catch (e) {
+        return false;
+      }
+      return true;
+    }
+
+    function hasSavedDraft() {
+      try {
+        return !!localStorage.getItem(SL_DRAFT_KEY);
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function _consumeDraft() {
+      try {
+        var raw = localStorage.getItem(SL_DRAFT_KEY);
+        localStorage.removeItem(SL_DRAFT_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // ── §4 حفظ/استعادة حالة الشاشة العامة (صفحة + فلاتر + تمرير) ──
+    function _saveUIState() {
+      try {
+        var contentEl = document.querySelector(".content");
+        var state = {
+          page: APP.currentPage,
+          scrollTop: contentEl ? contentEl.scrollTop : 0,
+          search:
+            (document.getElementById("global-search-input") || {}).value ||
+            "",
+        };
+        localStorage.setItem(SL_UI_STATE_KEY, JSON.stringify(state));
+      } catch (e) {}
+    }
+
+    function _consumeUIState() {
+      try {
+        var raw = localStorage.getItem(SL_UI_STATE_KEY);
+        localStorage.removeItem(SL_UI_STATE_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // ── §4b [FIX-LOGIN-MULTI-RENDER] معاينة الصفحة المحفوظة بدون
+    // استهلاكها — بتُستخدم قبل أول render بعد اللوجين (02_JS_UI_Shell.html
+    // _afterLoginSuccess) عشان الرسم الأول يبدأ على الصفحة الصحيحة من
+    // غير ما المستخدم يشوف الداشبورد لحظة وبعدين يُقفش لصفحته الحقيقية.
+    function peekInitialPage() {
+      try {
+        var raw = localStorage.getItem(SL_UI_STATE_KEY);
+        if (!raw) return null;
+        var st = JSON.parse(raw);
+        return st && st.page && st.page !== "dashboard" ? st.page : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // ── §5 تنظيف الواجهة بالترتيب المطلوب ─────────────────────────
+    function gracefulUICleanup() {
+      // 1) Dropdowns
+      if (typeof _closeAllDropdowns === "function") _closeAllDropdowns();
+      document.querySelectorAll(".os-id-open").forEach(function (p) {
+        p.classList.remove("os-id-open");
+      });
+      // 2) Tooltips
+      document
+        .querySelectorAll("[data-tooltip-open], .tooltip.show")
+        .forEach(function (t) {
+          t.classList.remove("show");
+          t.removeAttribute("data-tooltip-open");
+        });
+      // 3) Context Menus
+      document.querySelectorAll(".ctx-menu").forEach(function (m) {
+        m.remove();
+      });
+      // 4) Popovers
+      document.querySelectorAll(".popover.open, .popover.show").forEach(
+        function (p) {
+          p.classList.remove("open", "show");
+        },
+      );
+      // 5) Date/Color Pickers
+      document
+        .querySelectorAll(
+          ".flatpickr-calendar.open, .date-picker-panel.open, .color-picker-panel.open",
+        )
+        .forEach(function (p) {
+          p.classList.remove("open");
+        });
+      // 6) Notif dropdown
+      if (typeof closeNotifDropdown === "function") closeNotifDropdown();
+      // 7) Drawers (بعد حفظ حالتها كمسودة لو محتاجة)
+      if (document.getElementById("edit-drawer")) {
+        saveDraftIfDirty();
+        if (typeof closeDrawer === "function") closeDrawer(true);
+      }
+      // 8) Modals
+      if (typeof closeModal === "function") {
+        try {
+          closeModal();
+        } catch (e) {}
+      }
+      // 9) Notifications المؤقتة (Toasts)
+      document
+        .querySelectorAll(".toast, #__session-warning")
+        .forEach(function (t) {
+          t.remove();
+        });
+      // 10) شاشات المعاينة/الطباعة
+      document
+        .querySelectorAll("#print-preview-overlay, .print-preview-modal")
+        .forEach(function (p) {
+          p.remove();
+        });
+      // Mobile sidebar
+      if (typeof closeSidebar === "function") closeSidebar();
+    }
+
+    // ── §6 خروج منظّم كامل (Graceful Shutdown) ────────────────────
+    // reason: "timeout" | "expired" | "manual"
+    function beginGracefulShutdown(reason, opts) {
+      if (_shuttingDown) return;
+      _shuttingDown = true;
+      opts = opts || {};
+
+      // امنع أي عملية جديدة من البدء أثناء الإنهاء
+      APP._sessionEnding = true;
+
+      _saveUIState();
+      var draftSaved = saveDraftIfDirty();
+
+      var MAX_WAIT_MS = 4000;
+      var POLL_MS = 200;
+      var waited = 0;
+
+      function finalize() {
+        gracefulUICleanup();
+        _shuttingDown = false;
+        APP._sessionEnding = false;
+        _finishSessionEnd(reason, draftSaved);
+      }
+
+      (function waitForBusyOps() {
+        if (!hasBusyOps() || waited >= MAX_WAIT_MS) {
+          finalize();
+          return;
+        }
+        waited += POLL_MS;
+        setTimeout(waitForBusyOps, POLL_MS);
+      })();
+    }
+
+    // ── §7 إنهاء الجلسة فعليًا + عرض شاشة "انتهت جلستك" ──────────
+    function _finishSessionEnd(reason, draftSaved) {
+      var token = SESSION.token;
+      var username = APP.currentUser ? APP.currentUser.username : null;
+
+      // إيقاف كل المؤقتات/الـ Polling الخلفية
+      if (typeof _stopIdleWatcher === "function") _stopIdleWatcher();
+      if (typeof _stopSessionCountdown === "function") _stopSessionCountdown();
+      if (typeof _clearAllPollTimers === "function") _clearAllPollTimers();
+
+      if (token) {
+        try {
+          DL.Users.logout(token, username, {
+            onSuccess: function () {},
+            onError: function () {},
+          });
+        } catch (e) {}
+      }
+
+      if (typeof _clearSession === "function") _clearSession();
+      APP.currentUser = null;
+      APP.currentPage = "dashboard";
+      try {
+        _preloadDone = false;
+      } catch (e) {}
+      APP.extLoaded = false;
+      APP.extLoading = false;
+      try {
+        sessionStorage.clear();
+      } catch (e) {}
+
+      var fabRoot = document.getElementById("ai-float-root");
+      if (fabRoot) fabRoot.remove();
+
+      _renderSessionEndScreen(reason, draftSaved);
+    }
+
+    function _renderSessionEndScreen(reason, draftSaved) {
+      var root = document.getElementById("root");
+      if (!root) return;
+      root.innerHTML = renderLogin();
+      bindLogin();
+
+      var titles = {
+        timeout: "انتهت جلستك بسبب عدم النشاط، سجّل الدخول مرة أخرى",
+        expired: "انتهت صلاحية الجلسة، سجّل الدخول مرة أخرى",
+        manual: "تم تسجيل الخروج",
+      };
+      var msg = titles[reason] || titles.expired;
+      if (draftSaved) {
+        msg += " — تم حفظ تعديلاتك غير المحفوظة كمسودة وستُستعاد تلقائيًا.";
+      }
+
+      // [FIX-2026-08-05] بدل popup منبثق فوق شاشة اللوجين، بقت رسالة
+      // نصية عادية في نفس مكان أخطاء تسجيل الدخول (فوق زرار "دخول").
+      // ملحوظة: ما بننادي showLoginErr() من هنا لأنها معرّفة جوه IIFE
+      // خاص بـ 02_JS_UI_Shell.html ومش متعرّضة على window، فالتعديل
+      // بيتم مباشرة على العنصر نفسه (#login-err) بنفس الخصائص.
+      var errEl = document.getElementById("login-err");
+      if (errEl) {
+        errEl.style.display = "block";
+        errEl.setAttribute("role", "alert");
+        errEl.setAttribute("aria-live", "assertive");
+        errEl.textContent = msg;
+      }
+    }
+
+    // ── §8 استعادة العمل بعد تسجيل الدخول من جديد ─────────────────
+    // تتنادى من 02_JS_UI_Shell.html بعد نجاح اللوجين مباشرة (بعد ما
+    // APP.currentUser يتحدد وبعد أول renderPage).
+    function restoreAfterLogin() {
+      var uiState = _consumeUIState();
+      var draft = _consumeDraft();
+
+      // [FIX-LOGIN-MULTI-RENDER] الصفحة نفسها بقت بتتحدد قبل أول render
+      // في الأصل (عبر peekInitialPage() اللي بتتنادى من _afterLoginSuccess
+      // قبل render())، فمفيش داعي لـ renderPage() تانية هنا — كانت هي
+      // بالذات سبب "القفشة" من الداشبورد لصفحة تانية بعد ما المستخدم
+      // يكون شايف الداشبورد لحظة، وده اللي كان بيقفل أي قائمة سايد بار
+      // مفتوحة ويصفّر التمرير. هنا بس بنستعيد التمرير والبحث — تفاصيل
+      // مش مرتبطة بالرسم نفسه، والصفحة أصلاً معروضة صحيحة من الأول.
+      if (uiState && uiState.scrollTop) {
+        setTimeout(function () {
+          var contentEl = document.querySelector(".content");
+          if (contentEl) contentEl.scrollTop = uiState.scrollTop;
+          var searchEl = document.getElementById("global-search-input");
+          if (searchEl && uiState.search) searchEl.value = uiState.search;
+        }, 150);
+      }
+
+      if (draft && draft.fields) {
+        showToast(
+          "📝 تم استعادة مسودة العمل غير المحفوظ من الجلسة السابقة",
+          "info",
+        );
+        // استعادة القيم فقط لو نفس الشاشة اتفتحت لاحقًا (يدويًا) بنفس
+        // الحقول — بنخزّنها مؤقتًا على APP عشان أي شاشة تقدر تقرأها
+        // وتُطبّقها بنفسها لو حابة (best-effort، بدون افتراض بنية موحّدة
+        // لكل شاشات النظام).
+        APP._restoredDraft = draft;
+      }
+    }
+
+    return {
+      registerBusyOp: registerBusyOp,
+      unregisterBusyOp: unregisterBusyOp,
+      hasBusyOps: hasBusyOps,
+      listBusyOps: listBusyOps,
+      isShuttingDown: isShuttingDown,
+      scanUIState: scanUIState,
+      anyUIOpen: anyUIOpen,
+      saveDraftIfDirty: saveDraftIfDirty,
+      hasSavedDraft: hasSavedDraft,
+      gracefulUICleanup: gracefulUICleanup,
+      beginGracefulShutdown: beginGracefulShutdown,
+      restoreAfterLogin: restoreAfterLogin,
+      peekInitialPage: peekInitialPage,
+    };
+  })();
+</script>

@@ -1,0 +1,94 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 56_JS_PerfHarness.html — أداة قياس الأداء (المرحلة 16)
+  // ═══════════════════════════════════════════════════════════════════
+  // الهدف: قياس موحّد وقابل للمقارنة "قبل/بعد" لكل شاشة، بدون تغيير أي
+  // منطق عمل — أداة تشخيص فقط، تُستدعى يدويًا من الـ console أو تُفعَّل
+  // مؤقتًا بعلم (?perf=1) في الرابط.
+  //
+  // الاستخدام:
+  //   PerfHarness.mark('screen_open_start');
+  //   ... (بعد رسم الشاشة) ...
+  //   PerfHarness.mark('screen_ready');
+  //   PerfHarness.report(); // يطبع جدول في الـ console: الأزمنة، عدد
+  //                         // نداءات google.script.run، حجم DOM، عدد
+  //                         // Event Listeners المُقدَّر، الذاكرة (لو متاحة)
+  //
+  // ⚠️ لا يعدّل أي سلوك للشاشة — قياس فقط. يُفعَّل تلقائيًا لو الرابط فيه
+  // ?perf=1 (عشان مايؤثرش على أداء الإنتاج العادي وهو غير مُفعَّل).
+  // ═══════════════════════════════════════════════════════════════════
+
+  var PerfHarness = (function () {
+    "use strict";
+
+    var _enabled =
+      typeof location !== "undefined" &&
+      /[?&]perf=1(&|$)/.test(location.search || "");
+    var _marks = {};
+    var _gsrCallCount = 0;
+
+    // ── يعدّ نداءات google.script.run الفعلية (بدون تغيير سلوكها) ──
+    // يُنادى تلقائيًا من _gsr لو PerfHarness موجود (اختياري تمامًا —
+    // لو الملف مش محمّل، _gsr يشتغل عادي زي ما هو بالظبط).
+    function trackCall() {
+      if (_enabled) _gsrCallCount++;
+    }
+
+    function mark(name) {
+      if (!_enabled) return;
+      _marks[name] = performance.now();
+      if (typeof performance.mark === "function") {
+        try { performance.mark(name); } catch (e) {}
+      }
+    }
+
+    function _domNodeCount() {
+      return document.getElementsByTagName("*").length;
+    }
+
+    function _memoryMB() {
+      if (typeof performance.memory !== "undefined") {
+        return (performance.memory.usedJSHeapSize / 1048576).toFixed(1) + " MB";
+      }
+      return "غير متاح (Chrome فقط)";
+    }
+
+    function report() {
+      if (!_enabled) {
+        console.warn("[PerfHarness] غير مفعّل — أضف ?perf=1 للرابط لتفعيله");
+        return null;
+      }
+      var names = Object.keys(_marks).sort(function (a, b) {
+        return _marks[a] - _marks[b];
+      });
+      var base = names.length ? _marks[names[0]] : 0;
+      var timeline = names.map(function (n) {
+        return { mark: n, sinceStart_ms: Math.round(_marks[n] - base) };
+      });
+      var summary = {
+        timeline: timeline,
+        gsrCalls: _gsrCallCount,
+        domNodes: _domNodeCount(),
+        heapUsed: _memoryMB(),
+      };
+      console.table(timeline);
+      console.log("[PerfHarness] عدد نداءات google.script.run:", _gsrCallCount);
+      console.log("[PerfHarness] عدد عناصر DOM:", summary.domNodes);
+      console.log("[PerfHarness] الذاكرة المستخدمة (JS Heap):", summary.heapUsed);
+      return summary;
+    }
+
+    function reset() {
+      _marks = {};
+      _gsrCallCount = 0;
+    }
+
+    return {
+      enabled: _enabled,
+      mark: mark,
+      trackCall: trackCall,
+      report: report,
+      reset: reset,
+    };
+  })();
+</script>

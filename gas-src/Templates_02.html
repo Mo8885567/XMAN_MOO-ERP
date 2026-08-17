@@ -1,0 +1,1346 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════
+  // Templates_02.html — جزء من Templates.html الأصلي (تقسيم آلي نصي بحت، 2026-07-04)
+  // النطاق: _legacy_renderDashboard → renderTxIn (Legacy renders + Transactions IN)
+  // راجع Architecture Audit 2026-07-03، المرحلة 5 — تقسيم بحسب الحجم،
+  // على حدود دوال كاملة فقط (لا قطع لأي دالة في نص). تحقق برمجيًا:
+  // التركيب النهائي لكل الأجزاء الـ10 مطابق 100% لمحتوى Templates.html
+  // القديم حرفيًا (نفس الترتيب، بدون فقد أو تكرار).
+  // يُحمَّل بالترتيب عبر <script> في Index.html مع باقي الأجزاء.
+  // ═══════════════════════════════════════════════════════════════
+  function _legacy_renderDashboard() {
+    var d = APP.data;
+
+    // إجمالي المخزون (الكمية)
+    var totalStock = d.stock.reduce(function (a, s) {
+      return a + Number(s.quantity || 0);
+    }, 0);
+
+    // قيمة المخزون (الكمية × سعر التكلفة)
+    var inventoryValue = 0;
+    d.items.forEach(function (item) {
+      var cost = Number(item.cost_price || 0);
+      var qty = d.stock
+        .filter((s) => s.item_id === item.id)
+        .reduce((sum, s) => sum + Number(s.quantity || 0), 0);
+      inventoryValue += qty * cost;
+    });
+
+    var today = new Date().toDateString();
+    var todayTx = d.transactions.filter(function (t) {
+      return new Date(t.date).toDateString() === today;
+    }).length;
+
+    var alerts = alertCount();
+    var pendingPO = d.productionOrders.filter(function (o) {
+      return o.status === "pending";
+    }).length;
+
+    var totalOpening = (d.openingStock || []).reduce(function (a, r) {
+      return a + Number(r.quantity || 0);
+    }, 0);
+
+    var recentTx = d.transactions
+      .slice(-10)
+      .reverse()
+      .map(function (t) {
+        var TYPE_BADGE = {
+          IN: "badge-success",
+          OUT: "badge-danger",
+          TRANSFER: "badge-purple",
+          DISPATCH: "badge-warning",
+          FACTORY_RETURN: "badge-orange",
+          FG_IN: "badge-info",
+          CUTTING_STATEMENT: "badge-purple",
+        };
+        var TYPE_LABEL = {
+          IN: "وارد",
+          OUT: "صادر",
+          TRANSFER: "تحويل",
+          DISPATCH: "صرف مصنع",
+          FACTORY_RETURN: "مرتجع مصنع",
+          FG_IN: "منتج تام",
+          CUTTING_STATEMENT: "بيان قص",
+        };
+        var tb = TYPE_BADGE[t.type] || "badge-purple";
+        var tl = TYPE_LABEL[t.type] || t.type;
+        var userObj = (APP.data.users || []).find(function (u) {
+          return u.username === t.user || u.full_name === t.user;
+        });
+        var userName = userObj ? userObj.full_name || t.user : t.user || "—";
+        var itemObj = (APP.data.items || []).find(function (i) {
+          return i.id === t.item_id || i.code === t.item_id;
+        });
+        var itemName = itemObj ? itemObj.name || "" : "";
+        var itemCode = itemObj
+          ? itemObj.code || itemObj.id || t.item_id
+          : t.item_id;
+        return (
+          "<tr>" +
+          '<td><span class="mono">' +
+          esc(t.id || "") +
+          "</span></td>" +
+          "<td>" +
+          fmtDate(t.date) +
+          "</td>" +
+          '<td><span class="badge ' +
+          tb +
+          '">' +
+          tl +
+          "</span></td>" +
+          "<td>" +
+          (itemName
+            ? '<div style="font-size:13px;font-weight:600;color:var(--text1)">' +
+              esc(itemName) +
+              "</div>"
+            : "") +
+          '<span class="mono" style="font-size:11px;color:var(--text3)">' +
+          esc(itemCode) +
+          "</span></td>" +
+          "<td><b>" +
+          Number(t.quantity || 0) +
+          "</b></td>" +
+          '<td style="color:var(--text3);font-size:12px">' +
+          esc(userName) +
+          "</td></tr>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div class="dash-page">' +
+      '<div class="moo-welcome-banner">' +
+      '<div class="moo-welcome-logo">' +
+      mooLogoSVG(36, { bg: false }) +
+      "</div>" +
+      '<div class="moo-welcome-text">' +
+      '<div class="moo-sys-name"><span>MOO</span>.ERP</div>' +
+      '<div class="moo-user-msg">مرحباً، ' +
+      esc(APP.currentUser.full_name || "") +
+      " — يسعدنا وجودك في نظام تخطيط موارد المؤسسة</div>" +
+      '<div class="moo-sys-meta">' +
+      '<span class="moo-sys-meta-badge">الإصدار v' +
+      ((window.__PREFETCH__ && window.__PREFETCH__.appVersion) || "?") +
+      "</span>" +
+      '<span class="moo-sys-meta-badge green">Enterprise Resource Planning</span>' +
+      (APP.companySettings && APP.companySettings.company_name
+        ? '<span class="moo-sys-meta-badge">' +
+          esc(APP.companySettings.company_name) +
+          "</span>"
+        : "") +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      '<div class="page-header"><div><h1 style="display:flex;align-items:center;gap:10px">' +
+      iconBadge("ti-layout-dashboard", "var(--accent-soft)", "var(--primary)") +
+      "<span>لوحة التحكم</span></h1>" +
+      '<p style="margin-top:4px">نظرة عامة على أداء النظام والمؤشرات الرئيسية</p>' +
+      "</div>" +
+      '<div class="header-actions">' +
+      "</div></div>" +
+      '<div class="stat-grid">' +
+      statCard(
+        iconBadge("ti-package", "var(--teal-soft)", "var(--teal)"),
+        "إجمالي الأصناف",
+        d.items.length,
+        "",
+        "",
+      ) +
+      statCard(
+        iconBadge("ti-clipboard-list", "var(--accent-soft)", "var(--primary)"),
+        "إجمالي المخزون",
+        totalStock,
+        "وحدة",
+        "",
+      ) +
+      statCard(
+        iconBadge("ti-coin", "var(--warning-soft)", "var(--warning)"),
+        "قيمة المخزون",
+        formatMoney(inventoryValue, { decimals: 0, withSymbol: false }),
+        "جنيه",
+        "",
+      ) +
+      statCard(
+        iconBadge("ti-arrows-exchange", "var(--purple-soft)", "var(--purple)"),
+        "حركات اليوم",
+        todayTx,
+        "حركة",
+        "",
+      ) +
+      statCard(
+        iconBadge("ti-bell", "var(--danger-soft)", "var(--danger)"),
+        "تنبيهات النقص",
+        alerts,
+        "صنف",
+        "",
+      ) +
+      statCard(
+        iconBadge(
+          "ti-building-factory-2",
+          "var(--warning-soft)",
+          "var(--warning)",
+        ),
+        "أوامر إنتاج معلقة",
+        pendingPO,
+        "أمر",
+        "",
+      ) +
+      "</div>" +
+      // تنبيهات النقص + حركات آخر 7 أيام
+      '<div class="two-col" style="margin: 24px 0;">' +
+      renderLowStockAlerts() +
+      renderLast7DaysChart() +
+      "</div>" +
+      // آخر الحركات
+      '<div class="card dash-last-tx-card">' +
+      '<div style="font-weight:700;margin-bottom:12px;font-size:15px;display:flex;align-items:center;gap:8px">' +
+      iconBadge("ti-clock", "var(--purple-soft)", "var(--purple)") +
+      "<span>آخر الحركات</span></div>" +
+      '<div style="flex:1;display:flex;flex-direction:column;min-height:0">' +
+      (recentTx
+        ? '<div class="table-wrap dash-recent-tx-wrap"><table><thead style="position:sticky;top:0;z-index:1;background:var(--surface)"><tr><th>الكود</th><th>التاريخ</th><th>النوع</th><th>الصنف</th><th>الكمية</th><th>المستخدم</th></tr></thead><tbody>' +
+          recentTx +
+          "</tbody></table></div>"
+        : '<div class="empty-state"><div class="empty-icon"></div><p>لا توجد حركات بعد</p></div>') +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+  function renderLowStockAlerts() {
+    // ── بناء تنبيهات per-color ─────────────────────────────────────
+    var alertRows = [];
+    APP.data.items.forEach(function (item) {
+      var colors = getItemColors(item.id);
+      if (colors.length > 0) {
+        colors.forEach(function (c) {
+          var colorMinQ = Number(c.min_qty || 0);
+          if (colorMinQ <= 0) colorMinQ = Number(item.min_qty || 0);
+          if (colorMinQ <= 0) return;
+          var colorQty = getColorQty(item.id, c.name);
+          if (colorQty > colorMinQ) return;
+          alertRows.push({
+            item: item,
+            colorName: c.name,
+            colorHex: c.hex || colorNameToHex(c.name),
+            qty: colorQty,
+            minQty: colorMinQ,
+          });
+        });
+      } else {
+        var itemMinQ = Number(item.min_qty || 0);
+        if (itemMinQ <= 0) return;
+        var qty = APP.data.stock
+          .filter(function (s) {
+            return s.item_id === item.id;
+          })
+          .reduce(function (sum, s) {
+            return sum + Number(s.quantity || 0);
+          }, 0);
+        if (qty > itemMinQ) return;
+        alertRows.push({
+          item: item,
+          colorName: null,
+          colorHex: null,
+          qty: qty,
+          minQty: itemMinQ,
+        });
+      }
+    });
+
+    if (alertRows.length === 0) {
+      return '<div class="card"><div class="empty-state"><div class="empty-icon"><span style="display:inline-flex;background:#DCFCE7;border-radius:10px;padding:8px"><i class="ti ti-circle-check" style="font-size:30px;color:#166534" aria-hidden="true"></i></span></div><p>لا توجد تنبيهات نقص حالياً</p></div></div>';
+    }
+
+    var cards = alertRows
+      .map(function (a) {
+        var isOut = a.qty <= 0;
+        var statusBadge = isOut
+          ? '<span style="background:var(--danger);color:#fff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;white-space:nowrap">نفد</span>'
+          : '<span style="background:var(--warning);color:#fff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;white-space:nowrap">منخفض</span>';
+        var cardBg = isOut
+          ? "background:rgba(239,68,68,0.13);border-color:rgba(239,68,68,0.35);"
+          : "background:rgba(234,179,8,0.13);border-color:rgba(234,179,8,0.4);";
+        var colorSwatch = a.colorName
+          ? '<span style="display:inline-flex;align-items:center;gap:6px;' +
+            "background:rgba(0,0,0,0.06);border:1px solid rgba(0,0,0,0.10);" +
+            'border-radius:20px;padding:3px 10px 3px 6px;white-space:nowrap">' +
+            '<span style="width:14px;height:14px;border-radius:50%;flex-shrink:0;' +
+            "background:" +
+            (a.colorHex || "#ccc") +
+            ";" +
+            'border:2px solid rgba(0,0,0,0.18);box-shadow:0 1px 3px rgba(0,0,0,0.15)"></span>' +
+            '<span style="font-size:12px;font-weight:700;color:var(--text1)">' +
+            esc(a.colorName) +
+            "</span></span>"
+          : "";
+        var codeBadge =
+          '<span style="display:inline-flex;align-items:center;' +
+          "background:var(--accent);color:#fff;" +
+          "font-family:monospace;font-size:11px;font-weight:700;" +
+          'padding:2px 8px;border-radius:6px;letter-spacing:0.5px;white-space:nowrap">' +
+          esc(a.item.code || a.item.id) +
+          "</span>";
+        return (
+          '<div class="alert-card" style="' +
+          cardBg +
+          '">' +
+          '<div class="alert-icon">' +
+          (isOut ? "" : "") +
+          "</div>" +
+          '<div class="alert-text" style="flex:1;min-width:0">' +
+          '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:4px">' +
+          '<span style="font-weight:700;font-size:13px;color:var(--text1)">' +
+          esc(a.item.name) +
+          "</span>" +
+          codeBadge +
+          (colorSwatch ? colorSwatch : "") +
+          "</div>" +
+          "<p>الرصيد الحالي: <b>" +
+          a.qty +
+          "</b> — الحد الأدنى: <b>" +
+          a.minQty +
+          "</b></p>" +
+          "</div>" +
+          '<div style="display:flex;align-items:center;margin-right:8px;flex-shrink:0">' +
+          statusBadge +
+          "</div>" +
+          "</div>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div class="card">' +
+      '<div class="card-title" style="display:flex;align-items:center;gap:8px">' +
+      iconBadge("ti-bell", "var(--danger-soft)", "var(--danger)") +
+      "<span>تنبيهات نقص المخزون</span></div>" +
+      '<div style="position:relative">' +
+      '<div class="alerts-grid" style="max-height:200px;overflow-y:auto;padding-left:4px;scroll-behavior:smooth;overscroll-behavior:contain;">' +
+      cards +
+      "</div>" +
+      '<div style="position:absolute;bottom:0;left:0;right:0;height:32px;background:linear-gradient(to bottom,transparent,var(--surface));pointer-events:none;border-radius:0 0 var(--radius-sm) var(--radius-sm)"></div>' +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function renderLast7DaysChart() {
+    var txs = APP.data.transactions;
+    var days = [];
+    var now = new Date();
+
+    for (var i = 6; i >= 0; i--) {
+      var d = new Date(now);
+      d.setDate(d.getDate() - i);
+      days.push({
+        date: d.toISOString().split("T")[0],
+        label:
+          typeof DateEngine !== "undefined"
+            ? DateEngine.weekdayName(d)
+            : d.toLocaleDateString("ar-EG", { weekday: "short" }),
+        in: 0,
+        out: 0,
+        transfer: 0,
+      });
+    }
+
+    txs.forEach(function (t) {
+      var txDate = new Date(t.date).toISOString().split("T")[0];
+      var day = days.find(function (d) {
+        return d.date === txDate;
+      });
+      if (day) {
+        if (t.type === "IN") day.in += Number(t.quantity || 0);
+        else if (t.type === "OUT") day.out += Number(t.quantity || 0);
+        else if (t.type === "TRANSFER") day.transfer += Number(t.quantity || 0);
+      }
+    });
+
+    var maxVal = Math.max.apply(
+      null,
+      days
+        .map(function (d) {
+          return Math.max(d.in, d.out, d.transfer);
+        })
+        .concat([1]),
+    );
+
+    var CHART_H = 160;
+
+    // خطوط الشبكة
+    var gridLines = "";
+    for (var gi = 0; gi <= 4; gi++) {
+      gridLines +=
+        '<div style="position:absolute;left:0;right:0;bottom:' +
+        (gi * CHART_H) / 4 +
+        "px" +
+        ';border-top:1px dashed var(--border);opacity:0.5"></div>';
+    }
+
+    // الأعمدة
+    var bars = days
+      .map(function (d) {
+        var inH =
+          maxVal > 0
+            ? Math.max((d.in / maxVal) * CHART_H, d.in > 0 ? 4 : 0)
+            : 0;
+        var outH =
+          maxVal > 0
+            ? Math.max((d.out / maxVal) * CHART_H, d.out > 0 ? 4 : 0)
+            : 0;
+        var trH =
+          maxVal > 0
+            ? Math.max((d.transfer / maxVal) * CHART_H, d.transfer > 0 ? 4 : 0)
+            : 0;
+
+        function barCol(h, color, val) {
+          return (
+            '<div style="display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:' +
+            CHART_H +
+            'px">' +
+            (val > 0
+              ? '<div style="font-size:9px;color:' +
+                color +
+                ';font-weight:700;margin-bottom:2px;line-height:1">' +
+                val +
+                "</div>"
+              : "") +
+            '<div style="width:10px;border-radius:4px 4px 0 0;background:' +
+            color +
+            ";height:" +
+            h +
+            'px;transition:height .4s ease"></div>' +
+            "</div>"
+          );
+        }
+
+        return (
+          '<div style="display:flex;flex-direction:column;align-items:center;flex:1;min-width:0">' +
+          '<div style="display:flex;align-items:flex-end;gap:2px;width:100%;justify-content:center">' +
+          barCol(inH, "#10b981", d.in) +
+          barCol(outH, "#ef4444", d.out) +
+          barCol(trH, "#8b5cf6", d.transfer) +
+          "</div>" +
+          '<div style="font-size:10px;color:var(--text2);margin-top:6px;text-align:center;white-space:nowrap">' +
+          d.label +
+          "</div>" +
+          "</div>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div class="card" style="height:100%;box-sizing:border-box;display:flex;flex-direction:column;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">' +
+      '<div style="font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px">' +
+      iconBadge("ti-trending-up", "var(--accent-soft)", "var(--primary)") +
+      "<span>حركات آخر 7 أيام</span></div>" +
+      '<div style="display:flex;gap:14px;font-size:12px;color:var(--text2)">' +
+      '<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:3px;background:#10b981;display:inline-block"></span> وارد</span>' +
+      '<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:3px;background:#ef4444;display:inline-block"></span> صادر</span>' +
+      '<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:3px;background:#8b5cf6;display:inline-block"></span> تحويل</span>' +
+      "</div></div>" +
+      '<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end">' +
+      '<div style="position:relative;">' +
+      '<div style="position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none">' +
+      gridLines +
+      "</div>" +
+      '<div style="display:flex;align-items:flex-end;gap:4px;padding:0 4px;position:relative">' +
+      bars +
+      "</div>" +
+      "</div>" +
+      '<div style="height:1px;background:var(--border);margin-top:6px"></div>' +
+      "</div>" +
+      "</div>"
+    );
+  }
+  function renderShortcuts() {
+    return (
+      '<div class="shortcuts-page-wrap">' +
+      // ─── Hero Header ───────────────────────────────────────────
+      '<div class="shortcuts-page-hero">' +
+      '<div class="shortcuts-page-hero-left">' +
+      '<div class="shortcuts-hero-icon"><i class="ti ti-bolt" aria-hidden="true"></i></div>' +
+      "<div>" +
+      '<div class="shortcuts-hero-title">الاختصارات السريعة</div>' +
+      '<div class="shortcuts-hero-sub">وصول فوري لأهم العمليات</div>' +
+      "</div>" +
+      "</div>" +
+      '<div class="shortcuts-hero-badges">' +
+      '<div class="shortcuts-hero-badge"><strong>12</strong> اختصار</div>' +
+      '<div class="shortcuts-hero-badge"><strong>4</strong> أقسام</div>' +
+      "</div>" +
+      "</div>" +
+      // ─── Sections Grid 2×2 ─────────────────────────────────────
+      '<div class="shortcuts-all-sections">' +
+      '<div class="shortcuts-row">' +
+      renderShortcutSection("الحركات الأساسية", [
+        SHORTCUTS[0],
+        SHORTCUTS[1],
+        SHORTCUTS[2],
+      ]) +
+      renderShortcutSection("المتابعة والرصيد", [
+        SHORTCUTS[3],
+        SHORTCUTS[4],
+        SHORTCUTS[5],
+      ]) +
+      "</div>" +
+      '<div class="shortcuts-row">' +
+      renderShortcutSection("الإنتاج", [
+        SHORTCUTS[6],
+        SHORTCUTS[7],
+        SHORTCUTS[8],
+      ]) +
+      renderShortcutSection("الشحن والتقارير", [
+        SHORTCUTS[9],
+        SHORTCUTS[10],
+        SHORTCUTS[11],
+      ]) +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+  function renderShortcutSection(title, items) {
+    var alerts = alertCount();
+    var cards = items
+      .map(function (s) {
+        var badge =
+          s.isBadge && alerts > 0
+            ? '<span style="position:absolute;top:8px;left:8px;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:20px;z-index:2">' +
+              alerts +
+              "</span>"
+            : "";
+
+        var accentColor = s.iconBg || "#2563eb";
+        var softBg = s.iconSoft || accentColor + "18";
+
+        return (
+          '<button class="shortcut-card" data-page="' +
+          s.id +
+          '">' +
+          '<div class="shortcut-card-accent-bg" style="background:' +
+          accentColor +
+          '"></div>' +
+          badge +
+          '<div class="shortcut-icon" style="background:' +
+          softBg +
+          '">' +
+          '<i class="ti ' +
+          (s.tiIcon || "ti-bolt") +
+          '" style="font-size:20px;color:' +
+          accentColor +
+          '" aria-hidden="true"></i>' +
+          "</div>" +
+          '<div class="shortcut-text">' +
+          '<div class="shortcut-label">' +
+          s.label +
+          "</div>" +
+          '<div class="shortcut-desc">' +
+          s.desc +
+          "</div>" +
+          "</div>" +
+          '<i class="ti ti-chevron-left shortcut-chevron" aria-hidden="true"></i>' +
+          "</button>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div class="shortcut-section">' +
+      '<div class="shortcut-section-title">' +
+      title +
+      "</div>" +
+      '<div class="shortcuts-grid">' +
+      cards +
+      "</div>" +
+      "</div>"
+    );
+  }
+  function renderItems() {
+    var items = APP.data.items || [];
+    var warehouses = APP.data.warehouses || [];
+
+    // بناء options المخازن
+    var whOptions =
+      '<option value="">كل المخازن</option>' +
+      warehouses
+        .map(function (w) {
+          return (
+            '<option value="' +
+            esc(w.id) +
+            '">' +
+            esc(w.name) +
+            (w.code ? " (" + esc(w.code) + ")" : "") +
+            "</option>"
+          );
+        })
+        .join("");
+
+    // بناء options الوحدات ديناميكياً
+    var unitSet = [];
+    items.forEach(function (i) {
+      if (i.unit && unitSet.indexOf(i.unit) === -1) unitSet.push(i.unit);
+    });
+    var unitOptions =
+      '<option value="">كل الوحدات</option>' +
+      unitSet
+        .map(function (u) {
+          return '<option value="' + esc(u) + '">' + esc(u) + "</option>";
+        })
+        .join("");
+
+    return (
+      '<div class="page-header">' +
+      "<div><h1 style='display:flex;align-items:center;gap:10px'><span style='display:inline-flex;align-items:center;justify-content:center;background:#CFFAFE;border-radius:10px;padding:8px;flex-shrink:0'><i class=\"ti ti-package\" style='font-size:27px;color:#0E7490' aria-hidden=\"true\"></i></span><span>الأصناف</span></h1><p>إدارة كل المنتجات والخامات</p></div>" +
+      '<div class="header-actions">' +
+      (canDo("importItems")
+        ? '<button class="btn btn-secondary" id="btn-import-excel"><i class="ti ti-file-import" aria-hidden="true"></i> استيراد من إكسيل</button>'
+        : "") +
+      (canDo("addItem")
+        ? '<button class="btn btn-primary" id="btn-add-item">+ إضافة صنف جديد</button>'
+        : "") +
+      "</div></div>" +
+      // ── شريط البحث والفلاتر ──
+      '<div class="card" style="margin-bottom:12px">' +
+      '<div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:10px;align-items:center">' + // بحث نصي
+      '<div style="position:relative">' +
+      '<span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:16px;color:var(--text3)"></span>' +
+      '<input id="item-search" class="input" placeholder="بحث بالاسم أو الكود..." style="padding-right:34px;width:100%"></div>' +
+      // فلتر المخزن
+      '<select id="item-filter-wh" class="input" style="width:100%">' +
+      whOptions +
+      "</select>" +
+      // فلتر الوحدة
+      '<select id="item-filter-unit" class="input" style="width:100%">' +
+      unitOptions +
+      "</select>" +
+      // ── زر الترتيب ──
+      '<div style="position:relative">' +
+      '<select id="item-sort" class="input" style="width:100%;padding-right:32px;appearance:none;background-image:url(\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2216%22 height=%2216%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%232563eb%22 stroke-width=%222%22><path d=%22M3 6h18M7 12h10M11 18h2%22/></svg>\');background-repeat:no-repeat;background-position:8px center;font-size:13px">' +
+      '<option value="">↕ ترتيب</option>' +
+      '<option value="name_asc">الاسم (أ → ي)</option>' +
+      '<option value="name_desc">الاسم (ي → أ)</option>' +
+      '<option value="id_asc">الكود (تصاعدي)</option>' +
+      '<option value="id_desc">الكود (تنازلي)</option>' +
+      '<option value="group_asc">المجموعة (أ → ي)</option>' +
+      '<option value="group_desc">المجموعة (ي → أ)</option>' +
+      "</select></div>" +
+      "</div>" +
+      // زر الفلتر المتقدم + مسح الفلاتر في نفس الصف
+      '<div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between">' +
+      '<button id="item-adv-toggle" class="btn btn-secondary btn-sm" style="white-space:nowrap"> فلتر متقدم</button>' +
+      '<button id="item-clear-filters" style="display:none;align-items:center;gap:5px;background:rgba(239,68,68,.08);color:#ef4444;border:1.5px solid rgba(239,68,68,.35);border-radius:8px;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;white-space:nowrap" onmouseover="this.style.background=\'rgba(239,68,68,.18)\'" onmouseout="this.style.background=\'rgba(239,68,68,.08)\'"> مسح الفلاتر</button>' +
+      "</div>" +
+      // ── الفلتر المتقدم (مخفي) ──
+      '<div id="item-adv-panel" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px">' +
+      // نطاق سعر التكلفة
+      "<div>" +
+      '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">نطاق سعر التكلفة (ج)</div>' +
+      '<div style="display:flex;align-items:center;gap:6px">' +
+      '<input id="item-cost-min" class="input" type="number" placeholder="من" style="flex:1;padding:6px 8px">' +
+      '<span style="color:var(--text3);font-size:12px">—</span>' +
+      '<input id="item-cost-max" class="input" type="number" placeholder="إلى" style="flex:1;padding:6px 8px">' +
+      "</div></div>" +
+      // نطاق سعر البيع
+      "<div>" +
+      '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">نطاق سعر البيع (ج)</div>' +
+      '<div style="display:flex;align-items:center;gap:6px">' +
+      '<input id="item-sell-min" class="input" type="number" placeholder="من" style="flex:1;padding:6px 8px">' +
+      '<span style="color:var(--text3);font-size:12px">—</span>' +
+      '<input id="item-sell-max" class="input" type="number" placeholder="إلى" style="flex:1;padding:6px 8px">' +
+      "</div></div>" +
+      // فلتر اللون
+      "<div>" +
+      '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">فلتر بالألوان</div>' +
+      '<input id="item-color-q" class="input" placeholder="اكتب اسم اللون..." style="width:100%;padding:6px 8px">' +
+      "</div>" +
+      "</div></div></div>" +
+      // ── شريط النتائج ──
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding:0 2px">' +
+      '<span id="item-count" style="font-size:13px;color:var(--text3)">' +
+      items.length +
+      " صنف</span>" +
+      "</div>" +
+      // ── الجدول [COLUMN-ENGINE] — أعمدة ديناميكية بالكامل (Metadata-Driven)
+      // راجع _itemsRegisterColumns/_renderItemsTableCE في
+      // 03_JS_Dashboard_Items.html. لا يوجد أي <th>/<td> ثابت هنا بعد الآن —
+      // زر "تخصيص الجدول" داخل التولبار يتولى الإظهار/الإخفاء/الترتيب/
+      // التثبيت/عروض محفوظة، ونفس المحرك المستخدم في كتالوج الأصناف.
+      '<div class="card"><div id="items-ce-container"></div></div>'
+    );
+  }
+  function renderGroups() {
+    var html = `
+              <div class="page-header">
+                <div><h1 style="display:flex;align-items:center;gap:10px"><span style="display:inline-flex;align-items:center;justify-content:center;background:#EDE9FE;border-radius:10px;padding:8px;flex-shrink:0"><i class="ti ti-folders" style="font-size:27px;color:#5B21B6" aria-hidden="true"></i></span><span>المجموعات</span></h1><p>تصنيف الأصناف حسب الهيكل الشجري</p></div>
+                <div class="header-actions" style="display:flex;gap:8px;align-items:center">
+                  <div style="position:relative;display:inline-block">
+                    <button type="button" class="btn btn-outline" id="btn-groups-view-menu"><i class="ti ti-layout-grid"></i> <span id="groups-view-menu-label">شجري</span> <i class="ti ti-chevron-down" style="font-size:12px"></i></button>
+                  </div>
+                  <input class="input" id="groups-search" placeholder="بحث بالاسم أو المسار الكامل..." style="width:240px">
+                  <button type="button" class="btn btn-outline" id="btn-print-groups-tree"><i class="ti ti-printer"></i> تقرير شجري</button>
+                  ${canDo("addGroup") ? '<button class="btn btn-primary" id="btn-add-group" onclick="openGroupModal(null)">+ مجموعة جديدة</button>' : ""}
+                </div>
+              </div>`;
+
+    // ── عرضين: شجري (افتراضي) وجدولي — راجع _renderGroupsTreeView /
+    // _renderGroupsTableCE في 03_JS_Dashboard_Items.html (GROUP-HIERARCHY P3/P4)
+    html +=
+      '<div class="card" id="groups-tree-wrap"><div id="groups-tree-container"></div></div>';
+    html +=
+      '<div class="card" id="groups-grid-wrap" style="display:none"><div id="groups-ce-container"></div></div>';
+
+    return html;
+  }
+  function renderStock() {
+    var items = APP.data.items;
+    var stockArr = APP.data.stock;
+
+    // بناء map للمخزون الحالي لكل صنف
+    var stockMap = {};
+    stockArr.forEach(function (s) {
+      stockMap[s.item_id] =
+        (stockMap[s.item_id] || 0) + Number(s.quantity || 0);
+    });
+
+    // حساب الإحصائيات
+    var normal = 0,
+      low = 0,
+      zero = 0,
+      totalCostAll = 0;
+    items.forEach(function (item) {
+      var currentQty = stockMap[item.id] || 0;
+      var openingQty = getOpeningQty(item.id);
+      var totalQty = currentQty + openingQty;
+      var minQ = Number(item.min_qty || 0);
+      var cost = Number(item.cost_price || 0);
+      totalCostAll += totalQty * cost;
+      if (totalQty <= 0) zero++;
+      else if (minQ > 0 && totalQty <= minQ) low++;
+      else normal++;
+    });
+
+    // خيارات تصفية المجموعات — [GROUP-HIERARCHY P6] عرض هرمي موحّد
+    var groups = APP.data.groups || [];
+    var groupOpts = hierGroupOptionsHtml(groups, { allOption: true });
+
+    // خيارات فلتر اللون من APP.data.colors + ألوان الأصناف
+    var allColors = APP.data.colors || [];
+    var colorNames = [];
+    allColors.forEach(function (c) {
+      if (c.name && colorNames.indexOf(c.name) === -1) colorNames.push(c.name);
+    });
+    (APP.data.items || []).forEach(function (item) {
+      var clrs = item.colors_json || [];
+      if (!Array.isArray(clrs)) {
+        try {
+          clrs = JSON.parse(clrs);
+        } catch (e) {
+          clrs = [];
+        }
+      }
+      clrs.forEach(function (c) {
+        var n = typeof c === "object" ? c.name || "" : String(c);
+        if (n && colorNames.indexOf(n) === -1) colorNames.push(n);
+      });
+    });
+    var colorOpts =
+      '<option value="">كل الألوان</option>' +
+      colorNames
+        .map(function (n) {
+          return '<option value="' + esc(n) + '">' + esc(n) + "</option>";
+        })
+        .join("");
+
+    // بناء صفوف الجدول
+    var rows = items
+      .map(function (item) {
+        var currentQty = stockMap[item.id] || 0;
+        var openingQty = getOpeningQty(item.id);
+        var totalQty = currentQty + openingQty;
+        var minQ = Number(item.min_qty || 0);
+        var cost = Number(item.cost_price || 0);
+        var totalCost = totalQty * cost;
+
+        var badge =
+          totalQty <= 0
+            ? '<span class="badge badge-danger">نفد </span>'
+            : minQ > 0 && totalQty <= minQ
+              ? '<span class="badge badge-warning">منخفض </span>'
+              : '<span class="badge badge-success">طبيعي </span>';
+
+        var openingCell =
+          openingQty > 0
+            ? '<span style="font-weight:700;color:var(--orange)">' +
+              openingQty +
+              "</span>"
+            : '<span style="color:var(--text3)">—</span>';
+
+        // ── ألوان الصنف ───────────────────────────────────────────
+        var itemColors = getItemColors(item.id);
+        var hasColors = itemColors.length > 0;
+
+        // زر التوسيع (+) بجانب الكود لو فيه ألوان
+        var expandBtn = hasColors
+          ? '<button id="cbtn-' +
+            esc(item.id) +
+            '" onclick="toggleColorRow(&apos;' +
+            esc(item.id) +
+            '&apos;)" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:13px;font-weight:700;cursor:pointer;margin-left:5px;line-height:1;vertical-align:middle;transition:all .2s" title="عرض الألوان والأرصدة">+</button>'
+          : "";
+
+        // بناء صف الألوان القابل للطي
+        var colorRowHtml = "";
+        if (hasColors) {
+          var colorCards = itemColors
+            .map(function (c) {
+              // دعم الصيغة الجديدة {name,code,image} والقديمة string
+              var colorName = typeof c === "object" ? c.name || "" : String(c);
+              var colorCode =
+                typeof c === "object" && c.code && c.code.trim()
+                  ? c.code.trim().toUpperCase()
+                  : typeof _resolveColorCode === "function"
+                    ? _resolveColorCode(colorName)
+                    : colorName
+                        .replace(/\s+/g, "")
+                        .substring(0, 3)
+                        .toUpperCase();
+              var colorImage = typeof c === "object" ? c.image || "" : "";
+              var subCode = (item.code || item.id) + "-" + colorCode;
+
+              var warehouseQtys = {};
+              (APP.data.stock || []).forEach(function (s) {
+                if (
+                  String(s.item_id) === String(item.id) &&
+                  String(s.color || "").trim() === String(colorName).trim()
+                ) {
+                  var wn = s.warehouse || "غير محدد";
+                  warehouseQtys[wn] =
+                    (warehouseQtys[wn] || 0) + Number(s.quantity || 0);
+                }
+              });
+              var colorTotal = Object.keys(warehouseQtys).reduce(function (
+                a,
+                k,
+              ) {
+                return a + warehouseQtys[k];
+              }, 0);
+              var whBreakdown = Object.keys(warehouseQtys)
+                .map(function (wn) {
+                  return (
+                    '<span style="font-size:11px;color:var(--text3)">' +
+                    esc(wn) +
+                    ': <b style="color:var(--text2)">' +
+                    warehouseQtys[wn] +
+                    "</b></span>"
+                  );
+                })
+                .join(
+                  '<span style="color:var(--border);margin:0 4px">|</span>',
+                );
+
+              var qtyColor =
+                colorTotal <= 0
+                  ? "var(--danger)"
+                  : minQ > 0 && colorTotal <= minQ
+                    ? "var(--orange)"
+                    : "var(--success)";
+
+              // صورة اللون إن وجدت
+              var colorImgHtml = colorImage
+                ? '<img src="' +
+                  esc(colorImage) +
+                  '" ' +
+                  "onclick=\"showImageModal('" +
+                  esc(colorImage) +
+                  "')\" " +
+                  'style="width:100%;height:70px;object-fit:cover;border-radius:6px;margin-bottom:6px;cursor:pointer;border:1px solid var(--border)" ' +
+                  "onerror=\"this.style.display='none'\">"
+                : "";
+
+              // استخراج اللون الفعلي للدائرة
+              var _cName = colorName || "";
+              var _cCode =
+                typeof c === "object" && c.code ? (c.code || "").trim() : "";
+              var dotHex =
+                typeof c === "object" && c.hex && c.hex.trim()
+                  ? c.hex.trim()
+                  : CSS_COLOR_MAP[_cName]
+                    ? CSS_COLOR_MAP[_cName]
+                    : CSS_COLOR_MAP[_cName.toLowerCase()]
+                      ? CSS_COLOR_MAP[_cName.toLowerCase()]
+                      : CSS_COLOR_MAP[_cCode]
+                        ? CSS_COLOR_MAP[_cCode]
+                        : CSS_COLOR_MAP[_cCode.toLowerCase()]
+                          ? CSS_COLOR_MAP[_cCode.toLowerCase()]
+                          : _cCode.startsWith("#")
+                            ? _cCode
+                            : "#94a3b8";
+              // للألوان الفاتحة جداً (أبيض وقريبه) نضيف border داكن
+              var isLight =
+                dotHex === "#ffffff" ||
+                dotHex === "#f8fafc" ||
+                dotHex === "#f5f5f5";
+              var dotBorder = isLight ? "#c0c0c0" : dotHex;
+
+              return (
+                '<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;min-width:130px;flex:0 0 auto;max-width:180px">' +
+                colorImgHtml +
+                '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">' +
+                '<span style="width:12px;height:12px;border-radius:50%;background:' +
+                dotHex +
+                ";border:2px solid " +
+                dotBorder +
+                ';display:inline-block;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.2)"></span>' +
+                '<b style="font-size:13px">' +
+                esc(colorName) +
+                "</b>" +
+                '<span style="font-family:var(--font-mono);font-size:10px;background:var(--accent);color:#fff;padding:1px 5px;border-radius:8px;margin-right:4px">' +
+                esc(subCode) +
+                "</span>" +
+                "</div>" +
+                '<div style="font-size:14px;font-weight:700;color:' +
+                qtyColor +
+                ';margin-bottom:3px">' +
+                colorTotal +
+                ' <span style="font-size:11px;font-weight:400;color:var(--text3)">' +
+                esc(item.unit || "") +
+                "</span></div>" +
+                (Object.keys(warehouseQtys).length > 0
+                  ? '<div style="display:flex;flex-wrap:wrap;gap:4px">' +
+                    whBreakdown +
+                    "</div>"
+                  : '<div style="font-size:11px;color:var(--text3)">لا يوجد رصيد</div>') +
+                "</div>"
+              );
+            })
+            .join("");
+
+          colorRowHtml =
+            '<tr id="crow-' +
+            esc(item.id) +
+            '" style="display:none">' +
+            '<td colspan="7" style="padding:0;border-bottom:2px solid var(--accent)">' +
+            '<div style="padding:12px 16px 14px;background:linear-gradient(to bottom,var(--surface2),var(--bg2));border-right:3px solid var(--accent)">' +
+            '<div style="font-size:12px;color:var(--text3);margin-bottom:10px;font-weight:600"> الألوان والأرصدة — <span style="color:var(--accent)">' +
+            esc(item.name || item.id) +
+            "</span></div>" +
+            '<div style="display:flex;flex-wrap:wrap;gap:8px">' +
+            colorCards +
+            "</div></div></td></tr>";
+        }
+
+        var mainRow =
+          '<tr data-id="' +
+          esc(item.id || "") +
+          '" data-code="' +
+          esc(item.id || "") +
+          '" data-group="' +
+          esc(item.group || "") +
+          '">' +
+          "<td>" +
+          expandBtn +
+          '<span class="mono" style="font-weight:700;color:var(--accent)">' +
+          esc(item.id || "") +
+          "</span>" +
+          (hasColors
+            ? '<span style="font-size:10px;color:var(--text3);display:block;margin-top:2px"> ' +
+              itemColors.length +
+              " لون</span>"
+            : "") +
+          "</td>" +
+          '<td style="font-weight:500">' +
+          esc(item.name || "—") +
+          "</td>" +
+          '<td style="color:var(--text2)">' +
+          esc(item.unit || "—") +
+          "</td>" +
+          '<td style="text-align:center"><b style="font-family:\'JetBrains Mono\',monospace;font-size:15px">' +
+          totalQty +
+          "</b></td>" +
+          '<td style="text-align:center"><span style="color:var(--text3)">' +
+          (minQ || "—") +
+          "</span></td>" +
+          '<td style="text-align:center"><span style="font-weight:600;color:var(--success)">' +
+          (totalCost > 0 ? formatMoney(totalCost, { decimals: 0 }) : "—") +
+          "</span></td>" +
+          '<td style="text-align:center">' +
+          badge +
+          "</td>" +
+          "</tr>";
+
+        return mainRow + colorRowHtml;
+      })
+      .join("");
+
+    return (
+      // رأس الصفحة
+      '<div class="page-header">' +
+      "<div>" +
+      '<h1 style="display:flex;align-items:center;gap:10px">' +
+      iconBadge("ti-report", "var(--accent-soft)", "var(--primary)") +
+      "<span>تقرير الرصيد</span></h1>" +
+      "<p>رصيد كل صنف في المخازن</p>" +
+      "</div>" +
+      '<div class="header-actions">' +
+      '<div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px">' +
+      // طبيعي
+      '<div class="stat-card">' +
+      '<div class="stat-icon" style="background:var(--success-soft)">' +
+      iconBadge("ti-circle-check", "var(--success-soft)", "var(--success)") +
+      "</div>" +
+      '<div class="stat-info">' +
+      "<h3>مخزون طبيعي</h3>" +
+      '<h2 style="font-size:32px;color:var(--success)">' +
+      normal +
+      "</h2>" +
+      "<small>صنف</small>" +
+      "</div>" +
+      "</div>" +
+      // منخفض
+      '<div class="stat-card">' +
+      '<div class="stat-icon" style="background:var(--warning-soft,#fff7e6)">' +
+      iconBadge("ti-alert-circle", "var(--warning-soft)", "var(--warning)") +
+      "</div>" +
+      '<div class="stat-info">' +
+      "<h3>تحت الحد الأدنى</h3>" +
+      '<h2 style="font-size:32px;color:var(--orange)">' +
+      (low + zero) +
+      "</h2>" +
+      "<small>صنف</small>" +
+      "</div>" +
+      "</div>" +
+      // قيمة الكلية
+      '<div class="stat-card">' +
+      '<div class="stat-icon" style="background:var(--accent-soft)">' +
+      iconBadge("ti-coin", "var(--accent-soft)", "var(--primary)") +
+      "</div>" +
+      '<div class="stat-info">' +
+      "<h3>قيمة المخزون الكلية</h3>" +
+      '<h2 style="font-size:24px;color:var(--accent)">' +
+      formatMoney(totalCostAll, { decimals: 0, withSymbol: false }) +
+      "</h2>" +
+      "<small>جنيه</small>" +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // شريط الفلتر والبحث
+      '<div class="card" style="margin-bottom:16px">' +
+      '<div class="search-bar" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+      '<select class="input" id="stock-group-filter" style="max-width:150px">' +
+      groupOpts +
+      "</select>" +
+      '<select class="input" id="stock-color-filter" style="max-width:150px">' +
+      colorOpts +
+      "</select>" +
+      '<div class="search-input-wrap" style="flex:1;min-width:160px">' +
+      '<span class="s-icon"></span>' +
+      '<input class="input" id="stock-search" placeholder="بحث بالكود أو الاسم...">' +
+      "</div>" +
+      '<button class="btn btn-outline btn-sm" id="stock-view-toggle" style="white-space:nowrap"> تفصيل بالألوان</button>' +
+      '<button class="btn btn-outline btn-sm" id="stock-export-btn" style="white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:5px"><i class="ti ti-file-export" style="font-size:15px" aria-hidden="true"></i> تصدير</span></button>' +
+      "</div>" +
+      "</div>" +
+      // الجدول
+      '<div class="card"><div class="table-wrap">' +
+      (items.length
+        ? "<table>" +
+          "<thead><tr>" +
+          "<th>الكود</th>" +
+          "<th>الاسم</th>" +
+          "<th>الوحدة</th>" +
+          '<th style="text-align:center">الرصيد</th>' +
+          '<th style="text-align:center">الحد الأدنى</th>' +
+          '<th style="text-align:center">التكلفة الإجمالية</th>' +
+          '<th style="text-align:center">الحالة</th>' +
+          "</tr></thead>" +
+          '<tbody id="stock-tbody">' +
+          rows +
+          "</tbody>" +
+          "</table>"
+        : '<div class="empty-state"><div class="empty-icon"></div><p>لا توجد بيانات رصيد</p></div>') +
+      "</div></div>"
+    );
+  }
+  function renderTransfer() {
+    return `
+              <div class="page-header">
+                <div>
+                  <h1> تسجيل حركة</h1>
+                  <p>إضافة / تحويل / صرف</p>
+                </div>
+              </div>
+
+              <div class="card" style="max-width:650px; margin:0 auto;">
+                <div class="form-grid">
+
+                  <!-- نوع الحركة -->
+                  <div class="field full">
+                    <label>نوع الحركة *</label>
+                    <select class="input" id="tx-type" onchange="onTxTypeChange()">
+                      <option value="IN"> وارد (إضافة)</option>
+                      <option value="OUT"> صادر (صرف)</option>
+                      <option value="TRANSFER"> تحويل بين المخازن</option>
+                    </select>
+                  </div>
+
+                  <!-- الصنف -->
+                  <div class="field full">
+                    <label>الصنف *</label>
+                    <select class="input" id="tx-item" onchange="autoFillWarehouse();_rebuildColorSelect('tx-color','tx-item','tx-to')">
+                      <option value="">— اختر الصنف —</option>
+                      ${itemOpts()}
+                    </select>
+                  </div>
+
+                  <!-- اللون -->
+                  <div class="field" id="tx-color-wrap" style="display:none">
+                    <label> اللون</label>
+                    <div id="tx-color-ccd-outer"></div>
+                  </div>
+
+                  <!-- من مخزن — يظهر فقط في (OUT) و (TRANSFER) -->
+                  <div class="field" id="tx-from-wrap" style="display:none;">
+                    <label id="tx-from-label">من مستودع *</label>
+                    <input class="input" id="tx-from" placeholder="اسم المستودع" value="">
+                  </div>
+
+                  <!-- إلى مخزن — يظهر فقط في (IN) و (TRANSFER) -->
+                  <div class="field" id="tx-to-wrap" style="display:none;">
+                    <label id="tx-to-label">إلى مستودع *</label>
+                    <input class="input" id="tx-to" placeholder="اسم المستودع">
+                  </div>
+
+                  <!-- الكمية -->
+                  <div class="field">
+                    <label>الكمية *</label>
+                    <input class="input" id="tx-qty" type="number" min="1" value="1">
+                  </div>
+
+                  <!-- ملاحظات -->
+                  <div class="field full">
+                    <label>ملاحظات</label>
+                    <input class="input" id="tx-notes" placeholder="ملاحظات إضافية (اختياري)">
+                  </div>
+
+                </div>
+
+                <div class="modal-actions" style="margin-top:20px;">
+                  <button class="btn btn-primary" id="btn-save-tx" style="padding:14px 32px;">
+                     تسجيل الحركة
+                  </button>
+                </div>
+              </div>
+            `;
+  }
+
+  /*-----------------------------------------------------------------*/
+
+  // ============================================================
+  //  تطوير شاشة الوارد والصادر — v2
+  //  الملف ده بيستبدل الدوال دي في JavaScript.html:
+  //    renderTxIn, bindTxIn, renderTxOut, bindTxOut
+  //  + دوال مساعدة جديدة تُضاف فوقيهم مباشرةً
+  // ============================================================
+
+  // [CLEANUP-STAGE2] أُزيلت هنا كتلة كود قديمة وميتة بالكامل (v2 draft):
+  // كانت تحتوي على _txInItems/_txOutItems (متغيرات غير مستخدمة إطلاقًا)،
+  // ودالة _addTxItemRow() قديمة تم استبدالها بالكامل بنسخة 04_JS_Transactions.html
+  // (يتم تحميلها لاحقًا فتُطغى عليها فعليًا)، بالإضافة إلى _renderAddedItemsTable/
+  // _removeTxItem/_refreshCountBadges/_syncSummary التي كانت تعتمد على دالة
+  // _getTxItemsArr() غير المُعرَّفة أصلاً في أي مكان بالمشروع — أي أن هذه الكتلة
+  // كانت معطوبة وميتة في آنٍ واحد، وغير قابلة للوصول من أي واجهة مستخدم.
+  // النسخة الحيّة والعاملة فعليًا موجودة في 04_JS_Transactions.html.
+
+  // ── تسجيل الإذن كاملاً (متعدد الأصناف) ─────────────────────
+
+  // ============================================================
+  // renderTxIn
+  // ============================================================
+  function _genPermitId(prefix) {
+    var ts = Date.now().toString(36).toUpperCase().slice(-5);
+    var rnd = Math.random().toString(36).substr(2, 3).toUpperCase();
+    return prefix + "-" + ts + rnd;
+  }
+
+  function renderTxIn() {
+    var whOpts = _txWarehouseOpts();
+    var itOpts = itemOpts();
+    var autoId = _genPermitId("IN");
+
+    return (
+      // ── Page Header ──
+      '<div class="tx-in-page-header">' +
+      '<div class="tx-in-header-icon"><i class="ti ti-arrow-bar-down" aria-hidden="true"></i></div>' +
+      "<div>" +
+      '<h1 class="tx-in-header-title">إذن الوارد</h1>' +
+      '<p class="tx-in-header-sub">استلام بضاعة للمخزن — يدعم تسجيل أكثر من صنف في إذن واحد</p>' +
+      "</div></div>" +
+      // ── Steps ──
+      '<div class="tx-in-steps-row">' +
+      '<div class="tx-in-step tx-in-step-active" id="step1">' +
+      '<div class="tx-in-step-num">١</div>' +
+      '<span class="tx-in-step-label">بيانات الإذن</span>' +
+      "</div>" +
+      '<div class="tx-in-step-line"></div>' +
+      '<div class="tx-in-step" id="step2">' +
+      '<div class="tx-in-step-num">٢</div>' +
+      '<span class="tx-in-step-label">إضافة الأصناف</span>' +
+      "</div>" +
+      '<div class="tx-in-step-line"></div>' +
+      '<div class="tx-in-step" id="step3">' +
+      '<div class="tx-in-step-num">٣</div>' +
+      '<span class="tx-in-step-label">التأكيد والحفظ</span>' +
+      "</div>" +
+      "</div>" +
+      // ── Main Card ──
+      '<div class="tx-in-main-card">' +
+      // Strip 1
+      '<div class="tx-in-section-strip">' +
+      '<div class="tx-in-strip-icon"><i class="ti ti-clipboard-list" style="font-size:22px;color:currentColor" aria-hidden="true"></i></div>' +
+      '<div><h2 class="tx-in-strip-title">بيانات إذن الاستلام</h2><p class="tx-in-strip-sub">أدخل البيانات ثم أضف الأصناف</p></div>' +
+      '<span class="tx-in-badge-count" id="in-items-count">0 صنف</span>' +
+      "</div>" +
+      '<div class="tx-in-card-body">' +
+      // Permit Hero
+      '<div class="tx-in-permit-hero">' +
+      '<div style="z-index:1">' +
+      '<div class="tx-in-hero-label"><i class="ti ti-tag" aria-hidden="true"></i> رقم إذن الوارد</div>' +
+      '<div class="tx-in-hero-id" id="in-permit-id">' +
+      autoId +
+      "</div>" +
+      "</div>" +
+      '<div class="tx-in-hero-badge">يُولَّد تلقائياً </div>' +
+      "</div>" +
+      // Ref + Party + Warehouse (global, once per permit)
+      // ── Checkbox: مرتجع من عميل ──────────────────────────────────
+      '<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;margin:0 0 10px 0;background:var(--warning-soft,#fffbeb);border:1px solid var(--palette-amber-200);border-radius:10px;width:fit-content;cursor:pointer" id="in-return-wrapper">' +
+      '<input type="checkbox" id="in-is-return" style="width:18px;height:18px;accent-color:var(--palette-amber-600);cursor:pointer;flex-shrink:0">' +
+      '<label for="in-is-return" style="font-size:13px;font-weight:600;color:var(--palette-amber-800);cursor:pointer;display:flex;align-items:center;gap:6px;margin:0">' +
+      '<i class="ti ti-arrow-back-up" style="font-size:16px"></i> مرتجع من عميل' +
+      "</label>" +
+      "</div>" +
+      '<div class="tx-in-fields-grid" style="grid-template-columns:repeat(3,1fr)">' +
+      '<div class="tx-in-field-group">' +
+      '<label class="tx-in-field-label"><span class="tx-in-label-icon"><i class="ti ti-file-invoice" aria-hidden="true"></i></span>رقم المرجع / الفاتورة</label>' +
+      '<input class="input" id="in-ref" placeholder="مثال: 0001" style="font-family:monospace">' +
+      "</div>" +
+      '<div class="tx-in-field-group">' +
+      '<label class="tx-in-field-label" id="in-party-label"><span class="tx-in-label-icon"><i class="ti ti-building-factory-2" id="in-party-icon" aria-hidden="true"></i></span><span id="in-party-label-text">اسم المورد / الجهة</span></label>' +
+      '<input class="input" id="in-party" placeholder="اسم الشركة أو المورد" data-placeholder="اسم الشركة أو المورد" autocomplete="off"><input type="hidden" id="in-party-id">' +
+      "</div>" +
+      '<div class="tx-in-field-group">' +
+      '<label class="tx-in-field-label"><span class="tx-in-label-icon"><i class="ti ti-building-store" aria-hidden="true"></i></span>مخزن الاستلام <span style="color:var(--danger);font-size:13px">*</span></label>' +
+      '<div style="position:relative"><select class="input" id="in-to" style="font-size:13px;padding:8px 12px;width:100%"><option value="">— اختر المخزن —</option>' +
+      whOpts +
+      "</select>" +
+      '<span id="in-to-auto" style="display:none;position:absolute;left:6px;top:50%;transform:translateY(-50%);font-size:9px;color:var(--palette-emerald-700);font-weight:700;pointer-events:none"> تلقائي</span>' +
+      "</div></div>" +
+      "</div>" +
+      "</div>" +
+      // Strip 2
+      '<div class="tx-in-section-strip tx-in-strip-2">' +
+      '<div class="tx-in-strip-icon"><i class="ti ti-package" style="font-size:22px;color:currentColor" aria-hidden="true"></i></div>' +
+      '<div><h2 class="tx-in-strip-title">أصناف الإذن</h2><p class="tx-in-strip-sub">أضف الأصناف المستلَمة</p></div>' +
+      '<span class="tx-in-count-pill" id="in-summary-mini">0 صنف</span>' +
+      "</div>" +
+      '<div class="tx-in-card-body">' +
+      // Add Row Card — single line
+      '<div class="tx-in-add-row">' +
+      '<div class="tx-in-field-group" style="flex:3;min-width:0">' +
+      '<div class="tx-in-add-label"><i class="ti ti-package" aria-hidden="true"></i> الصنف</div>' +
+      '<div class="item-srch-wrap" id="in-item-wrap">' +
+      '<input type="text" id="in-item-search" class="input" placeholder=" ابحث عن الصنف..." autocomplete="off" disabled>' +
+      '<select id="in-item" style="display:none"><option value="">—</option>' +
+      itOpts +
+      "</select>" +
+      '<div id="in-item-list" class="item-srch-list"></div>' +
+      "</div>" +
+      "</div>" +
+      '<div class="tx-in-field-group" style="flex:2;min-width:0">' +
+      '<div class="tx-in-add-label"><i class="ti ti-palette" aria-hidden="true"></i> اللون</div>' +
+      '<div id="in-color-wrap"><div id="in-color-ccd-outer"></div></div>' +
+      "</div>" +
+      '<div class="tx-in-field-group" style="flex:1;min-width:80px">' +
+      '<div class="tx-in-add-label" style="text-align:center">الكمية</div>' +
+      '<input class="input" id="in-qty" type="number" min="1" placeholder="0" style="font-size:14px;font-weight:900;text-align:center;padding:9px 8px;width:100%;border:2px solid var(--palette-emerald-300);border-radius:10px;box-sizing:border-box;color:var(--palette-emerald-800)">' +
+      "</div>" +
+      '<div class="tx-in-field-group" style="flex:1;min-width:70px">' +
+      '<div class="tx-in-add-label" style="text-align:center">الوحدة</div>' +
+      '<input class="input" id="in-unit" readonly placeholder="—" style="background:var(--palette-emerald-100);color:var(--palette-emerald-800);font-weight:700;text-align:center;cursor:default;padding:9px 8px;font-size:13px;border:2px solid var(--palette-emerald-200)">' +
+      "</div>" +
+      // [TRACKING-FIELDS-2026-08-08] رقم دفعة / تاريخ صلاحية / رقم تسلسلي — تظهر بس لو الصنف المختار من نوع batch/serial (جافاسكريبت في 04_JS_Transactions.html)
+      '<div class="tx-in-field-group" id="in-batch-wrap" style="flex:1;min-width:110px;display:none">' +
+      '<div class="tx-in-add-label">رقم الدفعة</div>' +
+      '<input class="input" id="in-batch-no" type="text" placeholder="Batch No">' +
+      "</div>" +
+      '<div class="tx-in-field-group" id="in-expiry-wrap" style="flex:1;min-width:120px;display:none">' +
+      '<div class="tx-in-add-label">تاريخ الصلاحية</div>' +
+      '<input class="input" id="in-expiry-date" type="date">' +
+      "</div>" +
+      '<div class="tx-in-field-group" id="in-serial-wrap" style="flex:1;min-width:110px;display:none">' +
+      '<div class="tx-in-add-label">الرقم التسلسلي</div>' +
+      '<input class="input" id="in-serial-no" type="text" placeholder="Serial No">' +
+      "</div>" +
+      '<div style="display:flex;align-items:flex-end;padding-bottom:1px">' +
+      '<button id="btn-add-in-item" class="tx-in-btn-add" title="إضافة صنف"><i class="ti ti-plus" style="font-size:18px" aria-hidden="true"></i></button>' +
+      "</div>" +
+      "</div>" +
+      // Table
+      '<div class="tx-in-table-wrap">' +
+      '<table class="tx-in-table">' +
+      "<thead><tr>" +
+      '<th style="width:42px;text-align:center">م</th>' +
+      "<th>الصنف</th>" +
+      "<th>اللون</th>" +
+      '<th style="text-align:center">الكمية</th>' +
+      '<th style="text-align:center">الوحدة</th>' +
+      '<th style="width:44px"></th>' +
+      "</tr></thead>" +
+      '<tbody id="in-items-tbody">' +
+      '<tr id="in-empty-row"><td colspan="6" class="tx-in-empty-state">' +
+      "لم تُضَف أصناف بعد — استخدم الأداة أعلاه لإضافة أصناف" +
+      "</td></tr>" +
+      "</tbody>" +
+      "</table>" +
+      "</div>" +
+      '<div id="in-summary" class="tx-in-summary-bar" style="display:none">' +
+      "<span>إجمالي الأصناف المضافة</span>" +
+      '<span class="tx-in-sum-total" id="summary-total">0 صنف — 0 وحدة</span>' +
+      "</div>" +
+      "</div>" +
+      // Strip 3
+      '<div class="tx-in-section-strip tx-in-strip-3">' +
+      '<div class="tx-in-strip-icon"><i class="ti ti-notes" style="font-size:22px;color:currentColor" aria-hidden="true"></i></div>' +
+      '<div><h2 class="tx-in-strip-title">ملاحظات ومرفقات</h2><p class="tx-in-strip-sub">اختياري</p></div>' +
+      "</div>" +
+      '<div class="tx-in-card-body">' +
+      '<div class="tx-in-bottom-grid">' +
+      '<div class="tx-in-field-group">' +
+      '<label class="tx-in-field-label"><span class="tx-in-label-icon"><i class="ti ti-notes" aria-hidden="true"></i></span>ملاحظات الإذن</label>' +
+      '<textarea class="input" id="in-notes" rows="4" placeholder="أي ملاحظات إضافية على الفاتورة ككل..." style="resize:vertical;width:100%;box-sizing:border-box;min-height:100px"></textarea>' +
+      "</div>" +
+      '<div class="tx-in-field-group">' +
+      '<label class="tx-in-field-label" style="margin-bottom:6px"><span class="tx-in-label-icon"><i class="ti ti-paperclip" aria-hidden="true"></i></span>مرفق الإذن <span style="color:var(--text3);font-weight:400;font-size:11px">(اختياري)</span></label>' +
+      '<input type="file" id="in-file" accept="image/*,.pdf" capture="environment" style="display:none" onchange="handleTxFileSelect(this,\'in\')">' +
+      '<label for="in-file" id="in-attach-area" class="tx-in-attach-zone">' +
+      '<div id="in-attach-preview">' +
+      '<div style="font-size:28px;text-align:center"></div>' +
+      '<div style="font-size:12px;color:var(--text3);margin-top:4px;text-align:center">اضغط لاختيار صورة أو PDF</div>' +
+      '<div style="font-size:11px;color:var(--text3);margin-top:2px;text-align:center">JPG, PNG, PDF</div>' +
+      "</div>" +
+      "</label>" +
+      '<div id="in-upload-status" style="display:none;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--accent)"></div>' +
+      "</div>" +
+      "</div>" +
+      '<button id="btn-in" class="tx-in-btn-submit"><span style="display:inline-flex;align-items:center;gap:5px"><i class="ti ti-circle-check" style="font-size:15px" aria-hidden="true"></i> تسجيل إذن الوارد</span></button>' +
+      "</div>" +
+      "</div>"
+    );
+  }
+  // renderTxOut
+  // ============================================================
+</script>

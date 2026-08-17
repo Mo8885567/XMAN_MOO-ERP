@@ -1,0 +1,5024 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 01_JS_Core_Auth.html — الملف الموحّد (v5)
+  // دُمج مع Core_Auth_Extensions.html بتاريخ التوحيد
+  //
+  // النطاق: أساسيات + صلاحيات (v4 + ERP v5) + State + Router + Cache
+  //          + Session + Auth + أدوار وصلاحيات المحاسبة وHR + NAV ERP
+  //
+  // §A   CSS_COLOR_MAP
+  // §B   Permissions System (ROLE_PERMISSIONS · canDo · withPermission …)
+  // §C   APP State
+  // §D   Router (render · navigate · renderPage)
+  // §E   Data Layer (loadAllData · cache · prefetch)
+  // §F   Save Animation
+  // §G   Auth UI (bindLogin · doLogin · doLogout)
+  // §H   Alerts & Notifications
+  // §EXT-AUTH-01  أدوار ERP v5 + صلاحيات المحاسبة وHR
+  // §EXT-AUTH-02  NAV_GROUPS للمحاسبة والـ HR
+  // §EXT-AUTH-03  ERP_PAGE_MAP
+  // §EXT-AUTH-04  _initERPModules
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ───────────────────────────────────────────────────────────────
+  // JS_Core_Auth.html — جزء 1/10 من JavaScript.html الأصلي
+  // النطاق الأصلي: سطر 1–1632 | أساسيات + صلاحيات + State + Router + Cache + Session + تسجيل دخول/خروج
+  // ───────────────────────────────────────────────────────────────
+
+  // ═══════════════════════════════════════════════════════════════
+  // [PERF-LAZY-LOAD] تحميل مرحلي لباقي موديولات النظام بعد اللوجين
+  // ═══════════════════════════════════════════════════════════════
+  // المشكلة اللي بيحلّها الكود ده: doGet كان بيحقن ~6.5 ميجا نص
+  // (كل ملفات الـ CSS/JS لكل موديولات النظام) في نفس صفحة اللوجين
+  // من الأول. بما إن HtmlService مبيعملش streaming، المتصفح ما
+  // بيرسمش ولا حاجة (ولا حتى شاشة الـ Splash) لحد ما السيرفر يخلص
+  // بناء الصفحة الضخمة دي ويبعتها كاملة — ده كان بيسبب شاشة سودا
+  // تفضل لعدة ثواني قبل ما اللوجين يظهر.
+  //
+  // الحل: Index.html بقى بيحقن بس الملفات الضرورية لشاشة اللوجين
+  // والـ Shell الأساسي، وباقي كل الموديولات (المحاسبة/HR/التصنيع/
+  // الفواتير/الواتساب...) بتتحمل من هنا (getLazyAppBundle في
+  // Code_12_Core.gs) في الخلفية، بمجرد ما الصفحة تترسم — يعني
+  // غالبًا وهي المستخدم لسه بيكتب بياناته في شاشة اللوجين، فبيكون
+  // التحميل خلص خلاص لما يضغط "دخول".
+  //
+  // window.__LAZY_READY__ : true بعد ما الحزمة المؤجلة تتحقن بنجاح.
+  // window.__LAZY_PENDING_CB__ : طابور callbacks تتنفذ أوتوماتيك
+  //   بمجرد ما التحميل يخلص (مستخدمة من renderPage() تحت).
+  function _loadLazyAppBundle() {
+    if (window.__LAZY_READY__ || window.__LAZY_LOADING__) return;
+    window.__LAZY_LOADING__ = true;
+
+    // [FIX-LAZY-TIMEOUT-RETRY-2026-08-02] قبل كده أي فشل (خصوصًا timeout
+    // الـ 25 ثانية الافتراضي) كان بيخلي _finish() تعلّم __LAZY_READY__ = true
+    // فورًا وكأن التحميل نجح، فالدوال المتوقّع حقنها (زي _renderSidebarBrand)
+    // كانت تفضل مش معرّفة والنظام يكسر بـ ReferenceError بعد أول لوجين
+    // مباشرة. دلوقتي: لو فشل الطلب، بنعيد المحاولة تلقائيًا (لحد 3 محاولات
+    // كلها) قبل ما نستسلم فعليًا؛ غالبًا الفشل بيكون بطء شبكة/سيرفر مؤقت.
+    var _lazyAttempt = 0;
+    var _lazyMaxAttempts = 3;
+
+    function _finish(errMsg) {
+      window.__LAZY_READY__ = true;
+      window.__LAZY_LOADING__ = false;
+      if (errMsg) console.warn("Lazy bundle load issue:", errMsg);
+      var queue = window.__LAZY_PENDING_CB__ || [];
+      window.__LAZY_PENDING_CB__ = [];
+      queue.forEach(function (cb) {
+        try {
+          cb();
+        } catch (e) {
+          console.warn("Lazy pending callback error:", e);
+        }
+      });
+    }
+
+    function _attempt() {
+      _lazyAttempt++;
+      // [GSR-UNIFY] بقى بيمر عبر _gsr() الموحّدة (31_JS_DataLayer.html، متحمّلة
+      // eager قبل هذا الملف مباشرة في Index.html) بدل google.script.run مباشر،
+      // عشان يستفيد من retry/timeout/error-handling الموحّد زي كل نداءات النظام.
+      try {
+        _gsr("getLazyAppBundle", null, {
+          label: "getLazyAppBundle (محاولة " + _lazyAttempt + ")",
+          onSuccess: function (result) {
+            var bundle = result && result.data;
+            try {
+              if (bundle && bundle.css) {
+                var styleEl = document.createElement("style");
+                styleEl.setAttribute("data-lazy-bundle", "css");
+                styleEl.textContent = bundle.css;
+                document.head.appendChild(styleEl);
+              }
+              // [FIX-AUDIT-2026] بعض الملفات فيها عناصر HTML حقيقية (زي
+              // <template id="tpl-upload-modal">) لازم تتحقن كـ DOM فعلي
+              // مش كنص جوه سكريبت — لازم تتحقن قبل الـ JS اللي بيدور عليها.
+              if (bundle && bundle.html) {
+                document.body.insertAdjacentHTML("beforeend", bundle.html);
+              }
+              if (bundle && bundle.js) {
+                var scriptEl = document.createElement("script");
+                scriptEl.setAttribute("data-lazy-bundle", "js");
+                scriptEl.textContent = bundle.js;
+                document.body.appendChild(scriptEl);
+              }
+              _finish();
+            } catch (e) {
+              // ✅ حتى لو حصل خطأ جزئي في الحقن، لازم نفك القفل عشان
+              // المستخدم يقدر يكمل (بدل ما يفضل عالق على "جاري التجهيز")
+              _finish("inject error: " + e.message);
+            }
+          },
+          onError: function (result) {
+            if (_lazyAttempt < _lazyMaxAttempts) {
+              // إعادة محاولة بعد تأخير بسيط بدل الاستسلام على أول فشل
+              setTimeout(_attempt, 1500 * _lazyAttempt);
+              return;
+            }
+            _finish(
+              "_gsr error after " +
+                _lazyAttempt +
+                " attempts: " +
+                (result && result.message),
+            );
+          },
+        });
+      } catch (e) {
+        if (_lazyAttempt < _lazyMaxAttempts) {
+          setTimeout(_attempt, 1500 * _lazyAttempt);
+          return;
+        }
+        _finish("exception: " + e.message);
+      }
+    }
+
+    _attempt();
+  }
+
+  // ✅ نبدأ التحميل فورًا مع أول DOMContentLoaded (بالتوازي مع ظهور
+  // شاشة اللوجين) — راجع استدعاء _loadLazyAppBundle() في بداية
+  // Bootstrap تحت.
+
+  // ✅ [PERF-LAZY-LOAD] بينتظر جاهزية الحزمة المؤجلة قبل تنفيذ أي
+  // كود محتاج موديولات لسه متحملتش، وبيعرض overlay التحميل الموجود
+  // أصلاً (_showAppLoader) بدل ما يفضل عالق أو يرمي ReferenceError.
+  function _whenLazyReady(cb) {
+    if (window.__LAZY_READY__) {
+      cb();
+    } else {
+      window.__LAZY_PENDING_CB__ = window.__LAZY_PENDING_CB__ || [];
+      window.__LAZY_PENDING_CB__.push(cb);
+    }
+  }
+
+  // ╔══════════════════════════════════════════════════════════════╗
+  // ║      MOO.ERP — Enterprise Resource Planning                 ║
+  // ║      JavaScript.html — Frontend Application Logic       ║
+  // ╠══════════════════════════════════════════════════════════════╣
+  // ║  البنية العامة للملف:                                   ║
+  // ║  §A  CSS_COLOR_MAP — خريطة ألوان موحّدة (يطابق Code.js)  ║
+  // ║  §B  Permissions  — ROLE_PERMISSIONS · canDo()          ║
+  // ║  §C  APP State    — الحالة المركزية للتطبيق             ║
+  // ║  §D  Router       — render() · renderPage()             ║
+  // ║  §E  Data Layer   — loadAllData · cache · prefetch      ║
+  // ║  §F  Save Animation                                     ║
+  // ║  §G  Auth UI      — bindLogin · doLogin · doLogout      ║
+  // ║  §H  Alerts & Notifications                             ║
+  // ║  §I  Navigation   — bindNav · top-bar · sidebar         ║
+  // ║  §J  UI Primitives — toast · modal · confirm · freeze   ║
+  // ║  §K  Utility Helpers — esc · fmtDate · statCard         ║
+  // ║  §L  Dashboard                                          ║
+  // ║  §M  Color System — getItemColors · CCD dropdown        ║
+  // ║  §N  Items Page                                         ║
+  // ║  §O  Groups Page                                        ║
+  // ║  §P  Stock View                                         ║
+  // ║  §Q  Transactions — TX-IN · TX-OUT · Transfer           ║
+  // ║  §R  Production Orders                                  ║
+  // ║  §S  Factory Flow — Dispatch · Return · FG Receive      ║
+  // ║  §T  Cutting Statement                                  ║
+  // ║  §U  Catalog View                                       ║
+  // ║  §V  Current Stock                                      ║
+  // ║  §W  Opening Stock                                      ║
+  // ║  §X  Warehouses                                         ║
+  // ║  §Y  Shipping                                           ║
+  // ║  §Z  Color Definitions                                  ║
+  // ║  §AA Excel Import                                       ║
+  // ║  §AB Code Guide                                         ║
+  // ║  §AC Weekly Reports                                     ║
+  // ║  §AD Catalog Send                                       ║
+  // ║  §AE Users & Audit Log                                  ║
+  // ║  §AF Barcode Generator                                  ║
+  // ║  §AG Company Branding                                   ║
+  // ╠══════════════════════════════════════════════════════════════╣
+  // ║  قواعد الكود:                                           ║
+  // ║  • دوال خاصة: تبدأ بـ _ (underscore)                    ║
+  // ║  • bind*()   تربط أحداث الصفحة بعد رسمها في Templates   ║
+  // ║  • render*() موجودة في Templates.html، bind*() هنا      ║
+  // ║  • كل الاتصالات بالباكيند: google.script.run              ║
+  // ╚══════════════════════════════════════════════════════════════╝
+
+  // ─────────────────────────────────────────────────────────────
+  // §A  CSS_COLOR_MAP — خريطة الألوان الموحّدة
+  //
+  // IMPORTANT: يجب أن تطابق CSS_COLOR_MAP_MASTER في Code.js تماماً.
+  // عند إضافة لون جديد: أضفه في كلا الملفين.
+  // القاعدة: black → #111111 (وليس #000000)
+  // ─────────────────────────────────────────────────────────────
+  var CSS_COLOR_MAP = {
+    أحمر: "#ef4444",
+    احمر: "#ef4444",
+    red: "#ef4444",
+    أسود: "#111111", // ✅ [FIX-H05] توحيد مع CSS_COLOR_MAP_MASTER في Code.js
+    اسود: "#111111", // ✅ [FIX-H05]
+    black: "#111111", // ✅ [FIX-H05]
+    أبيض: "#f8fafc",
+    ابيض: "#f8fafc",
+    white: "#ffffff",
+    أزرق: "#3b82f6",
+    ازرق: "#3b82f6",
+    blue: "#3b82f6",
+    أخضر: "#22c55e",
+    اخضر: "#22c55e",
+    green: "#22c55e",
+    أصفر: "#eab308",
+    اصفر: "#eab308",
+    yellow: "#eab308",
+    برتقالي: "#f97316",
+    برتقالى: "#f97316",
+    orange: "#f97316",
+    بنفسجي: "#a855f7",
+    بنفسجى: "#a855f7",
+    purple: "#9333ea",
+    وردي: "#f472b6",
+    وردى: "#f472b6",
+    ورده: "#f9a8d4",
+    pink: "#ec4899",
+    بني: "#92400e",
+    بنى: "#92400e",
+    brown: "#7c3f00",
+    رمادي: "#6b7280",
+    رمادى: "#6b7280",
+    grey: "#9ca3af",
+    gray: "#9ca3af",
+    كحلي: "#1e3a5f",
+    كحلى: "#1e3a5f",
+    navy: "#001f5b",
+    زيتي: "#6b7c3c",
+    زيتى: "#6b7c3c",
+    olive: "#808000",
+    ذهبي: "#d97706",
+    ذهبى: "#d97706",
+    gold: "#d4af37",
+    فضي: "#94a3b8",
+    فضى: "#94a3b8",
+    silver: "#c0c0c0",
+    خمري: "#9b2335",
+    خمرى: "#9b2335",
+    maroon: "#800000",
+    نبيذي: "#722f37",
+    نبيتي: "#722f37",
+    wine: "#722f37",
+    بيج: "#f5deb3",
+    beige: "#f5deb3",
+    كريمي: "#f5f0dc",
+    كريمى: "#f5f0dc",
+    cream: "#fffdd0",
+    تيل: "#0d9488",
+    teal: "#0d9488",
+    فيروزي: "#06b6d4",
+    فيروزى: "#06b6d4",
+    cyan: "#06b6d4",
+    تركوازي: "#40e0d0",
+    تركواز: "#40e0d0",
+    turquoise: "#40e0d0",
+    نيلي: "#4338ca",
+    نيلى: "#4338ca",
+    indigo: "#4f46e5",
+    سلموني: "#fa8072",
+    salmon: "#fa8072",
+    سماوي: "#38bdf8",
+    سماوى: "#38bdf8",
+    ليموني: "#bef264",
+    ليمونى: "#bef264",
+    lime: "#84cc16",
+    "وردي فاتح": "#f9a8d4",
+    "باودر بينك": "#fce7f3",
+    أنثراسايت: "#374151",
+    انثراسايت: "#374151",
+    "أوف وايت": "#f5f0e8",
+    "اوف وايت": "#f5f0e8",
+    شامبين: "#f7e7ce",
+    كاميل: "#c19a6b",
+    خاكي: "#c3b091",
+    خاكى: "#c3b091",
+    khaki: "#c3b091",
+    تيراكوتا: "#e2725b",
+    terracotta: "#e2725b",
+    مرجاني: "#ff6b6b",
+    coral: "#ff7f50",
+    بوردو: "#800020",
+    فوشيا: "#ff00ff",
+    fuchsia: "#ff00ff",
+    لافندر: "#e6e6fa",
+    lavender: "#e6e6fa",
+    موف: "#e0b0ff",
+    mauve: "#e0b0ff",
+    سيدج: "#b2ac88",
+    sage: "#b2ac88",
+    "أخضر زجاجي": "#2e8b57",
+    "أخضر نعناع": "#98ff98",
+    "أخضر غابة": "#228b22",
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // §B  Permissions System
+  //
+  // ROLE_PERMISSIONS — خريطة الصلاحيات (يجب مطابقة PERMISSIONS في Code.js)
+  // canDo(action)        — هل المستخدم الحالي لديه صلاحية؟
+  // hideIfNoPermission() — يخفي عنصر HTML لو مفيش صلاحية
+  // withPermission()     — يُعطّل زر HTML إذا لم تتوفر الصلاحية
+  // requirePermission()  — يمنع تنفيذ callback إذا لم تتوفر الصلاحية
+  // ─────────────────────────────────────────────────────────────
+
+  // خريطة الصلاحيات (يجب أن تطابق PERMISSIONS في Code.js)
+  var ROLE_PERMISSIONS = {
+    admin: [
+      // ── مخزون ──
+      "addItem",
+      "updateItem",
+      "deleteItem",
+      "addGroup",
+      "updateGroup",
+      "deleteGroup",
+      "addWarehouse",
+      "updateWarehouse",
+      "deleteWarehouse",
+      "addOpeningStock",
+      "deleteOpeningStock",
+      "addTransaction",
+      "addBatchTransaction",
+      "updateTransaction",
+      "deleteTransaction",
+      "addProductionOrder",
+      "updateProductionOrder",
+      "deleteProductionOrder",
+      "updateProductionOrderStatus",
+      "saveCuttingData",
+      "addFgReceive",
+      "addShipment",
+      "updateShipment",
+      "deleteShipment",
+      "addColor",
+      "updateColor",
+      "deleteColor",
+      "saveItemWithColorSync",
+      "importItems",
+      // ── مستخدمون وأمان ──
+      "addUser",
+      "updateUser",
+      "deleteUser",
+      "resetPassword",
+      "createBackup",
+      "restoreBackup", // [BACKUP-ENGINE-v5] admin فقط — استبدال كامل البيانات
+      "viewAuditLog",
+      "manageRoles",
+      // ── تقارير ──
+      "viewExecutiveReports",
+      "runStockAudit",
+      // ── عملاء وموردون ──
+      "viewCustomers",
+      "addCustomer",
+      "updateCustomer",
+      "deleteCustomer",
+      "viewSuppliers",
+      "addSupplier",
+      "updateSupplier",
+      "deleteSupplier",
+      // ── فودافون كاش ──
+      "viewVodafoneCash",
+      "addVodafoneCashLine",
+      "updateVodafoneCashLine",
+      "deleteVodafoneCashLine",
+      "addVodafoneCashTransaction",
+      "updateVodafoneCashTransaction",
+      "deleteVodafoneCashTransaction",
+      // ── محاسبة ──
+      "viewAccounting",
+      "viewChartOfAccounts",
+      "addChartAccount",
+      "updateChartAccount",
+      "deleteChartAccount",
+      "viewCashBoxes",
+      "addCashBox",
+      "updateCashBox",
+      "deleteCashBox",
+      "viewBankAccounts",
+      "addBankAccount",
+      "updateBankAccount",
+      "deleteBankAccount",
+      "viewJournalEntries",
+      "addJournalEntry",
+      "updateJournalEntry",
+      "deleteJournalEntry",
+      "postJournalEntry",
+      "viewReceiptVouchers",
+      "addReceiptVoucher",
+      "approveReceiptVoucher",
+      "printReceiptVoucher",
+      "viewPaymentVouchers",
+      "addPaymentVoucher",
+      "approvePaymentVoucher",
+      "printPaymentVoucher",
+      "viewTransferVouchers",
+      "addTransferVoucher",
+      "approveTransferVoucher",
+      "viewGeneralLedger",
+      "viewTrialBalance",
+      "viewIncomeStatement",
+      "viewBalanceSheet",
+      "viewAccountStatement",
+      // ── HR ──
+      "viewHR",
+      "viewDepartments",
+      "addDepartment",
+      "updateDepartment",
+      "deleteDepartment",
+      "viewJobTitles",
+      "addJobTitle",
+      "updateJobTitle",
+      "deleteJobTitle",
+      "viewEmployees",
+      "addEmployee",
+      "updateEmployee",
+      "deleteEmployee",
+      "viewAttendance",
+      "recordAttendance",
+      "editAttendance",
+      "viewLeaveRequests",
+      "requestLeave",
+      "approveLeaveRequest",
+      "addLeaveType",
+      "manageLeaveTypes",
+      "viewLoanRequests",
+      "requestLoan",
+      "approveLoanRequest",
+      "viewPayroll",
+      "generatePayroll",
+      "approvePayroll",
+      "payPayroll",
+      "viewPayslip",
+      // ── فواتير ──
+      "viewSaleInvoices",
+      "addSaleInvoice",
+      "updateSaleInvoice",
+      "deleteSaleInvoice",
+      "viewPurchaseInvoices",
+      "addPurchaseInvoice",
+      "updatePurchaseInvoice",
+      "deletePurchaseInvoice",
+      // ── أوامر الشراء (Purchase Orders) ──
+      "viewPurchaseOrders",
+      "addPurchaseOrder",
+      "updatePurchaseOrder",
+      "deletePurchaseOrder",
+      "approvePurchaseOrder",
+      "receivePurchaseOrder",
+      // ── استيراد الحضور ──
+      "viewImportLog",
+      "importAttendance",
+      "deleteImport",
+      // ── واتساب ──
+      "sendWhatsapp",
+      "manageWhatsappTemplates",
+      "viewWhatsappLogs",
+      "viewWhatsappCenter",
+      "replyWhatsapp",
+      "sendWhatsappFiles",
+      "viewWhatsappCustomerData",
+      "viewWhatsappStatement",
+      "useWhatsappAutoReply",
+    ],
+    supervisor: [
+      // ── مخزون ──
+      "addItem",
+      "updateItem",
+      // [AUTH-AUDIT-2026-07-28] كانت موجودة في الباك إند بس وناقصة هنا
+      "viewShippingCompanies",
+      "importItems",
+      "addGroup",
+      "updateGroup",
+      "addWarehouse",
+      "updateWarehouse",
+      "addTransaction",
+      "addBatchTransaction",
+      "updateTransaction",
+      "addProductionOrder",
+      "updateProductionOrder",
+      "updateProductionOrderStatus",
+      "saveCuttingData",
+      "addFgReceive",
+      "addOpeningStock",
+      "addShipment",
+      "updateShipment",
+      "addColor",
+      "updateColor",
+      "addSize",
+      "updateSize",
+      "deleteSize",
+      "saveItemWithColorSync",
+      "viewAuditLog",
+      "viewExecutiveReports",
+      "runStockAudit",
+      // ── عملاء وموردون ──
+      "viewCustomers",
+      "addCustomer",
+      "updateCustomer",
+      "viewSuppliers",
+      "addSupplier",
+      "updateSupplier",
+      // ── فودافون كاش ──
+      "viewVodafoneCash",
+      "addVodafoneCashLine",
+      "updateVodafoneCashLine",
+      "addVodafoneCashTransaction",
+      "updateVodafoneCashTransaction",
+      // ── محاسبة (عرض فقط + سندات) ──
+      "viewAccounting",
+      "viewCashBoxes",
+      "viewBankAccounts",
+      "viewReceiptVouchers",
+      "addReceiptVoucher",
+      "printReceiptVoucher",
+      "viewPaymentVouchers",
+      "addPaymentVoucher",
+      "printPaymentVoucher",
+      "viewTransferVouchers",
+      "viewTrialBalance",
+      "viewAccountStatement",
+      // ── HR (عرض + حضور + إجازات) ──
+      "viewHR",
+      "viewEmployees",
+      "viewAttendance",
+      "recordAttendance",
+      "viewLeaveRequests",
+      "requestLeave",
+      "approveLeaveRequest",
+      "viewLoanRequests",
+      "requestLoan",
+      "viewPayslip",
+      "viewPayroll",
+      "viewSaleInvoices",
+      "addSaleInvoice",
+      "deleteSaleInvoice",
+      "viewPurchaseInvoices",
+      "addPurchaseInvoice",
+      "deletePurchaseInvoice",
+      // ── محاسبة (عرض إضافي) ──
+      "viewChartOfAccounts",
+      "viewJournalEntries",
+      "viewGeneralLedger",
+      "viewIncomeStatement",
+      "viewBalanceSheet",
+      "approveReceiptVoucher",
+      "approvePaymentVoucher",
+      // ── HR (عرض إضافي + عمليات) ──
+      "viewDepartments",
+      "viewJobTitles",
+      "editAttendance",
+      "importAttendance",
+      "viewImportLog",
+      "approveLoanRequest",
+      "manageLeaveTypes",
+      // ── تعديل (بدون حذف) ──
+      "updateEmployee",
+      "updateDepartment",
+      "updateJobTitle",
+      // ── واتساب ──
+      "sendWhatsapp",
+      "viewWhatsappLogs",
+      "viewWhatsappCenter",
+      "replyWhatsapp",
+      "viewWhatsappCustomerData",
+      "viewWhatsappStatement",
+    ],
+    operator: [
+      "addTransaction",
+      "addBatchTransaction",
+      "addProductionOrder",
+      "updateProductionOrderStatus",
+      "saveCuttingData",
+      "addFgReceive",
+      "addShipment",
+      "saveItemWithColorSync",
+      "viewCustomers",
+      "viewSuppliers",
+      "viewSaleInvoices",
+      "addSaleInvoice",
+      "viewPurchaseInvoices",
+      "addPurchaseInvoice",
+      // ── فودافون كاش ──
+      "viewVodafoneCash",
+      "addVodafoneCashTransaction",
+      // ── واتساب ──
+      "sendWhatsapp",
+    ],
+    viewer: ["viewVodafoneCash"],
+  };
+
+  /**
+   * هل المستخدم الحالي لديه صلاحية لعملية معينة؟
+   * @param {string} action - اسم العملية (مثال: "deleteItem")
+   * @returns {boolean}
+   */
+  function canDo(action) {
+    if (!APP.currentUser) return false;
+
+    var role = String(APP.currentUser.role || "viewer");
+
+    // ✅ BUG-5 FIX: استخدم effectivePermissions لو متاحة (تشمل overrides من الـ backend)
+    // قبل الإصلاح: كان بيعتمد على ROLE_PERMISSIONS الثابتة فقط ويتجاهل extra/denied
+    if (
+      APP.currentUser.effectivePermissions &&
+      Array.isArray(APP.currentUser.effectivePermissions)
+    ) {
+      if (APP.currentUser.effectivePermissions.indexOf(action) !== -1)
+        return true;
+      // ✅ [FIX-ADMIN-LOCK] لو الدور admin والصلاحية غير موجودة في effectivePermissions
+      // (مثلاً لأن الكاش في الباك إند لسه قديم بعد إضافة صلاحية جديدة، أو القائمة
+      // الثابتة ROLE_PERMISSIONS.admin مش متزامنة 100% مع ALL_PERMISSIONS)، الأدمن
+      // بحكم تعريفه لازم يكون عنده كل الصلاحيات دايماً ولا يتحجب عن أي شاشة جديدة.
+      if (role === "admin") return true;
+      return false;
+    }
+
+    // fallback للـ ROLE_PERMISSIONS لو effectivePermissions مش موجودة أصلاً
+    if (role === "admin") return true; // الأدمن دايماً صاحب كل الصلاحيات
+    var perms = ROLE_PERMISSIONS[role] || [];
+    return perms.indexOf(action) !== -1;
+  }
+
+  /**
+   * يخفي/يُظهر عنصر HTML بناءً على صلاحية
+   * مثال: hideIfNoPermission("btn-delete-item", "deleteItem")
+   */
+  function hideIfNoPermission(elId, action) {
+    var el = document.getElementById(elId);
+    if (!el) return;
+    if (!canDo(action)) {
+      el.style.display = "none";
+    }
+  }
+
+  /**
+   * يُعيد HTML لعنصر مع إضافة disabled + tooltip لو ما في صلاحية
+   * @param {string} html   - الـ HTML الأصلي للزر
+   * @param {string} action - اسم العملية
+   * @returns {string}
+   */
+  function withPermission(html, action) {
+    if (!canDo(action)) {
+      // بدّل btn-primary وbtn-danger بـ btn-ghost + disabled
+      return html
+        .replace(
+          /class="btn([^"]*)"/,
+          'class="btn$1" disabled title="' +
+            I18N.t("AUTH_TOOLTIP_NO_PERMISSION") +
+            '" style="opacity:0.4;cursor:not-allowed"',
+        )
+        .replace(
+          /onclick="[^"]*"/,
+          "onclick=\"event.preventDefault();showToast('" +
+            I18N.t("AUTH_MSG_NO_PERMISSION_ACTION") +
+            "','error')\"",
+        );
+    }
+    return html;
+  }
+
+  /**
+   * يعرض رسالة خطأ الصلاحيات بدلاً من تنفيذ الدالة
+   */
+  function requirePermission(action, callback) {
+    if (!canDo(action)) {
+      showToast(
+        I18N.t("AUTH_MSG_NO_PERMISSION_PREFIX") + " " + action,
+        "error",
+      );
+      return false;
+    }
+    if (callback) callback();
+    return true;
+  }
+
+  // ── Role Labels ─────────────────────────────────────────────
+  var ROLE_LABELS = {
+    admin: {
+      label: "مدير النظام",
+      color: "#ef4444",
+      bg: "var(--danger-soft)",
+      icon: "👑",
+    },
+    supervisor: {
+      label: "مشرف",
+      color: "#f59e0b",
+      bg: "var(--warning-soft)",
+      icon: "🔷",
+    },
+    operator: {
+      label: "موظف",
+      color: "#2563eb",
+      bg: "var(--accent-soft)",
+      icon: "ti-user-x",
+      iconColor: "#dc2626",
+    },
+    viewer: {
+      label: "مشاهد",
+      color: "#6b7280",
+      bg: "var(--surface2)",
+      icon: "👁️",
+    },
+  };
+
+  function roleBadge(role) {
+    var r = ROLE_LABELS[role] || {
+      label: role,
+      color: "#6b7280",
+      bg: "var(--surface2)",
+      icon: "?",
+    };
+    return (
+      '<span style="font-size:11px;font-weight:700;padding:2px 10px;border-radius:20px;' +
+      "background:" +
+      r.bg +
+      ";color:" +
+      r.color +
+      ";border:1px solid " +
+      r.color +
+      '33">' +
+      r.icon +
+      " " +
+      r.label +
+      "</span>"
+    );
+  }
+
+  // ---------- State ----------
+  var APP = {
+    currentUser: null,
+    currentPage: "dashboard",
+    isDark: false,
+    companySettings: {},
+    data: {
+      items: [],
+      stock: [],
+      transactions: [],
+      productionOrders: [],
+      users: [],
+      warehouses: [],
+      groups: [],
+      openingStock: [],
+      shipments: [],
+      colors: [],
+    },
+    loading: false,
+  };
+
+  // ═══════════════════════════════════════════════════════════
+  // إخفاء شريط تحذير Google Apps Script تلقائياً
+  // ═══════════════════════════════════════════════════════════
+  (function _dismissGoogleBanner() {
+    var _observer = new MutationObserver(function () {
+      // زرار الإغلاق في الشريط الأصفر من Google
+      var btn = document.querySelector(
+        "a.dismiss-button, button.dismiss-button, [data-id='dismiss-button']",
+      );
+      if (btn) {
+        btn.click();
+        _observer.disconnect();
+        return;
+      }
+
+      // بحث بالنص أو الـ aria-label (fallback)
+      var allBtns = document.querySelectorAll("a, button, div[role='button']");
+      for (var i = 0; i < allBtns.length; i++) {
+        var el = allBtns[i];
+        var txt = (el.textContent || "").trim();
+        var lbl = (el.getAttribute("aria-label") || "").toLowerCase();
+        if (
+          txt === "×" ||
+          txt === "Dismiss" ||
+          lbl === "dismiss" ||
+          lbl === "close"
+        ) {
+          var par = el.parentElement;
+          var isGoogleBanner = false;
+          while (par && par !== document.body) {
+            var st = par.getAttribute("style") || "";
+            if (
+              st.indexOf("position: fixed") !== -1 ||
+              st.indexOf("position:fixed") !== -1
+            ) {
+              if (par.id !== "root" && !par.closest("#root")) {
+                isGoogleBanner = true;
+              }
+              break;
+            }
+            par = par.parentElement;
+          }
+          if (isGoogleBanner) {
+            el.click();
+            _observer.disconnect();
+            return;
+          }
+        }
+      }
+    });
+    _observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+    setTimeout(function () {
+      _observer.disconnect();
+    }, 10000);
+  })();
+
+  // ---------- Bootstrap ----------
+  document.addEventListener("DOMContentLoaded", function () {
+    // ✅ [PERF-LAZY-LOAD] ابدأ تحميل باقي موديولات النظام في الخلفية
+    // فورًا — بالتوازي مع ظهور شاشة اللوجين، مش بعدها.
+    _loadLazyAppBundle();
+
+    sessionStorage.removeItem("wms_user");
+    // ✅ [SEC] استعادة توكن الجلسة عند reload الصفحة
+    _restoreSession();
+    var theme = localStorage.getItem("wms_theme");
+    if (theme === "dark") {
+      APP.isDark = true;
+      document.documentElement.setAttribute("data-theme", "dark");
+    }
+
+    // ✅ لو في بيانات محقونة من السيرفر (Server-Side Prefetch)، خزّنها فوراً
+    if (window.__PREFETCH__) {
+      try {
+        // items = الـ getAllData() كاملة محقونة من doGet
+        if (window.__PREFETCH__.items && window.__PREFETCH__.items.items) {
+          var pd = _parseData(window.__PREFETCH__.items);
+          _saveCache(pd);
+          APP.data = pd;
+          // مزامنة الإعدادات والألوان
+          if (pd.companySettings) {
+            APP.companySettings = pd.companySettings;
+            // [PERF-LAZY-LOAD] _applyCompanyBranding معرّفة في
+            // 08_JS_Users_Branding.html (بيتحمل lazy بعد أول رسم) —
+            // ممكن ما تكونش جاهزة لسه في هذه اللحظة المبكرة جدًا.
+            if (typeof _applyCompanyBranding === "function") {
+              _applyCompanyBranding();
+            }
+          }
+          if (typeof _syncColorsFromData === "function") {
+            _syncColorsFromData();
+          }
+        }
+        // users محقونين برضو
+        if (
+          window.__PREFETCH__.users &&
+          Array.isArray(window.__PREFETCH__.users.users)
+        ) {
+          APP._prefetchedUsers = window.__PREFETCH__.users.users;
+        }
+      } catch (e) {
+        console.warn("Prefetch parse error:", e);
+      }
+    }
+
+    // ⚠️ [PERF-FIX-BLACKSCREEN] كان في السابق بيتم إخفاء الـ Splash هنا
+    // فورًا (قبل render())، لكن render() نفسها بتستنى I18N.bootstrap
+    // (نداء سيرفر async لجلب قاموس اللغة) قبل ما ترسم شاشة اللوجين.
+    // ده كان بيسيب فجوة زمنية: الشعار يختفي، لكن شاشة اللوجين لسه ما
+    // اترسمتش → شاشة سودا فاضية بينهم. الحل: سيبنا الشعار شغال وهنخفيه
+    // بعد ما render() فعليًا ترسم المحتوى (شوف _hideSplash() تحت).
+    function _hideSplash() {
+      var splash = document.getElementById("app-splash");
+      if (!splash) return;
+      splash.style.opacity = "0";
+      setTimeout(function () {
+        if (splash && splash.parentNode) splash.parentNode.removeChild(splash);
+      }, 300);
+    }
+
+    // ── [I18N] تحميل قاموس اللغة قبل أول رسم للصفحة — لازم يحصل هنا
+    // (مش بس بعد نجاح اللوجين) عشان شاشة تسجيل الدخول نفسها، وكمان حالة
+    // استعادة جلسة قديمة بعد Reload، تتترجم صح من أول لحظة. المستخدم هنا
+    // ممكن يكون null (لسه ملوّجش) — الباك-إند (resolveUserLanguage) بيرجع
+    // اللغة الافتراضية للنظام في الحالة دي تلقائيًا.
+    if (typeof I18N !== "undefined") {
+      I18N.bootstrap(
+        APP.currentUser ? APP.currentUser.username : null,
+        SESSION ? SESSION.token : null,
+        function () {
+          render();
+          _hideSplash();
+          // 🔒 [SEC-FIX] لو مفيش جلسة محفوظة صالحة (يعني المستخدم لسه
+          // واقف في شاشة اللوجين ومحصلش دخول أصلاً)، مبقاش نستدعي
+          // _startPrefetch() هنا — هيفشل حتمًا بـ "session required" ويملأ
+          // الـ console بتحذيرات مالهاش أي فايدة فعلية. البيانات هتتحمّل
+          // عادي وبسرعة بعد نجاح تسجيل الدخول عن طريق
+          // _preloadAllAfterLogin() (شوف 02_JS_UI_Shell.html).
+          if (SESSION && SESSION.token) {
+            _startPrefetch();
+          }
+        },
+      );
+    } else {
+      render();
+      _hideSplash();
+      if (SESSION && SESSION.token) {
+        _startPrefetch();
+      }
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // §D  Router — التوجيه والتنقل
+  // ─────────────────────────────────────────────────────────────
+
+  // ---------- App Loading Overlay ----------
+  // يُعرض مباشرةً بعد نجاح الـ login بينما البيانات تُحمَّل
+  function _showAppLoader() {
+    var existing = document.getElementById("app-loading-overlay");
+    if (existing) return; // موجود بالفعل
+    var companyName =
+      (APP.companySettings && APP.companySettings.company_name) || "MOO.ERP";
+    var el = document.createElement("div");
+    el.id = "app-loading-overlay";
+    el.innerHTML =
+      '<div class="app-loader-logo">' +
+      companyName +
+      "</div>" +
+      '<div class="app-loader-ring"></div>' +
+      '<div class="app-loader-text" id="app-loader-text">' +
+      (typeof I18N !== "undefined" ? I18N.t("MSG_PREPARING_DATA") : "") +
+      "</div>";
+    document.body.appendChild(el);
+  }
+
+  // [FIX-STAGED-PROGRESS] بتحدّث نص شاشة التحضير برسائل مرحلية حقيقية بدل
+  // ما يفضل نص واحد ثابت طول فترة الانتظار — المستخدم يعرف فعليًا إيه اللي
+  // بيحصل دلوقتي، ولو الاتصال بطيء بيبان له ده صراحة بدل ما يفضل عالق
+  // على نفس الرسالة وكأنه هانج.
+  function _setAppLoaderText(msg) {
+    var el = document.getElementById("app-loader-text");
+    if (el) el.textContent = msg;
+  }
+
+  function _hideAppLoader() {
+    var el = document.getElementById("app-loading-overlay");
+    if (!el) return;
+    el.classList.add("hidden");
+    setTimeout(function () {
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    }, 400);
+  }
+
+  // ---------- Render Router ----------
+  // [FIX-LANG-SWITCH] باراميتر skipDataCheck: بيتبعت true بس من I18N.switchLanguage
+  // (تغيير لغة فقط — البيانات محمّلة أصلاً مسبقًا) عشان نمنع ظهور شاشة
+  // "جاري تحضير البيانات..." وكأننا بنعمل تحميل كامل من جديد وقت تبديل اللغة بس.
+  function render(skipDataCheck) {
+    var root = document.getElementById("root");
+    if (!APP.currentUser) {
+      // [PERF-FIX-CACHE-WIPE] كان هنا بيمسح wms_cache_static/dynamic/wms_cache
+      // (كاش البيانات) في كل مرة الصفحة بتتفتح — مش بس عند logout حقيقي —
+      // لأن APP.currentUser بيفضل null عند أول render() في كل boot (لسه ما
+      // حصلش login حتى لو فيه توكن جلسة صالح محفوظ). النتيجة: الكاش بيتمسح
+      // قبل ما اليوزر حتى يدخل، فبعد ما يسجّل دخول، loadAllData() ملاقيش
+      // حاجة تستخدمها وتعمل نداء سيرفر كامل من الصفر — شاشة "جاري تحميل
+      // البيانات..." الكاملة تظهر في كل تسجيل دخول حتى على نفس الجهاز.
+      // الحل: هنا بس بنمسح بيانات الجلسة (التوكن) لأنها فعلاً لازم تتمسح
+      // كل ما الشاشة دي تُعرض بدون يوزر — أما كاش البيانات (wms_cache*)
+      // فبيتسيب زي ما هو؛ الحماية من تسريب بيانات مستخدم لمستخدم تاني على
+      // نفس الجهاز بقت عن طريق ربط الكاش باسم صاحبه (_cacheOwnerMatches)
+      // اللي بتتفحص في loadAllData() قبل ما أي كاش يتطبّق فعليًا.
+      try {
+        localStorage.removeItem("wms_session_token");
+        localStorage.removeItem("wms_session_expires");
+        localStorage.removeItem("wms_session_idle_min");
+        SESSION.token = null;
+        SESSION.expiresAt = null;
+      } catch (e) {}
+      root.innerHTML = renderLogin();
+      bindLogin();
+      return;
+    }
+    // ✅ [FIX-LAZY-LAYOUT] renderLayout() بينادي alertCount() اللي بينادي
+    // getItemColors() — دالة معرّفة في 03_JS_Dashboard_Items.html (lazy).
+    // لو اتنادت هنا قبل ما الحزمة المؤجلة تخلص تحميل (لوجين سريع على نت
+    // بطيء)، كانت بترمي "getItemColors is not defined" وتكسر الشاشة كلها
+    // فور تسجيل الدخول. بنستخدم نفس آلية الانتظار الموجودة في renderPage().
+    if (!window.__LAZY_READY__) {
+      if (typeof _showAppLoader === "function") _showAppLoader();
+      _whenLazyReady(function () {
+        if (typeof _hideAppLoader === "function") _hideAppLoader();
+        render(skipDataCheck);
+      });
+      return;
+    }
+    root.innerHTML = renderLayout();
+    bindNav();
+    bindTopBar();
+    // ── [UX-INSTANT-DASHBOARD] بدل شاشة "app-loading-overlay" الوسيطة
+    // (اسم الشركة + سبينر) اللي كانت بتغطي الشاشة لحد ما البيانات توصل:
+    // بنعرض الصفحة فورًا زي ما هي. APP.data معرّفة فوق بمصفوفات فاضية
+    // افتراضيًا (items/stock/transactions/...) فكل الكروت والودجتس بترسم
+    // بأمان في حالتها الفاضية (0 / — ) — بالظبط نفس مبدأ Skeleton
+    // المستخدم أصلاً في ودجتس "المالية"/"HR" بالداشبورد التنفيذي
+    // (ensureExtendedData + xdRefreshWidget). لما getAllDataLight يرجع
+    // بالبيانات الحقيقية، renderPage() بتتنادى تاني والأرقام تتبدّل
+    // فورًا مكانها — من غير أي شاشة وسيطة منفصلة بين اللوجين والنظام.
+    renderPage(APP.currentPage);
+    updateAlertBadge();
+  }
+  // ── navigate() — alias لـ renderPage (مطلوب من الـ notifications) ──
+  function navigate(page) {
+    renderPage(page);
+  }
+  // ⚠️ [FIX] navigateTo() — alias لـ navigate()
+  // مستخدمة في أكثر من شاشة (استيراد الحضور، الشحن، تفاصيل الإذن داخل
+  // Templates.html) لكنها لم تكن معرّفة في أي ملف، فكانت الأزرار المعتمدة
+  // عليها تفشل بصمت (navigateTo is not a function) بدون أي تنبيه للمستخدم.
+  function navigateTo(page) {
+    navigate(page);
+  }
+
+  function renderPage(page) {
+    // ✅ [PERF-LAZY-LOAD] renderPage بينادي دوال عرض الموديولات
+    // (Templates_02-10 + كل ملفات الجزء 03 فما فوق) اللي بتتحمل lazy
+    // في الخلفية بعد اللوجين. لو لسه ما وصلتش (حالة نادرة: لوجين
+    // سريع جدًا على نت بطيء)، بنستنى بهدوء بدل ما نرمي ReferenceError،
+    // مع عرض overlay التحميل الموجود أصلاً في النظام.
+    if (!window.__LAZY_READY__) {
+      if (typeof _showAppLoader === "function") _showAppLoader();
+      _whenLazyReady(function () {
+        if (typeof _hideAppLoader === "function") _hideAppLoader();
+        renderPage(page);
+      });
+      return;
+    }
+    // [REBUILD-2026-08-07 / UDE] حارس عام موحّد: أي صفحة تعتمد على
+    // بيانات لسه ما وصلتش تُستنى عبر UDE.ensurePage() بدل المنظومة
+    // القديمة (PAGE_REQUIRED_FIELDS/_prefetchFullReady/ensureLevelData
+    // — شوف 53_JS_UnifiedDataEngine.html للتفاصيل الكاملة). الفرق
+    // الجوهري عن القديم: مفيش "مهلة استسلام" تخلّي الشاشة تُرسم ببيانات
+    // ناقصة للأبد — لو فشلت المحاولتين (الأصلية + retry تلقائي)، بنعرض
+    // رسالة خطأ صريحة مع زر إعادة محاولة بدل شاشة فاضية بصمت.
+    if (!UDE.haveAllLevels(UDE.levelsForPage(page))) {
+      APP.currentPage = page; // نحدّثها الآن عشان المقارنة بعد الانتظار تبقى صح
+      var cSkel = document.getElementById("page-content");
+      if (cSkel) cSkel.innerHTML = _renderAccHrSkeleton(page);
+      UDE.ensurePage(page, {
+        onReady: function () {
+          // لو المستخدم نقّل لصفحة تانية أثناء الانتظار، متعملش render قديم
+          if (APP.currentPage !== page) return;
+          renderPage(page);
+        },
+        onError: function () {
+          if (APP.currentPage !== page) return;
+          var cErr = document.getElementById("page-content");
+          if (!cErr) return;
+          cErr.innerHTML =
+            '<div class="empty-state" style="padding:48px 24px;text-align:center;">' +
+            '<div style="font-size:15px;margin-bottom:16px;color:var(--danger,#e5484d);">' +
+            (typeof I18N !== "undefined"
+              ? I18N.t("AUTH_MSG_INVALID_DATA_RECEIVED")
+              : "تعذّر تحميل بيانات هذه الشاشة") +
+            "</div>" +
+            '<button class="btn btn-primary" onclick="renderPage(\'' +
+            page +
+            "')\">" +
+            (typeof I18N !== "undefined" ? I18N.t("BTN_RETRY") : "إعادة المحاولة") +
+            "</button></div>";
+        },
+      });
+      return;
+    }
+    var c = document.getElementById("page-content");
+    if (!c) return;
+    APP.currentPage = page;
+    // [SIDEBAR-IW-ACTIVE] شاشات الفاتورة/المرتجع (workspace) مش بند سايد
+    // بار حقيقي بتاعها، فبنلوّن بدلها التاب المقابل ليها في القائمة
+    // (مثلاً sale_invoice_workspace → تاب "فواتير البيع") باستخدام نفس
+    // خريطة الـ breadcrumb IW_WORKSPACE_BREADCRUMB (02_JS_UI_Shell.html).
+    var _sidebarActivePage =
+      (typeof IW_WORKSPACE_BREADCRUMB !== "undefined" &&
+        IW_WORKSPACE_BREADCRUMB[page] &&
+        IW_WORKSPACE_BREADCRUMB[page].listPage) ||
+      page;
+    document.querySelectorAll(".nav-item").forEach(function (el) {
+      el.classList.toggle("active", el.dataset.page === _sidebarActivePage);
+    });
+    // تحديث الـ sub-items وإبقاء الـ group الأم مفتوحة
+    document.querySelectorAll(".nav-sub-item").forEach(function (el) {
+      var isActive = el.dataset.page === _sidebarActivePage;
+      el.classList.toggle("active", isActive);
+      if (isActive) {
+        var parentMenu = el.closest("[id$='-menu']");
+        if (parentMenu) {
+          var gId = parentMenu.id.replace("-menu", "");
+          var toggleEl = document.getElementById(gId + "-toggle");
+          if (toggleEl) toggleEl.classList.add("open", "has-active");
+          parentMenu.classList.add("open");
+        }
+      }
+    });
+    // ✅ [SIDEBAR-V3] تفعيل تلوين رأس المجموعة لما الصفحة الحالية تكون
+    // داشبورد القسم نفسه (اتفتحت بالضغط على اسم القسم مباشرة). هنا
+    // بنلوّن الـ toggle بس (has-active) — من غير ما نفتح القائمة الفرعية،
+    // لأن فتح/قفل القائمة مسؤولية السهم بس زي ما هو متفق عليه.
+    document
+      .querySelectorAll(".nav-grp-label[data-dashboard-page]")
+      .forEach(function (el) {
+        var isActive = el.dataset.dashboardPage === _sidebarActivePage;
+        var wrapEl = el.closest(".nav-dropdown");
+        var toggleEl = wrapEl ? wrapEl.querySelector(".nav-grp-toggle") : null;
+        if (toggleEl) toggleEl.classList.toggle("has-active", isActive);
+      });
+    // ── بداية الانتقال السلس: تلاشي المحتوى القديم قبل استبداله ──
+    // [PERF-FIX-FLICKER] لا نعمل fade أثناء الـ silent refresh عشان يختفي الـ flicker
+    // المستخدم لا يرى أي وميض عند التحديث الخلفي — فقط نحدث المحتوى بصمت
+    // [PERF-NAV-FADE-2026-08] الـ fade (0.18s) كان بيتطبّق على كل شاشة
+    // بلا استثناء، حتى الخفيفة اللي مالهاش أي تأخير تحميل حقيقي — فبيبان
+    // كـ"فلاش" ثابت قبل كل شاشة. دلوقتي بنطبّقه بس على الشاشات "التقيلة"
+    // (جداول بيانات كبيرة: أصناف/حركات/فواتير/تقارير...) المعرّفة في
+    // HEAVY_RENDER_PAGES تحت — أي شاشة تانية غير مذكورة فيها بتتبدّل فوراً
+    // بدون أي تأخير بصري مقصود.
+    var _isHeavyPage = !!HEAVY_RENDER_PAGES[page];
+    if (!APP._fromSilentRefresh && _isHeavyPage) {
+      c.style.opacity = "0";
+      c.style.transform = "translateY(6px)";
+    } else if (!APP._fromSilentRefresh) {
+      c.style.opacity = "1";
+      c.style.transform = "translateY(0)";
+    }
+    // تحديث عنوان الصفحة في الـ top bar
+    var PAGE_TITLES = {
+      dashboard: I18N.t("PAGE_DASHBOARD"),
+      shortcuts: I18N.t("PAGE_SHORTCUTS"),
+      whatsapp_hub: I18N.t("PAGE_WHATSAPP_HUB"),
+      sale_invoice_workspace: I18N.t("PAGE_SALE_INVOICE_WORKSPACE"),
+      purchase_invoice_workspace: I18N.t("PAGE_PURCHASE_INVOICE_WORKSPACE"),
+      sale_return_workspace: I18N.t("PAGE_SALE_RETURN_WORKSPACE"),
+      purchase_return_workspace: I18N.t("PAGE_PURCHASE_RETURN_WORKSPACE"),
+      purchase_request_workspace: I18N.t("PAGE_PURCHASE_REQUEST_WORKSPACE"),
+      purchase_order_workspace: I18N.t("PAGE_PURCHASE_ORDER_WORKSPACE"),
+      "inventory-dashboard": I18N.t("PAGE_INVENTORY_DASHBOARD"),
+      "transactions-dashboard": I18N.t("PAGE_TRANSACTIONS_DASHBOARD"),
+      "sales-dashboard": I18N.t("PAGE_SALES_DASHBOARD"),
+      "purchases-dashboard": I18N.t("PAGE_PURCHASES_DASHBOARD"),
+      "production-dashboard": I18N.t("PAGE_PRODUCTION_DASHBOARD"),
+      "shipping-dashboard": I18N.t("PAGE_SHIPPING_DASHBOARD"),
+      "customers-dashboard": I18N.t("PAGE_CUSTOMERS_DASHBOARD"),
+      "suppliers-dashboard": I18N.t("PAGE_SUPPLIERS_DASHBOARD"),
+      "admin-dashboard": I18N.t("PAGE_ADMIN_DASHBOARD"),
+      items: I18N.t("PAGE_ITEMS"),
+      groups: I18N.t("PAGE_GROUPS"),
+      stock: I18N.t("PAGE_STOCK"),
+      current_stock: I18N.t("PAGE_STOCK"),
+      stocktake: I18N.t("PAGE_STOCKTAKE"),
+      tx_in: I18N.t("PAGE_TX_IN"),
+      tx_out: I18N.t("PAGE_TX_OUT"),
+      transfer: I18N.t("PAGE_TRANSFER"),
+      tx_transfer: I18N.t("PAGE_TX_TRANSFER"),
+      transactions: I18N.t("PAGE_TRANSACTIONS"),
+      statement: I18N.t("PAGE_STATEMENT"),
+      reports_hub: I18N.t("PAGE_REPORTS_HUB"),
+      inventory_hub: I18N.t("PAGE_INVENTORY_HUB"),
+      sales_hub: I18N.t("PAGE_SALES_HUB"),
+      customers_hub: I18N.t("PAGE_CUSTOMERS_HUB"),
+      suppliers_hub: I18N.t("PAGE_SUPPLIERS_HUB"),
+      production_hub: I18N.t("PAGE_PRODUCTION_HUB"),
+      accounting_hub: I18N.t("PAGE_ACCOUNTING_HUB"),
+      hr_hub: I18N.t("PAGE_HR_HUB"),
+      shipping_hub: I18N.t("PAGE_SHIPPING_HUB"),
+      reports: I18N.t("PAGE_INVENTORY_HUB"),
+      inventory_overview: I18N.t("PAGE_INVENTORY_OVERVIEW"),
+      dormant_items: I18N.t("PAGE_DORMANT_ITEMS"),
+      low_stock: I18N.t("PAGE_LOW_STOCK"),
+      stock_valuation: I18N.t("PAGE_STOCK_VALUATION"),
+      sales_summary: I18N.t("PAGE_SALES_SUMMARY"),
+      sales_by_item: I18N.t("PAGE_SALES_BY_ITEM"),
+      sales_by_customer: I18N.t("PAGE_SALES_BY_CUSTOMER"),
+      sales_returns: I18N.t("PAGE_SALES_RETURNS"),
+      customer_aging: I18N.t("PAGE_CUSTOMER_AGING"),
+      top_customers: I18N.t("PAGE_TOP_CUSTOMERS"),
+      supplier_aging: I18N.t("PAGE_SUPPLIER_AGING"),
+      purchase_summary: I18N.t("PAGE_PURCHASE_SUMMARY"),
+      factory_efficiency: I18N.t("PAGE_FACTORY_EFFICIENCY"),
+      cash_flow: I18N.t("PAGE_CASH_FLOW"),
+      payroll_report: I18N.t("PAGE_PAYROLL_REPORT"),
+      attendance_report: I18N.t("PAGE_ATTENDANCE_REPORT"),
+      leave_report: I18N.t("PAGE_LEAVE_REPORT"),
+      hr_summary: I18N.t("PAGE_HR_SUMMARY"),
+      executive_dashboard: I18N.t("PAGE_EXECUTIVE_DASHBOARD"),
+      reports_overview: I18N.t("PAGE_REPORTS_OVERVIEW"),
+      alerts: I18N.t("PAGE_ALERTS"),
+      weekly_reports: I18N.t("PAGE_WEEKLY_REPORTS"),
+      users: I18N.t("PAGE_USERS"),
+      production: I18N.t("PAGE_PRODUCTION"),
+      dispatch: I18N.t("PAGE_DISPATCH"),
+      factory_return: I18N.t("PAGE_FACTORY_RETURN"),
+      fg_receive: I18N.t("PAGE_FG_RECEIVE"),
+      production_reports: I18N.t("PAGE_PRODUCTION_HUB"),
+      cutting_statement: I18N.t("PAGE_CUTTING_STATEMENT"),
+      opening_stock: I18N.t("PAGE_OPENING_STOCK"),
+      "work-centers": I18N.t("PAGE_WORK_CENTERS"),
+      machines: I18N.t("PAGE_MACHINES"),
+      bom: I18N.t("PAGE_BOM"),
+      routing: I18N.t("PAGE_ROUTING"),
+      warehouses: I18N.t("PAGE_WAREHOUSES"),
+      catalog: I18N.t("PAGE_CATALOG"),
+      catalog_send: I18N.t("PAGE_CATALOG_SEND"),
+      shipping: I18N.t("PAGE_SHIPPING"),
+      code_guide: I18N.t("PAGE_CODE_GUIDE"),
+      color_definitions: I18N.t("PAGE_COLOR_DEFINITIONS"),
+      size_definitions: I18N.t("PAGE_SIZE_DEFINITIONS"),
+      unit_definitions: I18N.t("PAGE_UNIT_DEFINITIONS"),
+      barcode: I18N.t("PAGE_BARCODE"),
+      audit_log: I18N.t("PAGE_AUDIT_LOG"),
+      import_log: I18N.t("PAGE_IMPORT_LOG"),
+      ai_assistant: I18N.t("PAGE_AI_ASSISTANT"),
+      customers: I18N.t("PAGE_CUSTOMERS"),
+      suppliers: I18N.t("PAGE_SUPPLIERS"),
+      party_movements: I18N.t("PAGE_PARTY_MOVEMENTS"),
+      supplier_statement: I18N.t("PAGE_SUPPLIER_STATEMENT"),
+      customer_statement: I18N.t("PAGE_CUSTOMER_STATEMENT"),
+      "accounting-dashboard": I18N.t("PAGE_ACCOUNTING_DASHBOARD"),
+      "chart-of-accounts": I18N.t("PAGE_CHART_OF_ACCOUNTS"),
+      "cash-boxes": I18N.t("PAGE_CASH_BOXES"),
+      banks: I18N.t("PAGE_BANKS"),
+      "bank-accounts": I18N.t("PAGE_BANK_ACCOUNTS"),
+      "cheque-books": I18N.t("PAGE_CHEQUE_BOOKS"),
+      cheques: I18N.t("PAGE_CHEQUES"),
+      "journal-entries": I18N.t("PAGE_JOURNAL_ENTRIES"),
+      "receipt-vouchers": I18N.t("PAGE_RECEIPT_VOUCHERS"),
+      "payment-vouchers": I18N.t("PAGE_PAYMENT_VOUCHERS"),
+      expenses: I18N.t("PAGE_EXPENSES"),
+      "transfer-vouchers": I18N.t("PAGE_TRANSFER_VOUCHERS"),
+      "general-ledger": I18N.t("PAGE_GENERAL_LEDGER"),
+      "trial-balance": I18N.t("PAGE_TRIAL_BALANCE"),
+      "income-statement": I18N.t("PAGE_INCOME_STATEMENT"),
+      "balance-sheet": I18N.t("PAGE_BALANCE_SHEET"),
+      "cash-flow-statement": I18N.t("PAGE_CASH_FLOW_STATEMENT"),
+      "account-statement": I18N.t("PAGE_ACCOUNT_STATEMENT"),
+      "posting-config": I18N.t("PAGE_POSTING_CONFIG"),
+      "fixed-assets": I18N.t("PAGE_FIXED_ASSETS"),
+      "user-preferences": I18N.t("PAGE_USER_PREFERENCES"),
+      "hr-dashboard": I18N.t("PAGE_HR_DASHBOARD"),
+      "production-stages": I18N.t("PAGE_PRODUCTION_STAGES"),
+      departments: I18N.t("PAGE_DEPARTMENTS"),
+      "job-titles": I18N.t("PAGE_JOB_TITLES"),
+      employees: I18N.t("PAGE_EMPLOYEES"),
+      attendance: I18N.t("PAGE_ATTENDANCE"),
+      "leave-types": I18N.t("PAGE_LEAVE_TYPES"),
+      "leave-requests": I18N.t("PAGE_LEAVE_REQUESTS"),
+      "loan-requests": I18N.t("PAGE_LOAN_REQUESTS"),
+      payroll: I18N.t("PAGE_PAYROLL"),
+      payslip: I18N.t("PAGE_PAYSLIP"),
+      "monthly-attendance": I18N.t("PAGE_MONTHLY_ATTENDANCE"),
+      "leave-balance": I18N.t("PAGE_LEAVE_BALANCE"),
+      attendance_import: I18N.t("PAGE_ATTENDANCE_IMPORT"),
+      attendance_import_log: I18N.t("PAGE_IMPORT_LOG"),
+      "sale-invoices": I18N.t("PAGE_SALE_INVOICES"),
+      "purchase-invoices": I18N.t("PAGE_PURCHASE_INVOICES"),
+      "sale-returns": I18N.t("PAGE_SALE_RETURNS"),
+      "purchase-returns": I18N.t("PAGE_PURCHASE_RETURNS"),
+      "purchase-orders": I18N.t("PAGE_PURCHASE_ORDERS"),
+      "purchase-requests": I18N.t("PAGE_PURCHASE_REQUESTS"),
+      vodafone_cash: I18N.t("PAGE_VODAFONE_CASH"),
+      release_notes: I18N.t("PAGE_RELEASE_NOTES"),
+      about_page: I18N.t("PAGE_ABOUT"),
+    };
+    // [FIX-BREADCRUMB-EN] كانت PAGE_TITLES محلية جوه renderPage بس، فكان
+    // شريط التنقل (renderPageTrail في 02_JS_UI_Shell.html) لما يوصل لصفحة
+    // مش مسجّلة في NAV_GROUPS ولا ERP_PAGE_MAP (زي "user-preferences")
+    // بيضطر يعرض الـ page id الإنجليزي الخام بدل اسمها العربي. تعريضها
+    // عالمياً هنا يخلّي أي مكان في النظام يقدر يستخدم نفس الترجمة الموحّدة.
+    window.PAGE_TITLES = PAGE_TITLES;
+    updateTopBarTitle(PAGE_TITLES[page] || "");
+    if (typeof renderPageTrail === "function") renderPageTrail(page);
+    // [RENDER-CRASH-FIX] لحد دلوقتي: لو render*/bind* أي شاشة رمت
+    // Exception (زي مشكلة "شاشة الباركود مش بتعرض المحتوي صح" —
+    // كانت بتسيب محتوى الشاشة القديمة زي ما هو على الشاشة لأن
+    // c.innerHTML مبيتحدّثش أصلاً لو الخطأ حصل قبل رجوع render*()،
+    // مع إن الـ breadcrumb/sidebar فوق كانوا بيتحدّثوا عادي — فيبان
+    // للمستخدم إنه "فاتح شاشة غلط" أو شاشة ناقصة من غير أي تنبيه).
+    // دلوقتي أي خطأ بيتلقّط، يتسجّل كامل (مع stack) في الكونسول
+    // للتشخيص، ويظهر للمستخدم شاشة خطأ واضحة فيها زرار "إعادة
+    // المحاولة" بدل ما يفضل شايف محتوى شاشة تانية بصمت.
+    try {
+      switch (page) {
+      case "dashboard":
+        c.innerHTML = renderDashboard();
+        bindDashboard();
+        break;
+      // ── شاشات إنشاء الفاتورة/المرتجع كاملة الصفحة (بديل المودال) ──
+      case "sale_invoice_workspace":
+        c.innerHTML = renderSaleInvoiceWorkspace();
+        bindSaleInvoiceWorkspace();
+        break;
+      case "purchase_invoice_workspace":
+        c.innerHTML = renderPurchaseInvoiceWorkspace();
+        bindPurchaseInvoiceWorkspace();
+        break;
+      case "sale_return_workspace":
+        c.innerHTML = renderSaleReturnWorkspace();
+        bindSaleReturnWorkspace();
+        break;
+      case "purchase_return_workspace":
+        c.innerHTML = renderPurchaseReturnWorkspace();
+        bindPurchaseReturnWorkspace();
+        break;
+      case "purchase_request_workspace":
+        c.innerHTML = renderPurchaseRequestWorkspace();
+        bindPurchaseRequestWorkspace();
+        break;
+      case "purchase_order_workspace":
+        c.innerHTML = renderPurchaseOrderWorkspace();
+        bindPurchaseOrderWorkspace();
+        break;
+      // ── لوحات المودلات ──
+      case "inventory-dashboard":
+        c.innerHTML = renderInventoryDashboard();
+        bindInventoryDashboard();
+        break;
+      case "transactions-dashboard":
+        c.innerHTML = renderTransactionsDashboard();
+        bindTransactionsDashboard();
+        break;
+      case "sales-dashboard":
+        c.innerHTML = renderSalesDashboard();
+        bindSalesDashboard();
+        break;
+      case "purchases-dashboard":
+        c.innerHTML = renderPurchasesDashboard();
+        bindPurchasesDashboard();
+        break;
+      case "production-dashboard":
+        c.innerHTML = renderProductionDashboard();
+        bindProductionDashboard();
+        break;
+      case "shipping-dashboard":
+        c.innerHTML = renderShippingDashboard();
+        bindShippingDashboard();
+        break;
+      case "customers-dashboard":
+        c.innerHTML = renderCustomersDashboard();
+        bindCustomersDashboard();
+        break;
+      case "suppliers-dashboard":
+        c.innerHTML = renderSuppliersDashboard();
+        bindSuppliersDashboard();
+        break;
+      case "admin-dashboard":
+        c.innerHTML = renderAdminDashboard();
+        bindAdminDashboard();
+        break;
+      case "shortcuts":
+        c.innerHTML = renderShortcuts();
+        bindShortcuts();
+        break;
+      case "items":
+        c.innerHTML = renderItems();
+        bindItems();
+        break;
+      case "groups":
+        c.innerHTML = renderGroups();
+        bindGroups();
+        break;
+      case "stock":
+      case "current_stock":
+        c.innerHTML = renderCurrentStock();
+        bindCurrentStock();
+        break;
+      case "stocktake":
+        if (!canDo("addTransaction")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_STOCKTAKE"));
+          break;
+        }
+        c.innerHTML = renderStocktake();
+        bindStocktake();
+        break;
+
+      case "tx_in":
+        c.innerHTML = renderTxIn();
+        bindTxIn();
+        break;
+      case "tx_out":
+        c.innerHTML = renderTxOut();
+        bindTxOut();
+        break;
+      case "transfer":
+      case "tx_transfer":
+        c.innerHTML = renderTxTransfer();
+        bindTxTransfer();
+        break;
+      case "transactions":
+        c.innerHTML = renderTransactions();
+        bindTransactions();
+        break;
+      case "statement":
+        c.innerHTML = renderStatement();
+        bindStatement();
+        break;
+      // ══════════════════════════════════════════════════════════
+      // مركز التقارير — Reports Hub
+      // ══════════════════════════════════════════════════════════
+      case "reports_hub":
+        c.innerHTML = renderReportsHub();
+        break;
+
+      // ── Group Hub pages ──
+      case "inventory_hub":
+        c.innerHTML = renderInventoryReportsHub();
+        break;
+      case "sales_hub":
+        c.innerHTML = renderSalesReportsHub();
+        break;
+      case "customers_hub":
+        c.innerHTML = renderCustomersReportsHub();
+        break;
+      case "suppliers_hub":
+        c.innerHTML = renderSuppliersReportsHub();
+        break;
+      case "production_hub":
+        c.innerHTML = renderProductionReportsHub();
+        break;
+      case "accounting_hub":
+        c.innerHTML = renderAccountingReportsHub();
+        break;
+      case "hr_hub":
+        c.innerHTML = renderHrReportsHub();
+        break;
+      case "shipping_hub":
+        c.innerHTML = renderShippingReportsHub
+          ? renderShippingReportsHub()
+          : "<p>تحميل...</p>";
+        break;
+      // ── تقارير مخزون فردية ──
+      case "reports": // إرث — يشتغل زي ما كان
+      case "inventory_overview":
+        c.innerHTML = renderReports();
+        break;
+      case "dormant_items":
+        c.innerHTML = renderDormantItemsReport();
+        break;
+      case "low_stock":
+        c.innerHTML = renderLowStockReport();
+        break;
+      case "stock_valuation":
+        c.innerHTML = renderStockValuationReport();
+        break;
+
+      // ── تقارير مبيعات ──
+      case "sales_summary":
+        c.innerHTML = renderSalesSummaryReport();
+        break;
+      case "sales_by_item":
+        c.innerHTML = renderSalesByItemReport();
+        break;
+      case "sales_by_customer":
+        c.innerHTML = renderSalesByCustomerReport();
+        break;
+      case "sales_returns":
+        c.innerHTML = renderSalesReturnsReport();
+        break;
+
+      // ── تقارير عملاء ──
+      case "customer_aging":
+        c.innerHTML = renderCustomerAgingReport();
+        break;
+      case "top_customers":
+        c.innerHTML = renderTopCustomersReport();
+        break;
+
+      // ── تقارير موردين ──
+      case "supplier_aging":
+        c.innerHTML = renderSupplierAgingReport();
+        break;
+      case "purchase_summary":
+        c.innerHTML = renderPurchaseSummaryReport();
+        break;
+
+      // ── تقارير إنتاج ──
+      case "factory_efficiency":
+        c.innerHTML = renderFactoryEfficiencyReport();
+        break;
+
+      // ── تقارير محاسبة ──
+      case "cash_flow":
+        c.innerHTML = renderCashFlowReport();
+        break;
+
+      // ── تقارير HR ──
+      case "payroll_report":
+        c.innerHTML = renderPayrollReport();
+        break;
+      case "attendance_report":
+        c.innerHTML = renderAttendanceReport();
+        break;
+      case "leave_report":
+        c.innerHTML = renderLeaveReport();
+        break;
+      case "hr_summary":
+        c.innerHTML = renderHrSummaryReport();
+        break;
+
+      // ── لوحة مجمّعة ──
+      case "executive_dashboard":
+        c.innerHTML = renderExecutiveDashboard
+          ? renderExecutiveDashboard()
+          : renderReportsHub();
+        break;
+      case "reports_overview":
+        c.innerHTML = renderReportsOverview();
+        break;
+
+      // ── التنبيهات ──
+      case "alerts":
+        c.innerHTML = renderAlerts();
+        break;
+      case "weekly_reports":
+        c.innerHTML = renderWeeklyReports();
+        bindWeeklyReports();
+        break;
+      case "users":
+        if (!canDo("addUser") && !canDo("updateUser") && !canDo("deleteUser")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_USERS"));
+          break;
+        }
+        c.innerHTML = renderUsers();
+        bindUsers();
+        break;
+      case "production":
+        if (
+          !canDo("addProductionOrder") &&
+          !canDo("updateProductionOrder") &&
+          !canDo("updateProductionOrderStatus") &&
+          !canDo("deleteProductionOrder")
+        ) {
+          c.innerHTML = renderAccessDenied(
+            I18N.t("ERR_ACCESS_PRODUCTION_ORDERS"),
+          );
+          break;
+        }
+        c.innerHTML = renderProduction();
+        bindProduction();
+        break;
+      case "dispatch":
+        c.innerHTML = renderDispatch();
+        bindDispatch();
+        break;
+      case "factory_return":
+        c.innerHTML = renderFactoryReturn();
+        bindFactoryReturn();
+        break;
+      case "fg_receive":
+        c.innerHTML = renderFgReceive();
+        bindFgReceive();
+        break;
+      case "production_reports":
+        c.innerHTML = renderProductionReports();
+        break;
+      // ── موديول التصنيع الجديد (Manufacturing) — Phase 1 Step 1 ──
+      case "work-centers":
+        if (!canDo("viewWorkCenters")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_WORK_CENTERS"));
+          break;
+        }
+        c.innerHTML = renderWorkCenters();
+        bindWorkCenters();
+        break;
+      case "machines":
+        if (!canDo("viewWorkCenters")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_MACHINES"));
+          break;
+        }
+        c.innerHTML = renderMachines();
+        bindMachines();
+        break;
+      case "bom":
+        if (!canDo("viewBOM")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_BOM"));
+          break;
+        }
+        c.innerHTML = renderBOMs();
+        bindBOMs();
+        break;
+      case "routing":
+        if (!canDo("viewRouting")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_MFG_ROUTES"));
+          break;
+        }
+        c.innerHTML = renderRoutings();
+        bindRoutings();
+        break;
+      case "cutting_statement":
+        c.innerHTML = renderCuttingStatement();
+        bindCuttingStatement();
+        break;
+      case "opening_stock":
+        c.innerHTML = renderOpeningStock();
+        bindOpeningStock();
+        break;
+      case "warehouses":
+        c.innerHTML = renderWarehouses();
+        bindWarehouses();
+        break; // warehouses visible to all; buttons inside are permission-gated
+      case "catalog":
+        c.innerHTML = renderCatalog();
+        bindCatalog();
+        break;
+      case "catalog_send":
+        c.innerHTML = renderCatalogSend();
+        bindCatalogSend();
+        break;
+      case "shipping-companies":
+        c.innerHTML = renderShippingCompanies();
+        bindShippingCompanies();
+        break;
+      case "shipping":
+        c.innerHTML = renderShipping();
+        bindShipping();
+        break;
+      case "code_guide":
+        c.innerHTML = renderCodeGuide();
+        break;
+      // [INV-SETTINGS-2026-08-07] راوتر شاشة إعدادات المخزون العامة —
+      // نفس نمط أي شاشة عرض/ربط تانية (renderX + bindX).
+      case "inventory_settings":
+        if (!canDo("manageInventorySettings")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_INVENTORY_SETTINGS"));
+          break;
+        }
+        c.innerHTML = renderInventorySettings();
+        bindInventorySettings();
+        break;
+      case "color_definitions":
+        c.innerHTML = renderColorDefinitions();
+        bindColorDefinitions();
+        break;
+      case "size_definitions":
+        c.innerHTML = renderSizeDefinitions();
+        bindSizeDefinitions();
+        break;
+      // [UNITS-2026-08-06] راوتر شاشة "تعريف الوحدات" — نفس نمط المقاسات.
+      case "unit_definitions":
+        c.innerHTML = renderUnitDefinitions();
+        bindUnitDefinitions();
+        break;
+      case "audit_log":
+        if (!canDo("viewAuditLog")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_OPS_LOG"));
+          break;
+        }
+        c.innerHTML = renderAuditLog();
+        bindAuditLog();
+        break;
+      case "import_log":
+        // [REMOVED] الشاشة اتلغيت نهائيًا بناءً على طلب المستخدم — كانت
+        // بتعرض سجل عمليات استيراد الإكسيل (37_JS_ImportWizard.html:
+        // renderImportWizardLog/bindImportWizardLog). لو حبيت ترجعها:
+        // شوف الكومنت في 02_JS_UI_Shell.html جنب "code_guide" في قسم
+        // المخزون، وارجع الكود القديم هنا:
+        //   c.innerHTML = renderImportWizardLog(); bindImportWizardLog();
+        c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_IMPORT_LOG"));
+        break;
+      case "ai_assistant":
+        c.innerHTML = renderAIAssistant();
+        bindAIAssistant();
+        break;
+      case "permissions":
+        bindPermissionsPage();
+        break;
+      case "system_settings":
+        if (!APP.currentUser || APP.currentUser.role !== "admin") {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_SETTINGS"));
+          break;
+        }
+        c.innerHTML = renderSystemSettings();
+        bindSystemSettings();
+        break;
+      case "customers":
+        if (!canDo("viewCustomers")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_CUSTOMERS"));
+          break;
+        }
+        c.innerHTML = renderCustomers();
+        bindCustomers();
+        break;
+      case "suppliers":
+        if (!canDo("viewSuppliers")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_SUPPLIERS"));
+          break;
+        }
+        c.innerHTML = renderSuppliers();
+        bindSuppliers();
+        break;
+      case "customer_categories":
+        if (!canDo("viewCustomerCategories")) {
+          c.innerHTML = renderAccessDenied(
+            I18N.t("ERR_ACCESS_CUSTOMER_CATEGORIES"),
+          );
+          break;
+        }
+        c.innerHTML = renderCustomerCategories();
+        bindCustomerCategories();
+        break;
+      // [CUST-SETTINGS-2026-08-07] راوتر شاشة إعدادات العملاء العامة —
+      // نفس نمط case "inventory_settings" أعلاه بالظبط.
+      case "customer_settings":
+        if (!canDo("manageCustomerSettings")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_CUSTOMER_SETTINGS"));
+          break;
+        }
+        c.innerHTML = renderCustomerSettings();
+        bindCustomerSettings();
+        break;
+      // [INV2-SETTINGS-2026-08-07] راوتر شاشة إعدادات الفواتير العامة.
+      case "invoice_settings":
+        if (!canDo("manageInvoiceSettings")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_INVOICE_SETTINGS"));
+          break;
+        }
+        c.innerHTML = renderInvoiceSettings();
+        bindInvoiceSettings();
+        break;
+      case "supplier_categories":
+        if (!canDo("viewSupplierCategories")) {
+          c.innerHTML = renderAccessDenied(
+            I18N.t("ERR_ACCESS_SUPPLIER_CATEGORIES"),
+          );
+          break;
+        }
+        c.innerHTML = renderSupplierCategories();
+        bindSupplierCategories();
+        break;
+      case "party_movements":
+        if (!canDo("viewCustomers") && !canDo("viewSuppliers")) {
+          c.innerHTML = renderAccessDenied(
+            I18N.t("ERR_ACCESS_MOVEMENTS_STATEMENT"),
+          );
+          break;
+        }
+        c.innerHTML = renderPartyMovementsPage();
+        bindPartyMovementsPage();
+        break;
+      case "vodafone_cash":
+        if (!canDo("viewVodafoneCash")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_EWALLETS"));
+          break;
+        }
+        // [SIDEBAR-WALLETS-SPLIT] رجّعنا المحافظ الإلكترونية لصفحة مستقلة
+        // في السايد بار بدل ما تكون تاب جوه شاشة "التعاملات البنكية"
+        // الموحّدة — بناءً على طلب محمد.
+        c.innerHTML = renderVodafoneCash();
+        bindVodafoneCash();
+        break;
+      case "supplier_statement":
+        if (!canDo("viewSuppliers")) {
+          c.innerHTML = renderAccessDenied(
+            I18N.t("ERR_ACCESS_SUPPLIER_STATEMENT"),
+          );
+          break;
+        }
+        c.innerHTML = renderSupplierStatementPage();
+        bindSupplierStatementPage();
+        break;
+      case "customer_statement":
+        if (!canDo("viewCustomers")) {
+          c.innerHTML = renderAccessDenied(
+            I18N.t("ERR_ACCESS_CUSTOMER_STATEMENT"),
+          );
+          break;
+        }
+        c.innerHTML = renderCustomerStatementPage();
+        bindCustomerStatementPage();
+        break;
+      // ── صفحات المحاسبة ─────────────────────────────────────
+      // [FIX] كل صفحات المحاسبة والـ HR تحتاج بيانات extended من السيرفر،
+      // فلازم تتلف بـ ensureExtendedData عشان البيانات تكون موجودة قبل الـ render.
+      case "accounting-dashboard":
+      // [BANKING-UNIFIED] "banking-transactions" هي الصفحة الجديدة الموحّدة.
+      // باقي الـ ids القديمة (banking-dashboard/banks/bank-accounts/...)
+      // فضلت هنا كـ redirect داخلي للتاب المناسب — عشان أي رابط أو إشعار
+      // قديم بيشاور عليها يفضل شغال من غير ما ينكسر.
+      case "banking-transactions":
+      case "banking-dashboard":
+      case "chart-of-accounts":
+      case "cash-boxes":
+      case "banks":
+      case "bank-accounts":
+      case "cheque-books":
+      case "cheques":
+      case "journal-entries":
+      case "receipt-vouchers":
+      case "payment-vouchers":
+      case "expenses":
+      case "transfer-vouchers":
+      case "bank-reconciliation":
+      case "general-ledger":
+      case "trial-balance":
+      case "income-statement":
+      case "balance-sheet":
+      case "cash-flow-statement":
+      case "account-statement":
+      case "posting-config":
+      case "fixed-assets":
+      case "user-preferences":
+      // ── صفحات الموارد البشرية ────────────────────────────
+      case "hr-dashboard":
+      case "departments":
+      case "salary-components":
+      case "job-titles":
+      case "employees":
+      case "attendance":
+      case "leave-types":
+      case "leave-requests":
+      case "loan-requests":
+      case "payroll":
+      case "payslip":
+      case "monthly-attendance":
+      case "leave-balance":
+      // ── صفحات التصنيع ────────────────────────────────────
+      // ⚠️ [FIX] صفحة "production-stages" كانت موجودة في السايد بار
+      // وفي ERP_PAGE_MAP وفي PAGE_TITLES، لكن لم يكن لها أي case هنا،
+      // فكان الضغط عليها لا يفتح شيئًا (يسقط على default بصمت).
+      case "production-stages": {
+        // عرض Skeleton Screen فوراً — بدل الـ spinner البسيط
+        c.innerHTML = _renderAccHrSkeleton(page);
+        var _accHrPage = page;
+        ensureExtendedData(function () {
+          // guard: لو المستخدم انتقل لصفحة تانية أثناء التحميل لا تعمل render
+          if (APP.currentPage !== _accHrPage) return;
+
+          // ✅ [FIX-E2E] Permission guard for accounting/HR pages
+          var _accPages = [
+            "accounting-dashboard",
+            "banking-transactions",
+            "banking-dashboard",
+            "chart-of-accounts",
+            "cash-boxes",
+            "banks",
+            "bank-accounts",
+            "cheque-books",
+            "cheques",
+            "journal-entries",
+            "receipt-vouchers",
+            "payment-vouchers",
+            "expenses",
+            "transfer-vouchers",
+            "bank-reconciliation",
+            "general-ledger",
+            "trial-balance",
+            "income-statement",
+            "balance-sheet",
+            "cash-flow-statement",
+            "account-statement",
+            "posting-config",
+            "fixed-assets",
+          ];
+          var _hrPages = [
+            "hr-dashboard",
+            "departments",
+            "salary-components",
+            "job-titles",
+            "employees",
+            "attendance",
+            "leave-types",
+            "leave-requests",
+            "loan-requests",
+            "payroll",
+            "payslip",
+            "monthly-attendance",
+            "leave-balance",
+            "production-stages",
+          ];
+          if (
+            _accPages.indexOf(_accHrPage) !== -1 &&
+            !canDo("viewAccounting")
+          ) {
+            c.innerHTML = renderAccessDenied(
+              I18N.t("ERR_ACCESS_ACCOUNTING"),
+              "viewAccounting",
+            );
+            return;
+          }
+          if (_hrPages.indexOf(_accHrPage) !== -1 && !canDo("viewHR")) {
+            c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_HR"), "viewHR");
+            return;
+          }
+
+          var _renderFn, _bindFn;
+          switch (_accHrPage) {
+            case "accounting-dashboard":
+              _renderFn = renderAccountingDashboard;
+              _bindFn = bindAccountingDashboard;
+              break;
+            // [BANKING-UNIFIED] "banking-transactions" هي الصفحة الأساسية
+            // الجديدة (تابات). باقي الـ ids القديمة بتحدد التاب المطلوب
+            // فتحه فقط ثم بتعرض نفس الشاشة الموحّدة — عشان أي رابط قديم
+            // (بطاقات لوحة تحكم البنوك، إشعارات الشيكات/المطابقة...) يفضل
+            // شغال بدون تعديل في أي مكان تاني.
+            case "banking-transactions":
+              // [DEFAULT-TAB-OVERVIEW] الدخول من السايد بار على "التعاملات
+              // البنكية" لازم دايمًا يرجّع تاب "نظرة عامة" كشاشة رئيسية،
+              // بدل ما يفضل واقف على آخر تاب كان مفتوح (accounts/cheques/...)
+              // لأن _bankingUIState.tab متغيّر عام بيحتفظ بقيمته بين الصفحات.
+              _bankingUIState.tab = "overview";
+              _renderFn = renderBankingTransactions;
+              _bindFn = bindBankingTransactions;
+              break;
+            case "banking-dashboard":
+              _bankingUIState.tab = "overview";
+              _renderFn = renderBankingTransactions;
+              _bindFn = bindBankingTransactions;
+              break;
+            case "banks":
+              _bankingUIState.tab = "banks";
+              _renderFn = renderBankingTransactions;
+              _bindFn = bindBankingTransactions;
+              break;
+            case "bank-accounts":
+              _bankingUIState.tab = "accounts";
+              _renderFn = renderBankingTransactions;
+              _bindFn = bindBankingTransactions;
+              break;
+            case "cheque-books":
+              _bankingUIState.tab = "chequebooks";
+              _renderFn = renderBankingTransactions;
+              _bindFn = bindBankingTransactions;
+              break;
+            case "cheques":
+              _bankingUIState.tab = "cheques";
+              _renderFn = renderBankingTransactions;
+              _bindFn = bindBankingTransactions;
+              break;
+            case "transfer-vouchers":
+              _renderFn = renderTransferVouchers;
+              _bindFn = bindTransferVouchers;
+              break;
+            case "bank-reconciliation":
+              _bankingUIState.tab = "reconciliation";
+              _renderFn = renderBankingTransactions;
+              _bindFn = bindBankingTransactions;
+              break;
+            case "chart-of-accounts":
+              _renderFn = renderChartOfAccounts;
+              _bindFn = bindChartOfAccounts;
+              break;
+            case "cash-boxes":
+              _renderFn = renderCashBoxes;
+              _bindFn = bindCashBoxes;
+              break;
+            case "journal-entries":
+              _renderFn = renderJournalEntries;
+              _bindFn = bindJournalEntries;
+              break;
+            case "receipt-vouchers":
+              _renderFn = renderReceiptVouchers;
+              _bindFn = bindReceiptVouchers;
+              break;
+            case "payment-vouchers":
+              _renderFn = renderPaymentVouchers;
+              _bindFn = bindPaymentVouchers;
+              break;
+            case "expenses":
+              _renderFn = renderExpenses;
+              _bindFn = bindExpenses;
+              break;
+            case "general-ledger":
+              _renderFn = renderGeneralLedger;
+              _bindFn = bindGeneralLedger;
+              break;
+            case "trial-balance":
+              _renderFn = renderTrialBalance;
+              _bindFn = bindTrialBalance;
+              break;
+            case "income-statement":
+              _renderFn = renderIncomeStatement;
+              _bindFn = bindIncomeStatement;
+              break;
+            case "balance-sheet":
+              _renderFn = renderBalanceSheet;
+              _bindFn = bindBalanceSheet;
+              break;
+            case "cash-flow-statement":
+              _renderFn = renderCashFlowStatement;
+              _bindFn = bindCashFlowStatement;
+              break;
+            case "account-statement":
+              _renderFn = renderAccountStatement;
+              _bindFn = bindAccountStatement;
+              break;
+            case "hr-dashboard":
+              _renderFn = renderHRDashboard;
+              _bindFn = bindHRDashboard;
+              break;
+            case "departments":
+              _renderFn = renderDepartments;
+              _bindFn = bindDepartments;
+              break;
+            case "salary-components":
+              _renderFn = renderSalaryComponents;
+              _bindFn = bindSalaryComponents;
+              break;
+            case "job-titles":
+              _renderFn = renderJobTitles;
+              _bindFn = bindJobTitles;
+              break;
+            case "employees":
+              _renderFn = renderEmployees;
+              _bindFn = bindEmployees;
+              break;
+            case "attendance":
+              _renderFn = renderAttendance;
+              _bindFn = bindAttendance;
+              break;
+            case "leave-types":
+              _renderFn = renderLeaveTypes;
+              _bindFn = bindLeaveTypes;
+              break;
+            case "leave-requests":
+              _renderFn = renderLeaveRequests;
+              _bindFn = bindLeaveRequests;
+              break;
+            case "loan-requests":
+              _renderFn = renderLoanRequests;
+              _bindFn = bindLoanRequests;
+              break;
+            case "payroll":
+              _renderFn = renderPayroll;
+              _bindFn = bindPayroll;
+              break;
+            case "payslip":
+              _renderFn = renderPayslip;
+              _bindFn = bindPayslip;
+              break;
+            case "monthly-attendance":
+              _renderFn = renderMonthlyAttendance;
+              _bindFn = bindMonthlyAttendance;
+              break;
+            case "leave-balance":
+              _renderFn = renderLeaveBalance;
+              _bindFn = bindLeaveBalance;
+              break;
+            case "production-stages":
+              _renderFn = renderProductionStages;
+              _bindFn = bindProductionStages;
+              break;
+            case "posting-config":
+              _renderFn = renderPostingConfig;
+              _bindFn = bindPostingConfig;
+              break;
+            case "fixed-assets":
+              _renderFn = renderFixedAssets;
+              _bindFn = bindFixedAssets;
+              break;
+            case "user-preferences":
+              _renderFn = renderUserPreferences;
+              _bindFn = bindUserPreferences;
+              break;
+          }
+          if (typeof _renderFn === "function") {
+            // [SKELETON→CONTENT] استبدال الـ skeleton بالمحتوى الحقيقي مع fade-in
+            c.innerHTML = _renderFn();
+            c.style.animation = "none";
+            c.style.opacity = "0";
+            c.offsetHeight; // force reflow
+            c.style.transition = "opacity 0.22s ease";
+            c.style.opacity = "1";
+            setTimeout(function () {
+              c.style.transition = "";
+            }, 300);
+            if (typeof _bindFn === "function") _bindFn();
+            // 🔒 حماية حقول الأرقام بعد الـ render الـ async
+            autoProtectTextNumberInputs(c);
+            // [SELECTION-ENGINE-GLOBAL] نفس التأمين الشامل لأي select خام
+            // في هذا المسار الـ async (skeleton→content) لأنه بيستبدل
+            // c.innerHTML بره تدفق renderPage الرئيسي.
+            if (typeof initCustomSelects === "function") initCustomSelects(c);
+          }
+        });
+        break;
+      }
+      // ── صفحات استيراد الحضور ────────────────────────────
+      case "attendance_import":
+        if (!canDo("importAttendance")) {
+          c.innerHTML = renderAccessDenied(
+            I18N.t("ERR_ACCESS_IMPORT_ATTENDANCE"),
+          );
+          break;
+        }
+        c.innerHTML = renderAttendanceImport();
+        if (typeof bindAttendanceImport === "function") bindAttendanceImport();
+        break;
+      case "attendance_import_log":
+        if (!canDo("viewImportLog")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_IMPORTS_LOG"));
+          break;
+        }
+        c.innerHTML = renderImportLog();
+        if (typeof bindImportLog === "function") bindImportLog();
+        break;
+      case "purchase-orders":
+        if (!canDo("viewPurchaseOrders") && !canDo("addPurchaseOrder")) {
+          c.innerHTML = renderAccessDenied(
+            I18N.t("ERR_ACCESS_PURCHASE_ORDERS"),
+          );
+          break;
+        }
+        c.innerHTML = renderPurchaseOrders();
+        bindPurchaseOrders();
+        break;
+
+      case "purchase-requests":
+        if (!canDo("viewPurchaseInvoices") && !canDo("addPurchaseInvoice")) {
+          c.innerHTML = renderAccessDenied(
+            I18N.t("ERR_ACCESS_PURCHASE_REQUESTS"),
+          );
+          break;
+        }
+        c.innerHTML = renderPurchaseRequests();
+        bindPurchaseRequests();
+        break;
+
+      // ── [UPDATE-MGMT-MODULE] شاشة "update_management" الإدارية اتشالت
+      // نهائيًا من نسخة العميل — بقت في بروجيكت MOO-UpdatesHub المركزي.
+      // [MERGE-ABOUT-RN] "release_notes" بقت صفحة "about_page" نفسها
+      // (سجل الإصدارات بقى جزء منها) — أي رابط/إشعار قديم لسه بيشاور
+      // على "release_notes" بيتحوّل تلقائي للصفحة المدمجة، بدون كسر أي
+      // لينكات قديمة (breadcrumb/sidebar-highlight هيتظبطوا صح لأن
+      // renderPage بينادى نفسه من الأول بـ "about_page").
+      case "release_notes":
+        renderPage("about_page");
+        return;
+      case "about_page":
+        c.innerHTML = UM.renderAboutPage();
+        UM.bindAboutPage();
+        break;
+
+      case "sale-invoices":
+        if (!canDo("viewSaleInvoices") && !canDo("addSaleInvoice")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_SALES_INVOICES"));
+          break;
+        }
+        c.innerHTML = renderSaleInvoices();
+        bindSaleInvoices();
+        break;
+
+      case "purchase-invoices":
+        if (!canDo("viewPurchaseInvoices") && !canDo("addPurchaseInvoice")) {
+          c.innerHTML = renderAccessDenied(
+            I18N.t("ERR_ACCESS_PURCHASE_INVOICES"),
+          );
+          break;
+        }
+        c.innerHTML = renderPurchaseInvoices();
+        bindPurchaseInvoices();
+        break;
+      case "sale-returns":
+        if (!canDo("viewSaleInvoices") && !canDo("addSaleInvoice")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_SALES_RETURNS"));
+          break;
+        }
+        c.innerHTML = renderSaleReturns();
+        bindSaleReturns();
+        break;
+      case "purchase-returns":
+        if (!canDo("viewPurchaseInvoices") && !canDo("addPurchaseInvoice")) {
+          c.innerHTML = renderAccessDenied(
+            I18N.t("ERR_ACCESS_PURCHASE_RETURNS"),
+          );
+          break;
+        }
+        c.innerHTML = renderPurchaseReturns();
+        bindPurchaseReturns();
+        break;
+      // ── شاشة واتساب الموحّدة (تابات: قوالب / مركز المحادثات /
+      //    Communication Hub / سجل الواتساب) — 36_JS_WhatsAppHub.html ──
+      case "whatsapp_hub":
+        if (typeof renderWhatsappHubPage === "function") {
+          c.innerHTML = renderWhatsappHubPage();
+          if (typeof bindWhatsappHubPage === "function") bindWhatsappHubPage();
+        } else {
+          c.innerHTML =
+            "<div style='padding:40px;text-align:center;color:var(--text3)'>لم يتم تحميل ملف شاشة واتساب الموحّدة (36_JS_WhatsAppHub.html)</div>";
+        }
+        break;
+      // ── شاشة قوالب واتساب (لا تزال متاحة عبر روابط مباشرة قديمة —
+      //    الوصول الأساسي الآن من تاب "قوالب" داخل whatsapp_hub) ──
+      case "whatsapp_templates":
+        if (!canDo("sendWhatsapp") && !canDo("manageWhatsappTemplates")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_WA_TEMPLATES"));
+          break;
+        }
+        c.innerHTML = renderWhatsappTemplatesPage();
+        if (typeof bindWhatsappTemplatesPage === "function")
+          bindWhatsappTemplatesPage();
+        break;
+      // ── شاشة سجل الواتساب (Communication Logs) ────────────
+      case "whatsapp_logs":
+        if (!canDo("viewWhatsappLogs")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_WA_LOG"));
+          break;
+        }
+        c.innerHTML = renderWhatsappLogsPage();
+        if (typeof bindWhatsappLogsPage === "function") bindWhatsappLogsPage();
+        break;
+      // ── مركز محادثات واتساب ──────────────────────────────
+      case "whatsapp_center":
+        if (!canDo("viewWhatsappCenter")) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_WA_CENTER"));
+          break;
+        }
+        if (typeof renderWhatsappCenterPage === "function") {
+          c.innerHTML = renderWhatsappCenterPage();
+          if (typeof bindWhatsappCenterPage === "function")
+            bindWhatsappCenterPage();
+        } else {
+          c.innerHTML =
+            "<div style='padding:40px;text-align:center;color:var(--text3)'>لم يتم تحميل ملف مركز واتساب (19b_JS_WA_Center.html)</div>";
+        }
+        break;
+      // ── Communication Hub (متعدد القنوات — 30_JS_CommunicationHub.html) ──
+      case "communication_hub":
+        if (typeof canOpenCommHub === "function" && !canOpenCommHub()) {
+          c.innerHTML = renderAccessDenied(I18N.t("ERR_ACCESS_COMM_HUB"));
+          break;
+        }
+        if (typeof renderCommunicationHubPage === "function") {
+          c.innerHTML = renderCommunicationHubPage();
+          if (typeof bindCommunicationHubPage === "function")
+            bindCommunicationHubPage();
+        } else {
+          c.innerHTML =
+            "<div style='padding:40px;text-align:center;color:var(--text3)'>لم يتم تحميل ملف Communication Hub (30_JS_CommunicationHub.html)</div>";
+        }
+        break;
+      default:
+        c.innerHTML =
+          '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:16px;text-align:center;padding:40px">' +
+          '<svg viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" width="80" height="80" style="opacity:0.6">' +
+          '<rect width="80" height="80" rx="18" fill="#0F172A"/>' +
+          '<text x="40" y="30" font-family="Arial" font-weight="900" font-size="14" fill="#2563EB" text-anchor="middle">MOO</text>' +
+          '<rect x="14" y="34" width="52" height="2" rx="1" fill="#10B981"/>' +
+          '<text x="40" y="52" font-family="Arial" font-weight="700" font-size="11" fill="#F8FAFC" text-anchor="middle" letter-spacing="4">ERP</text>' +
+          "</svg>" +
+          '<div style="font-size:48px;font-weight:900;color:var(--primary,#2563EB);line-height:1">404</div>' +
+          '<div style="font-size:18px;font-weight:700;color:var(--text1)">الصفحة غير موجودة</div>' +
+          '<div style="font-size:13px;color:var(--text3);max-width:320px">الصفحة التي تبحث عنها غير موجودة أو تم نقلها. تحقق من الرابط أو عد للوحة التحكم.</div>' +
+          '<button class="btn btn-primary" onclick="navigate(\'dashboard\')" style="margin-top:8px"><i class="ti ti-home" style="margin-left:6px"></i>العودة للوحة التحكم</button>' +
+          '<div style="font-size:11px;color:var(--text3);margin-top:8px">MOO.ERP — Enterprise Resource Planning v5.0</div>' +
+          "</div>";
+        break;
+      }
+    } catch (e) {
+      console.error(
+        "[RENDER-CRASH] فشل رسم الشاشة \"" + page + '":',
+        e && e.stack ? e.stack : e,
+      );
+      c.innerHTML =
+        '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:14px;text-align:center;padding:40px">' +
+        '<i class="ti ti-alert-triangle" style="font-size:48px;color:var(--danger,#ef4444)"></i>' +
+        '<div style="font-size:18px;font-weight:700;color:var(--text1)">حصل خطأ أثناء تحميل هذه الشاشة</div>' +
+        '<div style="font-size:13px;color:var(--text3);max-width:420px;font-family:monospace;direction:ltr">' +
+        esc((e && e.message) || String(e)) +
+        "</div>" +
+        '<div style="display:flex;gap:8px">' +
+        '<button class="btn btn-primary" onclick="renderPage(\'' +
+        page +
+        "')\"><i class=\"ti ti-refresh\" style=\"margin-left:6px\"></i>إعادة المحاولة</button>" +
+        '<button class="btn btn-outline" onclick="navigate(\'dashboard\')">العودة للوحة التحكم</button>' +
+        "</div></div>";
+    }
+    // 🔒 [LEADING-ZERO-FIX] حماية شاملة على مستوى المشروع: أي حقل هاتف/كود/
+    // SKU/Barcode/رقم قومي يظهر في الصفحة المرسومة يُؤمَّن تلقائيًا من فقدان
+    // الصفر الأول — بدون الحاجة لتعديل كل شاشة على حدة، ويغطي أي شاشة جديدة
+    // تُضاف مستقبلاً تلقائيًا طالما اسم id الحقل يحتوي على الكلمات المعروفة.
+    autoProtectTextNumberInputs(c);
+    // [SELECTION-ENGINE-GLOBAL] تأمين شامل: أي <select> خام تم بناؤه يدويًا
+    // داخل أي شاشة (بدل استخدام openStyledDrawer/fields) بيتحوّل تلقائيًا
+    // لـ AppSelect هنا — نقطة واحدة تغطي كل شاشات renderPage الحالية
+    // والمستقبلية من غير ما نحتاج نلمس كل ملف على حدة أو نعتمد على تذكّر
+    // كل شاشة تنادي initCustomSelects بنفسها.
+    if (typeof initCustomSelects === "function") initCustomSelects(c);
+    // ✅ [FIX] إعادة السكرول لأعلى الشاشة عند الانتقال لصفحة جديدة.
+    // الكونتينر اللي عليه overflow-y:auto فعليًا هو ".content" (أب #page-content)
+    // مش #page-content نفسه، فكان لازم نعمله reset يدويًا وإلا بيفضل
+    // محتفظ بمكان السكرول القديم من الشاشة اللي قبلها.
+    // بنستثني حالة الـ silent refresh عشان نحافظ على مكان المستخدم
+    // لو هو لسه واقف في نفس الصفحة وبتتحدث في الخلفية.
+    if (!APP._fromSilentRefresh) {
+      var scrollContainer = document.querySelector(".content");
+      if (scrollContainer) scrollContainer.scrollTop = 0;
+    }
+    // ── نهاية الانتقال السلس: ظهور المحتوى الجديد بحركة ناعمة ──
+    // [PERF-FIX-FLICKER] أثناء السايلنت ريفريش: نضمن إن الـ opacity=1 دايماً
+    // [PERF-NAV-FADE-2026-08] لو الشاشة مش "تقيلة"، الـ opacity=1 اتحطت
+    // فوراً فوق من غير transition خالص — مفيش داعي لأي rAF/تأخير هنا.
+    if (APP._fromSilentRefresh || !_isHeavyPage) {
+      c.style.opacity = "1";
+      c.style.transform = "translateY(0)";
+    } else {
+      // [PERF-FIX] rAF واحد يكفي — الـ double rAF كان يضيف تأخير إضافي
+      // داخل Apps Script iframe بيكون ملحوظ كـ "وميض" قبل الظهور
+      requestAnimationFrame(function () {
+        c.style.opacity = "1";
+        c.style.transform = "translateY(0)";
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §E  Data Layer — البيانات والكاش
+  // ─────────────────────────────────────────────────────────────
+
+  // ---------- Prefetch (تحميل مسبق أثناء اللوجين) ----------
+  var _prefetch = {
+    done: false,
+    data: null,
+    loading: false,
+    _onReady: null,
+    _fullWaiters: [], // [DATA-LOADING-ENGINE / PHASE-3] قائمة انتظار "البيانات كاملة" (مستويات 2+3)
+    // [FIX-STALE-PARTIAL-RENDER-2026-08-07] لو صفحة اتعرضت بسبب انتهاء
+    // مهلة ensureLevelData (8 ثواني) قبل ما البيانات الكاملة توصل فعليًا،
+    // بتتسجل هنا. لما البيانات الحقيقية توصل بعد كده (سواء نجحت أو فشلت)
+    // بنعمل إعادة رسم صامتة (silent) للصفحة الحالية تلقائيًا — بدل ما
+    // اليوزر يفضل شايف بيانات ناقصة/فاضية لحد ما يعمل Refresh يدوي أو
+    // يتنقل لصفحة تانية ويرجع. شوف _drainFullWaiters() و_markPartialRender().
+    _partialRenderPending: false,
+  };
+
+  // بتتنادى من جوه ensureLevelData وقت ما الـ timeout الاحتياطي يشتغل
+  // (يعني: الصفحة اتعرضت ببيانات لسه مش كاملة). أي إعادة رسم لاحقة —
+  // سواء نجحت أو فشلت البيانات المتبقية — لازم "تصحّح" الشاشة الظاهرة
+  // للمستخدم دلوقتي بدل ما تسيبها ناقصة للأبد.
+  function _markPartialRender() {
+    _prefetch._partialRenderPending = true;
+  }
+
+  // بتتنادى كل مرة بيانات جديدة (كاملة أو نص فشلانة) توصل من الـ prefetch
+  // التدريجي. لو فيه صفحة اتعرضت جزئيًا قبل كده (_markPartialRender)،
+  // نعيد رسمها الآن بصمت (بدون فليكر/تمرير سكرول زي silentRefresh) عشان
+  // تظهر بياناتها الحقيقية من غير أي تدخل يدوي من المستخدم.
+  function _resolvePartialRenderIfNeeded() {
+    if (!_prefetch._partialRenderPending) return;
+    _prefetch._partialRenderPending = false;
+    if (!APP.currentUser || !APP.currentPage) return;
+    try {
+      APP._fromSilentRefresh = true;
+      renderPage(APP.currentPage);
+    } finally {
+      APP._fromSilentRefresh = false;
+    }
+  }
+
+  // [DATA-LOADING-ENGINE / PHASE-3] صفحات "المستوى الأول فقط" — لا تحتاج
+  // انتظار أي بيانات إضافية (ON_DEMAND/BACKGROUND) لأنها تعتمد فقط على
+  // بيانات المستخدم/الشركة/الفرع/الافتراضيات (getAllDataLight). أي صفحة
+  // غير مذكورة هنا تُعتبر افتراضيًا معتمدة على بيانات المستوى 2/3 (عملاء،
+  // موردين، أصناف، فواتير...) فتنتظرها عبر ensureLevelData قبل الرسم —
+  // هذا يغلق فجوة كانت موجودة: صفحات مثل "customers"/"items" كانت تُرسم
+  // فورًا من APP.data حتى لو لسه المستوى 2/3 ما وصلش (خصوصًا لو المستخدم
+  // نقّل لصفحة بسرعة عقب اللوجين مباشرة)، من غير أي حارس زي اللي كان
+  // موجود بالفعل لصفحات المحاسبة/HR فقط (ensureExtendedData).
+  var LIGHT_ONLY_PAGES = {
+    dashboard: 1,
+    shortcuts: 1,
+  };
+
+  // [PERF-NAV-FADE-2026-08] الشاشات اللي بتعرض جداول/بيانات كبيرة نسبياً —
+  // دي الوحيدة اللي بتاخد fade transition (0.18s) عند التنقل ليها، عشان
+  // تغطي أي إعادة رسم DOM ملحوظة. أي صفحة غير مذكورة هنا (نماذج/إعدادات/
+  // شاشات صغيرة) بتتبدّل فوراً بدون أي تأخير بصري مقصود.
+  var HEAVY_RENDER_PAGES = {
+    items: 1,
+    groups: 1,
+    stock: 1,
+    current_stock: 1,
+    stocktake: 1,
+    transactions: 1,
+    tx_in: 1,
+    tx_out: 1,
+    transfer: 1,
+    tx_transfer: 1,
+    "sale-invoices": 1,
+    "purchase-invoices": 1,
+    "sale-returns": 1,
+    "purchase-returns": 1,
+    "purchase-orders": 1,
+    "purchase-requests": 1,
+    customers: 1,
+    suppliers: 1,
+    "journal-entries": 1,
+    "receipt-vouchers": 1,
+    "payment-vouchers": 1,
+    "transfer-vouchers": 1,
+    expenses: 1,
+    cheques: 1,
+    "general-ledger": 1,
+    "trial-balance": 1,
+    "account-statement": 1,
+    employees: 1,
+    attendance: 1,
+    payroll: 1,
+    "monthly-attendance": 1,
+    "leave-requests": 1,
+    "loan-requests": 1,
+    audit_log: 1,
+    import_log: 1,
+    catalog: 1,
+    production: 1,
+    dispatch: 1,
+    shipping: 1,
+    executive_dashboard: 1,
+    weekly_reports: 1,
+  };
+
+  function _prefetchFullReady() {
+    return !!(_prefetch.data && _prefetch.data._prefetch_full);
+  }
+
+  // [FIX-CATALOG-WAIT-2026-08] بعض الصفحات بتستنى _prefetchFullReady()
+  // (يعني كل المستويات 1-4: فواتير، حركات، شحنات...) رغم إنها فعليًا
+  // محتاجة جزء بسيط بس منها. مثال حقيقي: شاشة "catalog" (كتالوج
+  // الأصناف) بتحتاج items/stock/groups/warehouses بس (CRITICAL +
+  // جزء من ON_DEMAND) — ومع ذلك كانت بتستنى فواتير البيع/الشراء
+  // وحركات المخزون والشحنات (BACKGROUND/REFERENCE) قبل ما تُسمح
+  // لها بالفتح، فبتفضل على الـ Skeleton وقت أطول من اللازم.
+  //
+  // PAGE_REQUIRED_FIELDS: تعريف اختياري (opt-in) لكل صفحة — لو الصفحة
+  // مش مذكورة هنا، السلوك القديم (انتظار full) فاضل زي ما هو تمامًا،
+  // فمفيش أي مخاطرة على أي شاشة تانية غير المذكورة صراحةً.
+  var PAGE_REQUIRED_FIELDS = {
+    catalog: ["items", "stock", "groups", "warehouses"],
+    // [PERF-PAGE-FIELDS-2026-08-02] نفس مبدأ "catalog" اتعمّم على باقي
+    // شاشات المخزون الأساسية (زي طلب المستخدم بالظبط: تسريع أول فتح
+    // لشاشة الأصناف بعد اللوجين) — كل شاشة هنا محتاجة بس ON_DEMAND
+    // (المستوى 2)، ومش لازم تستنى BACKGROUND (حسابات/HR — المستوى 3)
+    // اللي بقى بيتحمّل في idle منفصل بعد كده (شوف _prefetchBackgroundIdle
+    // فوق). أي شاشة غير مذكورة هنا فضلت بنفس السلوك القديم (تستنى الكل).
+    items: ["items", "stock", "groups", "warehouses", "chartOfAccounts"],
+    groups: ["groups", "items", "warehouses"],
+    stock: ["stock", "items", "groups", "warehouses"],
+    current_stock: ["stock", "items", "groups", "warehouses"],
+    stocktake: ["stock", "items", "warehouses"],
+    tx_in: ["items", "stock", "warehouses", "groups"],
+    tx_out: ["items", "stock", "warehouses", "groups"],
+    transfer: ["items", "stock", "warehouses", "groups"],
+    tx_transfer: ["items", "stock", "warehouses", "groups"],
+    transactions: ["transactions", "items", "warehouses"],
+  };
+
+  function _pageDataReady(page) {
+    var fields = PAGE_REQUIRED_FIELDS[page];
+    if (!fields || !_prefetch.data) return false;
+    for (var i = 0; i < fields.length; i++) {
+      if (_prefetch.data[fields[i]] === undefined) return false;
+    }
+    return true;
+  }
+
+  /**
+   * ensureLevelData(cb) — [REBUILD-2026-08-07] بقت "shim" توافقية رفيعة
+   * فوق UDE (53_JS_UnifiedDataEngine.html) بدل التنفيذ القديم بالكامل،
+   * عشان أي كود قديم (زي 17_JS_ExecutiveDashboard.html) لسه بينادي
+   * ensureLevelData() مباشرة يفضل شغال من غير أي تعديل فيه. المنطق
+   * الحقيقي (dedup النداءات، retry تلقائي عند الفشل، مفيش "استسلام"
+   * بيانات ناقصة) بقى كله في UDE — راجع 53_JS_UnifiedDataEngine.html.
+   */
+  function ensureLevelData(cb) {
+    UDE.ensure([2, 3], {
+      onReady: cb,
+      onError: cb, // توافقية: القديم مكانش بيميّز فشل عن نجاح لمنادي عام زي ده
+    });
+  }
+
+  function _drainFullWaiters() {
+    // [FIX-STALE-PARTIAL-RENDER-2026-08-07] لازم تتنفذ حتى لو مفيش
+    // waiters قيد الانتظار دلوقتي — لأن الـ waiter بتاع الصفحة الحالية
+    // ممكن يكون خرج من القائمة بالفعل بسبب الـ timeout فوق (يعني
+    // الصفحة اتعرضت جزئيًا) قبل ما الداتا الحقيقية توصل هنا.
+    _resolvePartialRenderIfNeeded();
+    if (!_prefetch._fullWaiters.length) return;
+    var waiters = _prefetch._fullWaiters;
+    _prefetch._fullWaiters = [];
+    waiters.forEach(function (fn) {
+      try {
+        fn();
+      } catch (e) {}
+    });
+  }
+
+  // [PERF-FIX / P3-WIRING] كانت هذه الدالة تستدعي getAllData() الكاملة (أثقل
+  // نداء في النظام، 45 ثانية timeout) فور نجاح الحزمة الخفيفة — أي أن كل
+  // بيانات المستويات 2/3/4 (عملاء، موردين، فواتير، مرفقات..) كانت تُحمَّل
+  // فوراً أثناء اللوجين بغض النظر عن حاجة المستخدم لها، بالمخالفة المباشرة
+  // لمبدأ "لا تسمح لأي شاشة بانتظار تحميل جميع البيانات". كذلك getAllDataByLevel
+  // (Code_53_DataRegistryEngine.js) كانت معرَّفة في الـ backend من قبل ولم
+  // تُستدعَ من أي شاشة أبداً (كود ميت).
+  //
+  // الحل هنا لا يحذف أي وظيفة ولا يغيّر Business Logic: النتيجة النهائية في
+  // _prefetch.data تصل بنفس الشكل بالضبط (نفس المفاتيح) التي تعتمد عليها كل
+  // الشاشات الحالية عبر APP.data — الفرق الوحيد أن التحميل يصير تدريجياً:
+  //   • REFERENCE (4) تُجلب أولاً في وقت فراغ المتصفح (idle) لأنها خفيفة
+  //     ونادراً ما تتغيّر.
+  //   • ON_DEMAND (2) + BACKGROUND (3) تُجلب بعدها في idle تالٍ، بدون حجب
+  //     رسم لوحة التحكم أو تفاعل المستخدم.
+  // fallback: لو getAllDataByLevel فشلت لأي سبب، نرجع لنفس السلوك القديم
+  // (getAllData الكاملة) حفاظاً على الاستقرار.
+  var _ric =
+    (typeof requestIdleCallback === "function" && requestIdleCallback) ||
+    function (fn) {
+      setTimeout(fn, 60);
+    };
+
+  function _startPrefetch() {
+    if (_prefetch.done || _prefetch.loading) return;
+    _prefetch.loading = true;
+
+    function _finishPrefetch(mergedData, isFull) {
+      _prefetch.loading = false;
+      mergedData._prefetch_full = !!isFull;
+      _prefetch.done = true;
+      _prefetch.data = mergedData;
+      if (typeof _prefetch._onReady === "function") {
+        var cb = _prefetch._onReady;
+        _prefetch._onReady = null;
+        cb(mergedData);
+      }
+      if (mergedData._prefetch_full) _drainFullWaiters();
+    }
+
+    // مسار احتياطي قديم (getAllData الكاملة) — يُستخدم فقط لو التحميل
+    // التدريجي بالمستويات فشل، عشان لا ننكسر أبداً
+    function _prefetchFullLegacyFallback() {
+      DL.Core.getAllData({
+        label: "Auth.prefetch.full.fallback",
+        onSuccess: function (result) {
+          _finishPrefetch(result.data, true);
+        },
+        onError: function () {
+          if (_prefetch.data) {
+            _finishPrefetch(_prefetch.data, false);
+          } else {
+            _prefetch.loading = false;
+            _prefetch.done = false;
+          }
+        },
+      });
+    }
+
+    // [PERF-EAGER-ONDEMAND-2026-08-02] المرحلة 2-أ: ON_DEMAND فورًا،
+    // بدون انتظار أي requestIdleCallback. هذا المستوى بالتحديد (أصناف/
+    // مخزون/مجموعات/مخازن/عملاء/موردين/حسابات...) هو اللي كل شاشات
+    // النظام تقريبًا بتفتح عليه (شوف PAGE_REQUIRED_FIELDS فوق)، فتأجيله
+    // خلف REFERENCE في سلسلة idle-then-idle كان يفتح فجوة زمنية حقيقية:
+    // لو المستخدم فتح شاشة "الأصناف" بسرعة بعد اللوجين (خصوصًا لو
+    // المتصفح مشغول برسم الداشبورد ولسه مادّاش وقت فراغ لأول idle
+    // callback)، الشاشة تقف على Skeleton "جاري تحميل البيانات..." رغم
+    // إن الطلب أصلاً ما كانش بدأ لسه. الحل: نطلب ON_DEMAND فورًا (موازي
+    // مع REFERENCE بالأسفل، مش بعده)، ونسيب REFERENCE/BACKGROUND بس
+    // (الأقل إلحاحًا) على idle. الشكل النهائي لـ _prefetch.data
+    // و_prefetch_full === true فضل زي ما هو بالظبط — الفرق الوحيد توقيت
+    // الوصول.
+    function _prefetchOnDemandEager() {
+      DL.Core.getAllDataByLevel([2], {
+        label: "Auth.prefetch.onDemand",
+        onSuccess: function (result) {
+          Object.assign(_prefetch.data, result.data);
+          _finishPrefetch(_prefetch.data, false);
+          // ⚠️ [SAFE] عمداً بلا _drainFullWaiters() هنا: أي شاشة منتظرة
+          // فعليًا عبر ensureLevelData (مش عبر PAGE_REQUIRED_FIELDS)
+          // محتاجة full (2+3) بمنطقها الأصلي، فمفيش داعي نفكّها ناقصة.
+          // شاشات PAGE_REQUIRED_FIELDS (زي "items") بترسم من غير ما
+          // تسجّل نفسها كـ waiter من الأساس — شوف renderPage() فوق:
+          // بتتأكد من _pageDataReady(page) قبل ما تنادي ensureLevelData
+          // خالص، فأي صفحة حقولها وصلت فعلاً (زي دلوقتي) بترسم فورًا.
+          _prefetchBackgroundIdle();
+        },
+        onError: function () {
+          // فشل مسار المستويات بالكامل → ارجع للمسار القديم المضمون
+          _prefetchFullLegacyFallback();
+        },
+      });
+    }
+
+    // المرحلة 2-ب: REFERENCE فقط، أثناء وقت فراغ المتصفح (لا يحجب أي
+    // شيء) — خفيفة ونادرًا ما تتغيّر، فمفيش داعي تتنافس مع ON_DEMAND
+    // على الأولوية. تعمل بالتوازي مع _prefetchOnDemandEager() مش بعدها.
+    function _prefetchReferenceIdle() {
+      _ric(function () {
+        DL.Core.getAllDataByLevel([4], {
+          label: "Auth.prefetch.reference",
+          onSuccess: function (result) {
+            Object.assign(_prefetch.data, result.data);
+          },
+          onError: function () {
+            // best-effort — ON_DEMAND هو المسار الحرج ومعاه fallback
+            // الخاص بيه؛ فشل REFERENCE وحدها لا يوقف أي شاشة.
+          },
+        });
+      });
+    }
+
+    // المرحلة 2-ج: BACKGROUND بس، في idle منفصل بعد ON_DEMAND — حسابات/HR
+    // اللي محتاجة صلاحيات ونادراً ما تُفتح فور اللوجين مباشرة.
+    function _prefetchBackgroundIdle() {
+      _ric(function () {
+        DL.Core.getAllDataByLevel([3], {
+          label: "Auth.prefetch.background",
+          onSuccess: function (result) {
+            Object.assign(_prefetch.data, result.data);
+            _prefetch.data._prefetch_full = true; // كل المستويات وصلت الآن
+            _drainFullWaiters();
+          },
+          onError: function () {
+            // لا نوقف الداشبورد لأجل هذا — البيانات الناقصة ستُطلب per-screen
+            // لاحقاً (on-demand) بنفس آلية getAllDataByLevel عند الحاجة الفعلية
+            // [PHASE-3] لكن أي صفحة كانت مستنية عبر ensureLevelData لازم
+            // تتفك (تكمل بالبيانات المتاحة) بدل ما تفضل معلّقة على Skeleton
+            _prefetch.data._prefetch_full = true;
+            _drainFullWaiters();
+          },
+        });
+      });
+    }
+
+    // المرحلة 1: جيب البيانات الخفيفة سريعاً (Critical) — كما كانت بالضبط
+    // [RETRY-LIGHT-2026-08-07] النداء الخفيف أحيانًا بيفشل بسبب تزامن/تايمنج
+    // مع لحظة اللوجين نفسها (رد فاضٍ من google.script.run) — قبل كده كنا
+    // بنقفز على طول لـ _prefetchFullLegacyFallback (تحميل كل البيانات
+    // كاملة، أتقل بكتير) حتى لو كانت المشكلة عابرة وهتنجح من أول محاولة
+    // تانية. دلوقتي بنعيد نفس النداء الخفيف مرة واحدة بسرعة الأول، وبس لو
+    // فشلت تاني (فشل حقيقي/متكرر) ننتقل للـ fallback الكامل زي ما كان.
+    function _fetchPrefetchLight(isRetry) {
+      DL.Core.getAllDataLight({
+        label: isRetry ? "Auth.prefetch.light.retry" : "Auth.prefetch.light",
+        onSuccess: function (result) {
+          _prefetch.data = result.data;
+          // [PERF-EAGER-ONDEMAND-2026-08-02] الاثنان بالتوازي: ON_DEMAND
+          // فورًا (حرجة لمعظم الشاشات) + REFERENCE في idle (خفيفة، أقل
+          // إلحاحًا) — بدل ما ON_DEMAND تستنى دورها بعد REFERENCE.
+          _prefetchOnDemandEager();
+          _prefetchReferenceIdle();
+        },
+        onError: function () {
+          if (!isRetry) {
+            _fetchPrefetchLight(true);
+          } else {
+            _prefetchFullLegacyFallback();
+          }
+        },
+      });
+    }
+    _fetchPrefetchLight(false);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §E-CACHE  نظام الكاش المقسّم v4.2
+  //
+  // الفكرة: بيانات ثابتة (items, warehouses, groups, colors) TTL = 10 دقيقة
+  //          بيانات متغيرة (transactions, stock, productionOrders) TTL = 90 ثانية
+  //
+  // فائدة: بعد حفظ صنف جديد نحدّث items محلياً فوراً بدون round-trip كامل
+  //         (Optimistic Update) ثم نزامن في الخلفية
+  // ─────────────────────────────────────────────────────────────
+  var _cache = { data: null, ts: 0, fetching: false };
+
+  // TTL منفصل لكل نوع بيانات (بالميلي ثانية)
+  var CACHE_TTL_STATIC = 600000; // 10 دقائق — items, warehouses, groups, colors
+  var CACHE_TTL_DYNAMIC = 90000; // 90 ثانية  — transactions, stock, productionOrders
+  var CACHE_TTL = CACHE_TTL_DYNAMIC; // للتوافق مع الكود القديم
+
+  // [PERF-FIX-CACHE-WIPE] كاش wms_cache_static/dynamic بقى يفضل موجود في
+  // localStorage بعد الـ logout (بدل ما يتمسح — شوف render() فوق) عشان
+  // اليوزر يرجع يلاقي بياناته فورًا في اللوجين الجاي. لازم إذن نضمن إن
+  // اليوزر التاني (لو الجهاز مشترك) ميشوفش ولو لحظة بيانات مش بتاعته قبل
+  // ما silent refresh تجيب بياناته هو. الحل: كل مرة نحفظ كاش، نسجّل اسم
+  // صاحبه في مفتاح منفصل خفيف (wms_cache_owner)، وأي قراءة للكاش لازم
+  // تتأكد إن صاحبه هو نفس المستخدم الحالي قبل ما تُستخدَم.
+  function _cacheOwnerMatches() {
+    try {
+      var owner = localStorage.getItem("wms_cache_owner") || "";
+      var current =
+        (APP.currentUser && APP.currentUser.username) || "";
+      // لو مفيش owner متسجّل (كاش قديم من قبل الفيكس ده) نعتبره غير موثوق
+      // ونرفضه بحذر بدل ما نفترض إنه بتاع اليوزر الحالي.
+      return !!current && owner === current;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function _setCacheOwner() {
+    try {
+      var current = (APP.currentUser && APP.currentUser.username) || "";
+      if (current) localStorage.setItem("wms_cache_owner", current);
+    } catch (e) {}
+  }
+
+  /**
+   * _saveCache — يحفظ البيانات مع timestamp مقسّم
+   * static_ts: وقت آخر تحديث للبيانات الثابتة
+   * dynamic_ts: وقت آخر تحديث للبيانات المتغيرة
+   */
+  function _saveCache(data) {
+    var now = Date.now();
+    _cache.data = data;
+    _cache.ts = now;
+    // نحفظ timestamps منفصلة
+    // ✅ FIX: دائماً حدّث static_ts عند حفظ بيانات كاملة جديدة من السيرفر
+    // السبب: || now كانت تُبقي الـ static cache القديم صالحاً لـ 10 دقائق
+    // مما يمنع ظهور openingStock الجديدة بعد الحفظ
+    _cache.static_ts = now;
+    _cache.dynamic_ts = now;
+    try {
+      // نقسّم الكاش في sessionStorage لتقليل حجم JSON.parse عند القراءة
+      var staticPart = {
+        items: data.items,
+        warehouses: data.warehouses,
+        groups: data.groups,
+        colors: data.colors,
+        sizes: data.sizes || [],
+        // [FIX-2026-07-28] sizeGroups كانت ناقصة من كاش sessionStorage —
+        // فبعد أول تحميل، أي إعادة بناء لـ APP.data من الكاش (_loadCache)
+        // كانت بتمسح مجموعات المقاسات وترجّعها فاضية حتى لو السيرفر
+        // بيرجّعها صح، وده سبب اختفائها في شاشة "تعريف المقاسات".
+        sizeGroups: data.sizeGroups || [],
+        users: data.users,
+        companySettings: data.companySettings,
+        roles: data.roles,
+        permissions: data.permissions,
+        userOverrides: data.userOverrides,
+        // ✅ FIX: حفظ العملاء والموردين في الكاش
+        customers: data.customers || [],
+        suppliers: data.suppliers || [],
+        // ✅ [PERF-CAT-BUNDLE] حفظ تصنيفات العملاء/الموردين في الكاش أيضاً
+        customerCategories: data.customerCategories || [],
+        supplierCategories: data.supplierCategories || [],
+        chartOfAccounts: data.chartOfAccounts || [],
+        // [DLE-P0-FIX] كانت ناقصة هنا برضو (نفس فئة بج sizeGroups) —
+        // فلو حصل ريفريش للصفحة خلال مدة صلاحية الكاش الثابت (10 دقايق)،
+        // الفواتير والمرتجعات كانت بتضيع من APP.data بعد إعادة البناء من
+        // sessionStorage حتى بعد فيكس _parseData، لأنها ماكانتش بتتحفظ في
+        // الكاش أصلاً من البداية.
+        saleInvoices: data.saleInvoices || [],
+        purchaseInvoices: data.purchaseInvoices || [],
+        saleReturns: data.saleReturns || [],
+        purchaseReturns: data.purchaseReturns || [],
+        ts: _cache.static_ts,
+      };
+      var dynamicPart = {
+        transactions: data.transactions,
+        stock: data.stock,
+        productionOrders: data.productionOrders,
+        openingStock: data.openingStock,
+        shipments: data.shipments,
+        ts: now,
+      };
+      localStorage.setItem("wms_cache_static", JSON.stringify(staticPart));
+      localStorage.setItem("wms_cache_dynamic", JSON.stringify(dynamicPart));
+      _setCacheOwner();
+    } catch (e) {
+      // 🐛 [FIX-QUOTA] كانت الأخطاء هنا بتتبلع بصمت (catch فاضي) — لو
+      // localStorage امتلأ (QuotaExceededError، شائع جداً مع نظام بيانات
+      // بالحجم ده) كان الحفظ بيفشل بصمت في كل مرة، فـ _loadCache دايماً
+      // ترجع null والنظام يعمل "full reload" زي الأول تمامًا حتى بعد
+      // إصلاح التخزين — من غير أي رسالة تدل على السبب. دلوقتي: نسجّل
+      // تحذير واضح في الـ console، ونجرب مرة واحدة كمان بعد ما نمسح أي
+      // كاش قديم متراكم (خصوصاً wms_ext_cache_v1 اللي ممكن يكون كبير)
+      // عشان نفسح مساحة قبل ما نستسلم.
+      console.warn("_saveCache: فشل حفظ الكاش في localStorage:", e && e.message);
+      try {
+        localStorage.removeItem("wms_ext_cache_v1");
+        localStorage.setItem("wms_cache_static", JSON.stringify(staticPart));
+        localStorage.setItem("wms_cache_dynamic", JSON.stringify(dynamicPart));
+        _setCacheOwner();
+      } catch (e2) {
+        console.warn(
+          "_saveCache: فشل الحفظ حتى بعد تفريغ مساحة — الكاش المحلي معطّل هذه الجلسة:",
+          e2 && e2.message,
+        );
+      }
+    }
+  }
+
+  /**
+   * _saveCacheOptimistic — يحدّث البيانات الثابتة فقط في الكاش (بعد Optimistic Update)
+   * يستخدمها reloadAfterMutation بعد تعديل item/group/warehouse/color
+   */
+  function _saveCacheOptimistic(partialData) {
+    if (!_cache.data) return;
+    var now = Date.now();
+    // ادمج التحديثات في _cache.data
+    Object.keys(partialData).forEach(function (key) {
+      _cache.data[key] = partialData[key];
+    });
+    _cache.static_ts = now;
+    _cache.ts = now;
+    // أعد كتابة الكاش كاملاً
+    _saveCache(_cache.data);
+  }
+
+  function _loadCache() {
+    // أسرع مسار: الكاش في الذاكرة وصالح
+    if (_cache.data && Date.now() - _cache.dynamic_ts < CACHE_TTL_DYNAMIC) {
+      return _cache.data;
+    }
+    // محاولة القراءة المقسّمة من sessionStorage
+    try {
+      var staticRaw = localStorage.getItem("wms_cache_static");
+      var dynamicRaw = localStorage.getItem("wms_cache_dynamic");
+      if (!staticRaw || !dynamicRaw) {
+        // fallback للكاش القديم
+        var raw = localStorage.getItem("wms_cache");
+        if (!raw) return null;
+        var c = JSON.parse(raw);
+        if (Date.now() - c.ts < CACHE_TTL_DYNAMIC) {
+          _cache = {
+            data: c.data,
+            ts: c.ts,
+            static_ts: c.ts,
+            dynamic_ts: c.ts,
+            fetching: false,
+          };
+          return c.data;
+        }
+        return null;
+      }
+      var staticC = JSON.parse(staticRaw);
+      var dynamicC = JSON.parse(dynamicRaw);
+      var now = Date.now();
+
+      // ⚡ [FIX-RELOAD-UX] كانت البيانات الديناميكية بمجرد انتهاء صلاحيتها
+      // (90 ثانية) بتخلي الدالة ترجع null بالكامل — يعني حتى الأصناف/المخازن/
+      // المجموعات (اللي نادراً ما تتغيّر) كانت بتترمى، والمستخدم يشوف شاشة
+      // "جاري تحميل البيانات..." الكاملة من الصفر كل ما يرجع للنظام بعد
+      // دقيقة ونص بس. بدل الرمي الكامل: نرجّع الكاش المتاح فورًا (ولو
+      // الديناميكي قديم شوية) عشان الشاشة تظهر فورًا، ونسيب _silentRefresh()
+      // (اللي بيتنادى فعلاً فورًا بعد الرجوع من هنا في loadAllData) يجيب
+      // النسخة الحقيقية في الخلفية من غير ما يعطّل المستخدم. لسه فيه حد
+      // أقصى (MAX_STALE_DYNAMIC) عشان منعرضش بيانات قديمة جداً (لو التاب
+      // فضل مقفول ساعات) من غير أي مؤشر تحديث.
+      var MAX_STALE_DYNAMIC = 3600000; // ساعة — حد أقصى لعرض بيانات ديناميكية قديمة قبل التحديث الصامت
+      if (now - dynamicC.ts > MAX_STALE_DYNAMIC) return null;
+
+      // البيانات الثابتة انتهت — سنرجع الكاش لكن نشغّل silent refresh
+      var staticStale = now - staticC.ts > CACHE_TTL_STATIC;
+
+      var merged = {
+        items: staticC.items || [],
+        warehouses: staticC.warehouses || [],
+        groups: staticC.groups || [],
+        colors: staticC.colors || [],
+        sizes: staticC.sizes || [],
+        // [FIX-2026-07-28] راجع نفس الفيكس فوق في _saveCache
+        sizeGroups: staticC.sizeGroups || [],
+        users: staticC.users || [],
+        companySettings: staticC.companySettings || {},
+        roles: staticC.roles || [],
+        permissions: staticC.permissions || [],
+        userOverrides: staticC.userOverrides || {},
+        // ✅ FIX: استعادة العملاء والموردين من الكاش
+        customers: staticC.customers || [],
+        suppliers: staticC.suppliers || [],
+        // ✅ [PERF-CAT-BUNDLE] استعادة تصنيفات العملاء/الموردين من الكاش
+        customerCategories: staticC.customerCategories || [],
+        supplierCategories: staticC.supplierCategories || [],
+        chartOfAccounts: staticC.chartOfAccounts || [],
+        // [DLE-P0-FIX] راجع نفس الفيكس فوق في _saveCache
+        saleInvoices: staticC.saleInvoices || [],
+        purchaseInvoices: staticC.purchaseInvoices || [],
+        saleReturns: staticC.saleReturns || [],
+        purchaseReturns: staticC.purchaseReturns || [],
+        transactions: dynamicC.transactions || [],
+        stock: dynamicC.stock || [],
+        productionOrders: dynamicC.productionOrders || [],
+        openingStock: dynamicC.openingStock || [],
+        shipments: dynamicC.shipments || [],
+      };
+      // ✅ [FIX-EXT] أعد دمج بيانات المحاسبة/HR المحمّلة مسبقاً في APP.data
+      // عشان لو الـ dynamic cache انتهى وأُعيد بناء الـ merged من الـ sessionStorage
+      // تفضل بيانات الخزينة والمحاسبة موجودة بدل ما يروح في الـ re-merge
+      if (APP.data && APP.extLoaded) {
+        EXT_FIELDS.forEach(function (f) {
+          if (APP.data[f] !== undefined) {
+            merged[f] = APP.data[f];
+          }
+        });
+      }
+      _cache = {
+        data: merged,
+        ts: dynamicC.ts,
+        static_ts: staticC.ts,
+        dynamic_ts: dynamicC.ts,
+        fetching: false,
+        _staticStale: staticStale,
+      };
+      return merged;
+    } catch (e) {}
+    return null;
+  }
+
+  var _permI18nPatchRegistered = false;
+  /** يعيد حساب label/catLabel لكل صلاحيات APP.data.permissions أول ما
+   *  قاموس الترجمة يوصل (لو _parseData اشتغل قبل ما I18N يخلص تحميل).
+   *  بيتسجّل مرة واحدة بس عبر I18N.onReady. */
+  function _patchPermissionLabelsWhenI18nReady() {
+    if (_permI18nPatchRegistered) return;
+    if (typeof I18N === "undefined" || !I18N.onReady) return;
+    _permI18nPatchRegistered = true;
+    I18N.onReady(function () {
+      var list = (APP.data && APP.data.permissions) || [];
+      list.forEach(function (p) {
+        if (!p.label && p.labelKey) p.label = I18N.t(p.labelKey) || p.key;
+        if (!p.catLabel && p.catLabelKey)
+          p.catLabel = I18N.t(p.catLabelKey) || p.cat;
+      });
+      if (typeof render === "function") render();
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // [DLE-P0] DATA_FIELD_REGISTRY — مصدر الحقيقة الوحيد لكل حقول البيانات
+  // اللي بترجع من الباك إند (getAllData/getAllDataLight وغيرها).
+  //
+  // السبب: حادثة اختفاء sizeGroups كانت لأن إضافة حقل جديد محتاجة تتكتب
+  // يدوياً في أكتر من مكان منفصل (HEADERS في الباك إند، وهنا في
+  // _parseData، وفي _saveCache/_loadCache) — ولو أي مكان اتنسى، الحقل
+  // بيختفي بصمت. أثناء بناء المحرك المركزي (Data Loading Engine) اكتشفنا
+  // إن نفس الحاجة بالظبط حصلت لـ saleInvoices/purchaseInvoices/
+  // saleReturns/purchaseReturns — موجودين في getAllData() وبيتقروا من
+  // APP.data في 15_JS_Invoices.html، لكن ماكانوش مكتوبين في _parseData()
+  // خالص، يعني كانوا بيتمسحوا من APP.data في كل مرة يحصل فيها أي تحميل/
+  // تحديث بيانات (مش بس مرة واحدة).
+  //
+  // الحل: أي حقل "عادي" (يُنسخ زي ما هو من غير تحويل خاص) يتسجل هنا
+  // مرة واحدة بس، و_parseData بتقرا القايمة دي تلقائياً. الحقول اللي
+  // ليها تحويل خاص (items/stock/transactions/openingStock/permissions)
+  // بتفضل مكتوبة يدوياً تحت زي ما هي، ومستثناة من النسخ التلقائي.
+  //
+  // tier دلوقتي توثيقي بس (تمهيداً لمراحل P1+ من إعادة تصميم محرك تحميل
+  // البيانات) — مفيش أي تغيير في توقيت تحميل أي حقل في P0، فقط توحيد
+  // الشكل اللي بيتقرا بيه كل حقل عشان ميضيعش تاني.
+  // ─────────────────────────────────────────────────────────────
+  var DATA_FIELD_REGISTRY = [
+    // مستوى 1 — حرج
+    { key: "warehouses", tier: "critical", default: "array" },
+    { key: "groups", tier: "critical", default: "array" },
+    { key: "colors", tier: "critical", default: "array" },
+    { key: "sizes", tier: "critical", default: "array" },
+    { key: "sizeGroups", tier: "critical", default: "array" },
+    // [UNITS-FIX-2026-08-07] كانت ناقصة من هنا بالكامل رغم وجودها في
+    // DATA_REGISTRY بالباك اند (Code_53_DataRegistryEngine.js) — يعني
+    // _parseData() كانت بتشيلها من APP.data تلقائيًا في كل تحديث بيانات
+    // (خلفي أو كامل)، حتى لو السيرفر بعتها صح. أي شاشة تانية تعمل
+    // reloadAfterMutation/reloadAfterMutationFull كانت بتمسح الوحدات
+    // بالغلط بدون أي علاقة بالوحدات نفسها.
+    { key: "units", tier: "critical", default: "array" },
+    { key: "users", tier: "critical", default: "array" },
+    { key: "companySettings", tier: "critical", default: "object" },
+    { key: "roles", tier: "critical", default: "array" },
+    { key: "userOverrides", tier: "critical", default: "object" },
+    { key: "productionOrders", tier: "critical", default: "array" },
+    { key: "shipments", tier: "critical", default: "array" },
+    // مستوى 2 — عند الطلب (مرشّحة لتأجيل التحميل الفعلي في P1 — لسه
+    // بتتحمّل دلوقتي زي الأول، التصنيف هنا توثيقي تمهيدي فقط)
+    { key: "customers", tier: "onDemand", default: "array" },
+    { key: "suppliers", tier: "onDemand", default: "array" },
+    { key: "customerCategories", tier: "onDemand", default: "array" },
+    { key: "supplierCategories", tier: "onDemand", default: "array" },
+    { key: "chartOfAccounts", tier: "onDemand", default: "array" },
+    // [DLE-P0-FIX] الأربع حقول دول كانوا بيضيعوا من APP.data في كل
+    // تحديث بيانات — راجع الشرح فوق.
+    { key: "saleInvoices", tier: "onDemand", default: "array" },
+    { key: "purchaseInvoices", tier: "onDemand", default: "array" },
+    { key: "saleReturns", tier: "onDemand", default: "array" },
+    { key: "purchaseReturns", tier: "onDemand", default: "array" },
+  ];
+
+  /** ينسخ كل حقول DATA_FIELD_REGISTRY من d إلى target، بقيمة افتراضية آمنة */
+  function _dleApplyRegistry(target, d) {
+    DATA_FIELD_REGISTRY.forEach(function (f) {
+      target[f.key] = d[f.key] || (f.default === "object" ? {} : []);
+    });
+  }
+
+  function _parseData(d) {
+    _patchPermissionLabelsWhenI18nReady();
+    var items = (d.items || []).map(function (it) {
+      it.id = it.id != null ? String(it.id) : "";
+      if (!it.colors_json && it.calor) {
+        it.colors_json = it.calor;
+      }
+      return it;
+    });
+    var stock = (d.stock || []).map(function (s) {
+      s.item_id = s.item_id != null ? String(s.item_id) : "";
+      return s;
+    });
+    var transactions = (d.transactions || []).map(function (t) {
+      t.item_id = t.item_id != null ? String(t.item_id) : "";
+      return t;
+    });
+    var openingStock = (d.openingStock || []).map(function (o) {
+      o.item_id = o.item_id != null ? String(o.item_id) : "";
+      return o;
+    });
+    var out = {
+      items: items,
+      stock: stock,
+      transactions: transactions,
+      openingStock: openingStock,
+      // ✅ [FIX] ALL_PERMISSIONS في السيرفر (Code_18_Permissions.js) بيحتوي
+      // labelKey/catLabelKey (مفاتيح ترجمة) بس — مفيش أي label/catLabel نصي
+      // مباشر. كل شاشات الصلاحيات (مودال الدور، مصفوفة الصلاحيات،
+      // Override المستخدمين في Templates_06.html/08_JS_Users_Branding.html/
+      // 10_JS_Settings_Search_Parties.html) بتقرا p.label و p.catLabel
+      // مباشرة (esc(p.label)، cats[p.cat]={label:p.catLabel})، فكانت
+      // بترجع undefined دايمًا → نص فاضي في كل صف وكل عنوان فئة. الحل
+      // المركزي هنا: نحسب label/catLabel مرة واحدة وقت تحميل البيانات
+      // (بدل تعديل كل ملفات العرض)، مع fallback آمن لو الترجمة ناقصة.
+      permissions: (d.permissions || []).map(function (p) {
+        // ✅ [FIX-2] لو I18N لسه بيحمّل القاموس (سباق بين bootstrap
+        // البيانات و bootstrap الترجمة وقت فتح التطبيق)، I18N.t() كان
+        // بيرجع دايمًا "مفقود" ويطبع تحذير في الـ console لكل مفتاح صلاحية
+        // (حتى لو المفتاح موجود فعلاً في القاموس، بس لسه ما وصلش). الحل:
+        // لو مش جاهز، نسيب label/catLabel فاضيين مؤقتًا من غير ما ننادي
+        // I18N.t() خالص، وبعدين _patchPermissionLabelsWhenI18nReady()
+        // (تحت) بتعيد حسابهم أوتوماتيك أول ما القاموس يوصل.
+        var i18nReady =
+          typeof I18N !== "undefined" &&
+          I18N.t &&
+          (typeof I18N.isReady !== "function" || I18N.isReady());
+        var _t = i18nReady
+          ? I18N.t
+          : function () {
+              return "";
+            };
+        return Object.assign({}, p, {
+          label: p.label || (p.labelKey && i18nReady ? _t(p.labelKey) : "") || p.key,
+          catLabel:
+            p.catLabel ||
+            (p.catLabelKey && i18nReady ? _t(p.catLabelKey) : "") ||
+            p.cat,
+        });
+      }),
+    };
+    // [DLE-P0] باقي الحقول (بدون تحويل خاص) بتتنسخ تلقائياً من السجل
+    // المركزي فوق بدل ما تتكتب يدوياً واحد واحد هنا.
+    _dleApplyRegistry(out, d);
+    return out;
+  }
+  function _showRefreshBar(visible) {
+    var bar = document.getElementById("refresh-bar");
+    if (!bar) return;
+    if (visible) {
+      bar.classList.add("active");
+    } else {
+      bar.classList.remove("active");
+      bar.style.opacity = "0";
+    }
+  }
+
+  // ---------- Data Loading v4.2 ----------
+
+  /** مساعد مشترك لتطبيق البيانات الجديدة على APP + PM_STATE */
+  function _applyFreshData(fresh) {
+    // ✅ [FIX-EXT] احتفظ ببيانات المحاسبة/HR المحمّلة مسبقاً من getAllDataExtended
+    // لأن getAllData() لا تتضمّنها — بدون هذا الحفظ يتمسح cashBoxes/journalEntries
+    // بعد كل silentRefresh ويظهر المستخدم شاشة فاضية لما يرجع للخزينة
+    //
+    // [FIX-EXT-V2] التحقق من extLoaded كان يفشل لو silentRefresh انتهى قبل
+    // getAllDataExtended — دلوقتي نحتفظ بالحقل طالما هو array (موجود فعلاً)
+    // بغض النظر عن قيمة extLoaded
+    EXT_FIELDS.forEach(function (f) {
+      if (APP.data && Array.isArray(APP.data[f])) {
+        fresh[f] = APP.data[f];
+      }
+    });
+    // احتفظ بـ flag السيرفر
+    if (APP.data && APP.data._extLoadedFromServer) {
+      fresh._extLoadedFromServer = true;
+    }
+    APP.data = fresh;
+    APP.companySettings = fresh.companySettings || APP.companySettings || {};
+    // [PERF-LAZY-LOAD] دوال من ملفات مؤجلة (08_JS_Users_Branding /
+    // 03_JS_Dashboard_Items) — بتتحمل غالبًا خلال ثواني من فتح الصفحة،
+    // بس بنحرس النداء احتياطًا لأي تايمنج نادر.
+    if (typeof _applyCompanyBranding === "function") _applyCompanyBranding();
+    if (typeof _syncColorsFromData === "function") _syncColorsFromData();
+    if (
+      fresh.roles &&
+      fresh.roles.length &&
+      typeof PM_STATE !== "undefined"
+    ) {
+      // [FIX-2026-08-08] PM_STATE معرّفة جوه 08_JS_Users_Branding.html
+      // (ملف lazy بيتحمّل عبر getLazyAppBundle) — لو الحزمة المؤجلة فشلت/
+      // عملت timeout (زي ما بيحصل لما الباك إند يكون بطيء/عالق) كانت
+      // _applyFreshData بتكسر بـ "PM_STATE is not defined" وتوقف كل تحميل
+      // البيانات. نفس الحراسة مستخدمة فعلاً في 02_JS_UI_Shell.html.
+      PM_STATE.roles = fresh.roles;
+      PM_STATE.permissions = fresh.permissions || [];
+      PM_STATE.userOverrides = fresh.userOverrides || {};
+      PM_STATE.users = fresh.users || [];
+      PM_STATE.loaded = true;
+      _syncRolePermissions();
+    }
+  }
+
+  // تحديث صامت في الخلفية بعد عرض الكاش
+  // [PERF-FIX-SR] نسخة محسّنة: تتحقق من تغيّر البيانات قبل إعادة الرسم
+  function _dataFingerprint(data) {
+    if (!data) return "";
+    try {
+      var tx = data.transactions || [];
+      var items = data.items || [];
+      var stock = data.stock || [];
+      var lastTx = tx.length
+        ? String(tx[tx.length - 1].id) + "|" + tx[tx.length - 1].date
+        : "";
+      return [tx.length, items.length, stock.length, lastTx].join(":");
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function _silentRefresh() {
+    if (_cache.fetching) return;
+    _cache.fetching = true;
+    _showRefreshBar(true);
+    var _fpBefore = _dataFingerprint(APP.data);
+    DL.Core.getAllData({
+      label: "Auth.silentRefresh",
+      onSuccess: function (result) {
+        _showRefreshBar(false);
+        _cache.fetching = false;
+        var d = result.data;
+        if (!d || typeof d !== "object") return;
+        var fresh = _parseData(d);
+        _saveCache(fresh);
+        _applyFreshData(fresh);
+
+        // [PERF-FIX-SR] مقارنة البصمة: لو البيانات لم تتغير → لا نعيد الرسم
+        var _fpAfter = _dataFingerprint(fresh);
+        var _dataChanged = _fpBefore !== _fpAfter;
+
+        // حفظ scroll positions قبل الـ re-render
+        var pageEl = document.querySelector(".content");
+        var alertsEl = document.querySelector(".alerts-grid");
+        var pageScroll = pageEl ? pageEl.scrollTop : 0;
+        var alertsScroll = alertsEl ? alertsEl.scrollTop : 0;
+
+        // ✅ لو المستخدم بيكتب في form، متعملش re-render عشان متمسحش المدخلات
+        var activeEl = document.activeElement;
+        var userTyping =
+          activeEl &&
+          (activeEl.tagName === "INPUT" ||
+            activeEl.tagName === "TEXTAREA" ||
+            activeEl.tagName === "SELECT" ||
+            activeEl.isContentEditable);
+
+        updateAlertBadge();
+        updateNotifBell();
+
+        // [PERF-FIX-SR] أعد الرسم فقط لو البيانات تغيّرت فعلاً والمستخدم مش بيكتب
+        // [LOGIN-STABLE] وكمان لو فات 5 ثواني على اللوجين عشان الشاشة تتستقر
+        var _sinceLogin = Date.now() - (APP._loginTime || 0);
+        // 🎨 [FIX] شاشة "المجموعات" (عرض شجري) عندها حالة UI محلية غنية
+        // (توسيع/طي، سحب وإفلات، تمرير داخلي) وبصمة البيانات (_dataFingerprint)
+        // مبنية على transactions/items/stock بس — يعني أي حركة/صنف يتغيّر في
+        // أي مكان تاني بالنظام كان بيفجّر إعادة بناء كاملة للشجرة (فتش + رسم
+        // من الصفر) رغم إن بيانات المجموعات نفسها مالهاش دعوة، فيحس المستخدم
+        // إن الشاشة "بترفرش" باستمرار وبيفقد مكان التمرير/التوسيع. بنستثنيها
+        // من إعادة الرسم الصامتة؛ أي تعديل فعلي على المجموعات (إضافة/حذف/تعديل)
+        // بيحصله رسم فوري من مكانه هو نفسه (مش محتاج الريفريش الصامت أصلاً).
+        var _silentRefreshSkipPages = { groups: true };
+        if (
+          _dataChanged &&
+          !userTyping &&
+          _sinceLogin > 5000 &&
+          !_silentRefreshSkipPages[APP.currentPage]
+        ) {
+          APP._fromSilentRefresh = true;
+          renderPage(APP.currentPage);
+          APP._fromSilentRefresh = false;
+          // استعادة scroll positions بعد الـ re-render
+          setTimeout(function () {
+            var pageElNew = document.querySelector(".content");
+            var alertsElNew = document.querySelector(".alerts-grid");
+            if (pageElNew) pageElNew.scrollTop = pageScroll;
+            if (alertsElNew) alertsElNew.scrollTop = alertsScroll;
+          }, 0);
+        }
+      },
+      onError: function () {
+        _cache.fetching = false;
+        _showRefreshBar(false);
+      },
+    });
+  }
+
+  function loadAllData(cb, forceRefresh) {
+    if (!forceRefresh) {
+      // [PERF-FIX-CACHE-WIPE] كاش البيانات بقى ممكن يفضل من يوزر سابق على
+      // نفس الجهاز (شوف render() و_cacheOwnerMatches فوق) — لازم نتأكد إنه
+      // بتاع اليوزر الحالي قبل ما نستخدمه، وإلا نتجاهله ونعمل نداء سيرفر
+      // طبيعي (نفس سلوك "مفيش كاش" القديم بالظبط، بدون أي تسريب بيانات).
+      var cached = _cacheOwnerMatches() ? _loadCache() : null;
+      if (cached) {
+        _applyFreshData(cached);
+        if (typeof cb === "function") cb();
+        else if (cb !== null) renderPage(APP.currentPage);
+        updateAlertBadge();
+        updateNotifBell();
+        // لو البيانات الثابتة قديمة أيضاً → silent refresh كامل
+        _silentRefresh();
+        return;
+      }
+    }
+
+    APP.loading = true;
+    // لا نعرض spinner في page-content — الـ app-loading-overlay شغّال فوق كل شيء
+    // var c = document.getElementById("page-content"); -- removed
+
+    DL.Core.getAllData({
+      label: "Auth.loadAllData",
+      onSuccess: function (result) {
+        APP.loading = false;
+        var d = result.data;
+        if (!d || typeof d !== "object") {
+          showToast(I18N.t("AUTH_MSG_INVALID_DATA_RECEIVED"), "error");
+          if (typeof _hideAppLoader === "function") _hideAppLoader();
+          return;
+        }
+        var fresh = _parseData(d);
+        fresh._loaded = true;
+        _saveCache(fresh);
+        _applyFreshData(fresh);
+        if (typeof _hideAppLoader === "function") _hideAppLoader();
+        if (typeof APP._onDataLoaded === "function") {
+          var _hook = APP._onDataLoaded;
+          APP._onDataLoaded = null;
+          _hook();
+        }
+        if (typeof cb === "function") cb();
+        // [LOGIN-STABLE] لو cb=null (silent background load) — لا نعيد الرسم
+        else if (cb !== null) renderPage(APP.currentPage);
+        updateAlertBadge();
+        updateNotifBell();
+      },
+      onError: function (result) {
+        APP.loading = false;
+        if (typeof _hideAppLoader === "function") _hideAppLoader();
+        showToast(I18N.t("MSG_LOAD_ERROR") + ": " + result.message, "error");
+        console.error("loadAllData error:", result.message);
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 📦  الحزمة الموسعة (محاسبة + HR) — ensureExtendedData
+  // [DATA-UNIFY] بديل موحَّد لكل النداءات المتفرقة اللي كانت كل شاشة فرعية
+  // (الأقسام، الوظائف، الموظفين، الحضور، دليل الحسابات، الخزينة...) تعملها
+  // لوحدها في كل مرة تُفتح. دلوقتي: نداء واحد لـ getAllDataExtended،
+  // يتحمّل أول مرة بس، ويُخزَّن في APP.data + sessionStorage.
+  //
+  // الاستخدام داخل أي bind function:
+  //   function bindDepartments() {
+  //     ensureExtendedData(function () {
+  //       _renderDepartmentsTable(APP.data.departments || []);
+  //       ... bind events ...
+  //     });
+  //   }
+  // ─────────────────────────────────────────────────────────────
+  var EXT_CACHE_KEY = "wms_ext_cache_v1";
+  var EXT_CACHE_TTL = 1200000; // 20 دقيقة — [FIX] زيادة من 10 لتقليل re-fetch المتكرر
+  // [COA-IN-BASE] chartOfAccounts أُزيلت من هنا — بقت جزء من الحزمة
+  // الأساسية (getAllData/getAllDataLight) دايمًا محدّثة من السيرفر، فلو
+  // فضلت في القائمة دي كانت هتتفرض القيمة القديمة المحفوظة فوق القيمة
+  // الجديدة الصحيحة في كل مرة (نفس آلية EXT_FIELDS بتحافظ على القديم).
+  var EXT_FIELDS = [
+    "cashBoxes",
+    "bankAccounts",
+    "journalEntries",
+    "receiptVouchers",
+    "paymentVouchers",
+    "expenses",
+    "transferVouchers",
+    "bankReconciliations",
+    "cheques",
+    "fixedAssets",
+    "departments",
+    "jobTitles",
+    "employees",
+    "leaveTypes",
+    "leaveRequests",
+    "loanRequests",
+    "payrollPeriods",
+    "attendance",
+    "accountingSettings",
+    "hrSettings",
+  ];
+
+  APP.extLoaded = false;
+  APP.extLoading = false;
+  var _extCallbacks = [];
+  // [LOGIN-STABLE] وقت آخر لوجين — يمنع silentRefresh من إعادة الرسم في أول 5 ثواني
+  APP._loginTime = 0;
+
+  function _saveExtCache(data) {
+    try {
+      localStorage.setItem(
+        EXT_CACHE_KEY,
+        JSON.stringify({ data: data, ts: Date.now() }),
+      );
+    } catch (e) {
+      // 🐛 [FIX-QUOTA] نفس فيكس _saveCache — تسجيل مرئي بدل بلع الخطأ بصمت
+      console.warn("_saveExtCache: فشل حفظ الكاش الموسّع:", e && e.message);
+    }
+  }
+
+  function _loadExtCache() {
+    try {
+      var raw = localStorage.getItem(EXT_CACHE_KEY);
+      if (!raw) return null;
+      var c = JSON.parse(raw);
+      if (Date.now() - c.ts > EXT_CACHE_TTL) return null;
+      // [FIX-EXT-FLAG] الكاش = بيانات حقيقية سبق تحميلها من السيرفر
+      if (c.data) c.data._extLoadedFromServer = true;
+      return c.data;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function _applyExtData(data) {
+    // [FIX-EXT-NULL] لو APP.data لسه null (getAllData لم ينتهي بعد) نخلق object فاضي
+    if (!APP.data || typeof APP.data !== "object") APP.data = {};
+    EXT_FIELDS.forEach(function (f) {
+      var incoming = data[f];
+      // نقبل البيانات الجديدة حتى لو array فاضية — المهم إنها جت من السيرفر
+      // نرفض فقط undefined (الحقل مش موجود خالص في الرد)
+      if (incoming !== undefined) {
+        APP.data[f] = incoming;
+      } else if (APP.data[f] === undefined) {
+        APP.data[f] = [];
+      }
+    });
+    // [FIX-EXT-FLAG] علامة إن البيانات جت فعلاً من السيرفر (مش كاش فاضي)
+    APP.data._extLoadedFromServer = true;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §ACC-HR-SKELETON  Skeleton Screens للمحاسبة والـ HR
+  //
+  // بيعرض placeholder متحرك بنفس شكل الشاشة الحقيقية لحين تحميل
+  // البيانات من السيرفر — بدلاً من Spinner بسيط يبلوك الـ UI.
+  // ─────────────────────────────────────────────────────────────
+
+  /** يولّد Shimmer bar بعرض معين */
+  function _skelBar(w, h, mb) {
+    h = h || 14;
+    mb = mb || 0;
+    return (
+      "<div style='height:" +
+      h +
+      "px;width:" +
+      (w || "100%") +
+      ";border-radius:6px;margin-bottom:" +
+      (mb || 6) +
+      "px;" +
+      "background:linear-gradient(90deg,var(--surface2) 25%,var(--border) 50%,var(--surface2) 75%);" +
+      "background-size:200% 100%;animation:csShimmer 1.4s ease-in-out infinite'></div>"
+    );
+  }
+
+  /** يولّد صف جدول skeleton */
+  function _skelTableRow(cols) {
+    var cells = "";
+    for (var i = 0; i < (cols || 5); i++) {
+      var w = i === 0 ? "60%" : i === cols - 1 ? "40%" : "80%";
+      cells += "<td style='padding:12px 10px'>" + _skelBar(w, 13, 0) + "</td>";
+    }
+    return (
+      "<tr style='border-bottom:1px solid var(--border)'>" + cells + "</tr>"
+    );
+  }
+
+  /** يولّد Stat Card skeleton */
+  function _skelStatCard() {
+    return (
+      "<div style='background:var(--surface2);border-radius:12px;padding:20px;flex:1;min-width:160px'>" +
+      _skelBar("40px", 40, 8) +
+      _skelBar("60%", 12, 4) +
+      _skelBar("40%", 18, 0) +
+      "</div>"
+    );
+  }
+
+  /**
+   * _skelLoadingBanner() — شريط رسالة "جار تحميل البيانات" بيتحط أعلى
+   * أي Skeleton (شوف _renderAccHrSkeleton تحت) عشان يوضّح للمستخدم إن
+   * النظام فعليًا بيحمّل بيانات دلوقتي، مش شاشة عالقة أو فاضية.
+   */
+  function _skelLoadingBanner() {
+    var msg =
+      typeof I18N !== "undefined"
+        ? I18N.t("MSG_LOADING_DATA_ELLIPSIS")
+        : "جاري تحميل البيانات...";
+    return (
+      "<div style='display:flex;align-items:center;gap:10px;padding:10px 16px;" +
+      "margin-bottom:16px;border-radius:10px;background:var(--accent-soft);" +
+      "border:1px solid var(--accent);color:var(--accent);font-size:13px;font-weight:600'>" +
+      "<span style='width:16px;height:16px;flex-shrink:0;border-radius:50%;" +
+      "border:2px solid var(--accent);border-top-color:transparent;" +
+      "animation:csSpin 0.7s linear infinite;display:inline-block'></span>" +
+      "<span>" +
+      esc(msg) +
+      "</span>" +
+      "</div>"
+    );
+  }
+
+  /**
+   * _renderAccHrSkeleton(page) — يرسم Skeleton مناسب لكل نوع شاشة
+   * Dashboard  → stat cards + جدول مصغر
+   * Table      → Page header + جدول صفوف
+   * Form/Other → Page header + بطاقة + صفوف
+   */
+  function _renderAccHrSkeleton(page) {
+    // تحديد نوع الشاشة
+    var isDash = page === "accounting-dashboard" || page === "hr-dashboard";
+    var isLedger =
+      page === "general-ledger" ||
+      page === "trial-balance" ||
+      page === "income-statement" ||
+      page === "balance-sheet" ||
+      page === "cash-flow-statement" ||
+      page === "account-statement" ||
+      page === "payslip";
+    var colCount = isLedger ? 4 : 6;
+
+    var rows = "";
+    for (var r = 0; r < 7; r++) rows += _skelTableRow(colCount);
+
+    // ── Page Header skeleton ──
+    var headerSkel =
+      "<div style='display:flex;align-items:center;gap:16px;margin-bottom:24px'>" +
+      "<div style='width:48px;height:48px;border-radius:12px;flex-shrink:0;" +
+      "background:linear-gradient(90deg,var(--surface2) 25%,var(--border) 50%,var(--surface2) 75%);" +
+      "background-size:200% 100%;animation:csShimmer 1.4s ease-in-out infinite'></div>" +
+      "<div style='flex:1'>" +
+      _skelBar("40%", 18, 6) +
+      _skelBar("60%", 12, 0) +
+      "</div>" +
+      "<div style='width:120px;height:36px;border-radius:8px;" +
+      "background:linear-gradient(90deg,var(--surface2) 25%,var(--border) 50%,var(--surface2) 75%);" +
+      "background-size:200% 100%;animation:csShimmer 1.4s ease-in-out infinite'></div>" +
+      "</div>";
+
+    if (isDash) {
+      // Dashboard: stat cards + mini table
+      return (
+        "<div style='padding:24px 0'>" +
+        _skelLoadingBanner() +
+        headerSkel +
+        "<div style='display:flex;gap:16px;margin-bottom:24px;flex-wrap:wrap'>" +
+        _skelStatCard() +
+        _skelStatCard() +
+        _skelStatCard() +
+        _skelStatCard() +
+        "</div>" +
+        "<div style='background:var(--surface1);border:1px solid var(--border);border-radius:12px;padding:20px'>" +
+        _skelBar("30%", 14, 16) +
+        "<table style='width:100%;border-collapse:collapse'><tbody>" +
+        rows +
+        "</tbody></table>" +
+        "</div>" +
+        "</div>"
+      );
+    }
+
+    // Table / Form pages
+    return (
+      "<div style='padding:24px 0'>" +
+      _skelLoadingBanner() +
+      headerSkel +
+      "<div style='background:var(--surface1);border:1px solid var(--border);border-radius:12px;overflow:hidden'>" +
+      // Toolbar skeleton
+      "<div style='padding:14px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:center'>" +
+      "<div style='flex:1;max-width:260px'>" +
+      _skelBar("100%", 34, 0) +
+      "</div>" +
+      "<div style='width:100px'>" +
+      _skelBar("100%", 34, 0) +
+      "</div>" +
+      "</div>" +
+      // Table skeleton
+      "<div style='overflow-x:auto'>" +
+      "<table style='width:100%;border-collapse:collapse'>" +
+      "<thead><tr style='background:var(--surface2);border-bottom:2px solid var(--border)'>" +
+      (function () {
+        var ths = "";
+        for (var i = 0; i < colCount; i++) {
+          ths +=
+            "<th style='padding:12px 10px;text-align:right'>" +
+            _skelBar(i === 0 ? "70%" : "50%", 12, 0) +
+            "</th>";
+        }
+        return ths;
+      })() +
+      "</tr></thead>" +
+      "<tbody>" +
+      rows +
+      "</tbody>" +
+      "</table>" +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  /**
+   * ensureExtendedData — يضمن إن بيانات المحاسبة/HR موجودة في APP.data
+   * قبل ما الشاشة تعرضها، بدون ما يكرر نداء السيرفر لو كانت محمّلة فعلاً.
+   * @param {Function} cb يُستدعى لما البيانات تكون جاهزة
+   * @param {boolean} [forceRefresh] لو true يتجاهل الكاش ويجيب نسخة جديدة
+   */
+  // ─────────────────────────────────────────────────────────────
+  // [DATA-UNIFY-2] نقطة الاتصال الوحيدة بالسيرفر لجلب الحزمة الموسعة
+  //
+  // قبل كده كان فيه 4 نسخ منفصلة بتنادي google.script.run.getAllDataExtended
+  // مباشرة (هنا x3 + نسخة رابعة في 11_JS_Accounting.html)، كل نسخة بمنطق
+  // cache/retry خاص بيها — وده كان سبب ظهور شاشات "جاري التحميل" عالقة لما
+  // نسختين يشتغلوا في نفس الوقت من غير ما يعرفوا ببعض.
+  //
+  // دلوقتي: نداء واحد فعلي (_gsr → DL.Core.getAllDataExtended)، وكل الدوال
+  // التالية (ensureExtendedData / refreshExtendedData / _preloadAllAfterLogin /
+  // _silentPrefetchExtended) بقت مجرد "واجهات" حوالين نفس الطابور المشترك
+  // _extCallbacks + علم APP.extLoading المشترك.
+  // ─────────────────────────────────────────────────────────────
+  function _fetchExtendedDataFromServer(_isRetry) {
+    APP.extLoading = true;
+    // ✅ [REBUILD-ACC-HR-2026] الدالة دي كانت بتعمل 4 نداءات متوازية لأربع
+    // endpoints قديمة منفصلة (getAllDataExtendedCore + getAccountingExtendedLazy
+    // + getHRExtendedLazy + getFinanceSummaryLight)، كل واحدة بمهلتها
+    // الخاصة ومهلة أمان إضافية 35 ثانية فوقهم — تعقيد كبير وسبب متكرر
+    // لكروت المحاسبة/HR اللي بتفضل عالقة على "تحميل" (خصوصًا على /dev
+    // deployment الأبطأ، زي ما موثّق في تعليقات Code_12e_Dashboard_Reports.js).
+    // دلوقتي بقت بتستخدم نفس المحرك الحديث الموحّد اللي باقي الشاشات
+    // (الأصناف/المخزون/العملاء...) بتعتمد عليه بالفعل: DL.Core.getAllDataByLevel
+    // (Code_53_DataRegistryEngine.js) — نداء واحد بس بمستوى BACKGROUND،
+    // معاه كاش سيرفر جاهز ومفتاح صلاحيات مستقل لكل دور، ومهلة واحدة
+    // واضحة بدل تعقيد الأربعة نداءات المتوازية والـ safety timer المنفصل.
+    //
+    // البيانات الراجعة من الـ registry بمفاتيح مسبوقة (accCashBoxes،
+    // hrEmployees...) — بنعيد تسميتها هنا لنفس الأسماء المسطّحة اللي كل
+    // شاشات المحاسبة/HR القديمة (11_JS_Accounting.html، 12_JS_HR.html،
+    // 17_JS_ExecutiveDashboard.html...) لسه بتقرأها من APP.data مباشرة،
+    // فمفيش أي كود تاني محتاج يتغيّر غير المصدر هنا.
+    var LEVEL3_FIELD_MAP = {
+      accCashBoxes: "cashBoxes",
+      accBankAccounts: "bankAccounts",
+      accJournalEntries: "journalEntries",
+      accReceiptVouchers: "receiptVouchers",
+      accPaymentVouchers: "paymentVouchers",
+      accExpenses: "expenses",
+      accTransferVouchers: "transferVouchers",
+      accBankReconciliations: "bankReconciliations",
+      accCheques: "cheques",
+      accFixedAssets: "fixedAssets",
+      hrEmployees: "employees",
+      hrDepartments: "departments",
+      hrJobTitles: "jobTitles",
+      hrLeaveTypes: "leaveTypes",
+      hrLeaveRequests: "leaveRequests",
+      hrLoanRequests: "loanRequests",
+      hrPayrollPeriods: "payrollPeriods",
+      hrAttendance: "attendance",
+      accSettings: "accountingSettings",
+      hrSettingsBundle: "hrSettings",
+    };
+
+    DL.Core.getAllDataByLevel([3], {
+      label: "Auth.ensureExtendedData(level3)",
+      timeout: 30000,
+      onSuccess: function (result) {
+        APP.extLoading = false;
+        var raw = (result && result.data) || {};
+        var mapped = {};
+        Object.keys(LEVEL3_FIELD_MAP).forEach(function (rawKey) {
+          var flatKey = LEVEL3_FIELD_MAP[rawKey];
+          if (raw[rawKey] !== undefined) mapped[flatKey] = raw[rawKey];
+        });
+        _applyExtData(mapped);
+        _saveExtCache(mapped);
+        APP.extLoaded = true;
+        var cbs = _extCallbacks.slice();
+        _extCallbacks = [];
+        cbs.forEach(function (fn) {
+          fn();
+        });
+      },
+      onError: function (errResult) {
+        APP.extLoading = false;
+        if (!_isRetry) {
+          // أول فشل (تايم أوت مؤقت/كاش سيرفر تالف) — حاول مرة واحدة إضافية
+          // بنسخة fresh قبل ما نسيب الشاشات فاضية للمستخدم
+          _fetchExtendedDataFromServer(true);
+          return;
+        }
+        // حتى بعد إعادة المحاولة — لو فيه بيانات كاش قديمة محلية سليمة
+        // نستخدمها بدل ما نسيب الكروت فاضية تمامًا، ونعرض تنبيه بالخطأ
+        var cached = _loadExtCache();
+        if (cached) {
+          _applyExtData(cached);
+          APP.extLoaded = true;
+        }
+        showToast(
+          (errResult && errResult.message) ||
+            I18N.t("AUTH_MSG_LOAD_EXTENDED_ERROR"),
+          "error",
+        );
+        var cbsErr = _extCallbacks.slice();
+        _extCallbacks = [];
+        cbsErr.forEach(function (fn) {
+          fn();
+        });
+      },
+    });
+  }
+
+  /**
+   * ensureExtendedData — يضمن إن بيانات المحاسبة/HR موجودة في APP.data
+   * قبل ما الشاشة تعرضها، بدون ما يكرر نداء السيرفر لو كانت محمّلة فعلاً،
+   * ولو في طلب شغال بالفعل (من أي مصدر: prefetch/silent/مرئي) بينضم لنفس الطابور.
+   * @param {Function} cb يُستدعى لما البيانات تكون جاهزة
+   * @param {boolean} [forceRefresh] لو true يتجاهل الكاش ويجيب نسخة جديدة
+   */
+  function ensureExtendedData(cb, forceRefresh, _isRetry) {
+    cb = cb || function () {};
+
+    // ✅ [FIX-EXT] لو extLoaded=true لكن البيانات اتمسحت بسبب silentRefresh
+    // نكتشف ذلك بفحص حقل أساسي — لو فاضي نجبر re-fetch بدل ما نعرض شاشة فارغة
+    if (APP.extLoaded && !forceRefresh) {
+      // [FIX-EXT-INTACT] الفلاق _extLoadedFromServer وحده كافي للتحقق —
+      // فحص محتوى المصفوفات كان بيسبب re-fetch غلط لمستخدمين جدد عندهم
+      // بيانات فاضية بشكل طبيعي (مثلاً: مفيش قيود محاسبية بعد).
+      var extDataIntact = APP.data && APP.data._extLoadedFromServer === true;
+      if (!extDataIntact) {
+        // البيانات الموسعة اتمسحت أو جت فاضية — أعد التحميل
+        APP.extLoaded = false;
+        try {
+          localStorage.removeItem(EXT_CACHE_KEY);
+        } catch (e) {}
+      }
+    }
+
+    if (APP.extLoaded && !forceRefresh) {
+      cb();
+      return;
+    }
+
+    if (!forceRefresh) {
+      var cached = _loadExtCache();
+      if (cached) {
+        _applyExtData(cached);
+        APP.extLoaded = true;
+        cb();
+        return;
+      }
+    }
+
+    // لو في طلب شغال فعلاً (سواء silent prefetch أو طلب مرئي أو preload)
+    // اكتفِ بالانتظار عليه بدل تكرار النداء — طابور واحد مشترك للجميع
+    if (APP.extLoading) {
+      _extCallbacks.push(cb);
+      if (typeof showFABMessage === "function") {
+        showFABMessage("⏳ جاري تحضير البيانات...", 3000);
+      }
+      return;
+    }
+
+    _extCallbacks.push(cb);
+    // [SKELETON] الـ skeleton screen في محتوى الصفحة يكفي كـ visual feedback
+    _fetchExtendedDataFromServer(_isRetry);
+  }
+
+  /** يُستخدم لزر "تحديث" اليدوي في شاشات المحاسبة/HR، وأيضاً لأي إعادة تحميل
+   * إجبارية للحزمة الموسعة (زي `_reloadCashBoxesFromServer` سابقاً في المحاسبة) */
+  function refreshExtendedData(cb) {
+    try {
+      localStorage.removeItem(EXT_CACHE_KEY);
+    } catch (e) {}
+    APP.extLoaded = false;
+    ensureExtendedData(cb, true);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §E-SILENT-EXT  Background Prefetch للبيانات الموسعة (HR + محاسبة)
+  //
+  // ─────────────────────────────────────────────────────────────
+  // §PRELOAD-ALL  تحميل كل البيانات بعد تسجيل الدخول مباشرةً
+  //
+  // الهدف: ضمان إن 100% من البيانات (أساسية + موسعة) تكون محملة
+  // في الكاش قبل ما المستخدم يفتح أي شاشة — بدون spinner مزعج.
+  // يُستدعى من 02_JS_UI_Shell بعد اللوجين مباشرة.
+  // ─────────────────────────────────────────────────────────────
+  var _preloadDone = false;
+
+  // [DATA-LOADING-ENGINE / المرحلة 2+3] هذه الدالة كانت بتحمّل الحزمة
+  // الموسعة كاملة (محاسبة + HR — 19 حقل، EXT_FIELDS فوق) لكل مستخدم فور
+  // تسجيل الدخول، حتى لو مادخلش أي شاشة محاسبة/HR طول الجلسة — ده بالتعريف
+  // بيانات "المستوى الثاني: On Demand" وكانت بتتحمّل وقت "المستوى الأول:
+  // Critical". كل الشاشات اللي محتاجة الحزمة الموسعة (11_JS_Accounting،
+  // 12_JS_HR، 27_JS_Manufacturing، 15_JS_Invoices، 07_JS_Shipping...) بتنادي
+  // ensureExtendedData() بنفسها أول ما تُفتح، وensureExtendedData أصلاً بتتعامل
+  // مع حالة "طلب شغال بالفعل" أو "متخزّن في sessionStorage" فمفيش تكرار —
+  // فمفيش داعي لتحميلها مسبقًا لـ 100% من المستخدمين. الفرق الوحيد دلوقتي:
+  // أول فتح لشاشة موسعة في الجلسة بيستنى نداء ensureExtendedData العادي
+  // (نفس النداء اللي كان بيحصل هنا) بدل ما يلاقيه جاهز من قبل — مفيش أي
+  // تغيير في Business Logic أو في العقد بين الشاشة والداتا.
+  function _preloadAllAfterLogin() {
+    if (_preloadDone) return;
+    _preloadDone = true;
+
+    // ── المستوى 1 (Critical) فقط: البيانات الأساسية ──
+    // لو لسه مطلوبة (نادراً — عادة بتكون اتحمّلت وقت اللوجين نفسه) اطلبها
+    // بدون ما ننتظرها هنا أو نجرّ معاها الحزمة الموسعة.
+    var basicReady = APP.data && APP.data._loaded;
+    if (!basicReady && !APP.loading) {
+      loadAllData(null, true);
+    }
+
+    // [REBUILD-2026-08-07 / UDE] بدل موجات setTimeout بتوقيتات ثابتة
+    // مخمَّنة (4s/9s/14s/19s) اللي كانت بتحاول تحزر معاد "خلوّ" الشبكة،
+    // UDE.warmup() بتجيب مستوى ON_DEMAND (2) فورًا ثم BACKGROUND (3)
+    // وREFERENCE (4) في وقت فراغ المتصفح الفعلي (requestIdleCallback) —
+    // مش وقت متخيَّل. أي شاشة يفتحها المستخدم قبل ما warmup() يخلص
+    // هتضمن بياناتها بنفسها عبر UDE.ensurePage() في renderPage()، فمفيش
+    // أي احتمال "شاشة فاضية للأبد" حتى لو حصل تزاحم فعلي في الشبكة.
+    UDE.warmup();
+
+    // [EXT-PRELOAD] الحزمة الموسعة (محاسبة/HR/تصنيع/فواتير/شحن —
+    // ensureExtendedData/EXT_FIELDS) نظام منفصل عن مستويات UDE
+    // (2/3/4)، فلسه محتاج نداءه الخاص. بنسيبه في idle تاني بعد warmup()
+    // بدل رقم ثواني مخمَّن، عشان ميتزاحمش مع مستوى ON_DEMAND الحرج.
+    (
+      (typeof requestIdleCallback === "function" && requestIdleCallback) ||
+      function (fn) {
+        setTimeout(fn, 2500);
+      }
+    )(function () {
+      _silentPrefetchExtended();
+    });
+
+    // [VC-PRELOAD] المحافظ الإلكترونية والحضور — تأثيرهم أخف بكتير من
+    // بيانات الشاشات الأساسية، فبنسيبهم خلفية متأخرة بسيطة زي ما كانوا.
+    setTimeout(function () {
+      if (typeof _vcPreload === "function") _vcPreload();
+    }, 6000);
+    setTimeout(function () {
+      if (typeof _attPreload === "function") _attPreload();
+    }, 8000);
+  }
+
+  // يُستدعى بعد تسجيل الدخول بثانيتين في الخلفية بدون أي UI/Freeze
+  // الهدف: لما المستخدم يفتح أي شاشة HR/محاسبة يلاقي الكاش جاهز
+  // لو فشل: يفشل صامتاً — ensureExtendedData ستكمل طبيعي لو احتاج
+  // [DATA-UNIFY-2] بقت مجرد نداء صامت لـ ensureExtendedData بدل نسخة
+  // مستقلة من منطق الجلب — نفس الطابور، نفس علم extLoading.
+  // ─────────────────────────────────────────────────────────────
+  function _silentPrefetchExtended() {
+    if (APP.extLoaded || APP.extLoading) return;
+    ensureExtendedData(function () {});
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 💾  نظام أنيميشن الحفظ الاحترافي — Save Animation System
+  // ─────────────────────────────────────────────────────────────
+  var _saveAnim = { el: null, timer: null, hideTimer: null };
+
+  // [FIX-UI] showSaveAnim — يستخدم نفس الـ bubble بدون صندوق ثانٍ
+  function showSaveAnim(options) {
+    options = options || {};
+    var title = options.title || "جاري الحفظ...";
+    var emoji = options.emoji || "💾";
+
+    _closeSaveAnim(true);
+
+    // أظهر حالة التحميل في الـ bubble مباشرة
+    var bubble = _ensureBubble();
+    if (_aiFabToastTimer) {
+      clearTimeout(_aiFabToastTimer);
+      _aiFabToastTimer = null;
+    }
+    if (_fabMsgTimer) {
+      clearTimeout(_fabMsgTimer);
+      _fabMsgTimer = null;
+    }
+    if (_saveAnim.hideTimer) {
+      clearTimeout(_saveAnim.hideTimer);
+      _saveAnim.hideTimer = null;
+    }
+    var seq = ++_aiFabToastSeq;
+    _saveAnim._bubbleSeq = seq;
+
+    bubble.style.animation = "none";
+    bubble.style.display = "none";
+    bubble.offsetHeight;
+    bubble.setAttribute("data-type", "info");
+    bubble.setAttribute("data-freeze", "save");
+    bubble.innerHTML =
+      '<span class="fab-bubble-stem"></span>' +
+      '<span style="display:inline-flex;align-items:center;gap:8px;direction:rtl">' +
+      '<span style="width:14px;height:14px;border-radius:50%;border:2px solid rgba(37,99,235,0.25);border-top-color:#2563eb;animation:__spin 0.7s linear infinite;flex-shrink:0;display:inline-block"></span>' +
+      '<span style="font-size:13px;font-weight:600">' +
+      emoji +
+      " " +
+      title +
+      "</span>" +
+      "</span>";
+
+    bubble.style.visibility = "hidden";
+    bubble.style.display = "block";
+    bubble.offsetHeight;
+    _positionBubble(bubble);
+    bubble.style.visibility = "";
+    bubble.style.animation =
+      "fabBubbleIn 0.38s cubic-bezier(0.34,1.4,0.64,1) forwards";
+
+    _saveAnim.el = bubble; // نشير للـ bubble بدل overlay منفصل
+
+    return {
+      done: function (msg) {
+        _saveAnimSuccess(msg);
+      },
+      fail: function (msg) {
+        _saveAnimFail(msg);
+      },
+    };
+  }
+
+  // [FIX-UI] _saveAnimSuccess — يغير الـ bubble لرسالة نجاح ناعمة
+  function _saveAnimSuccess(msg) {
+    if (!msg) {
+      _closeSaveAnim(true);
+      return;
+    }
+    var bubble = document.getElementById("ai-fab-bubble");
+    if (!bubble) return;
+
+    if (_saveAnim.timer) {
+      clearTimeout(_saveAnim.timer);
+      _saveAnim.timer = null;
+    }
+
+    // نُبقي data-freeze="success" حتى يتعرف عليه _closeSaveAnim
+    bubble.setAttribute("data-type", "success");
+    bubble.setAttribute("data-freeze", "success");
+    bubble.innerHTML =
+      '<span class="fab-bubble-stem"></span>' +
+      '<span class="fab-bubble-icon">✅</span>' +
+      '<span class="fab-bubble-text">' +
+      (msg || "تم بنجاح ✓") +
+      "</span>";
+
+    bubble.style.animation = "none";
+    bubble.offsetHeight;
+    bubble.style.animation = "fabBubbleSuccess 0.35s ease forwards";
+
+    _saveAnim.timer = setTimeout(function () {
+      _closeSaveAnim(false);
+    }, 2000);
+  }
+
+  // [FIX-UI] _saveAnimFail — bubble خطأ
+  function _saveAnimFail(msg) {
+    var bubble = document.getElementById("ai-fab-bubble");
+    if (!bubble) return;
+
+    if (_saveAnim.timer) {
+      clearTimeout(_saveAnim.timer);
+      _saveAnim.timer = null;
+    }
+
+    bubble.setAttribute("data-type", "error");
+    bubble.setAttribute("data-freeze", "success"); // نفس المفتاح حتى يُغلقه _closeSaveAnim
+    bubble.innerHTML =
+      '<span class="fab-bubble-stem"></span>' +
+      '<span class="fab-bubble-icon">❌</span>' +
+      '<span class="fab-bubble-text">' +
+      (msg || "حدث خطأ، حاول مرة أخرى") +
+      "</span>";
+
+    bubble.style.animation = "none";
+    bubble.offsetHeight;
+    bubble.style.animation = "fabBubbleIn 0.3s ease forwards";
+
+    _saveAnim.timer = setTimeout(function () {
+      _closeSaveAnim(false);
+    }, 2500);
+  }
+
+  // [FIX-UI] _closeSaveAnim — يخفي الـ bubble
+  function _closeSaveAnim(immediate) {
+    if (_saveAnim.timer) clearTimeout(_saveAnim.timer);
+    _saveAnim.timer = null;
+    if (_saveAnim.hideTimer) clearTimeout(_saveAnim.hideTimer);
+    _saveAnim.hideTimer = null;
+    _saveAnim.el = null;
+
+    var bubble = document.getElementById("ai-fab-bubble");
+    if (!bubble) return;
+    var freeze = bubble.getAttribute("data-freeze");
+    if (freeze !== "save" && freeze !== "success") return;
+    bubble.removeAttribute("data-freeze");
+
+    if (immediate) {
+      bubble.style.display = "none";
+      return;
+    }
+    bubble.style.animation =
+      "fabBubbleOut 0.28s cubic-bezier(0.55,0,1,0.8) forwards";
+    // [FIX-UI] نسجّل التايمر ده حتى لو ظهرت رسالة (Toast) جديدة بعده مباشرة
+    // نقدر نلغيه قبل ما يقفل الـ bubble الجديد بالغلط (كان بيقفل رسائل الخطأ
+    // اللي بتيجي فورًا بعد unfreeze() قبل ما المستخدم يقدر يقراها).
+    _saveAnim.hideTimer = setTimeout(function () {
+      bubble.style.display = "none";
+      _saveAnim.hideTimer = null;
+    }, 300);
+  }
+
+  // [UX] _saveAnimUpdating — يحوّل نفس الـ bubble لحالة "جار التحديث"
+  // (سبينر + نص) بدون قفل/إعادة فتح — استخدامها بعد رسالة نجاح الحفظ
+  // مباشرة، أثناء مزامنة البيانات الحقيقية مع السيرفر في الخلفية، حتى
+  // يفهم المستخدم إن فيه عملية شغّالة فعلاً ولا تختفي الرسالة فجأة بلا تفسير.
+  function _saveAnimUpdating(msg) {
+    var bubble = _ensureBubble();
+
+    // ✅ نلغي أي تايمر إغلاق معلّق من رسالة النجاح اللي قبلها
+    if (_saveAnim.timer) {
+      clearTimeout(_saveAnim.timer);
+      _saveAnim.timer = null;
+    }
+
+    bubble.setAttribute("data-type", "info");
+    bubble.setAttribute("data-freeze", "save"); // نفس مفتاح showSaveAnim حتى يتعرف عليه _closeSaveAnim
+    bubble.innerHTML =
+      '<span class="fab-bubble-stem"></span>' +
+      '<span style="display:inline-flex;align-items:center;gap:8px;direction:rtl">' +
+      '<span style="width:14px;height:14px;border-radius:50%;border:2px solid rgba(37,99,235,0.25);border-top-color:#2563eb;animation:__spin 0.7s linear infinite;flex-shrink:0;display:inline-block"></span>' +
+      '<span style="font-size:13px;font-weight:600">🔄 ' +
+      (msg || "جار التحديث...") +
+      "</span>" +
+      "</span>";
+
+    // لو الـ bubble كانت مقفولة بالفعل (مش حالة شائعة) — أظهرها بمكانها الصحيح
+    if (!bubble.style.display || bubble.style.display === "none") {
+      bubble.style.animation = "none";
+      bubble.style.visibility = "hidden";
+      bubble.style.display = "block";
+      bubble.offsetHeight;
+      _positionBubble(bubble);
+      bubble.style.visibility = "";
+      bubble.style.animation =
+        "fabBubbleIn 0.3s cubic-bezier(0.34,1.4,0.64,1) forwards";
+    }
+    _saveAnim.el = bubble;
+  }
+
+  function _spawnSaveParticles() {
+    var card = document.getElementById("_saveCard");
+    if (!card) return;
+    var colors = [
+      "#2563eb",
+      "#10b981",
+      "#f59e0b",
+      "#8b5cf6",
+      "#0ea5e9",
+      "#f97316",
+    ];
+    for (var i = 0; i < 14; i++) {
+      (function (i) {
+        var p = document.createElement("div");
+        p.className = "save-particle";
+        var angle = (i / 14) * 360;
+        var dist = 55 + Math.random() * 45;
+        var rad = (angle * Math.PI) / 180;
+        p.style.cssText =
+          "left:50%;top:30%;" +
+          "--px:" +
+          Math.cos(rad) * dist +
+          "px;" +
+          "--py:" +
+          Math.sin(rad) * dist +
+          "px;" +
+          "background:" +
+          colors[i % colors.length] +
+          ";" +
+          "animation-delay:" +
+          i * 0.04 +
+          "s;" +
+          "width:" +
+          (5 + Math.random() * 4) +
+          "px;" +
+          "height:" +
+          (5 + Math.random() * 4) +
+          "px;" +
+          "border-radius:" +
+          (Math.random() > 0.5 ? "50%" : "2px") +
+          ";";
+        card.appendChild(p);
+        setTimeout(function () {
+          if (p.parentNode) p.remove();
+        }, 900);
+      })(i);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 🎨  إشعار الألوان الجديدة المضافة تلقائياً
+  // ─────────────────────────────────────────────────────────────
+  function _showNewColorsNotification(newColors) {
+    if (!newColors || !newColors.length) return;
+
+    // امنع التصادم البصري مع فقاعة المساعد: انتظر حتى يفرغ طابور التوست
+    if (_toastBusy || _toastQueue.length > 0) {
+      setTimeout(function () {
+        _showNewColorsNotification(newColors);
+      }, 400);
+      return;
+    }
+
+    var existing = document.getElementById("__newcolors-notif");
+    if (existing) existing.remove();
+
+    var listHtml = newColors
+      .map(function (c) {
+        var hex =
+          (typeof CSS_COLOR_MAP !== "undefined" &&
+            (CSS_COLOR_MAP[c.name] ||
+              CSS_COLOR_MAP[(c.name || "").toLowerCase()])) ||
+          null;
+        var dot = hex
+          ? '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:' +
+            hex +
+            ';border:1.5px solid rgba(0,0,0,.15);flex-shrink:0"></span>'
+          : '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--accent-soft);border:1.5px solid var(--accent);flex-shrink:0"></span>';
+        return (
+          '<span style="display:inline-flex;align-items:center;gap:5px;background:var(--success-soft);color:var(--success-dark,#059669);border:1px solid rgba(16,185,129,.2);padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600">' +
+          dot +
+          esc(c.name) +
+          '<span style="font-family:var(--font-mono);font-size:10px;color:var(--text3)">' +
+          esc(c.code) +
+          "</span>" +
+          "</span>"
+        );
+      })
+      .join("");
+
+    var notif = document.createElement("div");
+    notif.id = "__newcolors-notif";
+    notif.style.cssText = [
+      "position:fixed",
+      "bottom:28px",
+      "right:24px",
+      "z-index:99998",
+      "background:var(--surface)",
+      "border:1.5px solid var(--success)",
+      "border-radius:16px",
+      "padding:16px 20px",
+      "max-width:360px",
+      "width:90vw",
+      "box-shadow:0 8px 32px rgba(16,185,129,.18),0 2px 8px rgba(0,0,0,.10)",
+      "animation:slideNotifIn .35s cubic-bezier(.34,1.4,.64,1) forwards",
+      "direction:rtl",
+    ].join(";");
+
+    notif.innerHTML =
+      '<div style="display:flex;align-items:flex-start;gap:12px">' +
+      '<div style="width:36px;height:36px;border-radius:10px;background:var(--success-soft);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">🎨</div>' +
+      '<div style="flex:1;min-width:0">' +
+      '<div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:4px">' +
+      "تم تعريف " +
+      newColors.length +
+      " لون جديد تلقائياً" +
+      "</div>" +
+      '<div style="font-size:12px;color:var(--text2);margin-bottom:10px">الألوان التالية أُضيفت لشاشة تعريف الألوان:</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">' +
+      listHtml +
+      "</div>" +
+      '<div style="display:flex;gap:8px">' +
+      "<button onclick=\"renderPage('color_definitions');document.getElementById('__newcolors-notif').remove()\" " +
+      'style="flex:1;padding:7px;background:var(--success);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:var(--font-arabic)">عرض الألوان 🎨</button>' +
+      "<button onclick=\"document.getElementById('__newcolors-notif').remove()\" " +
+      'style="padding:7px 12px;background:var(--surface2);color:var(--text2);border:1.5px solid var(--border);border-radius:8px;font-size:12px;cursor:pointer;font-family:var(--font-arabic)">تم ✓</button>' +
+      "</div>" +
+      "</div>" +
+      "</div>";
+
+    if (!document.getElementById("__notif-style")) {
+      var st = document.createElement("style");
+      st.id = "__notif-style";
+      st.textContent =
+        "@keyframes slideNotifIn{from{opacity:0;transform:translateX(30px) scale(.95)}to{opacity:1;transform:translateX(0) scale(1)}}" +
+        "@keyframes slideNotifOut{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(30px)}}";
+      document.head.appendChild(st);
+    }
+
+    document.body.appendChild(notif);
+
+    setTimeout(function () {
+      var el = document.getElementById("__newcolors-notif");
+      if (el) {
+        el.style.animation = "slideNotifOut .3s ease forwards";
+        setTimeout(function () {
+          if (el.parentNode) el.remove();
+        }, 320);
+      }
+    }, 10000);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 🚀  reloadAfterMutation v4.2 — Optimistic Update
+  //
+  // بدلاً من مسح الكاش وجلب كل البيانات من الباكيند بعد كل عملية:
+  //   1. نحدّث APP.data محلياً فوراً (Optimistic Update)
+  //   2. نعرض الـ UI المحدّث بدون انتظار
+  //   3. في الخلفية نجلب getAllData() لمزامنة الحقيقة مع الباكيند
+  //
+  // @param {Function|null}  cb           - callback بعد تحديث UI
+  // @param {Function|null}  unfreeze     - تحرير الـ freeze بعد الانتهاء
+  // @param {Object|null}    animOptions  - خيارات أنيميشن الحفظ
+  // @param {Object|null}    optimisticPatch - { collection, record, op: 'add'|'update'|'remove', idField }
+  //   collection: اسم المصفوفة في APP.data (مثلاً "items", "groups")
+  //   record: الكائن الجديد/المعدّل
+  //   op: العملية ('add', 'update', 'remove')
+  //   idField: اسم حقل الـ id (افتراضي 'id')
+  // ─────────────────────────────────────────────────────────────
+  function reloadAfterMutation(cb, unfreeze, animOptions, optimisticPatch) {
+    // [SOFT-SAVE / SE-BUBBLE-FIX] لو الشاشة بتستخدم SaveEngine.run بالفعل
+    // (اللي بيدير فقاعة "جار الحفظ → جار التحديث → تم الحفظ" لوحده)، تمرير
+    // animOptions === false هنا يمنع reloadAfterMutation من فتح/تصفير نفس
+    // الفقاعة مرة ثانية (كان بيقفلها فجأة ويعيد فتحها بنص افتراضي، وبعدين
+    // SaveEngine.LoadingService.hide() كان بيقفلها هي كمان فورًا — فكان
+    // المستخدم بيشوف الرسالة "بتختفي" ثم رسالة النجاح "بتظهر" بعد فجوة
+    // فاضية بدل انتقال سلس). في الوضع الصامت: نعمل فقط الـ optimistic
+    // patch + إعادة الرسم + المزامنة الخلفية، من غير أي فقاعة هنا إطلاقًا.
+    var silent = animOptions === false;
+    var anim = silent
+      ? { done: function () {}, fail: function () {} }
+      : showSaveAnim(animOptions);
+
+    // ── Optimistic Update: حدّث الكاش المحلي فوراً ──────────────
+    if (optimisticPatch && _cache.data) {
+      try {
+        var col = optimisticPatch.collection;
+        var rec = optimisticPatch.record;
+        var op = optimisticPatch.op || "update";
+        var idField = optimisticPatch.idField || "id";
+        var arr = _cache.data[col] || [];
+
+        if (op === "add") {
+          _cache.data[col] = arr.concat([rec]);
+        } else if (op === "update") {
+          _cache.data[col] = arr.map(function (item) {
+            return String(item[idField]) === String(rec[idField]) ? rec : item;
+          });
+        } else if (op === "remove") {
+          _cache.data[col] = arr.filter(function (item) {
+            return String(item[idField]) !== String(rec[idField]);
+          });
+        }
+
+        APP.data = _cache.data;
+        // حدّث الكاش الثابت (لأن البيانات الثابتة هي الأكثر تعديلاً)
+        _cache.static_ts = Date.now();
+        _saveCacheOptimistic({});
+      } catch (patchErr) {
+        console.warn("optimisticPatch error:", patchErr);
+      }
+    }
+
+    // ── تحديث UI فوري من الكاش المحلّي ──────────────────────────
+    // [PERF-FIX-1] تحديث الـ UI فوراً بدون setTimeout — الـ optimisticPatch
+    // حدّث APP.data بالفعل، فلا يوجد سبب للانتظار 800ms قبل رسم الشاشة.
+    // نُبقي على requestAnimationFrame بدلاً من setTimeout لضمان رسم نظيف
+    if (!silent) {
+      var _animMsg =
+        animOptions && animOptions.successMsg != null
+          ? animOptions.successMsg
+          : "تم الحفظ بنجاح ✓";
+      if (_animMsg) {
+        anim.done(_animMsg);
+      } else {
+        _closeSaveAnim(true);
+      }
+    }
+    (window.requestAnimationFrame || setTimeout)(function () {
+      if (cb) cb();
+      else renderPage(APP.currentPage);
+      updateAlertBadge();
+      if (unfreeze) unfreeze();
+    });
+
+    // ── مزامنة خلفية مع الباكيند ─────────────────────────────────
+    // [PERF-FIX-2] نبدأ المزامنة مبكراً (300ms بدلاً من 1200ms)
+    // الـ UI اتحدّث فعلاً من الـ Optimistic Update، وبقدر نبدأ السيرفر call بسرعة
+    // بدون أثر على UX — أسرع تحديث للبيانات الحقيقية
+    setTimeout(function () {
+      if (_cache.fetching) return;
+      _cache.fetching = true;
+      // ✅ [FIX] شيلنا استدعاء _saveAnimUpdating() هنا:
+      // بما إن addGroup/updateGroup (وكل عمليات الحفظ التانية) بتستدعي
+      // _invalidateServerCache() عقب كل نجاح، فأي getAllData() جاي فورًا
+      // بعدها هيكون Cache MISS مضمون، وهيضطر يقرا كل الشيتات من جديد —
+      // ده بياخد وقت أطول بكتير من الـ Optimistic Update اللي ظهر فورًا
+      // في الجدول. فكان المستخدم بيشوف السطر الجديد ظاهر، ومع ذلك رسالة
+      // "جار التحديث..." لسه شغالة لثواني كمان — بتوهم إن فيه حاجة عالقة
+      // مع إن الحفظ خلص فعليًا. المزامنة الخلفية دلوقتي صامتة بالكامل؛
+      // هتفشل أو تنجح من غير ما تفضل معلّقة رسالة على الشاشة.
+      DL.Core.getAllData({
+        label: "Auth.backgroundSync",
+        onSuccess: function (result) {
+          _cache.fetching = false;
+          _closeSaveAnim(false); // ✅ يقفل بهدوء بعد اكتمال التحديث الحقيقي
+          var d = result.data;
+          if (!d || typeof d !== "object") return;
+          try {
+            var fresh = _parseData(d);
+            _saveCache(fresh);
+            _applyFreshData(fresh);
+            // لا تعمل re-render لصفحات الوارد/الصادر/التحويل
+            // عشان متمسحش الفورم لو المستخدم شغّال عليه
+            var _noRerender = ["tx_in", "tx_out", "tx_transfer"];
+            // [PERF-FIX-BGS] تحقق من إن المستخدم مش بيكتب في أي حقل قبل الـ re-render
+            var _bgActiveEl = document.activeElement;
+            var _bgUserTyping =
+              _bgActiveEl &&
+              (_bgActiveEl.tagName === "INPUT" ||
+                _bgActiveEl.tagName === "TEXTAREA" ||
+                _bgActiveEl.tagName === "SELECT" ||
+                _bgActiveEl.isContentEditable);
+            if (_noRerender.indexOf(APP.currentPage) === -1 && !_bgUserTyping) {
+              // [PERF-FIX-BGS] وسّم كـ silent refresh عشان يتجنب الـ fade flicker
+              APP._fromSilentRefresh = true;
+              renderPage(APP.currentPage);
+              APP._fromSilentRefresh = false;
+            }
+            updateAlertBadge();
+            updateNotifBell();
+          } catch (e) {
+            console.warn("Background sync error:", e);
+          }
+        },
+        onError: function (result) {
+          _cache.fetching = false;
+          _closeSaveAnim(true); // ✅ يقفل فوراً — الحفظ الأصلي نجح، دي مجرد مزامنة خلفية فشلت
+          console.warn("Background sync failed:", result.message);
+          // عند الفشل: أعد مسح الكاش ليُجبر المستخدم على refresh حقيقي
+          _cache.data = null;
+          _cache.ts = 0;
+        },
+      });
+    }, 300); // [PERF-FIX-2] 300ms بدلاً من 1200ms
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // reloadAfterMutationFull — للحالات التي نحتاج فيها تحديثاً كاملاً
+  // (مثل: استيراد Excel، تعديل الرصيد الافتتاحي، backup)
+  // ─────────────────────────────────────────────────────────────
+  function reloadAfterMutationFull(cb, unfreeze, animOptions) {
+    _cache.data = null;
+    _cache.ts = 0;
+    try {
+      localStorage.removeItem("wms_cache");
+      localStorage.removeItem("wms_cache_static");
+      localStorage.removeItem("wms_cache_dynamic");
+    } catch (e) {}
+
+    var anim = showSaveAnim(animOptions);
+
+    DL.Core.getAllDataFresh({
+      label: "Auth.reloadAfterMutationFull",
+      onSuccess: function (result) {
+        var d = result.data;
+        if (!d || typeof d !== "object") {
+          anim.fail("البيانات المستلمة غير صحيحة");
+          if (unfreeze) setTimeout(unfreeze, 1700);
+          return;
+        }
+        try {
+          var fresh = _parseData(d);
+          _saveCache(fresh);
+          _applyFreshData(fresh);
+        } catch (parseErr) {
+          anim.fail("خطأ في معالجة البيانات");
+          if (unfreeze) setTimeout(unfreeze, 1700);
+          return;
+        }
+        anim.done(
+          (animOptions && animOptions.successMsg) || "تم الحفظ بنجاح ✓",
+        );
+        // [PERF-FIX-3] لا حاجة لـ 1200ms إضافية — البيانات وصلت بالفعل من السيرفر
+        // نعرض الـ UI فوراً بعد رسم الـ animation frame
+        (window.requestAnimationFrame || setTimeout)(function () {
+          if (cb) cb();
+          else renderPage(APP.currentPage);
+          updateAlertBadge();
+          if (unfreeze) unfreeze();
+        });
+      },
+      onError: function (result) {
+        anim.fail("خطأ: " + (result.message || "حاول مرة أخرى"));
+        setTimeout(function () {
+          if (unfreeze) unfreeze();
+          loadAllData();
+        }, 1700);
+      },
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // ▼▼▼  امتدادات ERP v5 — كانت في Core_Auth_Extensions.html  ▼▼▼
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────────
+  // Core_Auth_Extensions.html — امتدادات لـ 01_JS_Core_Auth.html
+  // تُضاف إلى نهاية الملف
+  // ─────────────────────────────────────────────────────────────────
+
+  // ═══════════════════════════════════════════════════════════════
+  // §EXT-AUTH-01  أدوار جديدة + صلاحيات المحاسبة وHR
+  // ═══════════════════════════════════════════════════════════════
+
+  // أدوار جديدة (تُضاف لخريطة ROLES الموجودة)
+  var ERP_ROLES = {
+    accountant: {
+      label: "محاسب",
+      labelKey: "ROLE_ACCOUNTANT",
+      badge: "badge-info",
+    },
+    hr_manager: {
+      label: "مدير HR",
+      labelKey: "ROLE_HR_MANAGER",
+      badge: "badge-purple",
+    },
+    hr_specialist: {
+      label: "أخصائي HR",
+      labelKey: "ROLE_HR_SPECIALIST",
+      badge: "badge-teal",
+    },
+    cashier: {
+      label: "أمين صندوق",
+      labelKey: "ROLE_CASHIER",
+      badge: "badge-warning",
+    },
+  };
+
+  // صلاحيات المحاسبة
+  var ACCOUNTING_PERMISSIONS = [
+    // دليل الحسابات
+    {
+      key: "viewChartOfAccounts",
+      label: "عرض دليل الحسابات",
+      category: "accounting",
+    },
+    { key: "addChartAccount", label: "إضافة حساب", category: "accounting" },
+    { key: "updateChartAccount", label: "تعديل حساب", category: "accounting" },
+    { key: "deleteChartAccount", label: "حذف حساب", category: "accounting" },
+    // الخزائن
+    { key: "viewCashBoxes", label: "عرض الخزائن", category: "accounting" },
+    { key: "addCashBox", label: "إضافة خزنة", category: "accounting" },
+    { key: "updateCashBox", label: "تعديل خزنة", category: "accounting" },
+    { key: "deleteCashBox", label: "حذف خزنة", category: "accounting" },
+    // البنوك
+    { key: "viewBankAccounts", label: "عرض البنوك", category: "accounting" },
+    { key: "addBankAccount", label: "إضافة بنك", category: "accounting" },
+    { key: "updateBankAccount", label: "تعديل بنك", category: "accounting" },
+    { key: "deleteBankAccount", label: "حذف بنك", category: "accounting" },
+    // القيود
+    { key: "viewJournalEntries", label: "عرض القيود", category: "accounting" },
+    { key: "addJournalEntry", label: "إضافة قيد", category: "accounting" },
+    { key: "updateJournalEntry", label: "تعديل قيد", category: "accounting" },
+    { key: "deleteJournalEntry", label: "حذف قيد", category: "accounting" },
+    { key: "postJournalEntry", label: "اعتماد قيد", category: "accounting" },
+    // سندات القبض
+    {
+      key: "viewReceiptVouchers",
+      label: "عرض سندات القبض",
+      category: "accounting",
+    },
+    {
+      key: "addReceiptVoucher",
+      label: "إضافة سند قبض",
+      category: "accounting",
+    },
+    {
+      key: "approveReceiptVoucher",
+      label: "اعتماد سند قبض",
+      category: "accounting",
+    },
+    {
+      key: "printReceiptVoucher",
+      label: "طباعة سند قبض",
+      category: "accounting",
+    },
+    // سندات الصرف
+    {
+      key: "viewPaymentVouchers",
+      label: "عرض سندات الصرف",
+      category: "accounting",
+    },
+    {
+      key: "addPaymentVoucher",
+      label: "إضافة سند صرف",
+      category: "accounting",
+    },
+    {
+      key: "approvePaymentVoucher",
+      label: "اعتماد سند صرف",
+      category: "accounting",
+    },
+    {
+      key: "printPaymentVoucher",
+      label: "طباعة سند صرف",
+      category: "accounting",
+    },
+    // التحويلات
+    {
+      key: "viewTransferVouchers",
+      label: "عرض التحويلات",
+      category: "accounting",
+    },
+    { key: "addTransferVoucher", label: "إضافة تحويل", category: "accounting" },
+    {
+      key: "approveTransferVoucher",
+      label: "اعتماد تحويل",
+      category: "accounting",
+    },
+    // التقارير
+    {
+      key: "viewGeneralLedger",
+      label: "الأستاذ العام",
+      category: "accounting",
+    },
+    {
+      key: "viewTrialBalance",
+      label: "ميزان المراجعة",
+      category: "accounting",
+    },
+    {
+      key: "viewIncomeStatement",
+      label: "قائمة الدخل",
+      category: "accounting",
+    },
+    {
+      key: "viewBalanceSheet",
+      label: "الميزانية العمومية",
+      category: "accounting",
+    },
+    { key: "viewAccountStatement", label: "كشف حساب", category: "accounting" },
+  ];
+
+  // صلاحيات HR
+  var HR_PERMISSIONS = [
+    // الأقسام
+    { key: "viewDepartments", label: "عرض الأقسام", category: "hr" },
+    { key: "addDepartment", label: "إضافة قسم", category: "hr" },
+    { key: "updateDepartment", label: "تعديل قسم", category: "hr" },
+    { key: "deleteDepartment", label: "حذف قسم", category: "hr" },
+    // الوظائف
+    { key: "viewJobTitles", label: "عرض الوظائف", category: "hr" },
+    { key: "addJobTitle", label: "إضافة وظيفة", category: "hr" },
+    { key: "updateJobTitle", label: "تعديل وظيفة", category: "hr" },
+    { key: "deleteJobTitle", label: "حذف وظيفة", category: "hr" },
+    // الموظفين
+    { key: "viewEmployees", label: "عرض الموظفين", category: "hr" },
+    { key: "addEmployee", label: "إضافة موظف", category: "hr" },
+    { key: "updateEmployee", label: "تعديل موظف", category: "hr" },
+    { key: "deleteEmployee", label: "حذف موظف", category: "hr" },
+    // الحضور
+    { key: "viewAttendance", label: "عرض الحضور", category: "hr" },
+    { key: "recordAttendance", label: "تسجيل حضور", category: "hr" },
+    { key: "editAttendance", label: "تعديل حضور", category: "hr" },
+    // الإجازات
+    { key: "viewLeaveRequests", label: "عرض الإجازات", category: "hr" },
+    { key: "requestLeave", label: "طلب إجازة", category: "hr" },
+    { key: "approveLeaveRequest", label: "اعتماد إجازة", category: "hr" },
+    { key: "manageLeaveTypes", label: "إدارة أنواع الإجازات", category: "hr" },
+    // السلف
+    { key: "viewLoanRequests", label: "عرض السلف", category: "hr" },
+    { key: "requestLoan", label: "طلب سلفة", category: "hr" },
+    { key: "approveLoanRequest", label: "اعتماد سلفة", category: "hr" },
+    // الرواتب
+    { key: "viewPayroll", label: "عرض الرواتب", category: "hr" },
+    { key: "generatePayroll", label: "توليد مسير", category: "hr" },
+    { key: "approvePayroll", label: "اعتماد مسير", category: "hr" },
+    { key: "payPayroll", label: "صرف رواتب", category: "hr" },
+    { key: "viewPayslip", label: "عرض كشف الراتب", category: "hr" },
+  ];
+
+  // توزيع الصلاحيات حسب الدور
+  var ERP_ROLE_PERMISSIONS = {
+    // المحاسب — كل صلاحيات المحاسبة
+    accountant: ACCOUNTING_PERMISSIONS.map(function (p) {
+      return p.key;
+    }).concat(["viewAccounting", "viewItems", "viewTransactions"]),
+
+    // مدير HR — كل صلاحيات HR + عرض تقارير
+    hr_manager: HR_PERMISSIONS.map(function (p) {
+      return p.key;
+    }).concat(["viewHR", "viewEmployees", "viewDashboard"]),
+
+    // أخصائي HR — صلاحيات محدودة
+    hr_specialist: [
+      "viewDepartments",
+      "viewJobTitles",
+      "viewEmployees",
+      "addEmployee",
+      "updateEmployee",
+      "viewAttendance",
+      "recordAttendance",
+      "viewLeaveRequests",
+      "requestLeave",
+      "viewLoanRequests",
+      "requestLoan",
+      "viewPayroll",
+      "viewPayslip",
+      "viewHR",
+    ],
+
+    // أمين صندوق — قبض وصرف وتحويل
+    cashier: [
+      "viewCashBoxes",
+      "viewBankAccounts",
+      "viewReceiptVouchers",
+      "addReceiptVoucher",
+      "viewPaymentVouchers",
+      "addPaymentVoucher",
+      "viewTransferVouchers",
+      "addTransferVoucher",
+      "viewJournalEntries",
+      "viewAccountStatement",
+      "printReceiptVoucher",
+      "printPaymentVoucher",
+      "viewAccounting",
+    ],
+  };
+
+  // دمج الأدوار الجديدة مع النظام الحالي
+  function _initERPRoles() {
+    // دمج ERP_ROLES مع ROLE_LABELS
+    if (typeof ROLE_LABELS !== "undefined") {
+      Object.keys(ERP_ROLES).forEach(function (key) {
+        var role = ERP_ROLES[key];
+        var translated =
+          typeof I18N !== "undefined" && I18N.t ? I18N.t(role.labelKey) : null;
+        // I18N.t يرجّع "⟦KEY⟧" لو القاموس لسه مش جاهز أو المفتاح ناقص — في الحالة دي نستخدم
+        // النص العربي الأصلي كـ fallback آمن بدل ما نعرض المفتاح الخام للمستخدم.
+        ROLE_LABELS[key] =
+          translated && translated.indexOf("⟦") !== 0 ? translated : role.label;
+      });
+    }
+
+    // د-merge صلاحيات الأدوار الجديدة
+    if (typeof ROLE_PERMISSIONS !== "undefined") {
+      Object.keys(ERP_ROLE_PERMISSIONS).forEach(function (role) {
+        ROLE_PERMISSIONS[role] = ERP_ROLE_PERMISSIONS[role];
+      });
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // §EXT-AUTH-02  مجموعات التنقل الجديدة (NAV_GROUPS)
+  // ═══════════════════════════════════════════════════════════════
+
+  var ERP_NAV_GROUPS = [
+    {
+      group: "MENU_ACCOUNTING",
+      icon: '<i class="ti ti-calculator" style="font-size:18px;color:#0E7490"></i>',
+      dropdown: true,
+      items: [
+        {
+          page: "chart-of-accounts",
+          label: "MENU_CHART_OF_ACCOUNTS",
+          icon: '<i class="ti ti-list-tree" style="font-size:18px;color:#1E40AF"></i>',
+          requiredPerms: ["viewChartOfAccounts"],
+        },
+        {
+          page: "cash-boxes",
+          label: "MENU_CASH_BOXES",
+          icon: '<i class="ti ti-cash" style="font-size:18px;color:#166534"></i>',
+          requiredPerms: ["viewCashBoxes"],
+        },
+        // [SIDEBAR-CLEANUP-3] بند "الحسابات البنكية" (bank-accounts) اتشال
+        // من هنا — كان بيتكرر في السايد بار مع "التعاملات البنكية"
+        // (banking-transactions) لأنه بقى تاب جوه نفس الشاشة الموحدة بعد
+        // [BANKING-UNIFIED]، ومحدش من الاتنين بيتفلتر في _initERPNavGroups()
+        // لاختلاف الـ page id. "التحويلات" (transfer-vouchers) اتسابت
+        // عمدًا كبند مستقل هنا لأنها مرتبطة مباشرة بالخزائن والبنوك.
+        {
+          page: "journal-entries",
+          label: "MENU_JOURNAL_ENTRIES",
+          icon: '<i class="ti ti-notebook" style="font-size:18px;color:#5B21B6"></i>',
+          requiredPerms: ["viewJournalEntries"],
+        },
+        {
+          page: "receipt-vouchers",
+          label: "MENU_RECEIPT_VOUCHERS",
+          icon: '<i class="ti ti-receipt" style="font-size:18px;color:#166534"></i>',
+          requiredPerms: ["viewReceiptVouchers"],
+        },
+        {
+          page: "payment-vouchers",
+          label: "MENU_PAYMENT_VOUCHERS",
+          icon: '<i class="ti ti-receipt-off" style="font-size:18px;color:#9A3412"></i>',
+          requiredPerms: ["viewPaymentVouchers"],
+        },
+        {
+          page: "transfer-vouchers",
+          label: "MENU_TRANSFERS",
+          icon: '<i class="ti ti-arrows-exchange" style="font-size:18px;color:#0369A1"></i>',
+          requiredPerms: ["viewTransferVouchers"],
+        },
+        // [SIDEBAR-CLEANUP] الأستاذ العام / ميزان المراجعة / قائمة الدخل /
+        // الميزانية العمومية / التدفقات النقدية / كشف حساب — كانت لسه
+        // موجودة هنا في ERP_NAV_GROUPS (نسخة قديمة موازية) وكانت بترجع
+        // تظهر في السايدبار تاني عن طريق _initERPNavGroups() رغم إنها
+        // كانت اتشالت من النسخة الأساسية بتاعة NAV_GROUPS في
+        // 02_JS_UI_Shell.html — ده كان باج حقيقي (تعارض بين نسختين من
+        // نفس القائمة). دلوقتي الستة بنود دول موجودين بس كبطاقات جوه
+        // "تقارير المحاسبة" (Report Center)، ومحدش منهم بيظهر في
+        // السايدبار من أي مصدر.
+        //
+        // [SIDEBAR-CLEANUP-2] "لوحة المحاسبة" (accounting-dashboard) كانت
+        // هنا برضه وكانت بتتكرر في السايد بار: مرة بالضغط على اسم القسم
+        // "المحاسبة" نفسه (لأنه معرَّف بـ dashboardPage: "accounting-dashboard"
+        // في 02_JS_UI_Shell.html) ومرة تانية كبند عادي هنا — لأن دالة
+        // الدمج _initERPNavGroups() بتستثني بس البنود اللي الـ page بتاعها
+        // موجود فعلاً جوه items[] بتاعة قسم موجود، ومش بتشوف dashboardPage
+        // خالص. اتشال البند من هنا نهائيًا.
+      ],
+    },
+    {
+      group: "MENU_HR",
+      icon: '<i class="ti ti-users-group" style="font-size:18px;color:#2563EB"></i>',
+      dropdown: true,
+      // [SIDEBAR-CLEANUP-2] "لوحة HR" (hr-dashboard) اتشالت من هنا لنفس
+      // سبب "لوحة المحاسبة" بالظبط — كانت بتتكرر في السايد بار (مرة
+      // بالضغط على اسم القسم نفسه، ومرة كبند عادي هنا).
+      items: [
+        {
+          page: "departments",
+          label: "MENU_DEPARTMENTS",
+          icon: '<i class="ti ti-building" style="font-size:18px;color:#0369A1"></i>',
+          requiredPerms: ["viewDepartments"],
+        },
+        {
+          page: "job-titles",
+          label: "MENU_JOBS",
+          icon: '<i class="ti ti-briefcase" style="font-size:18px;color:#5B21B6"></i>',
+          requiredPerms: ["viewJobTitles"],
+        },
+        {
+          page: "employees",
+          label: "MENU_EMPLOYEES",
+          icon: '<i class="ti ti-user-circle" style="font-size:18px;color:#1D4ED8"></i>',
+          requiredPerms: ["viewEmployees"],
+        },
+        {
+          page: "attendance",
+          label: "MENU_ATTENDANCE",
+          icon: '<i class="ti ti-clock-check" style="font-size:18px;color:#166534"></i>',
+          requiredPerms: ["viewAttendance"],
+        },
+
+        {
+          page: "leave-types",
+          label: "MENU_LEAVE_TYPES",
+          icon: '<i class="ti ti-calendar-event" style="font-size:18px;color:#0E7490"></i>',
+          requiredPerms: ["manageLeaveTypes"],
+        },
+        {
+          page: "leave-requests",
+          label: "MENU_LEAVE_REQUESTS",
+          icon: '<i class="ti ti-calendar-plus" style="font-size:18px;color:#9D174D"></i>',
+          requiredPerms: ["viewLeaveRequests"],
+        },
+        {
+          page: "loan-requests",
+          label: "MENU_ADVANCES",
+          icon: '<i class="ti ti-coin" style="font-size:18px;color:#92400E"></i>',
+          requiredPerms: ["viewLoanRequests"],
+        },
+        {
+          page: "payroll",
+          label: "MENU_PAYROLL_RUN",
+          icon: '<i class="ti ti-cash-banknote" style="font-size:18px;color:#166534"></i>',
+          requiredPerms: ["viewPayroll"],
+        },
+        {
+          page: "payslip",
+          label: "MENU_SALARY_STATEMENT",
+          icon: '<i class="ti ti-file-invoice" style="font-size:18px;color:#374151"></i>',
+          requiredPerms: ["viewPayslip"],
+        },
+        {
+          page: "leave-types",
+          label: "MENU_LEAVE_TYPES",
+          icon: '<i class="ti ti-calendar-stats" style="font-size:18px;color:#0369A1"></i>',
+          requiredPerms: ["viewHR"],
+        },
+        {
+          page: "leave-balance",
+          label: "MENU_LEAVE_BALANCE",
+          icon: '<i class="ti ti-chart-pie" style="font-size:18px;color:#0891B2"></i>',
+          requiredPerms: ["viewHR"],
+        },
+        {
+          page: "monthly-attendance",
+          label: "MENU_MONTHLY_REPORT",
+          icon: '<i class="ti ti-table" style="font-size:18px;color:#065F46"></i>',
+          requiredPerms: ["viewHR"],
+        },
+        {
+          page: "production-stages",
+          label: "MENU_PRODUCTION_STAGES",
+          icon: '<i class="ti ti-tools" style="font-size:18px;color:#0F766E"></i>',
+          requiredPerms: ["viewHR"],
+          isNew: true,
+        },
+      ],
+    },
+  ];
+
+  // دمج مجموعات التنقل مع النظام الحالي
+  function _initERPNavGroups() {
+    if (typeof NAV_GROUPS !== "undefined") {
+      var existingGroups = {};
+      var existingPages = {};
+      NAV_GROUPS.forEach(function (g) {
+        existingGroups[g.group] = true;
+        (g.items || []).forEach(function (it) {
+          existingPages[it.page] = true;
+        });
+      });
+
+      // إدراج مجموعات المحاسبة وHR بعد Dashboard
+      var dashboardIdx = NAV_GROUPS.findIndex(function (g) {
+        return (
+          g.items &&
+          g.items.some(function (i) {
+            return i.page === "dashboard";
+          })
+        );
+      });
+
+      ERP_NAV_GROUPS.forEach(function (group, i) {
+        var filteredItems = (group.items || []).filter(function (it) {
+          return !existingPages[it.page];
+        });
+        if (!filteredItems.length) return;
+
+        // ⚠️ [FIX] لو القسم موجود مسبقًا في NAV_GROUPS (مثل "الموارد البشرية"
+        // المضاف يدويًا في 02_JS_UI_Shell.html)، كان الكود القديم يتجاهل
+        // القسم بالكامل ولا يضيف عناصره الجديدة (مثل "مراحل الإنتاج") إطلاقًا،
+        // فتختفي الصفحة بصمت من السايد بار رغم أنها مسجّلة وتعمل فعليًا.
+        // الحل: لو القسم موجود، ندمج العناصر الناقصة داخله بدل تجاهله بالكامل.
+        if (existingGroups[group.group]) {
+          var existingGroupObj = NAV_GROUPS.filter(function (g) {
+            return g.group === group.group;
+          })[0];
+          if (existingGroupObj) {
+            existingGroupObj.items = (existingGroupObj.items || []).concat(
+              filteredItems,
+            );
+            filteredItems.forEach(function (it) {
+              existingPages[it.page] = true;
+            });
+          }
+          return;
+        }
+
+        var groupToInsert = Object.assign({}, group, { items: filteredItems });
+        var insertIdx =
+          dashboardIdx !== -1 ? dashboardIdx + 1 + i : NAV_GROUPS.length;
+        NAV_GROUPS.splice(insertIdx, 0, groupToInsert);
+        existingGroups[group.group] = true;
+        filteredItems.forEach(function (it) {
+          existingPages[it.page] = true;
+        });
+      });
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // §EXT-AUTH-03  Router — ربط الصفحات الجديدة
+  // ═══════════════════════════════════════════════════════════════
+
+  // خريطة الصفحات → دوال render + bind
+  var ERP_PAGE_MAP = {
+    // ── Accounting ──
+    "accounting-dashboard": {
+      render: "renderAccountingDashboard",
+      bind: "bindAccountingDashboard",
+      title: "المحاسبة",
+    },
+    "banking-dashboard": {
+      render: "renderBankingDashboard",
+      bind: "bindBankingDashboard",
+      title: "لوحة تحكم البنوك",
+    },
+
+    "chart-of-accounts": {
+      render: "renderChartOfAccounts",
+      bind: "bindChartOfAccounts",
+      title: "دليل الحسابات",
+    },
+    "cash-boxes": {
+      render: "renderCashBoxes",
+      bind: "bindCashBoxes",
+      title: "الخزائن",
+    },
+    banks: {
+      render: "renderBanks",
+      bind: "bindBanks",
+      title: "البنوك",
+    },
+    "bank-accounts": {
+      render: "renderBankAccounts",
+      bind: "bindBankAccounts",
+      title: "التعاملات البنكية",
+    },
+    "cheque-books": {
+      render: "renderChequeBooks",
+      bind: "bindChequeBooks",
+      title: "دفاتر الشيكات",
+    },
+    cheques: {
+      render: "renderCheques",
+      bind: "bindCheques",
+      title: "الشيكات",
+    },
+    "journal-entries": {
+      render: "renderJournalEntries",
+      bind: "bindJournalEntries",
+      title: "القيود اليومية",
+    },
+    "receipt-vouchers": {
+      render: "renderReceiptVouchers",
+      bind: "bindReceiptVouchers",
+      title: "سندات القبض",
+    },
+    "payment-vouchers": {
+      render: "renderPaymentVouchers",
+      bind: "bindPaymentVouchers",
+      title: "سندات الصرف",
+    },
+    "transfer-vouchers": {
+      render: "renderTransferVouchers",
+      bind: "bindTransferVouchers",
+      title: "التحويلات",
+    },
+    "bank-reconciliation": {
+      render: "renderBankReconciliation",
+      bind: "bindBankReconciliation",
+      title: "المطابقة البنكية",
+    },
+    "general-ledger": {
+      render: "renderGeneralLedger",
+      bind: "bindGeneralLedger",
+      title: "الأستاذ العام",
+      module: "accounting",
+    },
+    "trial-balance": {
+      render: "renderTrialBalance",
+      bind: "bindTrialBalance",
+      title: "ميزان المراجعة",
+      module: "accounting",
+    },
+    "income-statement": {
+      render: "renderIncomeStatement",
+      bind: "bindIncomeStatement",
+      title: "قائمة الدخل",
+      module: "accounting",
+    },
+    "balance-sheet": {
+      render: "renderBalanceSheet",
+      bind: "bindBalanceSheet",
+      title: "الميزانية العمومية",
+      module: "accounting",
+    },
+    // [SIDEBAR-CLEANUP] كانت ناقصة تمامًا من ERP_PAGE_MAP، فكان أي رابط
+    // قديم أو إشعار بيشاور على "cash-flow-statement" مباشرة بيفتح صح
+    // (لأن الـ render/bind بتوعها متسجّلين في switch منفصل) بس الـ
+    // breadcrumb والعنوان في الـ top bar كانوا بيرجعوا فاضيين.
+    "cash-flow-statement": {
+      render: "renderCashFlowStatement",
+      bind: "bindCashFlowStatement",
+      title: "قائمة التدفقات النقدية",
+      module: "accounting",
+    },
+    "account-statement": {
+      render: "renderAccountStatement",
+      bind: "bindAccountStatement",
+      title: "كشف حساب",
+      module: "accounting",
+    },
+
+    // ── HR ──
+    "hr-dashboard": {
+      render: "renderHRDashboard",
+      bind: "bindHRDashboard",
+      title: "الموارد البشرية",
+    },
+    departments: {
+      render: "renderDepartments",
+      bind: "bindDepartments",
+      title: "الأقسام",
+    },
+    "salary-components": {
+      render: "renderSalaryComponents",
+      bind: "bindSalaryComponents",
+      title: "بنود الرواتب",
+    },
+    "job-titles": {
+      render: "renderJobTitles",
+      bind: "bindJobTitles",
+      title: "الوظائف",
+    },
+    employees: {
+      render: "renderEmployees",
+      bind: "bindEmployees",
+      title: "الموظفون",
+    },
+    attendance: {
+      render: "renderAttendance",
+      bind: "bindAttendance",
+      title: "الحضور والانصراف",
+    },
+    "leave-types": {
+      render: "renderLeaveTypes",
+      bind: "bindLeaveTypes",
+      title: "أنواع الإجازات",
+    },
+    "leave-requests": {
+      render: "renderLeaveRequests",
+      bind: "bindLeaveRequests",
+      title: "طلبات الإجازة",
+    },
+    "loan-requests": {
+      render: "renderLoanRequests",
+      bind: "bindLoanRequests",
+      title: "السلف",
+    },
+    payroll: {
+      render: "renderPayroll",
+      bind: "bindPayroll",
+      title: "مسير الرواتب",
+    },
+    payslip: {
+      render: "renderPayslip",
+      bind: "bindPayslip",
+      title: "كشف الراتب",
+    },
+    "production-stages": {
+      render: "renderProductionStages",
+      bind: "bindProductionStages",
+      title: "مراحل الإنتاج",
+    },
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // §EXT-AUTH-04  التهيئة
+  // ═══════════════════════════════════════════════════════════════
+
+  // تهيئة كل الامتدادات عند الإقلاع
+  function _initERPModules() {
+    // [FIX] لا ننادي _initERPRoles() مباشرة هنا: عند DOMContentLoaded يكون
+    // I18N.bootstrap() لسه مارجعش رد السيرفر (نداء async)، فـ _dict بيبقى
+    // فاضي و I18N.t() بيطبع "[I18N] مفتاح ترجمة مفقود" رغم إن المفتاح
+    // موجود فعلاً في القاموس. onReady() بيأجّل التنفيذ لحد ما القاموس
+    // يوصل فعلاً (أو ينفّذ فورًا لو كان جاهز أصلاً)، فيدّي نفس النتيجة
+    // بدون تحذير كاذب.
+    if (typeof I18N !== "undefined" && I18N.onReady) {
+      I18N.onReady(_initERPRoles);
+    } else {
+      _initERPRoles();
+    }
+    _initERPNavGroups();
+  }
+
+  // ⚠️ [FIX] استدعاء التهيئة بعد تحميل كل ملفات الـ JS
+  // السبب: NAV_GROUPS معرّف في 02_JS_UI_Shell.html وهو ملف يُضمَّن
+  // بعد هذا الملف (01_JS_Core_Auth.html). استدعاء _initERPModules()
+  // مباشرة هنا كان يجعل (typeof NAV_GROUPS !== "undefined") = false
+  // دائماً، فتفشل عملية دمج مجموعتي "المحاسبة" و"الموارد البشرية"
+  // (وكل ما تحتهما، بما فيه شاشة استيراد الحضور من جهاز البصمة) بصمت
+  // ولا تظهر أبداً في الـ Sidebar. التأخير لحد DOMContentLoaded
+  // يضمن أن كل ملفات JS_*.html نفّذت بالفعل وأن NAV_GROUPS موجود.
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", _initERPModules);
+  } else {
+    _initERPModules();
+  }
+
+  // إعادة دمج تسميات الأدوار (ROLE_LABELS) في كل مرة يجهّز/يتغيّر فيها القاموس،
+  // حتى لا تتجمّد الأسماء على اللغة الافتراضية عند أول تحميل (راجع 32_JS_i18n_Client.html § onChange)
+  if (typeof I18N !== "undefined" && I18N.onChange) {
+    I18N.onChange(_initERPRoles);
+  }
+</script>

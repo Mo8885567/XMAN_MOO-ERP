@@ -1,0 +1,380 @@
+<style>
+  /* ═══════════════════════════════════════════════════════════════════
+     Style_14_AppSelect.html — Design Tokens + Styles لمحرك الاختيار
+     الموحّد AppSelect (Selection Engine).
+     ─────────────────────────────────────────────────────────────────
+     [SELECTION-ENGINE] هذا هو المصدر الوحيد لكل شكل/أبعاد/ألوان/ظلال/
+     حركة خاصة بأي عنصر اختيار في النظام (Select / Multi Select /
+     Searchable / Autocomplete / ComboBox / Lookup / Tree Select /
+     Cascading Select). ممنوع تعريف أي قيمة من دول جوه أي شاشة — أي
+     تخصيص شكل لازم يعدي من هنا فقط. يعتمد بالكامل على التوكِنز
+     العامة الموجودة في Style_01_Tokens.html (--surface, --border,
+     --text, --accent, --radius-*, --shadow-*, --space-*, --transition)
+     فأي تغيير Theme/Dark Mode/RTL بينعكس هنا تلقائيًا من غير تكرار.
+     الجافاسكريبت المقابل: 49_JS_SelectionEngine.html (window.AppSelect).
+     ═══════════════════════════════════════════════════════════════════ */
+
+  :root {
+    /* ── AppSelect-specific tokens (مش موجودة في الملف العام لأنها خاصة
+       بالمكون ده بس) — القيم التانية كلها بتتسحب من التوكِنز العامة ── */
+    --as-panel-max-h: 320px;
+    --as-panel-gap: 6px;
+    --as-option-h: 40px;
+    --as-option-h-sm: 32px;
+    --as-option-h-lg: 46px;
+    --as-z-panel: 999999; /* [FIX] كانت 4200 وبتفتح تحت المودالز (z-index:9000) فيبان إنها مش بتفتح */
+    --as-search-h: 40px;
+    --as-avatar-size: 22px;
+    --as-badge-min-w: 20px;
+    --as-tree-indent: 20px;
+    --as-anim-dur: 0.16s;
+    --as-anim-ease: cubic-bezier(0.16, 1, 0.3, 1);
+    --as-highlight-bg: var(--warning-soft);
+    --as-highlight-color: var(--warning);
+  }
+
+  /* ═══ 1. Root / Sizes ═══ */
+  .as-root {
+    position: relative;
+    width: 100%;
+    display: inline-flex;
+    flex-direction: column;
+    font-family: var(--font);
+    user-select: none;
+  }
+  .as-root[data-size="sm"] { --as-cur-h: var(--space-9); }
+  .as-root[data-size="md"] { --as-cur-h: var(--input-height); }
+  .as-root[data-size="lg"] { --as-cur-h: var(--space-13); }
+  .as-root:not([data-size]) { --as-cur-h: var(--input-height); }
+
+  /* ═══ 2. Trigger (الحقل الظاهر) ═══ */
+  .as-trigger {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    height: var(--as-cur-h);
+    min-height: var(--as-cur-h);
+    padding: 0 var(--input-padding-x);
+    background: var(--surface);
+    border: var(--input-border-width) solid var(--border);
+    border-radius: var(--input-radius);
+    color: var(--text);
+    font-size: var(--input-font-size);
+    cursor: pointer;
+    transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+    box-shadow: var(--shadow-xs);
+  }
+  .as-trigger:hover:not([aria-disabled="true"]) { border-color: var(--accent); }
+  .as-root.as-open .as-trigger {
+    border-color: var(--accent);
+    box-shadow: var(--input-focus-ring);
+  }
+  [data-theme="dark"] .as-root.as-open .as-trigger { box-shadow: var(--input-focus-ring-dark); }
+
+  .as-icon { display: flex; align-items: center; color: var(--text3); flex: 0 0 auto; }
+  .as-value {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+  .as-value.as-placeholder { color: var(--text3); }
+  .as-clear {
+    flex: 0 0 auto;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: var(--radius-pill);
+    color: var(--text3);
+    cursor: pointer;
+  }
+  .as-clear:hover { background: var(--surface3); color: var(--danger); }
+  .as-root.as-has-value:not(.as-required):not([data-loading="true"]) .as-clear { display: none; } /* [FIX] X اتشالت بناءً على الطلب */
+
+  .as-chevron {
+    flex: 0 0 auto;
+    color: var(--text3);
+    transition: transform var(--transition);
+    display: flex;
+  }
+  .as-root.as-open .as-chevron { transform: rotate(180deg); color: var(--accent); }
+
+  /* ═══ [INLINE-ADD-2026-08-06] زرار "+" داخل صندوق الـ select نفسه،
+     جنب السهم المنسد مباشرة — بدل ما كان زرار خارجي منفصل بجنب
+     الـ dropdown. راجع opts.addAction في AppSelect.upgrade/create
+     (49_JS_SelectionEngine.html). ═══ */
+  /* [FIX-PLUS-CENTERING] الشكل القديم كان بيحط border-inline-start +
+     padding-inline-start على نفس صندوق الزرار (22×22px)، فبيبقى صندوق
+     المحتوى الفعلي غير متماثل (padding على جهة واحدة بس) وبالتالي
+     الأيقونة بتتمركز جوه صندوق مش متماثل وتبان مزحزحة عن المنتصف
+     الحقيقي للزرار. الحل: نخلي الصندوق 22×22 نضيف تمامًا (من غير
+     border/padding داخلي)، والخط الفاصل بقى ::before منفصل بمكان
+     مطلق برّه صندوق الزرار — مايأثرش على تمركز الأيقونة خالص. */
+  .as-inline-add {
+    position: relative;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    margin-inline-start: 8px;
+    border-radius: var(--radius-sm, 6px);
+    color: var(--text3);
+    cursor: pointer;
+  }
+  .as-inline-add::before {
+    content: "";
+    position: absolute;
+    inset-inline-start: -6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1px;
+    height: 16px;
+    background: var(--border);
+  }
+  .as-inline-add:hover { background: var(--surface3); color: var(--accent); }
+  .as-root[data-disabled="true"] .as-inline-add,
+  .as-root[data-readonly="true"] .as-inline-add { display: none; }
+
+  /* ═══ [ICON-ONLY-TRIGGER] منسدل مضغوط يعرض أيقونة فقط وهو مقفول
+     (زي "طريقة توليد الكود": تلقائي/يدوي) — النص الكامل بيفضل ظاهر
+     جوه القائمة لما تتفتح، وكـ title (tooltip) وهو مقفول. ═══ */
+  .as-root.as-icon-trigger { width: auto; flex: 0 0 auto; }
+  .as-root.as-icon-trigger .as-trigger {
+    width: 48px;
+    min-width: 48px;
+    padding: 0 8px;
+    gap: 2px;
+    justify-content: center;
+  }
+  .as-root.as-icon-trigger .as-value,
+  .as-root.as-icon-trigger .as-clear { display: none !important; }
+  .as-root.as-icon-trigger .as-icon i { font-size: 16px; }
+  .as-spinner {
+    width: 16px; height: 16px; flex: 0 0 auto; display: none;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: as-spin 0.7s linear infinite;
+  }
+  .as-root[data-loading="true"] .as-spinner { display: block; }
+  .as-root[data-loading="true"] .as-chevron { display: none; }
+  @keyframes as-spin { to { transform: rotate(360deg); } }
+
+  /* ═══ 3. States ═══ */
+  .as-root[data-disabled="true"] .as-trigger {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: var(--surface2);
+  }
+  .as-root[data-readonly="true"] .as-trigger {
+    cursor: default;
+    background: var(--surface2);
+  }
+  .as-root[data-error="true"] .as-trigger {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+  }
+  .as-error-msg {
+    display: none;
+    color: var(--danger);
+    font-size: var(--text-xs);
+    margin-top: var(--space-1);
+    padding: 0 2px;
+  }
+  .as-root[data-error="true"] .as-error-msg { display: block; }
+  .as-required-mark { color: var(--danger); margin-inline-start: 2px; }
+
+  /* ═══ 4. Multi-select tags ═══ */
+  .as-tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; flex: 1 1 auto; min-width: 0; }
+  .as-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-radius: var(--radius-xs-alt);
+    padding: 2px 6px;
+    font-size: var(--text-xs);
+    max-width: 140px;
+  }
+  .as-tag span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .as-tag i { cursor: pointer; opacity: 0.7; }
+  .as-tag i:hover { opacity: 1; }
+  .as-tag-more { color: var(--text3); font-size: var(--text-xs); }
+
+  /* ═══ 5. Panel (القائمة المنسدلة) ═══ */
+  .as-panel {
+    position: fixed;
+    z-index: var(--as-z-panel);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+    pointer-events: none;
+    transition: opacity var(--as-anim-dur) var(--as-anim-ease), transform var(--as-anim-dur) var(--as-anim-ease);
+    overflow: hidden;
+  }
+  .as-panel.as-panel-up { transform: translateY(4px) scale(0.98); }
+  .as-panel.as-visible { opacity: 1; transform: translateY(0) scale(1); pointer-events: all; }
+
+  .as-search-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+  }
+  .as-search-row i { color: var(--text3); flex: 0 0 auto; }
+  .as-search-input {
+    flex: 1 1 auto;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--text);
+    font-size: var(--text-sm);
+    font-family: var(--font);
+    height: var(--as-search-h);
+    min-width: 0;
+  }
+  .as-search-input::placeholder { color: var(--text3); }
+
+  .as-list {
+    overflow-y: auto;
+    max-height: var(--as-panel-max-h);
+    flex: 1 1 auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .as-viewport { position: relative; }
+
+  .as-group-label {
+    padding: var(--space-2) var(--space-3) 4px;
+    font-size: var(--text-2xs);
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-weight: 600;
+  }
+
+  .as-option {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: var(--as-option-h);
+    padding: 0 var(--space-3);
+    cursor: pointer;
+    color: var(--text);
+    font-size: var(--text-sm);
+    white-space: nowrap;
+  }
+  .as-panel[data-size="sm"] .as-option { height: var(--as-option-h-sm); }
+  .as-panel[data-size="lg"] .as-option { height: var(--as-option-h-lg); }
+
+  .as-option:hover, .as-option.as-active { background: var(--surface2); }
+  .as-option.as-selected { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .as-option.as-disabled { opacity: 0.45; cursor: not-allowed; }
+  .as-option[data-indent] { padding-inline-start: calc(var(--space-3) + var(--as-tree-indent) * var(--as-depth, 0)); }
+
+  .as-opt-check {
+    flex: 0 0 auto;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--border);
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff;
+  }
+  .as-option.as-selected .as-opt-check { background: var(--accent); border-color: var(--accent); }
+  .as-option.as-selected .as-opt-check svg { display: block; }
+  .as-opt-check svg { display: none; width: 11px; height: 11px; }
+  .as-option:not([data-multi]) .as-opt-check { display: none; }
+
+  .as-opt-tree-toggle {
+    flex: 0 0 auto;
+    width: 18px; height: 18px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text3);
+    cursor: pointer;
+    transition: transform var(--transition);
+  }
+  .as-opt-tree-toggle.as-expanded { transform: rotate(90deg); }
+
+  .as-opt-media {
+    flex: 0 0 auto;
+    width: var(--as-avatar-size);
+    height: var(--as-avatar-size);
+    border-radius: var(--radius-xs);
+    object-fit: cover;
+    background: var(--surface2);
+  }
+  .as-opt-icon { flex: 0 0 auto; color: var(--text3); display: flex; }
+  .as-opt-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .as-opt-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .as-opt-desc { font-size: var(--text-2xs); color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .as-opt-badge {
+    flex: 0 0 auto;
+    min-width: var(--as-badge-min-w);
+    text-align: center;
+    font-size: var(--text-2xs);
+    padding: 1px 6px;
+    border-radius: var(--radius-pill);
+    background: var(--surface3);
+    color: var(--text2);
+  }
+  .as-opt-name mark {
+    background: var(--as-highlight-bg);
+    color: var(--as-highlight-color);
+    border-radius: 3px;
+    padding: 0 1px;
+  }
+
+  .as-empty, .as-error-state {
+    padding: var(--space-6) var(--space-3);
+    text-align: center;
+    color: var(--text3);
+    font-size: var(--text-sm);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .as-error-state { color: var(--danger); }
+  .as-loading-row {
+    display: flex; align-items: center; justify-content: center;
+    padding: var(--space-4);
+    color: var(--text3);
+    font-size: var(--text-xs);
+    gap: var(--space-2);
+  }
+
+  .as-footer {
+    border-top: 1px solid var(--border);
+    padding: var(--space-2) var(--space-3);
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    flex: 0 0 auto;
+  }
+  .as-footer button {
+    background: none; border: none; color: var(--accent);
+    font-size: var(--text-xs); cursor: pointer; font-family: var(--font);
+  }
+  .as-footer button:hover { text-decoration: underline; }
+
+  /* ═══ 6. Responsive ═══ */
+  @media (max-width: 640px) {
+    .as-panel { left: 8px !important; right: 8px !important; width: auto !important; }
+  }
+</style>

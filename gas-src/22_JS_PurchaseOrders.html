@@ -1,0 +1,1317 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 22_JS_PurchaseOrders.html — موديول أوامر الشراء (Purchase Orders)
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  // §PO-A  bindPurchaseOrders   — ربط أحداث الشاشة الرئيسية
+  // §PO-B  openCreatePOModal    — Modal إنشاء أمر شراء جديد
+  // §PO-C  _buildPOLineRow      — صف بند في أمر الشراء
+  // §PO-D  _calcPOTotals        — حساب الإجماليات
+  // §PO-E  savePurchaseOrder    — حفظ أمر شراء جديد
+  // §PO-F  viewPurchaseOrder    — عرض/طباعة أمر الشراء
+  // §PO-G  approvePurchaseOrderConfirm — اعتماد الأمر
+  // §PO-H  openReceivePOModal   — Modal استلام البضاعة
+  // §PO-I  saveReceivePO        — حفظ الاستلام (ينشئ حركة وارد IN)
+  // §PO-J  deletePurchaseOrderConfirm — حذف الأمر
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+  // §PO-BADGE  شارة حالة أمر الشراء — Global (كانت محلية داخل
+  // renderPurchaseOrders في Templates_09.html، نُقلت هنا لأنها أصبحت
+  // تُستخدم أيضًا من column.format في _poRegisterColumns أدناه)
+  // ─────────────────────────────────────────────────────────────
+  function poStatusBadge(status) {
+    if (status === "مسودة")
+      return '<span style="background:#FEF9C3;color:#92400E;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700"> مسودة</span>';
+    if (status === "معتمد")
+      return '<span style="background:#DCFCE7;color:#166534;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700"> معتمد</span>';
+    if (status === "مستلم")
+      return '<span style="background:#EDE9FE;color:#5B21B6;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700"> مستلم</span>';
+    if (status === "ملغي")
+      return '<span style="background:#FEE2E2;color:#991B1B;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700"> ملغي</span>';
+    return (
+      '<span style="background:var(--surface2);color:var(--text3);padding:2px 8px;border-radius:20px;font-size:11px">' +
+      esc(status || "—") +
+      "</span>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PO-CE  [COLUMN-ENGINE PILOT] تعريف أعمدة جدول أوامر الشراء
+  // كـ Metadata بدل <th> ثابتة — أول شاشة تُطبَّق عليها Dynamic Columns
+  // (راجع COLUMN-ENGINE-P1-REPORT.md لتفاصيل المعمارية الكاملة، و
+  // COLUMN-ENGINE-ROADMAP.md لخطة تعميمها على باقي الشاشات).
+  // ─────────────────────────────────────────────────────────────
+  var _poColumnsRegistered = false;
+
+  function _poRegisterColumns() {
+    if (_poColumnsRegistered) return;
+    _poColumnsRegistered = true;
+    ColumnEngine.register(
+      "purchase_orders",
+      [
+        {
+          key: "id",
+          label: "رقم الأمر",
+          type: "text",
+          width: 110,
+          frozen: "right",
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px;color:#7C3AED">' +
+              esc(v || "") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "date",
+          label: "التاريخ",
+          type: "date",
+          width: 100,
+        },
+        {
+          key: "supplier",
+          label: "المورد",
+          type: "text",
+          width: 180,
+          format: function (v) {
+            return "<b>" + esc(v || "—") + "</b>";
+          },
+        },
+        {
+          key: "lines_count",
+          label: "البنود",
+          type: "number",
+          width: 80,
+          align: "center",
+          format: function (v) {
+            return (
+              '<span style="display:block;text-align:center">' +
+              Number(v || 0) +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "net_total",
+          label: "الإجمالي",
+          type: "currency",
+          width: 130,
+          format: function (v) {
+            return (
+              '<span class="sensitive-balance" style="font-weight:700;color:#7C3AED">' +
+              formatMoney(v || 0, { decimals: 0 }) +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "status",
+          label: "الحالة",
+          type: "badge",
+          width: 110,
+          format: function (v) {
+            return poStatusBadge(v);
+          },
+        },
+        {
+          key: "expected_date",
+          label: "تاريخ التسليم",
+          type: "date",
+          width: 110,
+        },
+        {
+          key: "created_by",
+          label: "بواسطة",
+          type: "text",
+          width: 110,
+        },
+        // ── أعمدة ذكية: مخفية افتراضيًا، يظهرها المستخدم من "تخصيص الجدول" ──
+        {
+          key: "notes",
+          label: "ملاحظات",
+          type: "text",
+          width: 200,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "created_at",
+          label: "تاريخ الإنشاء",
+          type: "date",
+          width: 110,
+          category: "حقول إضافية",
+          defaultVisible: false,
+          format: function (v) {
+            return v ? _fmtDate(v) : "—";
+          },
+        },
+        // [COLUMN-ENGINE-FULL-FIELDS] حقول موجودة فعليًا في PURCHASE_ORDER_HEADERS
+        // (Code_27_PurchaseOrders.gs) لكنها لم تكن معروضة كأعمدة اختيارية.
+        // lines_json (بنود الأمر التفصيلية) بيانات متداخلة معقدة — تُعرض
+        // من شاشة عرض/طباعة الأمر (viewPurchaseOrder) وليست عمود مسطّح مناسب.
+        {
+          key: "warehouse",
+          label: "المخزن",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "payment_terms",
+          label: "شروط الدفع",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "subtotal",
+          label: "الإجمالي قبل الخصم/الضريبة",
+          type: "currency",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "discount_value",
+          label: "قيمة الخصم المُدخلة",
+          type: "number",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "discount_amount",
+          label: "مبلغ الخصم",
+          type: "currency",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "vat_percent",
+          label: "نسبة الضريبة %",
+          type: "number",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "vat_amount",
+          label: "مبلغ الضريبة",
+          type: "currency",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "updated_at",
+          label: "تاريخ آخر تعديل",
+          type: "date",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "invoiced_status",
+          label: "حالة الفوترة",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "invoiced_amount",
+          label: "المبلغ المفوتر",
+          type: "currency",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+      ],
+      {
+        title: "أوامر الشراء",
+        rowKey: "id",
+        contextMenuType: "purchase_orders", // نفس menuType المُسجَّل سابقًا لـ po-tbody
+      },
+    );
+  }
+
+  /**
+   * _poRenderTable — يبني/يحدّث جدول أوامر الشراء عبر ColumnEngine
+   * حسب فلتر الحالة الحالي (زر "الكل/مسودة/معتمد/مستلم"). البحث النصي
+   * نفسه أصبح جزءًا من ColumnEngine (مربع البحث في الـ toolbar) بدل
+   * مربع #po-search القديم.
+   */
+  function _poRenderTable(statusFilter) {
+    var container = document.getElementById("po-ce-container");
+    if (!container) return;
+    _poRegisterColumns();
+    var orders = (APP.data.purchaseOrders || []).slice().reverse();
+    if (statusFilter) {
+      orders = orders.filter(function (o) {
+        return o.status === statusFilter;
+      });
+    }
+    ColumnEngine.renderTable("purchase_orders", container, orders, {
+      onRowClick: function (row) {
+        viewPurchaseOrder(row.id);
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PO-A  Bind الشاشة الرئيسية
+  // ─────────────────────────────────────────────────────────────
+  function bindPurchaseOrders() {
+    var newBtn = document.getElementById("po-new-btn");
+    if (newBtn)
+      newBtn.addEventListener("click", function () {
+        openPurchaseOrderWorkspace();
+      });
+
+    document.querySelectorAll(".po-filter-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll(".po-filter-btn").forEach(function (b) {
+          b.style.background = "transparent";
+          b.style.color = "var(--text2)";
+        });
+        this.style.background = "#7C3AED";
+        this.style.color = "#fff";
+        _currentPOStatus = this.dataset.status;
+        _poRenderTable(_currentPOStatus);
+      });
+    });
+
+    // [FIX-PO-DATA-LOAD] كان مفيش أي نداء لـ getPurchaseOrders() في كامل
+    // المشروع — يعني الشاشة كانت بتعرض بس الأوامر اللي اتعملت في نفس
+    // الجلسة الحالية (بتتضاف لـ APP.data.purchaseOrders يدويًا عند
+    // savePurchaseOrder فقط)، وأي أمر شراء قديم من جلسة سابقة كان مستحيل
+    // يظهر لحد ما حد يعمل حاجة تانية تملأ الأراي دي بالصدفة. راجع
+    // ERP_GAP_ANALYSIS_AND_IMPROVEMENT_PLAN.md.
+    var container = document.getElementById("po-ce-container");
+    if (container)
+      container.innerHTML = '<div class="empty-state">جارِ التحميل...</div>';
+    DL.PurchaseOrders.getPurchaseOrders(
+      {},
+      {
+        onSuccess: function (result) {
+          APP.data.purchaseOrders = result.data || [];
+          _poRenderTable(_currentPOStatus);
+        },
+        onError: function (result) {
+          if (container)
+            container.innerHTML =
+              '<div class="empty-state">تعذر تحميل أوامر الشراء: ' +
+              esc(result.message || "") +
+              "</div>";
+        },
+      },
+    );
+  }
+
+  var _currentPOStatus = "";
+
+  // ─────────────────────────────────────────────────────────────
+  // §PO-B  Modal إنشاء أمر شراء
+  // ─────────────────────────────────────────────────────────────
+  // [ERP-REDESIGN] الشاشة أصبحت صفحة كاملة داخل حدود منطقة المحتوى
+  // (زي 29_JS_InvoiceWorkspace.html) بدل مودال-أوفرلاي بيغطي الشاشة كلها
+  // فوق السايد بار والشريط العلوي.
+  function openPurchaseOrderWorkspace() {
+    renderPage("purchase_order_workspace");
+  }
+
+  function renderPurchaseOrderWorkspace() {
+    var date = (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().split("T")[0]);
+    var suppliers = APP.data.suppliers || [];
+    var supplierOpts =
+      '<option value="">-- اختر مورد --</option>' +
+      suppliers
+        .map(function (s) {
+          return (
+            '<option value="' + esc(s.name) + '">' + esc(s.name) + "</option>"
+          );
+        })
+        .join("");
+
+    var firstLineHtml = _buildPOLineRow(0, {});
+
+    return (
+      '<div class="iw-page">' +
+      '<div class="iw-toolbar">' +
+      '<button class="iw-tool-btn" onclick="_addPOLine()"><i class="ti ti-square-plus"></i> إضافة صنف</button>' +
+      "</div>" +
+      '<div class="iw-body iw-body-full"><div class="iw-main">' +
+      '<div class="iw-header-card">' +
+      '<div class="iw-header-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      '<div class="iw-field"><label class="form-label">المورد <span style="color:#ef4444">*</span></label>' +
+      '<select class="input" id="po-supplier">' +
+      supplierOpts +
+      "</select></div>" +
+      '<div class="iw-field"><label class="form-label">تاريخ الأمر</label>' +
+      '<input class="input" type="date" id="po-date" value="' +
+      date +
+      '"></div>' +
+      '<div class="iw-field"><label class="form-label">تاريخ التسليم المتوقع</label>' +
+      '<input class="input" type="date" id="po-expected-date"></div>' +
+      '<div class="iw-field"><label class="form-label">شروط الدفع</label>' +
+      '<div style="display:flex;gap:8px;margin-top:4px">' +
+      '<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="po-payment" value="كاش" checked> كاش</label>' +
+      '<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="po-payment" value="آجل"> آجل</label>' +
+      "</div></div>" +
+      '<div class="iw-field"><label class="form-label">المخزن المستلِم</label>' +
+      '<select class="input" id="po-warehouse">' +
+      _poWarehouseOptsWithDefault() +
+      "</select></div>" +
+      '<div class="iw-field"><label class="form-label">ملاحظات</label>' +
+      '<input class="input" id="po-notes" placeholder="ملاحظات على الأمر..."></div>' +
+      "</div></div>" +
+      '<div class="card" style="margin-bottom:12px;padding:0;overflow:hidden">' +
+      '<div style="padding:10px 14px;background:#F5F3FF;border-bottom:1px solid #DDD6FE;display:flex;justify-content:space-between;align-items:center">' +
+      '<span style="font-weight:700;font-size:13px;color:#3B0764">بنود الأمر</span>' +
+      "</div>" +
+      '<div class="table-wrap" style="margin:0"><table>' +
+      "<thead><tr>" +
+      "<th>الصنف</th>" +
+      "<th>اللون/المواصفة</th>" +
+      '<th style="text-align:center;width:90px">الكمية</th>' +
+      '<th style="text-align:left;width:110px">سعر الوحدة</th>' +
+      '<th style="text-align:left;width:110px">الإجمالي</th>' +
+      '<th style="width:36px"></th>' +
+      "</tr></thead>" +
+      '<tbody id="po-lines-body">' +
+      firstLineHtml +
+      "</tbody>" +
+      "</table></div>" +
+      '<div style="padding:10px 14px">' +
+      '<button class="btn btn-outline btn-sm" onclick="_addPOLine()"><i class="ti ti-plus" style="font-size:12px"></i> إضافة صنف</button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="card" style="margin-bottom:12px;padding:14px 16px">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">' +
+      '<div><label class="form-label">الخصم</label>' +
+      '<div style="display:flex;gap:6px">' +
+      '<input class="input" type="number" id="po-discount-val" value="0" min="0" step="0.01" oninput="_calcPOTotals()" style="flex:1">' +
+      '<select class="form-select" id="po-discount-type" onchange="_calcPOTotals()" style="width:90px">' +
+      '<option value="percent">%</option><option value="fixed">ج.م</option>' +
+      "</select>" +
+      "</div>" +
+      "</div>" +
+      '<div><label class="form-label">ضريبة القيمة المضافة (VAT %)</label>' +
+      '<input class="input" type="number" id="po-vat" value="0" min="0" max="100" step="0.01" oninput="_calcPOTotals()">' +
+      "</div>" +
+      "</div>" +
+      '<div style="border-top:1px solid var(--border);padding-top:12px">' +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:14px"><span style="color:var(--text2)">المجموع قبل الخصم</span><b id="po-subtotal">0.00 ج.م</b></div>' +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:14px"><span style="color:var(--text2)">الخصم</span><span style="color:#ef4444" id="po-discount-display">0.00 ج.م</span></div>' +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:14px"><span style="color:var(--text2)">الضريبة (VAT)</span><span style="color:#f59e0b" id="po-vat-display">0.00 ج.م</span></div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:18px;font-weight:800;border-top:1px solid var(--border);padding-top:8px;margin-top:4px">' +
+      '<span>الإجمالي النهائي</span><span style="color:#7C3AED" id="po-nettotal">0.00 ج.م</span>' +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      '<div class="iw-footer" style="display:flex;justify-content:flex-end;gap:10px;margin-top:14px">' +
+      '<button class="btn btn-outline" onclick="renderPage(\'purchase-orders\')">إلغاء</button>' +
+      withPermission(
+        '<button id="po-save-btn" class="btn btn-primary" style="background:#7C3AED;border-color:#7C3AED" onclick="savePurchaseOrder()"><i class="ti ti-device-floppy" style="font-size:14px"></i> حفظ كمسودة</button>',
+        "addPurchaseOrder",
+      ) +
+      "</div>" +
+      "</div></div></div>"
+    );
+  }
+
+  function bindPurchaseOrderWorkspace() {
+    _calcPOTotals();
+    if (window.SplitSelect) {
+      SplitSelect.init("po-warehouse", {
+        label: "المخزن",
+        icon: "ti-building-warehouse",
+        searchable: true,
+      });
+    }
+    try {
+      var _defWh =
+        typeof PreferenceService !== "undefined"
+          ? PreferenceService.get("default_warehouse", "")
+          : "";
+      var _whSel = document.getElementById("po-warehouse");
+      if (
+        _defWh &&
+        _whSel &&
+        _whSel.querySelector('option[value="' + _defWh + '"]')
+      ) {
+        _whSel.value = _defWh;
+        _whSel.dispatchEvent(new Event("change"));
+      }
+    } catch (e) {}
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PO-C  بناء صف البنود
+  // ─────────────────────────────────────────────────────────────
+  var _poLineCounter = 0;
+
+  function _buildPOLineRow(idx, line) {
+    var items = APP.data.items || [];
+    var colors = APP.data.colors || [];
+
+    var itemOpts =
+      '<option value="">-- اختر صنف --</option>' +
+      items
+        .map(function (it) {
+          var sel =
+            line.item_id === it.id || line.item_name === it.name
+              ? " selected"
+              : "";
+          return (
+            '<option value="' +
+            esc(it.id) +
+            '" data-name="' +
+            esc(it.name) +
+            '" data-price="' +
+            Number(it.cost_price || 0) +
+            '"' +
+            sel +
+            ">" +
+            esc(it.name) +
+            "</option>"
+          );
+        })
+        .join("");
+
+    var colorOpts =
+      '<option value="">—</option>' +
+      colors
+        .map(function (c) {
+          var sel = (line.color || "") === c.name ? " selected" : "";
+          return (
+            '<option value="' +
+            esc(c.name) +
+            '"' +
+            sel +
+            ">" +
+            esc(c.name) +
+            "</option>"
+          );
+        })
+        .join("");
+
+    var qty = line.qty || 1;
+    var price = line.unit_price || line.cost_price || 0;
+    var total = (qty * price).toFixed(0);
+
+    return (
+      '<tr id="po-line-row-' +
+      idx +
+      '">' +
+      "<td>" +
+      '<select class="input input-sm po-line-item" data-idx="' +
+      idx +
+      '" onchange="_onPOItemChange(this)">' +
+      itemOpts +
+      "</select>" +
+      "</td>" +
+      "<td>" +
+      '<select class="input input-sm po-line-color" data-idx="' +
+      idx +
+      '">' +
+      colorOpts +
+      "</select>" +
+      "</td>" +
+      "<td>" +
+      '<input type="number" class="input input-sm po-line-qty" data-idx="' +
+      idx +
+      '" value="' +
+      qty +
+      '" min="1" style="width:70px;text-align:center" oninput="_calcPOTotals()">' +
+      "</td>" +
+      "<td>" +
+      '<input type="number" class="input input-sm po-line-price" data-idx="' +
+      idx +
+      '" value="' +
+      price +
+      '" min="0" step="0.01" style="width:90px" oninput="_calcPOTotals()">' +
+      "</td>" +
+      '<td style="font-weight:700;text-align:left;white-space:nowrap" id="po-line-total-' +
+      idx +
+      '">' +
+      total +
+      " ج.م</td>" +
+      "<td>" +
+      '<button class="btn btn-delete btn-xs" onclick="_removePOLine(' +
+      idx +
+      ')" title="حذف"><i class="ti ti-x" style="font-size:12px"></i></button>' +
+      "</td>" +
+      "</tr>"
+    );
+  }
+
+  function _addPOLine() {
+    _poLineCounter++;
+    var tbody = document.getElementById("po-lines-body");
+    if (!tbody) return;
+    var tr = document.createElement("tbody");
+    tr.innerHTML = _buildPOLineRow(_poLineCounter, {});
+    var addedRow = tr.firstChild;
+    tbody.appendChild(addedRow);
+    // [SELECTION-ENGINE] الصف بيتضاف خارج تدفق renderPage الرئيسي، فلازم
+    // تحويل الـ selects بتاعته لـ AppSelect يدويًا هنا.
+    if (typeof initCustomSelects === "function") initCustomSelects(addedRow);
+  }
+
+  function _removePOLine(idx) {
+    var row = document.getElementById("po-line-row-" + idx);
+    if (row) row.remove();
+    _calcPOTotals();
+  }
+
+  // عند اختيار صنف — يملأ السعر تلقائياً من سعر التكلفة
+  function _onPOItemChange(sel) {
+    var opt = sel.options[sel.selectedIndex];
+    if (!opt) return;
+    var price = opt.getAttribute("data-price") || 0;
+    var idx = sel.dataset.idx;
+    var row = document.getElementById("po-line-row-" + idx);
+    if (!row) return;
+    var priceInput = row.querySelector(".po-line-price");
+    if (priceInput && (!priceInput.value || Number(priceInput.value) === 0)) {
+      priceInput.value = Number(price).toFixed(0);
+    }
+    _calcPOTotals();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PO-D  حساب الإجماليات
+  // ─────────────────────────────────────────────────────────────
+  function _calcPOTotals() {
+    var tbody = document.getElementById("po-lines-body");
+    if (!tbody) return;
+    var subtotal = 0;
+    tbody.querySelectorAll("tr").forEach(function (row) {
+      var qtyEl = row.querySelector(".po-line-qty");
+      var priceEl = row.querySelector(".po-line-price");
+      if (!qtyEl || !priceEl) return;
+      var qty = Number(qtyEl.value || 0);
+      var price = Number(priceEl.value || 0);
+      var rowTotal = qty * price;
+      subtotal += rowTotal;
+      var idx = qtyEl.dataset.idx;
+      var totalEl = document.getElementById("po-line-total-" + idx);
+      if (totalEl) totalEl.textContent = NumberEngine.currency(rowTotal);
+    });
+
+    var discVal = Number(
+      (document.getElementById("po-discount-val") || {}).value || 0,
+    );
+    var discType =
+      (document.getElementById("po-discount-type") || {}).value || "percent";
+    var vatPct = Number((document.getElementById("po-vat") || {}).value || 0);
+    var discAmt = discType === "percent" ? subtotal * (discVal / 100) : discVal;
+    discAmt = Math.min(discAmt, subtotal);
+    var afterDisc = subtotal - discAmt;
+    var vatAmt = afterDisc * (vatPct / 100);
+    var netTotal = afterDisc + vatAmt;
+
+    var setText = function (id, val) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = val;
+    };
+    setText("po-subtotal", NumberEngine.currency(subtotal));
+    setText("po-discount-display", NumberEngine.currency(discAmt));
+    setText("po-vat-display", NumberEngine.currency(vatAmt));
+    setText("po-nettotal", NumberEngine.currency(netTotal));
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PO-E  حفظ أمر الشراء (مسودة)
+  // ─────────────────────────────────────────────────────────────
+  function _poCollectLines() {
+    var tbody = document.getElementById("po-lines-body");
+    var lines = [];
+    if (!tbody) return lines;
+    tbody.querySelectorAll("tr").forEach(function (row) {
+      var itemSel = row.querySelector(".po-line-item");
+      var colorSel = row.querySelector(".po-line-color");
+      var qtyInput = row.querySelector(".po-line-qty");
+      var priceInput = row.querySelector(".po-line-price");
+      if (!itemSel || !itemSel.value) return;
+      var qty = Number(qtyInput ? qtyInput.value : 0);
+      var price = Number(priceInput ? priceInput.value : 0);
+      if (qty <= 0) return;
+      var opt = itemSel.options[itemSel.selectedIndex];
+      var name = opt ? opt.getAttribute("data-name") || opt.text : itemSel.value;
+      lines.push({
+        item_id: itemSel.value,
+        item_name: name,
+        color: colorSel ? colorSel.value : "",
+        qty: qty,
+        unit_price: price,
+        total: qty * price,
+      });
+    });
+    return lines;
+  }
+
+  function _poCollectPayload() {
+    var supplier = (
+      (document.getElementById("po-supplier") || {}).value || ""
+    ).trim();
+    var date = (document.getElementById("po-date") || {}).value || "";
+    var expDate =
+      (document.getElementById("po-expected-date") || {}).value || "";
+    var notes = (
+      (document.getElementById("po-notes") || {}).value || ""
+    ).trim();
+    var warehouse = (document.getElementById("po-warehouse") || {}).value || "";
+    var payMethod = "";
+    document.querySelectorAll('input[name="po-payment"]').forEach(function (r) {
+      if (r.checked) payMethod = r.value;
+    });
+
+    var lines = _poCollectLines();
+
+    var discVal = Number(
+      (document.getElementById("po-discount-val") || {}).value || 0,
+    );
+    var discType =
+      (document.getElementById("po-discount-type") || {}).value || "percent";
+    var vatPct = Number((document.getElementById("po-vat") || {}).value || 0);
+    var subtotal = lines.reduce(function (s, l) {
+      return s + l.total;
+    }, 0);
+    var discAmt = discType === "percent" ? subtotal * (discVal / 100) : discVal;
+    discAmt = Math.min(discAmt, subtotal);
+    var afterDisc = subtotal - discAmt;
+    var vatAmt = afterDisc * (vatPct / 100);
+    var netTotal = afterDisc + vatAmt;
+
+    return {
+      supplier: supplier,
+      date: date,
+      expected_date: expDate,
+      notes: notes,
+      warehouse: warehouse,
+      payment_terms: payMethod,
+      discount_value: discVal,
+      discount_type: discType,
+      discount_amount: discAmt,
+      vat_percent: vatPct,
+      vat_amount: vatAmt,
+      subtotal: subtotal,
+      net_total: netTotal,
+      lines: lines,
+      lines_count: lines.length,
+      status: "مسودة",
+    };
+  }
+
+  // [SE-ROLLOUT] عبر SaveEngine.run بدل SaveButtonController + DL.PurchaseOrders
+  // اليدوي — نفس رسائل النجاح/الفشل ونفس تأثير الحفظ بالظبط.
+  function savePurchaseOrder() {
+    SaveEngine.run({
+      screen: "purchase_orders",
+      entity: "purchase_order",
+      buttonId: "po-save-btn",
+      rules: [
+        { field: "po-supplier", label: "المورد", required: true },
+        { field: "po-date", label: "تاريخ الأمر", required: true },
+        {
+          test: function () {
+            return _poCollectLines().length > 0;
+          },
+          message: "أضف بنداً واحداً على الأقل",
+        },
+      ],
+      collect: _poCollectPayload,
+      fn: "savePurchaseOrder",
+      // [FIX-PO-SAVE-2026-08] كان بيبعت [data] بس من غير SESSION.token.
+      // الـ backend (Code_27_PurchaseOrders.js) بيعمل
+      // _getUserFromToken(sessionToken) كأول خطوة — من غير token بترجع
+      // "جلستك انتهت" دايمًا. يعني حفظ أمر الشراء كان معطوب 100% من
+      // الأول (كل محاولة حفظ كانت بترجع رسالة جلسة منتهية كاذبة، بغض
+      // النظر عن حالة الجلسة الحقيقية). راجع تعليق الـ convention نفسه
+      // في 32_JS_SaveEngine.html: params: function(data){ return [data,
+      // SESSION.token]; }
+      params: function (data) {
+        return [data, SESSION.token];
+      },
+      successMessage: "تم حفظ أمر الشراء بنجاح ",
+      onSuccess: function (res) {
+        if (!APP.data.purchaseOrders) APP.data.purchaseOrders = [];
+        APP.data.purchaseOrders.push(res.data);
+        renderPage("purchase-orders");
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PO-F  عرض وطباعة أمر الشراء
+  // ─────────────────────────────────────────────────────────────
+  function viewPurchaseOrder(id) {
+    var order = (APP.data.purchaseOrders || []).find(function (o) {
+      return o.id === id;
+    });
+    if (!order) {
+      NotificationEngine.error("أمر الشراء غير موجود");
+      return;
+    }
+
+    var settings = APP.data.companySettings || {};
+    var compName = settings.company_name || "MOO.ERP";
+    var lines = Array.isArray(order.lines) ? order.lines : [];
+    var color = "#7C3AED";
+
+    var linesHtml = lines
+      .map(function (l, i) {
+        return (
+          '<tr style="border-bottom:1px solid #e5e7eb">' +
+          '<td style="padding:8px 10px">' +
+          (i + 1) +
+          "</td>" +
+          '<td style="padding:8px 10px"><b>' +
+          esc(l.item_name || "—") +
+          "</b></td>" +
+          '<td style="padding:8px 10px">' +
+          esc(l.color || "—") +
+          "</td>" +
+          '<td style="padding:8px 10px;text-align:center">' +
+          Number(l.qty || 0) +
+          "</td>" +
+          '<td style="padding:8px 10px;text-align:left" class="sensitive-price">' +
+          Number(l.unit_price || 0).toFixed(0) +
+          "</td>" +
+          '<td style="padding:8px 10px;text-align:left;font-weight:700" class="sensitive-price">' +
+          Number(l.total || 0).toFixed(0) +
+          "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    var statusBadge =
+      {
+        مسودة:
+          '<span style="background:#FEF9C3;color:#92400E;padding:4px 12px;border-radius:20px;font-weight:700"> مسودة</span>',
+        معتمد:
+          '<span style="background:#DCFCE7;color:#166534;padding:4px 12px;border-radius:20px;font-weight:700"> معتمد</span>',
+        مستلم:
+          '<span style="background:#EDE9FE;color:#5B21B6;padding:4px 12px;border-radius:20px;font-weight:700"> مستلم</span>',
+        ملغي: '<span style="background:#FEE2E2;color:#991B1B;padding:4px 12px;border-radius:20px;font-weight:700"> ملغي</span>',
+      }[order.status] || esc(order.status || "—");
+
+    var printHtml =
+      '<div id="po-print-area" style="font-family:\'IBM Plex Sans Arabic\',sans-serif;direction:rtl;background:#fff;color:#111;padding:24px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid ' +
+      color +
+      ';padding-bottom:16px;margin-bottom:16px">' +
+      "<div>" +
+      '<div style="font-size:24px;font-weight:900;color:' +
+      color +
+      '">' +
+      esc(compName) +
+      "</div>" +
+      (settings.phone
+        ? '<div style="font-size:12px;color:#374151"> ' +
+          esc(settings.phone) +
+          "</div>"
+        : "") +
+      "</div>" +
+      '<div style="text-align:left">' +
+      '<div style="font-size:20px;font-weight:900;color:' +
+      color +
+      '">أمر شراء</div>' +
+      '<div style="font-size:13px;color:#374151"><b>رقم:</b> ' +
+      esc(order.id || "—") +
+      "</div>" +
+      '<div style="font-size:13px;color:#374151"><b>التاريخ:</b> ' +
+      (order.date ? fmtDate(order.date) : "—") +
+      "</div>" +
+      '<div style="margin-top:4px">' +
+      statusBadge +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;font-size:13px">' +
+      '<div style="background:#F9FAFB;border-radius:8px;padding:12px">' +
+      "<b>المورد:</b> " +
+      esc(order.supplier || "—") +
+      "<br>" +
+      "<b>شروط الدفع:</b> " +
+      esc(order.payment_terms || "—") +
+      "</div>" +
+      '<div style="background:#F9FAFB;border-radius:8px;padding:12px">' +
+      "<b>المخزن المستلِم:</b> " +
+      esc(order.warehouse || "—") +
+      "<br>" +
+      "<b>تاريخ التسليم:</b> " +
+      (order.expected_date ? fmtDate(order.expected_date) : "—") +
+      "<br>" +
+      "<b>حالة الفوترة:</b> " +
+      esc(order.invoiced_status || "لم يُفوتر") +
+      (order.invoice_ids
+        ? " (فواتير: " + esc(order.invoice_ids) + ")"
+        : "") +
+      "</div>" +
+      "</div>" +
+      '<table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px">' +
+      '<thead><tr style="background:' +
+      color +
+      ';color:#fff">' +
+      '<th style="padding:8px 10px;text-align:center">#</th>' +
+      '<th style="padding:8px 10px">الصنف</th>' +
+      '<th style="padding:8px 10px">اللون</th>' +
+      '<th style="padding:8px 10px;text-align:center">الكمية</th>' +
+      '<th style="padding:8px 10px;text-align:left">سعر الوحدة</th>' +
+      '<th style="padding:8px 10px;text-align:left">الإجمالي</th>' +
+      "</tr></thead>" +
+      "<tbody>" +
+      linesHtml +
+      "</tbody>" +
+      "</table>" +
+      '<div style="display:flex;justify-content:flex-start">' +
+      '<div style="background:#F9FAFB;border-radius:8px;padding:16px;min-width:260px;font-size:13px">' +
+      '<div class="sensitive-price" style="display:flex;justify-content:space-between;margin-bottom:6px"><span>المجموع</span><b>' +
+      Number(order.subtotal || 0).toFixed(0) +
+      " ج.م</b></div>" +
+      '<div class="sensitive-price" style="display:flex;justify-content:space-between;margin-bottom:6px;color:#EF4444"><span>الخصم</span><b>- ' +
+      Number(order.discount_amount || 0).toFixed(0) +
+      " ج.م</b></div>" +
+      '<div class="sensitive-price" style="display:flex;justify-content:space-between;margin-bottom:6px;color:#F59E0B"><span>VAT (' +
+      Number(order.vat_percent || 0) +
+      "%)</span><b>" +
+      Number(order.vat_amount || 0).toFixed(0) +
+      " ج.م</b></div>" +
+      '<div class="sensitive-price" style="display:flex;justify-content:space-between;font-size:16px;font-weight:900;border-top:2px solid ' +
+      color +
+      ";padding-top:8px;margin-top:4px;color:" +
+      color +
+      '"><span>الإجمالي النهائي</span><b>' +
+      Number(order.net_total || 0).toFixed(0) +
+      " ج.م</b></div>" +
+      "</div>" +
+      "</div>" +
+      (order.notes
+        ? '<div style="margin-top:16px;font-size:12px;color:#6B7280;border-top:1px dashed #e5e7eb;padding-top:10px"><b>ملاحظات:</b> ' +
+          esc(order.notes) +
+          "</div>"
+        : "") +
+      "</div>";
+
+    var footerBtns =
+      '<button class="btn btn-outline" onclick="closeModal(\'po-view-modal\')">إغلاق</button>' +
+      '<button class="btn btn-primary" onclick="_printPOArea()" style="background:#7C3AED;border-color:#7C3AED">' +
+      '<i class="ti ti-printer" style="font-size:14px"></i> طباعة</button>';
+
+    // إضافة زر الاعتماد من نافذة العرض لو كان مسودة
+    if (order.status === "مسودة") {
+      footerBtns += withPermission(
+        '<button class="btn" style="background:#059669;color:#fff" onclick="closeModal(\'po-view-modal\');approvePurchaseOrderConfirm(\'' +
+          esc(id) +
+          "')\">" +
+          '<i class="ti ti-check" style="font-size:14px"></i> اعتماد الأمر</button>',
+        "approvePurchaseOrder",
+      );
+    }
+    if (order.status === "معتمد") {
+      footerBtns += withPermission(
+        '<button class="btn" style="background:#7C3AED;color:#fff" onclick="closeModal(\'po-view-modal\');openReceivePOModal(\'' +
+          esc(id) +
+          "')\">" +
+          '<i class="ti ti-package" style="font-size:14px"></i> تسجيل استلام</button>',
+        "receivePurchaseOrder",
+      );
+    }
+    // [PO-INVOICE-LINK] زر تحويل لفاتورة شراء — يظهر بعد الاستلام وطالما
+    // الأمر لسه مش مفوتر بالكامل (بيسمح بفواتير جزئية أكتر من مرة).
+    if (order.status === "مستلم" && order.invoiced_status !== "مفوتر بالكامل") {
+      footerBtns += withPermission(
+        '<button class="btn" style="background:#059669;color:#fff" onclick="closeModal(\'po-view-modal\');openPurchaseInvoiceWorkspaceFromPO(\'' +
+          esc(id) +
+          "','" +
+          esc(order.last_receive_permit_id || "") +
+          "')\">" +
+          '<i class="ti ti-file-invoice" style="font-size:14px"></i> تحويل لفاتورة شراء</button>',
+        "addPurchaseInvoice",
+      );
+    }
+    // زر إلغاء الأمر — متاح فقط قبل الاستلام (مسودة/معتمد)، لأن الاستلام
+    // بينشئ حركات مخزون فعلية (راجع cancelPurchaseOrder في Code_27)
+    if (order.status === "مسودة" || order.status === "معتمد") {
+      footerBtns += withPermission(
+        '<button class="btn btn-outline" style="color:#DC2626;border-color:#DC2626" onclick="closeModal(\'po-view-modal\');cancelPurchaseOrderConfirm(\'' +
+          esc(id) +
+          "')\">" +
+          '<i class="ti ti-ban" style="font-size:14px"></i> إلغاء الأمر</button>',
+        "deletePurchaseOrder",
+      );
+    }
+
+    var modal = _buildPOModal(
+      "po-view-modal",
+      "عرض أمر الشراء",
+      printHtml,
+      footerBtns,
+      760,
+    );
+    document.body.appendChild(modal);
+  }
+
+  function _printPOArea() {
+    var area = document.getElementById("po-print-area");
+    if (!area) return;
+    var win = window.open("", "_blank", "width=800,height=700");
+    win.document.write(
+      '<html dir="rtl"><head><meta charset="UTF-8"><title>أمر شراء</title>' +
+        '<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;700;900&display=swap" rel="stylesheet">' +
+        '<style>body{font-family:"IBM Plex Sans Arabic",sans-serif;margin:20px}@media print{body{margin:0}}</style></head>' +
+        "<body>" +
+        area.innerHTML +
+        "</body></html>",
+    );
+    win.document.close();
+    win.onload = function () {
+      win.print();
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PO-G  اعتماد أمر الشراء
+  // ─────────────────────────────────────────────────────────────
+  function approvePurchaseOrderConfirm(id) {
+    showConfirm({
+      title: "اعتماد أمر الشراء",
+      message:
+        "هل تريد اعتماد أمر الشراء رقم " +
+        id +
+        "؟\nبعد الاعتماد لن يمكن تعديله.",
+      icon: "ti-circle-check",
+      iconColor: "#2563eb",
+      confirmText: "اعتماد",
+      confirmClass: "btn-primary",
+      onConfirm: function () {
+        DL.PurchaseOrders.approvePurchaseOrder([id, SESSION.token], {
+          onSuccess: function (res) {
+            NotificationEngine.success("تم اعتماد أمر الشراء ");
+            // تحديث الحالة محلياً
+            var orders = APP.data.purchaseOrders || [];
+            var idx = orders.findIndex(function (o) {
+              return o.id === id;
+            });
+            if (idx !== -1) orders[idx].status = "معتمد";
+            APP._fromSilentRefresh = true;
+            renderPage("purchase-orders");
+            APP._fromSilentRefresh = false;
+          },
+          onError: function (res) {
+            NotificationEngine.error(res.message || "فشل الاعتماد");
+          },
+        });
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PO-G2  إلغاء أمر الشراء
+  // ─────────────────────────────────────────────────────────────
+  function cancelPurchaseOrderConfirm(id) {
+    showConfirm({
+      title: "إلغاء أمر الشراء",
+      message:
+        "هل تريد إلغاء أمر الشراء رقم " +
+        id +
+        "؟\nلن يمكن التراجع عن الإلغاء.",
+      icon: "ti-ban",
+      iconColor: "#DC2626",
+      confirmText: "إلغاء الأمر",
+      confirmClass: "btn-danger",
+      onConfirm: function () {
+        DL.PurchaseOrders.cancelPurchaseOrder([id, SESSION.token], {
+          onSuccess: function () {
+            NotificationEngine.success("تم إلغاء أمر الشراء");
+            var orders = APP.data.purchaseOrders || [];
+            var idx = orders.findIndex(function (o) {
+              return o.id === id;
+            });
+            if (idx !== -1) orders[idx].status = "ملغي";
+            APP._fromSilentRefresh = true;
+            renderPage("purchase-orders");
+            APP._fromSilentRefresh = false;
+          },
+          onError: function (res) {
+            NotificationEngine.error(res.message || "فشل إلغاء الأمر");
+          },
+        });
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PO-H  Modal استلام البضاعة
+  // ─────────────────────────────────────────────────────────────
+  function openReceivePOModal(id) {
+    var order = (APP.data.purchaseOrders || []).find(function (o) {
+      return o.id === id;
+    });
+    if (!order) {
+      NotificationEngine.error("أمر الشراء غير موجود");
+      return;
+    }
+    var lines = Array.isArray(order.lines) ? order.lines : [];
+    var today = (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().split("T")[0]);
+
+    var linesHtml = lines
+      .map(function (l, idx) {
+        return (
+          "<tr>" +
+          "<td>" +
+          esc(l.item_name || "—") +
+          "</td>" +
+          "<td>" +
+          esc(l.color || "—") +
+          "</td>" +
+          '<td style="text-align:center">' +
+          Number(l.qty || 0) +
+          "</td>" +
+          "<td>" +
+          '<input type="number" class="input input-sm" id="recv-qty-' +
+          idx +
+          '" ' +
+          'value="' +
+          Number(l.qty || 0) +
+          '" min="0" max="' +
+          Number(l.qty || 0) +
+          '" ' +
+          'style="width:80px;text-align:center">' +
+          "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    var modal = _buildPOModal(
+      "po-recv-modal",
+      "تسجيل استلام — أمر رقم " + id,
+      '<div style="background:#F5F3FF;border:1px solid #DDD6FE;border-radius:10px;padding:12px;margin-bottom:16px;font-size:13px">' +
+        "<b>المورد:</b> " +
+        esc(order.supplier || "—") +
+        " &nbsp;&nbsp; " +
+        "<b>المخزن:</b> " +
+        esc(order.warehouse || "—") +
+        "</div>" +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">' +
+        '<div><label class="form-label">تاريخ الاستلام</label>' +
+        '<input class="input" type="date" id="recv-date" value="' +
+        today +
+        '"></div>' +
+        '<div><label class="form-label">المخزن المستلِم</label>' +
+        '<select class="input" id="recv-warehouse">' +
+        _poWarehouseOptsWithDefault(order.warehouse) +
+        "</select></div>" +
+        '<div style="grid-column:1/-1"><label class="form-label">ملاحظات الاستلام</label>' +
+        '<input class="input" id="recv-notes" placeholder="مثال: بضاعة مطابقة للمواصفات..."></div>' +
+        "</div>" +
+        '<div class="card" style="padding:0;overflow:hidden;margin-bottom:4px">' +
+        '<div style="padding:10px 14px;background:#F5F3FF;border-bottom:1px solid #DDD6FE;font-weight:700;font-size:13px;color:#3B0764">الكميات المستلمة</div>' +
+        '<div class="table-wrap" style="margin:0"><table>' +
+        '<thead><tr><th>الصنف</th><th>اللون</th><th style="text-align:center">الكمية المطلوبة</th><th style="text-align:center">الكمية المستلمة</th></tr></thead>' +
+        "<tbody>" +
+        linesHtml +
+        "</tbody>" +
+        "</table></div>" +
+        "</div>" +
+        '<p style="font-size:12px;color:var(--text3);margin-top:6px"> سيتم إنشاء حركة وارد (IN) تلقائياً في المخزن المحدد</p>',
+      // Footer
+      '<button class="btn btn-outline" onclick="closeModal(\'po-recv-modal\')">إلغاء</button>' +
+        withPermission(
+          '<button class="btn btn-primary" style="background:#7C3AED;border-color:#7C3AED" onclick="saveReceivePO(\'' +
+            esc(id) +
+            "')\">" +
+            '<i class="ti ti-package" style="font-size:14px"></i> تأكيد الاستلام</button>',
+          "receivePurchaseOrder",
+        ),
+    );
+
+    document.body.appendChild(modal);
+    // حفظ lines في dataset للرجوع إليها عند الحفظ
+    var modalEl = document.getElementById("po-recv-modal");
+    if (modalEl) modalEl.dataset.lines = JSON.stringify(lines);
+
+    if (window.SplitSelect) {
+      SplitSelect.init("recv-warehouse", {
+        label: "المخزن",
+        icon: "ti-building-warehouse",
+        searchable: true,
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PO-I  حفظ الاستلام
+  // ─────────────────────────────────────────────────────────────
+  function saveReceivePO(id) {
+    var order = (APP.data.purchaseOrders || []).find(function (o) {
+      return o.id === id;
+    });
+    if (!order) return;
+
+    var date = (document.getElementById("recv-date") || {}).value || "";
+    var warehouse =
+      (document.getElementById("recv-warehouse") || {}).value || "";
+    var notes = (
+      (document.getElementById("recv-notes") || {}).value || ""
+    ).trim();
+
+    if (!date) {
+      NotificationEngine.error("أدخل تاريخ الاستلام");
+      return;
+    }
+    if (!warehouse) {
+      NotificationEngine.error("اختر المخزن");
+      return;
+    }
+
+    var lines = Array.isArray(order.lines) ? order.lines : [];
+    var recvLines = lines
+      .map(function (l, idx) {
+        var qtyEl = document.getElementById("recv-qty-" + idx);
+        return {
+          item_id: l.item_id,
+          item_name: l.item_name,
+          color: l.color || "",
+          qty: Number(qtyEl ? qtyEl.value : l.qty),
+          unit_price: l.unit_price || 0,
+        };
+      })
+      .filter(function (l) {
+        return l.qty > 0;
+      });
+
+    if (!recvLines.length) {
+      NotificationEngine.error("أدخل كمية مستلمة واحدة على الأقل");
+      return;
+    }
+
+    // [SAVE-ENGINE] soft-save موحّد
+    var btn = document.querySelector("#po-recv-modal .btn-primary");
+    var _sbc = SaveButtonController.attachEl(btn);
+    _sbc.setSaving();
+
+    var payload = {
+      po_id: id,
+      date: date,
+      warehouse: warehouse,
+      notes: notes,
+      supplier: order.supplier,
+      lines: recvLines,
+    };
+
+    DL.PurchaseOrders.receivePurchaseOrder([payload, SESSION.token], {
+      onSuccess: function (res) {
+        NotificationEngine.success("تم تسجيل الاستلام وتحديث المخزن ");
+        closeModal("po-recv-modal");
+        // تحديث حالة الأمر محلياً
+        var orders = APP.data.purchaseOrders || [];
+        var idx = orders.findIndex(function (o) {
+          return o.id === id;
+        });
+        if (idx !== -1) orders[idx].status = "مستلم";
+        // إضافة حركات المخزن الجديدة
+        if (res.data && res.data.transactions && res.data.transactions.length) {
+          if (!APP.data.transactions) APP.data.transactions = [];
+          APP.data.transactions = APP.data.transactions.concat(
+            res.data.transactions,
+          );
+        }
+        APP._fromSilentRefresh = true;
+        renderPage("purchase-orders");
+        APP._fromSilentRefresh = false;
+      },
+      onError: function (res) {
+        _sbc.restore();
+        NotificationEngine.error(res.message || "فشل تسجيل الاستلام");
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PO-J  حذف أمر الشراء
+  // ─────────────────────────────────────────────────────────────
+  function deletePurchaseOrderConfirm(id) {
+    confirmDelete(
+      "حذف أمر الشراء",
+      "هل تريد حذف أمر الشراء رقم " + id + "؟",
+      function () {
+        DL.PurchaseOrders.deletePurchaseOrder([id, SESSION.token], {
+          onSuccess: function () {
+            NotificationEngine.success("تم الحذف");
+            APP.data.purchaseOrders = (APP.data.purchaseOrders || []).filter(
+              function (o) {
+                return o.id !== id;
+              },
+            );
+            APP._fromSilentRefresh = true;
+            renderPage("purchase-orders");
+            APP._fromSilentRefresh = false;
+          },
+          onError: function (res) {
+            NotificationEngine.error(res.message || "فشل الحذف");
+          },
+        });
+      },
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PO-K  Modal Builder خاص بـ PO (مشابه لـ _buildModal في Invoices)
+  // ─────────────────────────────────────────────────────────────
+  function _buildPOModal(id, title, bodyHtml, footerHtml, maxWidth) {
+    var div = document.createElement("div");
+    div.innerHTML =
+      '<div class="modal-overlay" id="' +
+      id +
+      '" onclick="if(event.target===this)closeModal(\'' +
+      id +
+      "')\">" +
+      '<div class="modal-box wide-modal-box">' +
+      '<div class="modal-header">' +
+      '<div class="modal-header-left">' +
+      '<div class="modal-icon" style="background:#F5F3FF;color:#7C3AED"><i class="ti ti-clipboard-list"></i></div>' +
+      "<div><h2>" +
+      esc(title) +
+      "</h2></div>" +
+      "</div>" +
+      '<button class="modal-close" onclick="closeModal(\'' +
+      id +
+      '\')"><i class="ti ti-x"></i></button>' +
+      "</div>" +
+      '<div class="modal-body">' +
+      bodyHtml +
+      "</div>" +
+      '<div class="modal-actions">' +
+      footerHtml +
+      "</div>" +
+      "</div>" +
+      "</div>";
+    return div.firstChild;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PO-L  دالة مساعدة: خيارات المخازن مع تحديد مسبق
+  // ─────────────────────────────────────────────────────────────
+  function _poWarehouseOptsWithDefault(defaultVal) {
+    var warehouses = APP.data.warehouses || [];
+    if (!warehouses.length)
+      return '<option value="">— لا توجد مخازن —</option>';
+    return warehouses
+      .map(function (w) {
+        var sel =
+          w.name === defaultVal || w.id === defaultVal ? " selected" : "";
+        return (
+          '<option value="' +
+          esc(w.name || w.id) +
+          '"' +
+          sel +
+          ">" +
+          esc(w.name || w.id) +
+          "</option>"
+        );
+      })
+      .join("");
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // نهاية 22_JS_PurchaseOrders.html
+  // ═══════════════════════════════════════════════════════════════════
+</script>

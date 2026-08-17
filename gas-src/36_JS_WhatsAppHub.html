@@ -1,0 +1,244 @@
+<script>
+  // ══════════════════════════════════════════════════════════════════════════
+  // 36_JS_WhatsAppHub.html — شاشة "واتساب" الموحّدة (Merge Hub)
+  // ──────────────────────────────────────────────────────────────────────────
+  // [WA-HUB-MERGE] دمج الشاشات الأربعة المستقلة اللي كانت متفرقة في
+  //    السايد بار جوه مجموعة "العملاء":
+  //      • قوالب واتساب        (renderWhatsappTemplatesPage / 19_JS_WhatsApp)
+  //      • مركز المحادثات       (renderWhatsappCenterPage   / 19_JS_WhatsApp)
+  //      • Communication Hub    (renderCommunicationHubPage / 30_JS_CommunicationHub)
+  //      • سجل الواتساب         (renderWhatsappLogsPage     / 19_JS_WhatsApp)
+  //
+  // في شاشة واحدة "whatsapp_hub" بتابات داخلية (Internal Tabs) بدل ما
+  // تكون 4 بنود منفصلة في السايد بار. الشاشات القديمة لسه شغالة زي ما
+  // هي (نفس الدوال بالظبط) — إحنا هنا بس بنستدعيها جوه container واحد
+  // ونتحكم في التبديل بينها + تنضيف الـ polling عند مغادرة أي تاب.
+  //
+  // ملاحظة: أسماء الصفحات القديمة (whatsapp_templates / whatsapp_center /
+  // communication_hub / whatsapp_logs) لسه موجودة في الراوتر
+  // (01_JS_Core_Auth.html) للتوافق مع أي رابط قديم محفوظ، لكن السايد بار
+  // بقى بيشاور بس على "whatsapp_hub".
+  // ══════════════════════════════════════════════════════════════════════════
+
+  var _waHubState = {
+    activeTab: null,
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // إعدادات التابات — مصدر الحقيقة الوحيد
+  // ─────────────────────────────────────────────────────────────
+  function _waHubGetTabs() {
+    return [
+      {
+        id: "templates",
+        label: I18N.t("WAHUB_TAB_TEMPLATES"),
+        iconClass: "ti ti-template",
+        requiredPerms: ["sendWhatsapp", "manageWhatsappTemplates"],
+        fullBleed: false,
+        render: function () {
+          return typeof renderWhatsappTemplatesPage === "function"
+            ? renderWhatsappTemplatesPage()
+            : "";
+        },
+        bind: function () {
+          if (typeof bindWhatsappTemplatesPage === "function")
+            bindWhatsappTemplatesPage();
+        },
+      },
+      {
+        id: "center",
+        label: I18N.t("WAHUB_TAB_CENTER"),
+        iconClass: "ti ti-layout-sidebar-right-expand",
+        requiredPerms: ["viewWhatsappCenter"],
+        fullBleed: true,
+        render: function () {
+          return typeof renderWhatsappCenterPage === "function"
+            ? renderWhatsappCenterPage()
+            : "";
+        },
+        bind: function () {
+          if (typeof bindWhatsappCenterPage === "function")
+            bindWhatsappCenterPage();
+        },
+        unbind: function () {
+          if (typeof _waStopCenterPolling === "function")
+            _waStopCenterPolling();
+        },
+      },
+      {
+        id: "comm_hub",
+        label: "Communication Hub",
+        iconClass: "ti ti-messages",
+        requiredPerms: ["viewCommunicationHub", "manageCommunicationHub"],
+        fullBleed: true,
+        render: function () {
+          return typeof renderCommunicationHubPage === "function"
+            ? renderCommunicationHubPage()
+            : "";
+        },
+        bind: function () {
+          if (typeof bindCommunicationHubPage === "function")
+            bindCommunicationHubPage();
+        },
+        unbind: function () {
+          if (typeof CH_INBOX !== "undefined" && CH_INBOX.stopPolling)
+            CH_INBOX.stopPolling();
+        },
+      },
+      {
+        id: "logs",
+        label: I18N.t("WAHUB_TAB_LOGS"),
+        iconClass: "ti ti-message-circle",
+        requiredPerms: ["viewWhatsappLogs"],
+        fullBleed: false,
+        render: function () {
+          return typeof renderWhatsappLogsPage === "function"
+            ? renderWhatsappLogsPage()
+            : "";
+        },
+        bind: function () {
+          if (typeof bindWhatsappLogsPage === "function")
+            bindWhatsappLogsPage();
+        },
+      },
+    ];
+  }
+
+  /** التابات المسموح للمستخدم الحالي يشوفها (نفس منطق OR المستخدم في
+   *  فلترة عناصر السايد بار — Templates_01.html: requiredPerms.some) */
+  function _waHubVisibleTabs() {
+    return _waHubGetTabs().filter(function (t) {
+      if (!t.requiredPerms || !t.requiredPerms.length) return true;
+      return t.requiredPerms.some(function (p) {
+        return canDo(p);
+      });
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Render — هيكل الشاشة (هيدر + تابات + container)
+  // ─────────────────────────────────────────────────────────────
+  function renderWhatsappHubPage() {
+    var visibleTabs = _waHubVisibleTabs();
+
+    if (!visibleTabs.length) {
+      return (
+        '<div style="padding:40px;text-align:center;color:var(--text3)">' +
+        '<i class="ti ti-lock" style="font-size:48px;display:block;margin-bottom:16px"></i>' +
+        "<p>" +
+        I18N.t("WAHUB_MSG_NO_PERMISSION") +
+        "</p></div>"
+      );
+    }
+
+    var tabsHtml = visibleTabs
+      .map(function (t) {
+        return (
+          '<button type="button" class="wa-hub-tab" data-wa-hub-tab="' +
+          t.id +
+          '" onclick="_waHubActivateTab(\'' +
+          t.id +
+          "')\">" +
+          '<i class="' +
+          t.iconClass +
+          '"></i><span>' +
+          esc(t.label) +
+          "</span></button>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div class="wa-hub-wrap">' +
+      '<div class="wa-hub-topheader">' +
+      '<div class="page-header" style="margin-bottom:14px">' +
+      "<div>" +
+      '<h2 style="display:flex;align-items:center;gap:10px">' +
+      '<span style="background:#25D366;color:#fff;border-radius:10px;width:38px;height:38px;display:flex;align-items:center;justify-content:center;flex-shrink:0">' +
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.126.556 4.12 1.523 5.847L0 24l6.332-1.494A11.945 11.945 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.793 9.793 0 01-5.023-1.378l-.36-.213-3.727.879.936-3.606-.235-.37A9.793 9.793 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182S21.818 6.57 21.818 12 17.43 21.818 12 21.818z"/></svg>' +
+      "</span>" +
+      "<span>" +
+      I18N.t("MOD_WHATSAPP") +
+      "</span>" +
+      "</h2>" +
+      '<p class="page-subtitle">' +
+      I18N.t("WAHUB_SUBTITLE") +
+      "</p>" +
+      "</div>" +
+      "</div>" +
+      '<div class="wa-hub-tabs">' +
+      tabsHtml +
+      "</div>" +
+      "</div>" +
+      '<div class="wa-hub-body" id="wa-hub-body">' +
+      '<div style="padding:60px;text-align:center"><span class="spinner"></span></div>' +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  /** يُستدعى بعد renderWhatsappHubPage() — يحدد التاب الافتراضي ويفعّله */
+  function bindWhatsappHubPage() {
+    var visibleTabs = _waHubVisibleTabs();
+    if (!visibleTabs.length) return;
+
+    // لو فيه تاب مطلوب مسبقاً (عبر openWhatsappHubTab قبل التنقل)
+    // نستخدمه، وإلا أول تاب متاح.
+    var target = _waHubState.pendingTab;
+    _waHubState.pendingTab = null;
+    var isValid = visibleTabs.some(function (t) {
+      return t.id === target;
+    });
+    if (!isValid) target = visibleTabs[0].id;
+
+    _waHubActivateTab(target);
+  }
+
+  /** تبديل التاب النشط — بيعمل تنضيف (unbind) للتاب اللي هيتسيب
+   *  ويرسم التاب الجديد جوه نفس الـ container من غير ما يعمل navigate()
+   *  تاني (يعني من غير أي وميض/reload لباقي الشاشة). */
+  function _waHubActivateTab(tabId) {
+    var tabs = _waHubGetTabs();
+    var tab = null;
+    for (var i = 0; i < tabs.length; i++) {
+      if (tabs[i].id === tabId) {
+        tab = tabs[i];
+        break;
+      }
+    }
+    if (!tab) return;
+
+    // تنضيف التاب القديم (وقف polling لو موجود) قبل ما نمسح محتواه
+    if (_waHubState.activeTab && _waHubState.activeTab !== tabId) {
+      var prevTabs = tabs.filter(function (t) {
+        return t.id === _waHubState.activeTab;
+      });
+      if (prevTabs.length && typeof prevTabs[0].unbind === "function") {
+        prevTabs[0].unbind();
+      }
+    }
+
+    _waHubState.activeTab = tabId;
+
+    // تحديث شكل الأزرار
+    document.querySelectorAll("[data-wa-hub-tab]").forEach(function (btn) {
+      btn.classList.toggle("active", btn.dataset.waHubTab === tabId);
+    });
+
+    var body = document.getElementById("wa-hub-body");
+    if (!body) return;
+    body.classList.toggle("wa-hub-body-fullbleed", !!tab.fullBleed);
+    body.innerHTML = tab.render();
+    tab.bind();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // نقطة دخول عامة تُستخدم من أي مكان في النظام (بدل navigate
+  // المباشر للصفحات القديمة) — بتفتح شاشة واتساب على تاب معيّن.
+  // مثال: openWhatsappHubTab('center') لفتح مركز المحادثات مباشرة.
+  // ─────────────────────────────────────────────────────────────
+  function openWhatsappHubTab(tabId) {
+    _waHubState.pendingTab = tabId;
+    navigate("whatsapp_hub");
+  }
+</script>

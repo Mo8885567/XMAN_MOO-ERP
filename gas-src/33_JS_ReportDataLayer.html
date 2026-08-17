@@ -1,0 +1,189 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 33_JS_ReportDataLayer.html — عميل طبقة الاستعلام + Filter Engine
+  // (الوجه الأمامي لـ Code_26_ReportDataLayer.gs)
+  // ═══════════════════════════════════════════════════════════════════
+  // بدل ما كل تقرير يعمل _gsr("getSaleInvoices",...) ويفلتر بنفسه، أي
+  // تقرير جديد يستخدم:
+  //
+  //   ReportQuery.fetch("sale_invoices", {dateFrom, dateTo, partyId}, {page,pageSize},
+  //     function(res){ ... res.data / res.total ... });
+  //
+  //   FilterEngine.renderBar("sale_invoices", {onApply: fn}) // يبني شريط الفلاتر تلقائيًا
+  //
+  // ENTITY_FILTER_UI تحت بيوصف *واجهة* الفلتر لكل كيان (تسميات + نوع
+  // الحقل) بينما التحقق الفعلي من صحة الفلتر يحصل في السيرفر
+  // (ENTITY_REGISTRY في Code_47). القائمتين لازم تتزامنوا يدويًا لما
+  // نضيف فلتر جديد لكيان.
+  // ═══════════════════════════════════════════════════════════════════
+
+  var ENTITY_FILTER_UI = {
+    sale_invoices: {
+      hasDate: true,
+      fields: [
+        { key: "partyId", label: "العميل", type: "party", partyType: "customer" },
+        { key: "status", label: "الحالة", type: "select", options: ["", "APPROVED", "PENDING", "CANCELLED"] },
+        { key: "paymentStatus", label: "حالة السداد", type: "select", options: ["", "PAID", "PARTIAL", "UNPAID"] },
+      ],
+    },
+    purchase_invoices: {
+      hasDate: true,
+      fields: [
+        { key: "partyId", label: "المورد", type: "party", partyType: "supplier" },
+        { key: "status", label: "الحالة", type: "select", options: ["", "APPROVED", "PENDING", "CANCELLED"] },
+      ],
+    },
+    journal_entries: {
+      hasDate: true,
+      fields: [
+        { key: "accountId", label: "الحساب", type: "text" },
+        { key: "costCenterId", label: "مركز التكلفة", type: "text" },
+        { key: "branchId", label: "الفرع", type: "text" },
+      ],
+    },
+  };
+
+  var ReportQuery = (function () {
+    "use strict";
+
+    /**
+     * fetch — نداء موحّد لـ queryReportEntity على السيرفر.
+     * @param {string} entityKey
+     * @param {object} filters   { dateFrom, dateTo, q, ...حقول الكيان }
+     * @param {object} opts      { page, pageSize, sortBy, sortDir }
+     * @param {function} onSuccess  (res) => void   — res = {success,data,total,page,pageSize}
+     * @param {function} [onError]
+     */
+    function fetch(entityKey, filters, opts, onSuccess, onError) {
+      _gsr(
+        "queryReportEntity",
+        [
+          entityKey,
+          filters || {},
+          opts || {},
+          APP.currentUser ? APP.currentUser.username : null,
+          SESSION ? SESSION.token : null,
+        ],
+        {
+          label: "queryReportEntity:" + entityKey,
+          onSuccess: function (res) {
+            if (!res || !res.success) {
+              if (typeof NotificationEngine !== "undefined") {
+                NotificationEngine.error((res && res.message) || "تعذر جلب بيانات التقرير");
+              }
+              if (onError) onError(res);
+              return;
+            }
+            onSuccess(res);
+          },
+          onError: onError,
+        },
+      );
+    }
+
+    /** aggregate — نداء موحّد لـ queryReportAggregate (ملخصات/Group By) */
+    function aggregate(entityKey, filters, aggOptions, onSuccess, onError) {
+      _gsr(
+        "queryReportAggregate",
+        [
+          entityKey,
+          filters || {},
+          aggOptions || {},
+          APP.currentUser ? APP.currentUser.username : null,
+          SESSION ? SESSION.token : null,
+        ],
+        {
+          label: "queryReportAggregate:" + entityKey,
+          onSuccess: function (res) {
+            if (!res || !res.success) {
+              if (onError) onError(res);
+              return;
+            }
+            onSuccess(res);
+          },
+          onError: onError,
+        },
+      );
+    }
+
+    return { fetch: fetch, aggregate: aggregate };
+  })();
+
+  var FilterEngine = (function () {
+    "use strict";
+
+    /** بيبني الفلاتر الحالية من قيم عناصر شريط الفلتر لكيان معيّن */
+    function readFilterBar(entityKey, containerId) {
+      var container = document.getElementById(containerId);
+      if (!container) return {};
+      var filters = {};
+      var dateFrom = container.querySelector('[data-filter="dateFrom"]');
+      var dateTo = container.querySelector('[data-filter="dateTo"]');
+      if (dateFrom && dateFrom.value) filters.dateFrom = dateFrom.value;
+      if (dateTo && dateTo.value) filters.dateTo = dateTo.value;
+      var qEl = container.querySelector('[data-filter="q"]');
+      if (qEl && qEl.value) filters.q = qEl.value;
+      (ENTITY_FILTER_UI[entityKey] || {}).fields &&
+        ENTITY_FILTER_UI[entityKey].fields.forEach(function (f) {
+          var el = container.querySelector('[data-filter="' + f.key + '"]');
+          if (el && el.value) filters[f.key] = el.value;
+        });
+      return filters;
+    }
+
+    /**
+     * renderBar — بيرجّع HTML لشريط فلاتر موحّد الشكل لأي كيان مسجّل
+     * في ENTITY_FILTER_UI. الشاشة اللي بتستخدمه لازم تبني onclick لزرار
+     * "تطبيق" بتاعها بنفسها لأنه هو اللي عارف يعمل رندر لجدول التقرير،
+     * لكن قراءة القيم بتتم عبر FilterEngine.readFilterBar الموحّدة.
+     */
+    function renderBar(entityKey, containerId, onApplyFnName) {
+      var cfg = ENTITY_FILTER_UI[entityKey];
+      if (!cfg) return "";
+      var parts = ['<div class="card" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">'];
+
+      if (cfg.hasDate) {
+        parts.push(_filterField("من تاريخ", '<input type="date" data-filter="dateFrom">'));
+        parts.push(_filterField("إلى تاريخ", '<input type="date" data-filter="dateTo">'));
+      }
+      (cfg.fields || []).forEach(function (f) {
+        if (f.type === "select") {
+          var opts = f.options
+            .map(function (o) {
+              return '<option value="' + o + '">' + (o || "الكل") + "</option>";
+            })
+            .join("");
+          parts.push(_filterField(f.label, '<select data-filter="' + f.key + '">' + opts + "</select>"));
+        } else {
+          parts.push(_filterField(f.label, '<input type="text" data-filter="' + f.key + '" placeholder="' + f.label + '">'));
+        }
+      });
+
+      parts.push(
+        '<button onclick="' +
+          onApplyFnName +
+          '()" style="padding:8px 18px;background:var(--primary);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600;font-size:13px">تطبيق الفلتر</button>',
+      );
+      parts.push("</div>");
+      return '<div id="' + containerId + '">' + parts.join("") + "</div>";
+    }
+
+    function _filterField(label, inputHtml) {
+      return (
+        '<div><label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">' +
+        label +
+        "</label>" +
+        inputHtml.replace(
+          "<input ",
+          '<input style="padding:8px;border:1px solid var(--border);border-radius:8px;font-family:inherit" ',
+        ).replace(
+          "<select ",
+          '<select style="padding:8px;border:1px solid var(--border);border-radius:8px;font-family:inherit" ',
+        ) +
+        "</div>"
+      );
+    }
+
+    return { renderBar: renderBar, readFilterBar: readFilterBar };
+  })();
+</script>

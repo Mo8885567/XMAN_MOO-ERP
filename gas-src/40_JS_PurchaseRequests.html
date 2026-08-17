@@ -1,0 +1,828 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 40_JS_PurchaseRequests.html — طلبات الشراء الداخلية (Purchase Requests)
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  // راجع Code_40_PurchaseRequests.gs للـ backend والـ ERP_GAP_ANALYSIS_
+  // AND_IMPROVEMENT_PLAN.md (القسم 3) لسبب وجود الموديول ده.
+  //
+  // [ملحوظة تصميم مقصودة] الشاشة دي مبنية بجدول HTML بسيط بدل ColumnEngine
+  // (المُستخدَم في 22_JS_PurchaseOrders.html) — تقليلاً للمخاطرة على موديول
+  // جديد بالكامل، وسهل ترقيته لاحقًا لو احتجنا فرز/فلترة متقدمة.
+  //
+  // [ملحوظة أهم] لاحظنا أثناء البناء إن شاشة أوامر الشراء (22_JS) بتعرض
+  // APP.data.purchaseOrders من غير ما أي كود فعليًا ينادي
+  // DL.PurchaseOrders.getPurchaseOrders() لتعبئته — يعني القائمة هناك
+  // ممكن تفضل فاضية لحد ما حاجة تانية تملاها بالصدفة. تجنبنا نفس المشكلة
+  // هنا: bindPurchaseRequests() تحت بتجيب البيانات فعليًا في كل مرة
+  // الصفحة بتتفتح. (المشكلة دي مش جزء من مهمة "طلبات الشراء" — لو حابب
+  // نصلحها في أوامر الشراء نفسها قولّي).
+  //
+  // §PR-A  renderPurchaseRequests / bindPurchaseRequests — الصفحة الرئيسية
+  // §PR-B  _prRenderTable        — جدول الطلبات
+  // §PR-C  openAddPRModal        — Modal إنشاء طلب جديد
+  // §PR-D  savePurchaseRequestSubmit
+  // §PR-E  viewPurchaseRequest   — Modal العرض + أزرار الحالة
+  // §PR-F  approve/reject/cancel/delete PurchaseRequest
+  // §PR-G  openConvertToPOModal / convertPurchaseRequestSubmit
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+  // §PR-BADGE  شارة حالة الطلب
+  // ─────────────────────────────────────────────────────────────
+  function _prStatusBadge(status) {
+    var map = {
+      "مسودة": { bg: "#F1F5F9", fg: "#475569", icon: "ti-file-pencil" },
+      "معتمد": { bg: "#ECFDF5", fg: "#059669", icon: "ti-circle-check" },
+      "مرفوض": { bg: "#FEF2F2", fg: "#DC2626", icon: "ti-circle-x" },
+      "محوّل": { bg: "#F5F3FF", fg: "#7C3AED", icon: "ti-arrow-right" },
+      "ملغي": { bg: "#F3F4F6", fg: "#6B7280", icon: "ti-ban" },
+    };
+    var s = map[status] || map["مسودة"];
+    return (
+      '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;background:' +
+      s.bg +
+      ";color:" +
+      s.fg +
+      '"><i class="ti ' +
+      s.icon +
+      '" style="font-size:12px"></i>' +
+      esc(status) +
+      "</span>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PR-A  الصفحة الرئيسية
+  // ─────────────────────────────────────────────────────────────
+  function renderPurchaseRequests() {
+    return (
+      '<div class="page-header">' +
+      '<div><h1 class="page-title"><i class="ti ti-clipboard-text"></i> طلبات الشراء الداخلية</h1>' +
+      '<p class="page-subtitle">طلب شراء داخلي معتمد قبل تحويله لأمر شراء فعلي</p></div>' +
+      '<div class="page-actions">' +
+      withPermission(
+        '<button class="btn btn-primary" style="background:#7C3AED;border-color:#7C3AED" onclick="openPurchaseRequestWorkspace()"><i class="ti ti-plus" style="font-size:14px"></i> طلب شراء جديد</button>',
+        "addPurchaseInvoice",
+      ) +
+      "</div>" +
+      "</div>" +
+      '<div class="tabs" id="pr-status-tabs" style="margin-bottom:14px">' +
+      '<button class="tab-btn active" data-status="" onclick="_prSwitchTab(this,\'\')">الكل</button>' +
+      '<button class="tab-btn" data-status="مسودة" onclick="_prSwitchTab(this,\'مسودة\')">مسودة</button>' +
+      '<button class="tab-btn" data-status="معتمد" onclick="_prSwitchTab(this,\'معتمد\')">معتمد</button>' +
+      '<button class="tab-btn" data-status="محوّل" onclick="_prSwitchTab(this,\'محوّل\')">محوّل لأمر شراء</button>' +
+      '<button class="tab-btn" data-status="مرفوض" onclick="_prSwitchTab(this,\'مرفوض\')">مرفوض</button>' +
+      '<button class="tab-btn" data-status="ملغي" onclick="_prSwitchTab(this,\'ملغي\')">ملغي</button>' +
+      "</div>" +
+      '<div id="pr-table-container"><div class="empty-state">جارِ التحميل...</div></div>'
+    );
+  }
+
+  var _currentPRStatus = "";
+
+  function _prSwitchTab(btn, status) {
+    _currentPRStatus = status;
+    var tabs = document.getElementById("pr-status-tabs");
+    if (tabs)
+      Array.prototype.forEach.call(tabs.querySelectorAll(".tab-btn"), function (b) {
+        b.classList.toggle("active", b === btn);
+      });
+    _prRenderTable(status);
+  }
+
+  function bindPurchaseRequests() {
+    _currentPRStatus = "";
+    DL.PurchaseRequests.getPurchaseRequests(
+      {},
+      {
+        onSuccess: function (result) {
+          APP.data.purchaseRequests = result.data || [];
+          _prRenderTable("");
+        },
+        onError: function (result) {
+          var c = document.getElementById("pr-table-container");
+          if (c)
+            c.innerHTML =
+              '<div class="empty-state">تعذر تحميل البيانات: ' +
+              esc(result.message || "") +
+              "</div>";
+        },
+      },
+    );
+  }
+
+  var _prColumnsRegistered = false;
+
+  // [ENGINE-UNIFY] كانت هذه الشاشة الوحيدة في موديول المشتريات (على عكس
+  // 22_JS_PurchaseOrders.html الأخ الشقيق) بتبني الجدول بـ innerHTML خام
+  // بدل ColumnEngine — يعني بدون بحث/فلترة/تخصيص أعمدة/تصدير موحّد.
+  // نفس نمط _poRegisterColumns بالضبط.
+  function _prRegisterColumns() {
+    if (_prColumnsRegistered) return;
+    _prColumnsRegistered = true;
+    ColumnEngine.register(
+      "purchase_requests",
+      [
+        {
+          key: "id",
+          label: "رقم الطلب",
+          type: "text",
+          width: 130,
+          frozen: "right",
+          format: function (v, row) {
+            return (
+              "<b>" +
+              esc(v || "") +
+              "</b>" +
+              (row.converted_po_id
+                ? '<br><span style="font-size:11px;color:#7C3AED">→ ' +
+                  esc(row.converted_po_id) +
+                  "</span>"
+                : "")
+            );
+          },
+        },
+        { key: "date", label: "التاريخ", type: "date", width: 100 },
+        { key: "requested_by", label: "مقدّم الطلب", type: "text", width: 140 },
+        {
+          key: "department",
+          label: "القسم",
+          type: "text",
+          width: 120,
+          format: function (v) {
+            return esc(v || "—");
+          },
+        },
+        {
+          key: "lines_count",
+          label: "عدد الأصناف",
+          type: "number",
+          width: 90,
+          align: "center",
+          format: function (v) {
+            return (
+              '<span style="display:block;text-align:center">' +
+              Number(v || 0) +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "status",
+          label: "الحالة",
+          type: "badge",
+          width: 110,
+          format: function (v) {
+            return _prStatusBadge(v);
+          },
+        },
+        {
+          key: "_actions",
+          label: "",
+          type: "custom",
+          width: 60,
+          sortable: false,
+          filterable: false,
+          searchable: false,
+          exportable: false,
+          format: function (v, row) {
+            return (
+              '<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();viewPurchaseRequest(\'' +
+              esc(row.id) +
+              '\')"><i class="ti ti-eye" style="font-size:12px"></i></button>'
+            );
+          },
+        },
+        // [COLUMN-ENGINE-FULL-FIELDS] حقول موجودة في PURCHASE_REQUEST_HEADERS
+        // (Code_40_PurchaseRequests.gs) لكنها لم تكن معروضة كأعمدة اختيارية.
+        // lines_json (بنود الطلب) بيانات متداخلة معقدة — تُعرض من شاشة
+        // عرض الطلب نفسها (viewPurchaseRequest) وليست عمود مسطّح مناسب.
+        {
+          key: "warehouse",
+          label: "المخزن",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "needed_by_date",
+          label: "تاريخ الاحتياج",
+          type: "date",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "converted_po_id",
+          label: "أمر الشراء المحوَّل إليه",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "reject_reason",
+          label: "سبب الرفض",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "notes",
+          label: "ملاحظات",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "created_by",
+          label: "أُضيف بواسطة",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "created_at",
+          label: "تاريخ الإضافة",
+          type: "date",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "updated_at",
+          label: "تاريخ آخر تعديل",
+          type: "date",
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+      ],
+      {
+        title: "طلبات الشراء",
+        rowKey: "id",
+      },
+    );
+  }
+
+  function _prRenderTable(statusFilter) {
+    var container = document.getElementById("pr-table-container");
+    if (!container) return;
+    var rows = APP.data.purchaseRequests || [];
+    if (statusFilter)
+      rows = rows.filter(function (r) {
+        return r.status === statusFilter;
+      });
+    rows.sort(function (a, b) {
+      return (b.created_at || "").localeCompare(a.created_at || "");
+    });
+
+    if (!rows.length) {
+      container.innerHTML =
+        '<div class="empty-state"><i class="ti ti-clipboard-text" style="font-size:32px;opacity:.4"></i><p>لا توجد طلبات شراء' +
+        (statusFilter ? " بحالة: " + esc(statusFilter) : "") +
+        "</p></div>";
+      return;
+    }
+
+    _prRegisterColumns();
+    ColumnEngine.renderTable("purchase_requests", container, rows, {
+      onRowClick: function (row) {
+        viewPurchaseRequest(row.id);
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PR-C  شاشة إنشاء طلب شراء جديد
+  // ─────────────────────────────────────────────────────────────
+  // [ERP-REDESIGN] زي 22_JS_PurchaseOrders.html بالظبط — الشاشة أصبحت
+  // صفحة كاملة داخل حدود منطقة المحتوى (بين السايد بار والتوب بار) بدل
+  // مودال-أوفرلاي كان بيغطي الشاشة كلها فوقهم.
+  // ─────────────────────────────────────────────────────────────
+  var _prLineCounter = 0;
+
+  function _buildPRLineRow(idx, line) {
+    var items = APP.data.items || [];
+    var itemOpts =
+      '<option value="">-- اختر صنف --</option>' +
+      items
+        .map(function (it) {
+          var sel = line.item_id === it.id ? " selected" : "";
+          return (
+            '<option value="' +
+            esc(it.id) +
+            '"' +
+            sel +
+            ">" +
+            esc(it.name) +
+            "</option>"
+          );
+        })
+        .join("");
+
+    return (
+      '<tr id="pr-line-row-' +
+      idx +
+      '">' +
+      "<td>" +
+      '<select class="input input-sm pr-line-item" data-idx="' +
+      idx +
+      '">' +
+      itemOpts +
+      "</select>" +
+      "</td>" +
+      "<td>" +
+      '<input type="number" class="input input-sm pr-line-qty" data-idx="' +
+      idx +
+      '" value="' +
+      (line.qty || 1) +
+      '" min="1" style="width:80px;text-align:center">' +
+      "</td>" +
+      "<td>" +
+      '<input type="text" class="input input-sm pr-line-notes" data-idx="' +
+      idx +
+      '" value="' +
+      esc(line.notes || "") +
+      '" placeholder="ملاحظة (اختياري)">' +
+      "</td>" +
+      "<td>" +
+      '<button class="btn btn-outline btn-sm" style="color:#DC2626;border-color:#DC2626" onclick="_removePRLineRow(' +
+      idx +
+      ')"><i class="ti ti-trash" style="font-size:12px"></i></button>' +
+      "</td>" +
+      "</tr>"
+    );
+  }
+
+  function _addPRLineRow() {
+    _prLineCounter++;
+    var tbody = document.getElementById("pr-lines-body");
+    if (!tbody) return;
+    var div = document.createElement("tbody");
+    div.innerHTML = _buildPRLineRow(_prLineCounter, {});
+    tbody.appendChild(div.firstChild);
+  }
+
+  function _removePRLineRow(idx) {
+    var row = document.getElementById("pr-line-row-" + idx);
+    var tbody = document.getElementById("pr-lines-body");
+    if (row && tbody && tbody.children.length > 1) row.remove();
+    else if (row) NotificationEngine.error("لازم يفضل بند واحد على الأقل");
+  }
+
+  function openPurchaseRequestWorkspace() {
+    renderPage("purchase_request_workspace");
+  }
+
+  function renderPurchaseRequestWorkspace() {
+    _prLineCounter = 0;
+    var date = (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().split("T")[0]);
+    var firstLine = _buildPRLineRow(0, {});
+
+    return (
+      '<div class="iw-page">' +
+      '<div class="iw-toolbar">' +
+      '<button class="iw-tool-btn" onclick="_addPRLineRow()"><i class="ti ti-square-plus"></i> إضافة صنف</button>' +
+      "</div>" +
+      '<div class="iw-body iw-body-full"><div class="iw-main">' +
+      '<div class="iw-header-card">' +
+      '<div class="iw-header-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      '<div class="iw-field"><label class="form-label">التاريخ</label>' +
+      '<input class="input" type="date" id="pr-date" value="' +
+      date +
+      '"></div>' +
+      '<div class="iw-field"><label class="form-label">القسم / الإدارة الطالبة</label>' +
+      '<input class="input" id="pr-department" placeholder="مثال: خط الإنتاج 2"></div>' +
+      '<div class="iw-field"><label class="form-label">المخزن</label>' +
+      '<select class="input" id="pr-warehouse">' +
+      (typeof _txWarehouseOpts === "function" ? _txWarehouseOpts() : "") +
+      "</select></div>" +
+      '<div class="iw-field"><label class="form-label">مطلوب بتاريخ</label>' +
+      '<input class="input" type="date" id="pr-needed-date"></div>' +
+      '<div class="iw-field" style="grid-column:span 2"><label class="form-label">ملاحظات</label>' +
+      '<input class="input" id="pr-notes" placeholder="سبب الطلب أو ملاحظات..."></div>' +
+      "</div></div>" +
+      '<div class="card" style="margin-bottom:12px;padding:0;overflow:hidden">' +
+      '<div style="padding:10px 14px;background:#F5F3FF;border-bottom:1px solid #DDD6FE;display:flex;justify-content:space-between;align-items:center">' +
+      '<span style="font-weight:700;font-size:13px;color:#3B0764">الأصناف المطلوبة</span>' +
+      "</div>" +
+      '<div class="table-wrap" style="margin:0"><table>' +
+      "<thead><tr><th>الصنف</th>" +
+      '<th style="width:100px">الكمية</th><th>ملاحظة</th><th style="width:40px"></th></tr></thead>' +
+      '<tbody id="pr-lines-body">' +
+      firstLine +
+      "</tbody></table></div>" +
+      '<div style="padding:10px 14px">' +
+      '<button class="btn btn-outline btn-sm" onclick="_addPRLineRow()"><i class="ti ti-plus" style="font-size:12px"></i> إضافة صنف</button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="iw-footer" style="display:flex;justify-content:flex-end;gap:10px;margin-top:14px">' +
+      '<button class="btn btn-outline" onclick="renderPage(\'purchase-requests\')">إلغاء</button>' +
+      withPermission(
+        '<button id="pr-save-btn" class="btn btn-primary" style="background:#7C3AED;border-color:#7C3AED" onclick="savePurchaseRequestSubmit()"><i class="ti ti-device-floppy" style="font-size:14px"></i> حفظ الطلب</button>',
+        "addPurchaseInvoice",
+      ) +
+      "</div>" +
+      "</div></div></div>"
+    );
+  }
+
+  function bindPurchaseRequestWorkspace() {
+    if (window.SplitSelect) {
+      SplitSelect.init("pr-warehouse", {
+        label: "المخزن",
+        icon: "ti-building-warehouse",
+        searchable: true,
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PR-D  حفظ طلب الشراء
+  // ─────────────────────────────────────────────────────────────
+  function _prCollectLines() {
+    var lines = [];
+    Array.prototype.forEach.call(
+      document.querySelectorAll("#pr-lines-body tr"),
+      function (row) {
+        var itemSel = row.querySelector(".pr-line-item");
+        var qtyInp = row.querySelector(".pr-line-qty");
+        var notesInp = row.querySelector(".pr-line-notes");
+        if (!itemSel || !itemSel.value) return;
+        var opt = itemSel.options[itemSel.selectedIndex];
+        lines.push({
+          item_id: itemSel.value,
+          item_name: opt ? opt.textContent : "",
+          qty: Number((qtyInp && qtyInp.value) || 1),
+          notes: (notesInp && notesInp.value) || "",
+        });
+      },
+    );
+    return lines;
+  }
+
+  // [SE-ROLLOUT] عبر SaveEngine.run بدل DL.PurchaseRequests اليدوي —
+  // نفس رسائل النجاح/الفشل ونفس تأثير الحفظ بالظبط.
+  function savePurchaseRequestSubmit() {
+    SaveEngine.run({
+      screen: "purchase_requests",
+      entity: "purchase_request",
+      buttonId: "pr-save-btn",
+      rules: [
+        {
+          test: function () {
+            return _prCollectLines().length > 0;
+          },
+          message: "أضف صنفاً واحداً على الأقل",
+        },
+      ],
+      collect: function () {
+        return {
+          date: (document.getElementById("pr-date") || {}).value,
+          department:
+            (document.getElementById("pr-department") || {}).value || "",
+          warehouse:
+            (document.getElementById("pr-warehouse") || {}).value || "",
+          needed_by_date:
+            (document.getElementById("pr-needed-date") || {}).value || "",
+          notes: (document.getElementById("pr-notes") || {}).value || "",
+          lines: _prCollectLines(),
+        };
+      },
+      fn: "savePurchaseRequest",
+      params: function (data) {
+        return [data, SESSION.token];
+      },
+      successMessage: "تم الحفظ",
+      onSuccess: function () {
+        renderPage("purchase-requests");
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PR-E  عرض تفاصيل الطلب + أزرار الحالة
+  // ─────────────────────────────────────────────────────────────
+  function viewPurchaseRequest(id) {
+    var order = (APP.data.purchaseRequests || []).find(function (o) {
+      return o.id === id;
+    });
+    if (!order) {
+      NotificationEngine.error("الطلب غير موجود");
+      return;
+    }
+    var lines = order.lines || order.lines_json || [];
+    if (typeof lines === "string") {
+      try {
+        lines = JSON.parse(lines);
+      } catch (e) {
+        lines = [];
+      }
+    }
+
+    var linesHtml = lines
+      .map(function (l) {
+        return (
+          "<tr><td>" +
+          esc(l.item_name || l.item_id || "") +
+          '</td><td style="text-align:center">' +
+          esc(l.qty || 0) +
+          "</td><td>" +
+          esc(l.notes || "—") +
+          "</td></tr>"
+        );
+      })
+      .join("");
+
+    var body =
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;font-size:14px">' +
+      "<div><b>الحالة:</b> " +
+      _prStatusBadge(order.status) +
+      "</div>" +
+      "<div><b>التاريخ:</b> " +
+      esc(order.date || "") +
+      "</div>" +
+      "<div><b>مقدّم الطلب:</b> " +
+      esc(order.requested_by || "") +
+      "</div>" +
+      "<div><b>القسم:</b> " +
+      esc(order.department || "—") +
+      "</div>" +
+      "<div><b>المخزن:</b> " +
+      esc(order.warehouse || "—") +
+      "</div>" +
+      "<div><b>مطلوب بتاريخ:</b> " +
+      esc(order.needed_by_date || "—") +
+      "</div>" +
+      "</div>" +
+      (order.notes
+        ? '<div style="margin-bottom:12px"><b>ملاحظات:</b> ' + esc(order.notes) + "</div>"
+        : "") +
+      (order.status === "مرفوض" && order.reject_reason
+        ? '<div style="margin-bottom:12px;padding:8px 12px;background:#FEF2F2;border-radius:8px;color:#DC2626"><b>سبب الرفض:</b> ' +
+          esc(order.reject_reason) +
+          "</div>"
+        : "") +
+      '<div class="table-wrap"><table><thead><tr><th>الصنف</th><th style="text-align:center">الكمية</th><th>ملاحظة</th></tr></thead><tbody>' +
+      linesHtml +
+      "</tbody></table></div>";
+
+    var footer = "";
+    if (order.status === "مسودة") {
+      footer += withPermission(
+        '<button class="btn" style="background:#059669;color:#fff" onclick="closeModal(\'pr-view-modal\');approvePurchaseRequestConfirm(\'' +
+          esc(id) +
+          "')\"><i class=\"ti ti-circle-check\" style=\"font-size:14px\"></i> اعتماد</button>",
+        "addPurchaseInvoice",
+      );
+      footer += withPermission(
+        '<button class="btn btn-outline" style="color:#DC2626;border-color:#DC2626" onclick="closeModal(\'pr-view-modal\');rejectPurchaseRequestPrompt(\'' +
+          esc(id) +
+          "')\"><i class=\"ti ti-circle-x\" style=\"font-size:14px\"></i> رفض</button>",
+        "addPurchaseInvoice",
+      );
+    }
+    if (order.status === "معتمد") {
+      footer += withPermission(
+        '<button class="btn" style="background:#7C3AED;color:#fff" onclick="closeModal(\'pr-view-modal\');openConvertToPOModal(\'' +
+          esc(id) +
+          "')\"><i class=\"ti ti-arrow-right\" style=\"font-size:14px\"></i> تحويل لأمر شراء</button>",
+        "addPurchaseInvoice",
+      );
+    }
+    if (order.status === "مسودة" || order.status === "معتمد") {
+      footer += withPermission(
+        '<button class="btn btn-outline" style="color:#6B7280;border-color:#6B7280" onclick="closeModal(\'pr-view-modal\');cancelPurchaseRequestConfirm(\'' +
+          esc(id) +
+          "')\"><i class=\"ti ti-ban\" style=\"font-size:14px\"></i> إلغاء</button>",
+        "deletePurchaseInvoice",
+      );
+    }
+    if (order.status !== "معتمد" && order.status !== "محوّل") {
+      footer += withPermission(
+        '<button class="btn btn-outline" style="color:#DC2626;border-color:#DC2626" onclick="closeModal(\'pr-view-modal\');deletePurchaseRequestConfirm(\'' +
+          esc(id) +
+          "')\"><i class=\"ti ti-trash\" style=\"font-size:14px\"></i> حذف</button>",
+        "deletePurchaseInvoice",
+      );
+    }
+    footer += '<button class="btn btn-outline" onclick="closeModal(\'pr-view-modal\')">إغلاق</button>';
+
+    var modal = _buildPRModal("pr-view-modal", "طلب شراء رقم: " + id, body, footer, 640);
+    document.body.appendChild(modal);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PR-F  اعتماد / رفض / إلغاء / حذف
+  // ─────────────────────────────────────────────────────────────
+  function approvePurchaseRequestConfirm(id) {
+    showConfirm({
+      title: "اعتماد طلب الشراء",
+      message: "هل تريد اعتماد طلب الشراء رقم " + id + "؟",
+      icon: "ti-circle-check",
+      iconColor: "#059669",
+      confirmText: "اعتماد",
+      onConfirm: function () {
+        DL.PurchaseRequests.approvePurchaseRequest([id, SESSION.token], {
+          onSuccess: function (result) {
+            NotificationEngine.success(result.message || "تم الاعتماد");
+            bindPurchaseRequests();
+          },
+          onError: function (result) {
+            NotificationEngine.error(result.message || "فشل الاعتماد");
+          },
+        });
+      },
+    });
+  }
+
+  function rejectPurchaseRequestPrompt(id) {
+    var reason = prompt("سبب رفض طلب الشراء (مطلوب):");
+    if (reason === null) return;
+    if (!reason.trim()) {
+      NotificationEngine.error("سبب الرفض مطلوب");
+      return;
+    }
+    DL.PurchaseRequests.rejectPurchaseRequest([{ id: id, reason: reason }, SESSION.token], {
+      onSuccess: function (result) {
+        NotificationEngine.success(result.message || "تم الرفض");
+        bindPurchaseRequests();
+      },
+      onError: function (result) {
+        NotificationEngine.error(result.message || "فشل الرفض");
+      },
+    });
+  }
+
+  function cancelPurchaseRequestConfirm(id) {
+    showConfirm({
+      title: "إلغاء طلب الشراء",
+      message: "هل تريد إلغاء طلب الشراء رقم " + id + "؟",
+      icon: "ti-ban",
+      iconColor: "#6B7280",
+      confirmText: "إلغاء الطلب",
+      confirmClass: "btn-danger",
+      onConfirm: function () {
+        DL.PurchaseRequests.cancelPurchaseRequest([id, SESSION.token], {
+          onSuccess: function (result) {
+            NotificationEngine.success(result.message || "تم الإلغاء");
+            bindPurchaseRequests();
+          },
+          onError: function (result) {
+            NotificationEngine.error(result.message || "فشل الإلغاء");
+          },
+        });
+      },
+    });
+  }
+
+  function deletePurchaseRequestConfirm(id) {
+    showConfirm({
+      title: "حذف طلب الشراء",
+      message: "هل تريد حذف طلب الشراء رقم " + id + " نهائياً؟",
+      icon: "ti-trash",
+      iconColor: "#DC2626",
+      confirmText: "حذف",
+      confirmClass: "btn-danger",
+      onConfirm: function () {
+        DL.PurchaseRequests.deletePurchaseRequest([id, SESSION.token], {
+          onSuccess: function (result) {
+            NotificationEngine.success(result.message || "تم الحذف");
+            APP.data.purchaseRequests = (APP.data.purchaseRequests || []).filter(
+              function (o) {
+                return o.id !== id;
+              },
+            );
+            _prRenderTable(_currentPRStatus);
+          },
+          onError: function (result) {
+            NotificationEngine.error(result.message || "فشل الحذف");
+          },
+        });
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PR-G  تحويل الطلب المعتمد لأمر شراء فعلي
+  // ─────────────────────────────────────────────────────────────
+  function openConvertToPOModal(id) {
+    var order = (APP.data.purchaseRequests || []).find(function (o) {
+      return o.id === id;
+    });
+    if (!order) return;
+    var lines = order.lines || order.lines_json || [];
+    if (typeof lines === "string") {
+      try {
+        lines = JSON.parse(lines);
+      } catch (e) {
+        lines = [];
+      }
+    }
+    var items = APP.data.items || [];
+    var suppliers = APP.data.suppliers || [];
+    var supplierOpts =
+      '<option value="">-- اختر مورد --</option>' +
+      suppliers
+        .map(function (s) {
+          return '<option value="' + esc(s.name) + '">' + esc(s.name) + "</option>";
+        })
+        .join("");
+
+    var linesHtml = lines
+      .map(function (l, idx) {
+        var it = items.find(function (i) {
+          return i.id === l.item_id;
+        });
+        var price = it ? Number(it.cost_price || 0) : 0;
+        return (
+          '<tr><td>' +
+          esc(l.item_name || l.item_id || "") +
+          '<input type="hidden" class="pr-conv-item" data-idx="' +
+          idx +
+          '" value="' +
+          esc(l.item_id || "") +
+          '"></td>' +
+          '<td style="text-align:center">' +
+          '<input type="number" class="input input-sm pr-conv-qty" data-idx="' +
+          idx +
+          '" value="' +
+          (l.qty || 1) +
+          '" min="1" style="width:80px;text-align:center">' +
+          "</td>" +
+          '<td><input type="number" class="input input-sm pr-conv-price" data-idx="' +
+          idx +
+          '" value="' +
+          price +
+          '" min="0" step="0.01" style="width:100px"></td>' +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    var modal = _buildPRModal(
+      "pr-convert-modal",
+      "تحويل الطلب " + id + " لأمر شراء",
+      '<div style="margin-bottom:14px"><label class="form-label">المورد <span style="color:#ef4444">*</span></label>' +
+        '<select class="input" id="pr-conv-supplier">' +
+        supplierOpts +
+        "</select></div>" +
+        '<div class="table-wrap"><table><thead><tr><th>الصنف</th>' +
+        '<th style="width:100px">الكمية</th><th style="width:120px">سعر الوحدة</th></tr></thead>' +
+        "<tbody>" +
+        linesHtml +
+        "</tbody></table></div>" +
+        '<p style="color:var(--text2);font-size:12px;margin-top:8px">هيتحوّل الطلب لأمر شراء بحالة "مسودة" — تقدر تكمّل تعديل الأسعار والخصومات على أمر الشراء نفسه بعد كده.</p>',
+      '<button class="btn btn-outline" onclick="closeModal(\'pr-convert-modal\')">إلغاء</button>' +
+        withPermission(
+          '<button class="btn btn-primary" style="background:#7C3AED;border-color:#7C3AED" onclick="convertPurchaseRequestSubmit(\'' +
+            esc(id) +
+            '\')"><i class="ti ti-arrow-right" style="font-size:14px"></i> تحويل لأمر شراء</button>',
+          "addPurchaseInvoice",
+        ),
+      560,
+    );
+    document.body.appendChild(modal);
+  }
+
+  function convertPurchaseRequestSubmit(id) {
+    var supplier = (document.getElementById("pr-conv-supplier") || {}).value;
+    if (!supplier) {
+      NotificationEngine.error("اختر المورد");
+      return;
+    }
+    var lines = [];
+    Array.prototype.forEach.call(
+      document.querySelectorAll("#pr-convert-modal .pr-conv-item"),
+      function (inp) {
+        var idx = inp.getAttribute("data-idx");
+        var qtyInp = document.querySelector(
+          '.pr-conv-qty[data-idx="' + idx + '"]',
+        );
+        var priceInp = document.querySelector(
+          '.pr-conv-price[data-idx="' + idx + '"]',
+        );
+        lines.push({
+          item_id: inp.value,
+          qty: Number((qtyInp && qtyInp.value) || 1),
+          price: Number((priceInp && priceInp.value) || 0),
+        });
+      },
+    );
+
+    var data = {
+      id: id,
+      supplier: supplier,
+      date: (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().split("T")[0]),
+      lines: lines,
+    };
+
+    DL.PurchaseRequests.convertPurchaseRequestToPO([data, SESSION.token], {
+      onSuccess: function (result) {
+        NotificationEngine.success(result.message || "تم التحويل");
+        closeModal("pr-convert-modal");
+        bindPurchaseRequests();
+      },
+      onError: function (result) {
+        NotificationEngine.error(result.message || "فشل التحويل");
+      },
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // نهاية 40_JS_PurchaseRequests.html
+  // ═══════════════════════════════════════════════════════════════════
+</script>

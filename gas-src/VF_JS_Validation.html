@@ -1,0 +1,1069 @@
+<script>
+  // ╔══════════════════════════════════════════════════════════════════════╗
+  // ║  MOO.ERP — Enterprise Validation Framework (VF v2.0)                 ║
+  // ║  نظام التحقق الموحّد — المرجع الوحيد للتحقق في كل شاشات النظام      ║
+  // ║  يُحمَّل بعد Style وI18N، وقبل باقي الموديولات                      ║
+  // ║                                                                      ║
+  // ║  [VF-V2] هذا الملف هو الإصدار الموسّع الذي يغطي كل أنواع الحقول +   ║
+  // ║  UX حديث (تحقق فوري/inline/تركيز تلقائي على أول خطأ) + Business      ║
+  // ║  Validation (رصيد/حد ائتمان..) عبر جسر يتصل بـ ValidationEngine     ║
+  // ║  السيرفر (Code_36) و BusinessRulesEngine (Code_33) — بدون تكرار     ║
+  // ║  أي منطق قواعد أعمال هنا، فقط عرض نتيجته على الحقل الصحيح.          ║
+  // ║                                                                      ║
+  // ║  الاستخدام الأساسي (لم يتغيّر — التوافق للخلف مضمون):               ║
+  // ║    VF.validate(fieldId, rules)  ← تحقق فوري من حقل واحد             ║
+  // ║    VF.validateForm(formConfig)  ← تحقق من نموذج كامل                ║
+  // ║    VF.bind(fieldId, rules)      ← ربط حدث blur/input بحقل          ║
+  // ║    VF.bindAll(formConfig)       ← ربط أحداث كل حقول النموذج        ║
+  // ║    VF.clear(fieldId) / VF.clearForm(ids)                            ║
+  // ║                                                                      ║
+  // ║  الجديد في v2:                                                       ║
+  // ║    VF.RULES.*        ← أنماط جاهزة لكل نوع حقل مطلوب (43 نوع)      ║
+  // ║    VF.checkDuplicate(fieldId, rules) ← فحص تكرار Debounced يتصل     ║
+  // ║                        بدالة سيرفر تُمرَّر في rules.checkFn         ║
+  // ║    VF.business.*     ← تشغيل قاعدة عمل سيرفر وعرض الخطأ على شاشة   ║
+  // ║                        الحفظ (رصيد/حد ائتمان/فترة سماح...)          ║
+  // ║    VF.showSuccess(msg) ← رسالة نجاح موحّدة بعد الحفظ                ║
+  // ╚══════════════════════════════════════════════════════════════════════╝
+  //
+  // [I18N] هذا الملف محوَّل بالكامل لاستخدام Translation Engine — يعتمد
+  // على المتغيّر العام I18N (38_JS_i18n_Client.html)، ولازم يتحمّل بعده.
+
+  (function (global) {
+    "use strict";
+
+    // ─── CSS class names ─────────────────────────────────────────────────
+    var CLS_ERR = "vf-error";
+    var CLS_OK = "vf-ok";
+    var CLS_CHECKING = "vf-checking"; // [VF-V2] أثناء فحص Duplicate/Async
+    var HINT_ID = "-vf-hint"; // suffix → element id = fieldId + HINT_ID
+
+    // ═══════════════════════════════════════════════════════════════════
+    // [BUGFIX-GSR-SIG] _vfCallServer — محوّل موحّد لاستدعاء السيرفر بنمط
+    // callback قديم (fnName, cbSuccess, cbFail, callArgs) فوق _gsr الحقيقي
+    // (31_JS_DataLayer.html) اللي توقيعه مختلف تمامًا: (fnName, params, opts).
+    // قبل الإصلاح ده، checkDuplicate و business.run كانوا بيمرروا cbSuccess
+    // نفسها كـ "params" لـ _gsr، فكانت بتتبعت كـ argument لـ google.script.run
+    // (بدل مصفوفة الآرجيومنتس الحقيقية) وتفشل بـ "Failed due to illegal
+    // value in property: 0" لأن الدوال مش قابلة للتسلسل (serialize).
+    // ═══════════════════════════════════════════════════════════════════
+    function _vfCallServer(fnName, cbSuccess, cbFail, callArgs) {
+      if (typeof global._gsr === "function") {
+        global._gsr(fnName, callArgs, {
+          onSuccess: function (result) {
+            cbSuccess(result.data);
+          },
+          onError: function (result) {
+            // بعض الدوال (زي business.run) محتاجة تفرّق بين "فشل قاعدة
+            // عمل" (السيرفر رد بـ success:false) و"فشل اتصال حقيقي" —
+            // بنبعت كائن يحاكي الشكل القديم عشان الكولباك يقرر بنفسه.
+            if (cbFail) {
+              cbFail({ success: false, message: result.message });
+            } else {
+              cbSuccess({ success: false, message: result.message });
+            }
+          },
+        });
+      } else {
+        google.script.run
+          .withSuccessHandler(cbSuccess)
+          .withFailureHandler(cbFail)
+          [fnName].apply(null, callArgs || []);
+      }
+    }
+
+    // ─── مساعدات داخلية ──────────────────────────────────────────────────
+    function _el(id) {
+      return document.getElementById(id);
+    }
+
+    function _getHint(fieldId) {
+      return _el(fieldId + HINT_ID);
+    }
+
+    function _createHint(field) {
+      var hint = document.createElement("div");
+      hint.id = field.id + HINT_ID;
+      hint.className = "vf-hint";
+      hint.setAttribute("role", "alert");
+      hint.setAttribute("aria-live", "polite");
+      field.parentNode.insertBefore(hint, field.nextSibling);
+      return hint;
+    }
+
+    function _ensureHint(field) {
+      return _getHint(field.id) || _createHint(field);
+    }
+
+    // [VF-V2] tooltip اختياري — نفس نص الخطأ لكن كـ title، مفيد لو الحقل
+    // ضيّق (جدول ColumnEngine مثلاً) والـ hint المرئي مش هيتقرأ بسهولة.
+    function _setError(field, msg) {
+      field.classList.remove(CLS_CHECKING);
+      field.classList.add(CLS_ERR);
+      field.classList.remove(CLS_OK);
+      field.setAttribute("aria-invalid", "true");
+      field.title = msg;
+      var hint = _ensureHint(field);
+      hint.textContent = msg;
+      hint.style.display = "block";
+    }
+
+    function _setOk(field) {
+      field.classList.remove(CLS_ERR, CLS_CHECKING);
+      field.classList.add(CLS_OK);
+      field.removeAttribute("aria-invalid");
+      field.removeAttribute("title");
+      var hint = _getHint(field.id);
+      if (hint) {
+        hint.textContent = "";
+        hint.style.display = "none";
+      }
+    }
+
+    function _setChecking(field) {
+      field.classList.add(CLS_CHECKING);
+      field.classList.remove(CLS_ERR, CLS_OK);
+    }
+
+    function _clearState(field) {
+      field.classList.remove(CLS_ERR, CLS_OK, CLS_CHECKING);
+      field.removeAttribute("aria-invalid");
+      field.removeAttribute("title");
+      var hint = _getHint(field.id);
+      if (hint) {
+        hint.textContent = "";
+        hint.style.display = "none";
+      }
+    }
+
+    // [VF-V2] debounce محلي — يعيد استخدام دالة debounce العامة
+    // (02_JS_UI_Shell.html) لو موجودة، وإلا بيستخدم نسخة احتياطية بسيطة
+    // حتى لا يعتمد هذا الملف على ترتيب تحميل صارم.
+    function _debounce(fn, wait) {
+      if (typeof global.debounce === "function")
+        return global.debounce(fn, wait);
+      var t;
+      return function () {
+        var args = arguments,
+          ctx = this;
+        clearTimeout(t);
+        t = setTimeout(function () {
+          fn.apply(ctx, args);
+        }, wait || 300);
+      };
+    }
+
+    // ─── Regex أساسية (نفس صيغ ValidationEngine على السيرفر تمامًا حتى لا
+    // يختلف حقل يظهر صحيحًا على العميل ثم يُرفض على السيرفر أو العكس) ────
+    var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+    var PHONE_RE = /^[\d\s\-\+\(\)]{7,20}$/;
+    var EG_PHONE_RE = /^01[0125][0-9]{8}$/;
+    var EG_TEL_RE = /^0[2-9][0-9]{6,8}$/;
+    var URL_RE = /^https?:\/\/\S+$/i;
+    var NUMBERS_ONLY_RE = /^[0-9]+$/;
+    var LETTERS_ONLY_RE = /^[A-Za-z\s]+$/;
+    var ARABIC_ONLY_RE = /^[\u0600-\u06FF\s]+$/;
+    var ENGLISH_ONLY_RE = /^[A-Za-z0-9\s.,'\-]+$/;
+    var DECIMAL_RE = /^-?\d+(\.\d+)?$/;
+    var EG_NATIONAL_ID_RE = /^[23][0-9]{13}$/;
+    var EG_TAX_NUMBER_RE = /^[0-9]{9}$/;
+    var EG_COMMERCIAL_REG_RE = /^[0-9]{2,10}$/;
+    var BARCODE_RE = /^[0-9]{8}$|^[0-9]{12,13}$|^[A-Za-z0-9\-_]{4,30}$/;
+
+    // ─── Date dd/MM/yyyy ─────────────────────────────────────────────────
+    var DATE_RE = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+    function _validDate(val) {
+      var m = val.match(DATE_RE);
+      if (!m) return false;
+      var d = +m[1],
+        mo = +m[2],
+        y = +m[3];
+      if (mo < 1 || mo > 12) return false;
+      var max = new Date(y, mo, 0).getDate();
+      return d >= 1 && d <= max && y >= 1900 && y <= 2100;
+    }
+
+    var TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/;
+
+    function _isValidNationalId(v) {
+      if (!EG_NATIONAL_ID_RE.test(v)) return false;
+      var century = v.charAt(0) === "2" ? 1900 : 2000;
+      var year = century + parseInt(v.substr(1, 2), 10);
+      var month = parseInt(v.substr(3, 2), 10);
+      var day = parseInt(v.substr(5, 2), 10);
+      if (month < 1 || month > 12) return false;
+      var d = new Date(year, month - 1, day);
+      return d.getMonth() === month - 1 && d.getDate() === day;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // VF.validate(fieldId, rules) → true إذا الحقل صحيح، false إذا خطأ
+    //
+    // rules مثال:
+    // {
+    //   required   : true,
+    //   type       : "text" | "number" | "email" | "phone" | "egyptPhone" |
+    //                "egyptTelephone" | "url" | "date" | "time" | "decimal" |
+    //                "currency" | "percentage" | "numbersOnly" | "lettersOnly" |
+    //                "arabicOnly" | "englishOnly" | "nationalId" | "taxNumber" |
+    //                "commercialRegistration" | "barcode" | "qr" |
+    //                "select" | "multiSelect" | "checkbox" | "radio" | "file",
+    //   min/max            : حدود رقمية أو تاريخية
+    //   minLength/maxLength/exactLength : حدود نصية
+    //   allowNeg           : يسمح بالسالب (أرقام)
+    //   allowedExtensions  : ["jpg","png",...] (نوع file)
+    //   maxSizeMB          : حجم أقصى بالميجا (نوع file)
+    //   label              : اسم الحقل يُستخدم في رسائل الخطأ
+    // }
+    // ═══════════════════════════════════════════════════════════════════
+    function validate(fieldId, rules) {
+      var field = _el(fieldId);
+      if (!field) return true; // الحقل غير موجود في DOM حالياً — تجاهل
+
+      rules = rules || {};
+      var label = rules.label || I18N.t("VF_LBL_DEFAULT_FIELD");
+      var type = rules.type || "text";
+      var isCheckboxLike = type === "checkbox" || type === "radio";
+      var raw;
+      if (isCheckboxLike) raw = field.checked;
+      else if (type === "multiSelect")
+        raw = Array.prototype.map.call(
+          field.selectedOptions || [],
+          function (o) {
+            return o.value;
+          },
+        );
+      else raw = field.tagName === "SELECT" ? field.value : field.value || "";
+      var val =
+        type === "number" || type === "currency" || type === "percentage"
+          ? raw
+          : typeof raw === "string"
+            ? raw.trim()
+            : raw;
+
+      // ── required ─────────────────────────────────────────────────────
+      if (rules.required) {
+        if (type === "select" && (!val || val === "" || val === "0")) {
+          _setError(field, I18N.t("VF_MSG_SELECT_PLEASE", { label: label }));
+          return false;
+        }
+        if (isCheckboxLike && !val) {
+          _setError(field, I18N.t("VF_MSG_REQUIRED", { label: label }));
+          return false;
+        }
+        if (type === "multiSelect" && (!val || val.length === 0)) {
+          _setError(field, I18N.t("VF_MSG_SELECT_PLEASE", { label: label }));
+          return false;
+        }
+        if (
+          type !== "select" &&
+          type !== "multiSelect" &&
+          !isCheckboxLike &&
+          !val
+        ) {
+          _setError(field, I18N.t("VF_MSG_REQUIRED", { label: label }));
+          return false;
+        }
+      } else if (!val && !isCheckboxLike) {
+        // الحقل اختياري وفارغ → مسح الحالة فقط (بدون رسالة مزعجة)
+        _clearState(field);
+        return true;
+      }
+
+      // ── type-specific ────────────────────────────────────────────────
+      if (type === "number" || type === "currency" || type === "percentage") {
+        if (val === "" || isNaN(+val) || val !== String(val).trim()) {
+          _setError(field, I18N.t("VF_MSG_INVALID_NUMBER", { label: label }));
+          return false;
+        }
+        var num = +val;
+        if (!rules.allowNeg && num < 0) {
+          _setError(field, I18N.t("VF_MSG_NO_NEGATIVE", { label: label }));
+          return false;
+        }
+        if (
+          type === "percentage" &&
+          (num < (rules.min !== undefined ? rules.min : 0) ||
+            num > (rules.max !== undefined ? rules.max : 100))
+        ) {
+          _setError(
+            field,
+            I18N.t("VF_MSG_INVALID_PERCENTAGE", { label: label }),
+          );
+          return false;
+        }
+        if (type === "currency") {
+          var decimals = rules.decimals !== undefined ? rules.decimals : 2;
+          var curRe = new RegExp("^-?\\d+(\\.\\d{1," + decimals + "})?$");
+          if (!curRe.test(String(val).trim())) {
+            _setError(
+              field,
+              I18N.t("VF_MSG_INVALID_CURRENCY", { label: label }),
+            );
+            return false;
+          }
+        }
+        if (rules.min !== undefined && num < rules.min) {
+          _setError(
+            field,
+            I18N.t("VF_MSG_MIN_NUMBER", { label: label, min: rules.min }),
+          );
+          return false;
+        }
+        if (rules.max !== undefined && num > rules.max) {
+          _setError(
+            field,
+            I18N.t("VF_MSG_MAX_NUMBER", { label: label, max: rules.max }),
+          );
+          return false;
+        }
+      } else if (type === "email") {
+        if (!EMAIL_RE.test(val)) {
+          _setError(field, I18N.t("VF_MSG_INVALID_EMAIL"));
+          return false;
+        }
+      } else if (type === "phone") {
+        if (!PHONE_RE.test(val)) {
+          _setError(field, I18N.t("VF_MSG_INVALID_PHONE"));
+          return false;
+        }
+      } else if (type === "egyptPhone") {
+        if (!EG_PHONE_RE.test(val)) {
+          _setError(field, I18N.t("VF_MSG_INVALID_EGYPT_PHONE"));
+          return false;
+        }
+      } else if (type === "egyptTelephone") {
+        if (!EG_TEL_RE.test(val.replace(/[\s\-]/g, ""))) {
+          _setError(field, I18N.t("VF_MSG_INVALID_EGYPT_TEL"));
+          return false;
+        }
+      } else if (type === "url") {
+        if (!URL_RE.test(val)) {
+          _setError(field, I18N.t("VF_MSG_INVALID_URL"));
+          return false;
+        }
+      } else if (type === "date") {
+        if (!_validDate(val)) {
+          _setError(field, I18N.t("VF_MSG_INVALID_DATE"));
+          return false;
+        }
+      } else if (type === "time") {
+        if (!TIME_RE.test(val)) {
+          _setError(field, I18N.t("VF_MSG_INVALID_TIME"));
+          return false;
+        }
+      } else if (type === "decimal") {
+        if (!DECIMAL_RE.test(val)) {
+          _setError(field, I18N.t("VF_MSG_INVALID_NUMBER", { label: label }));
+          return false;
+        }
+      } else if (type === "numbersOnly") {
+        if (!NUMBERS_ONLY_RE.test(val)) {
+          _setError(field, I18N.t("VF_MSG_NUMBERS_ONLY", { label: label }));
+          return false;
+        }
+      } else if (type === "lettersOnly") {
+        if (!LETTERS_ONLY_RE.test(val)) {
+          _setError(field, I18N.t("VF_MSG_LETTERS_ONLY", { label: label }));
+          return false;
+        }
+      } else if (type === "arabicOnly") {
+        if (!ARABIC_ONLY_RE.test(val)) {
+          _setError(field, I18N.t("VF_MSG_ARABIC_ONLY", { label: label }));
+          return false;
+        }
+      } else if (type === "englishOnly") {
+        if (!ENGLISH_ONLY_RE.test(val)) {
+          _setError(field, I18N.t("VF_MSG_ENGLISH_ONLY", { label: label }));
+          return false;
+        }
+      } else if (type === "nationalId") {
+        if (!_isValidNationalId(val)) {
+          _setError(field, I18N.t("VF_MSG_INVALID_NATIONAL_ID"));
+          return false;
+        }
+      } else if (type === "taxNumber") {
+        if (!EG_TAX_NUMBER_RE.test(val.replace(/[\s\-]/g, ""))) {
+          _setError(field, I18N.t("VF_MSG_INVALID_TAX_NUMBER"));
+          return false;
+        }
+      } else if (type === "commercialRegistration") {
+        if (!EG_COMMERCIAL_REG_RE.test(val.replace(/[\s\-]/g, ""))) {
+          _setError(field, I18N.t("VF_MSG_INVALID_COMMERCIAL_REG"));
+          return false;
+        }
+      } else if (type === "barcode" || type === "qr") {
+        if (!BARCODE_RE.test(val)) {
+          _setError(field, I18N.t("VF_MSG_INVALID_BARCODE"));
+          return false;
+        }
+      } else if (type === "file") {
+        var fileObj = field.files && field.files[0];
+        if (rules.required && !fileObj) {
+          _setError(field, I18N.t("VF_MSG_REQUIRED", { label: label }));
+          return false;
+        }
+        if (fileObj) {
+          if (rules.maxSizeMB && fileObj.size > rules.maxSizeMB * 1024 * 1024) {
+            _setError(
+              field,
+              I18N.t("VF_MSG_FILE_TOO_LARGE", { max: rules.maxSizeMB }),
+            );
+            return false;
+          }
+          if (rules.allowedExtensions) {
+            var ext = fileObj.name.split(".").pop().toLowerCase();
+            if (rules.allowedExtensions.indexOf(ext) === -1) {
+              _setError(field, I18N.t("VF_MSG_FILE_EXT_NOT_ALLOWED"));
+              return false;
+            }
+          }
+        }
+      } else {
+        // text
+        if (
+          rules.exactLength !== undefined &&
+          val.length !== rules.exactLength
+        ) {
+          _setError(
+            field,
+            I18N.t("VF_MSG_EXACT_LENGTH", {
+              label: label,
+              len: rules.exactLength,
+            }),
+          );
+          return false;
+        }
+        if (rules.min !== undefined && val.length < rules.min) {
+          _setError(
+            field,
+            I18N.t("VF_MSG_MIN_LENGTH", { label: label, min: rules.min }),
+          );
+          return false;
+        }
+        if (rules.max !== undefined && val.length > rules.max) {
+          _setError(
+            field,
+            I18N.t("VF_MSG_MAX_LENGTH", { label: label, max: rules.max }),
+          );
+          return false;
+        }
+      }
+
+      _setOk(field);
+      return true;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // VF.validateForm(formConfig) → true إذا كل الحقول صحيحة
+    //
+    // formConfig: مصفوفة من { fieldId, rules }
+    //
+    // عند الفشل:
+    //   • تُعرض رسائل على جميع الحقول الخاطئة (بدون توالي نوافذ منبثقة)
+    //   • يُحرَّك الشاشة تلقائياً لأول حقل خاطئ (Auto Focus + Scroll)
+    // ═══════════════════════════════════════════════════════════════════
+    function validateForm(formConfig) {
+      formConfig = formConfig || [];
+      var allOk = true;
+      var firstError = null;
+
+      formConfig.forEach(function (cfg) {
+        var ok = validate(cfg.fieldId, cfg.rules);
+        if (!ok) {
+          allOk = false;
+          if (!firstError) firstError = cfg.fieldId;
+        }
+      });
+
+      if (firstError) {
+        var el = _el(firstError);
+        if (el) {
+          // [VF-TAB-REVEAL] لو الحقل جوه تبويب مخفي (party-tab-panel في
+          // مودالات العميل/المورد)، focus()/scrollIntoView() ما بيعملوش
+          // حاجة ظاهرة على عنصر display:none — فالمستخدم كان بيضغط "حفظ"
+          // ومفيش أي رد فعل مرئي مع إن فيه خطأ حقيقي في تبويب تاني. هنا
+          // بنفتح التبويب الصحيح الأول (لو موجود) قبل الـ focus/scroll.
+          var hiddenPanel = el.closest
+            ? el.closest(
+                '.party-tab-panel[style*="display: none"], .party-tab-panel[style*="display:none"]',
+              )
+            : null;
+          if (hiddenPanel && typeof global._switchPartyTab === "function") {
+            var panelKey = hiddenPanel.getAttribute("data-party-panel") || "";
+            var dashIdx = panelKey.indexOf("-");
+            if (dashIdx > -1) {
+              global._switchPartyTab(
+                panelKey.slice(0, dashIdx),
+                panelKey.slice(dashIdx + 1),
+              );
+            }
+          }
+          el.focus();
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }
+
+      return allOk;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // VF.bind(fieldId, rules) — يربط أحداث input/blur/change بحقل واحد
+    // [VF-V2] Smart Validation:
+    //   - أثناء الكتابة (input): لو النوع email/phone/date/time/numbersOnly..
+    //     إلخ (له صيغة واضحة) يتحقق فورًا بمجرد أن تصبح القيمة "قابلة للحكم"
+    //     (مش بيتفرج على كل ضغطة زر وهو لسه ناقص).
+    //   - لو الحقل فاضي وهو مطلوب: مفيش رسالة إلا لما يغادر الحقل (blur) أو
+    //     يحاول يحفظ — تفاديًا لإزعاج المستخدم وهو لسه بادئ الكتابة.
+    // ═══════════════════════════════════════════════════════════════════
+    function bind(fieldId, rules) {
+      var field = _el(fieldId);
+      if (!field) return;
+
+      // نتجنب التكرار
+      if (field._vfBound) return;
+      field._vfBound = true;
+
+      var realtimeTypes = {
+        email: 1,
+        phone: 1,
+        egyptPhone: 1,
+        egyptTelephone: 1,
+        url: 1,
+        date: 1,
+        time: 1,
+        numbersOnly: 1,
+        lettersOnly: 1,
+        arabicOnly: 1,
+        englishOnly: 1,
+        nationalId: 1,
+        taxNumber: 1,
+        commercialRegistration: 1,
+        barcode: 1,
+        qr: 1,
+        decimal: 1,
+        currency: 1,
+        percentage: 1,
+      };
+      var isRealtime = realtimeTypes[rules && rules.type];
+
+      var runInputCheck = isRealtime
+        ? _debounce(function () {
+            if ((field.value || "").trim()) validate(fieldId, rules);
+            else if (field.classList.contains(CLS_ERR)) _clearState(field);
+          }, 250)
+        : function () {
+            if ((field.value || "").trim() || field.tagName === "SELECT") {
+              validate(fieldId, rules);
+            } else if (field.classList.contains(CLS_ERR)) {
+              // إذا صار الحقل فارغاً وكان فيه خطأ، نُعيد التحقق (ليظهر "مطلوب")
+              validate(fieldId, rules);
+            }
+          };
+
+      field.addEventListener("input", runInputCheck);
+
+      // change: للـ select والـ checkbox/radio
+      if (
+        field.tagName === "SELECT" ||
+        (rules &&
+          (rules.type === "checkbox" ||
+            rules.type === "radio" ||
+            rules.type === "multiSelect"))
+      ) {
+        field.addEventListener("change", function () {
+          validate(fieldId, rules);
+        });
+      }
+
+      // blur: التحقق الكامل عند مغادرة الحقل (هنا فقط تظهر رسالة "مطلوب"
+      // للحقول الفاضية، حتى لا تظهر وهو لسه بادئ الكتابة)
+      field.addEventListener("blur", function () {
+        validate(fieldId, rules);
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // VF.bindAll(formConfig) — يربط أحداث كل حقول النموذج
+    // ═══════════════════════════════════════════════════════════════════
+    function bindAll(formConfig) {
+      (formConfig || []).forEach(function (cfg) {
+        bind(cfg.fieldId, cfg.rules);
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // VF.clear / VF.clearForm — تنظيف حالة الحقول
+    // ═══════════════════════════════════════════════════════════════════
+    function clear(fieldId) {
+      var field = _el(fieldId);
+      if (field) _clearState(field);
+    }
+
+    function clearForm(fieldIds) {
+      (fieldIds || []).forEach(function (id) {
+        clear(id);
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // VF.quickSave — غلاف مختصر لاستخدامه داخل دوال الحفظ الحالية
+    //
+    // الاستخدام:
+    //   if (!VF.quickSave([
+    //     { fieldId:'cust-modal-name', rules:{ required:true, label:'اسم العميل' } },
+    //     { fieldId:'cust-modal-email', rules:{ type:'email', label:'البريد الإلكتروني' } },
+    //   ])) return;
+    // ═══════════════════════════════════════════════════════════════════
+    function quickSave(formConfig) {
+      return validateForm(formConfig);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // [VF-V2] VF.checkDuplicate(fieldId, opts) — فحص تكرار/كود فريد بشكل
+    // Debounced، يستدعي دالة سيرفر عبر google.script.run تُمرَّر صراحة (مفيش
+    // أي افتراض لاسم دالة سيرفر معيّن، عشان يفضل عام لأي شاشة).
+    //
+    // opts = {
+    //   label       : اسم الحقل لرسالة الخطأ,
+    //   checkFnName : اسم الدالة على السيرفر (تُستدعى عبر _gsr إن وُجد
+    //                 wrapper موحّد، وإلا google.script.run مباشرة),
+    //   buildArgs   : function(value){ return [...args]; } — تبني آرجيومنتس
+    //                 الاستدعاء (مثال: [value, excludeId]),
+    //   onResult    : function(isDuplicateBool){} اختياري لمنطق إضافي,
+    // }
+    // ═══════════════════════════════════════════════════════════════════
+    function checkDuplicate(fieldId, opts) {
+      var field = _el(fieldId);
+      if (!field || !opts || !opts.checkFnName) return;
+
+      // [BUGFIX-BLUR-CHECK] الفحص الفعلي بقى في دالة منفصلة (_performCheck)
+      // بدل ما يكون جوّه الـ debounce مباشرة، عشان نقدر نستدعيه فورًا (من
+      // غير انتظار الـ 400ms) عند خروج المستخدم من الحقل (blur) — قبل كده
+      // كان الفحص مربوط بالكتابة (input) بس، فلو المستخدم كتب وسحب الماوس
+      // بسرعة، ما كانش فيه ضمان إن نتيجة الفحص ظهرت قبل ما يشوف الحقل.
+      function _performCheck() {
+        var value = (field.value || "").trim();
+        if (!value) {
+          _clearState(field);
+          return;
+        }
+        _setChecking(field);
+        var args = opts.buildArgs ? opts.buildArgs(value) : [value];
+
+        _vfCallServer(
+          opts.checkFnName,
+          function (isDup) {
+            // [BUGFIX-STALE-RESULT] لو المستخدم غيّر القيمة قبل ما يرجع رد
+            // السيرفر (مثلاً كتب حرف جديد بعد الـ blur)، الرد ده بقى قديم
+            // ومينفعش نلوّن بيه الحقل على قيمة مختلفة.
+            if ((field.value || "").trim() !== value) return;
+            if (isDup) {
+              _setError(
+                field,
+                I18N.t("VF_MSG_DUPLICATE", {
+                  label: opts.label || I18N.t("VF_LBL_DEFAULT_FIELD"),
+                }),
+              );
+            } else {
+              _setOk(field);
+            }
+            if (opts.onResult) opts.onResult(isDup);
+          },
+          function () {
+            // فشل الاتصال بالسيرفر — لا نمنع الحفظ محليًا، النسخة النهائية من
+            // الفحص تحدث على السيرفر وقت الحفظ الفعلي على أي حال.
+            _clearState(field);
+          },
+          args,
+        );
+      }
+
+      // وهو لسه بيكتب: نمسح أي لون/رسالة قديمة (أخضر أو أحمر) بس من غير
+      // ما نتصل بالسيرفر، عشان الحقل يفضل محايد أثناء التعديل ومايبقاش
+      // فيه لون قديم غلط لقيمة اتغيّرت.
+      field.addEventListener("input", function () {
+        _clearState(field);
+      });
+
+      // [BLUR-ONLY-CHECK] الفحص الفعلي (اللي بيتصل بالسيرفر ويلوّن الحقل
+      // أخضر = متاح / أحمر = مكرر) بيشتغل بس لما المستخدم يخرج من الخلية
+      // (blur)، مش أثناء الكتابة.
+      field.addEventListener("blur", _performCheck);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // [VF-V2] VF.business — تشغيل قاعدة عمل سيرفر (رصيد/حد ائتمان/فترة
+    // سماح/توازن قيد...) عرضًا على شاشة الحفظ. لا تُنفَّذ القاعدة هنا؛
+    // فقط تُستدعى دالة سيرفر (تُغلّف ValidationEngine.business.* من
+    // Code_36) وتُعرض نتيجتها كرسالة موحّدة، حتى لا تكرر كل شاشة منطق
+    // "لو success=false امنع الحفظ واعرض الرسالة".
+    //
+    // الاستخدام المتوقع من الشاشة:
+    //   VF.business.run('runBusinessValidation', ['invoice', payload], function(res){
+    //     if (!res.success) return; // الرسالة اتعرضت تلقائيًا
+    //     // كمّل حفظ فعلي هنا
+    //   });
+    // حيث 'runBusinessValidation' دالة .gs بسيطة في الموديول بتنادي
+    // ValidationEngine.business.beforeSave(...) وترجع نتيجتها كما هي.
+    // ═══════════════════════════════════════════════════════════════════
+    var business = {
+      run: function (serverFnName, args, onPass) {
+        _vfCallServer(
+          serverFnName,
+          function (res) {
+            res = res || {};
+            if (res.success === false) {
+              // [UNIFY-NOTIF] استبدال النداء المباشر لـ global.showToast +
+              // fallback يدوي مكرر بـ NotificationEngine.error الموحّد — نفس
+              // نظام الـ fallback (console.warn لو showToast مش محمّل بعد)
+              // موجود بالفعل جوه NotificationEngine نفسه، فمفيش داعي لتكراره هنا.
+              if (typeof NotificationEngine !== "undefined") {
+                NotificationEngine.error(
+                  res.message || I18N.t("VF_MSG_BUSINESS_RULE_FAILED"),
+                );
+              } else if (typeof global.showToast === "function") {
+                global.showToast(
+                  res.message || I18N.t("VF_MSG_BUSINESS_RULE_FAILED"),
+                  "error",
+                );
+              } else {
+                console.error(
+                  "[VF.business] لا يوجد نظام إشعارات متاح — تعذر عرض رسالة فشل قاعدة العمل للمستخدم:",
+                  res.message || I18N.t("VF_MSG_BUSINESS_RULE_FAILED"),
+                );
+              }
+              return;
+            }
+            if (res.warning) {
+              if (typeof NotificationEngine !== "undefined") {
+                NotificationEngine.warning(res.warning);
+              } else if (typeof global.showToast === "function") {
+                global.showToast(res.warning, "warning");
+              }
+            }
+            if (onPass) onPass(res);
+          },
+          // [BUGFIX-GSR-SIG] بدون cbFail منفصل هنا عن قصد: _vfCallServer
+          // بيبعت أي فشل (سواء رفض قاعدة عمل success:false أو خطأ اتصال
+          // حقيقي) لنفس الكولباك اللي فوق ده كـ {success:false, message},
+          // وهو أصلاً بيعرض res.message في toast — ده بيحافظ على نفس
+          // السلوك القديم (عرض رسالة الفشل الفعلية) بدل رسالة عامة تعمي
+          // سبب الفشل الحقيقي.
+          null,
+          args || [],
+        );
+      },
+    };
+
+    // ═══════════════════════════════════════════════════════════════════
+    // [VF-V2] VF.showSuccess(msg) — رسالة نجاح احترافية موحّدة بعد الحفظ.
+    // تستخدم showToast العام لو موجود (نفس نظام SaveEngine)، وإلا fallback.
+    // ═══════════════════════════════════════════════════════════════════
+    function showSuccess(msg) {
+      var text = msg || I18N.t("VF_MSG_SAVE_SUCCESS");
+      // [UNIFY-NOTIF] NotificationEngine هو المستوى الأول الآن (بدل النداء
+      // المباشر لـ global.showToast) — نفس سلسلة الـ fallback القديمة
+      // (showSaveAnim ثم console.error) فضلت كما هي لو NotificationEngine
+      // نفسه مش محمّل لأي سبب.
+      if (typeof NotificationEngine !== "undefined") {
+        NotificationEngine.success(text);
+      } else if (typeof global.showToast === "function") {
+        global.showToast(text, "success");
+      } else if (typeof global.showSaveAnim === "function") {
+        global.showSaveAnim(text);
+      } else {
+        console.error(
+          "[VF.showSuccess] لا يوجد نظام إشعارات متاح لعرض رسالة النجاح:",
+          text,
+        );
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // تعريف الأنماط الشائعة — rules جاهزة لإعادة الاستخدام (v2: أضيفت كل
+    // الأنواع المطلوبة، بدون تغيير أي نمط قديم كان موجودًا فعليًا)
+    // ═══════════════════════════════════════════════════════════════════
+    var RULES = {
+      requiredText: function (label) {
+        return {
+          required: true,
+          type: "text",
+          label: label || I18N.t("VF_LBL_DEFAULT_FIELD"),
+        };
+      },
+      requiredSelect: function (label) {
+        return {
+          required: true,
+          type: "select",
+          label: label || I18N.t("VF_LBL_DEFAULT_SELECT"),
+        };
+      },
+      requiredNum: function (label, min, max) {
+        return {
+          required: true,
+          type: "number",
+          label: label || I18N.t("VF_LBL_NUMBER"),
+          min: min !== undefined ? min : 0,
+          max: max,
+        };
+      },
+      email: function (req) {
+        return {
+          required: !!req,
+          type: "email",
+          label: I18N.t("VF_LBL_EMAIL"),
+        };
+      },
+      phone: function (req) {
+        return {
+          required: !!req,
+          type: "phone",
+          label: I18N.t("VF_LBL_PHONE"),
+        };
+      },
+      egyptPhone: function (req) {
+        return {
+          required: !!req,
+          type: "egyptPhone",
+          label: I18N.t("VF_LBL_PHONE"),
+        };
+      },
+      egyptTelephone: function (req) {
+        return {
+          required: !!req,
+          type: "egyptTelephone",
+          label: I18N.t("VF_LBL_PHONE"),
+        };
+      },
+      url: function (req) {
+        return { required: !!req, type: "url", label: I18N.t("VF_LBL_URL") };
+      },
+      date: function (req) {
+        return { required: !!req, type: "date", label: I18N.t("VF_LBL_DATE") };
+      },
+      time: function (req) {
+        return { required: !!req, type: "time", label: I18N.t("VF_LBL_TIME") };
+      },
+      code: function (label) {
+        return {
+          required: true,
+          type: "text",
+          min: 1,
+          max: 50,
+          label: label || I18N.t("VF_LBL_CODE"),
+        };
+      },
+      currency: function (label, req) {
+        return {
+          required: !!req,
+          type: "currency",
+          label: label || I18N.t("VF_LBL_AMOUNT"),
+        };
+      },
+      percentage: function (label, req) {
+        return {
+          required: !!req,
+          type: "percentage",
+          label: label || I18N.t("VF_LBL_PERCENTAGE"),
+        };
+      },
+      nationalId: function (req) {
+        return {
+          required: !!req,
+          type: "nationalId",
+          label: I18N.t("VF_LBL_NATIONAL_ID"),
+        };
+      },
+      taxNumber: function (req) {
+        return {
+          required: !!req,
+          type: "taxNumber",
+          label: I18N.t("VF_LBL_TAX_NUMBER"),
+        };
+      },
+      commercialRegistration: function (req) {
+        return {
+          required: !!req,
+          type: "commercialRegistration",
+          label: I18N.t("VF_LBL_COMMERCIAL_REG"),
+        };
+      },
+      barcode: function (req) {
+        return {
+          required: !!req,
+          type: "barcode",
+          label: I18N.t("VF_LBL_BARCODE"),
+        };
+      },
+      arabicOnly: function (label, req) {
+        return {
+          required: !!req,
+          type: "arabicOnly",
+          label: label || I18N.t("VF_LBL_DEFAULT_FIELD"),
+        };
+      },
+      englishOnly: function (label, req) {
+        return {
+          required: !!req,
+          type: "englishOnly",
+          label: label || I18N.t("VF_LBL_DEFAULT_FIELD"),
+        };
+      },
+      password: function () {
+        return {
+          required: true,
+          type: "text",
+          min: 8,
+          label: I18N.t("VF_LBL_PASSWORD"),
+        };
+      },
+      file: function (allowedExtensions, maxSizeMB, req) {
+        return {
+          required: !!req,
+          type: "file",
+          allowedExtensions: allowedExtensions,
+          maxSizeMB: maxSizeMB || 5,
+          label: I18N.t("VF_LBL_FILE"),
+        };
+      },
+      image: function (maxSizeMB, req) {
+        return {
+          required: !!req,
+          type: "file",
+          allowedExtensions: ["jpg", "jpeg", "png", "gif", "webp"],
+          maxSizeMB: maxSizeMB || 5,
+          label: I18N.t("VF_LBL_IMAGE"),
+        };
+      },
+    };
+
+    // ══════════════════════════════════════════════════════════════════
+    // §PW — Password Policy (نسخة عرض/UX طرفية — المرجع الملزم يبقى
+    // PASSWORD_POLICY + _validatePasswordStrength في Code_12_Core.js).
+    // [PW-UNIFY] هذا هو المكان الوحيد المفروض لمنطق تقييم قوة كلمة المرور
+    // على مستوى العميل — كان مكرر حرفيًا في 3 ملفات (02, 08, 39).
+    // ══════════════════════════════════════════════════════════════════
+    var PASSWORD_POLICY = {
+      MIN_LENGTH: 8,
+      REQUIRE_NUMBER: true,
+      REQUIRE_UPPER: true,
+      REQUIRE_LOWER: true,
+      REQUIRE_SPECIAL: true,
+    };
+
+    // نفس قائمة كلمات المرور الشائعة الممنوعة في Code_12_Core.js —
+    // موجودة هنا فقط لعرض تحذير فوري للمستخدم، التحقق الملزم في السيرفر.
+    var PASSWORD_BANNED = [
+      "password",
+      "Password1!",
+      "123456",
+      "admin123",
+      "Admin123!",
+      "12345678",
+      "qwerty",
+      "abc123",
+      "Aa123456!",
+    ];
+
+    /**
+     * checkPasswordRequirements — يرجّع حالة كل شرط من شروط PASSWORD_POLICY
+     * بشكل موحّد (len/upper/lower/num/special/banned/match) عشان تُستخدم
+     * في أي شاشة (checklist حي + شريط قوة) بدل التكرار.
+     * @param {string} pw كلمة المرور الجديدة
+     * @param {string} [confirmPw] كلمة المرور للتأكيد (اختياري)
+     * @returns {object} حالة كل شرط + عدد المستوفى + allOk
+     */
+    function checkPasswordRequirements(pw, confirmPw) {
+      pw = pw || "";
+      var state = {
+        len: pw.length >= PASSWORD_POLICY.MIN_LENGTH,
+        upper: !PASSWORD_POLICY.REQUIRE_UPPER || /[A-Z]/.test(pw),
+        lower: !PASSWORD_POLICY.REQUIRE_LOWER || /[a-z]/.test(pw),
+        num: !PASSWORD_POLICY.REQUIRE_NUMBER || /\d/.test(pw),
+        special:
+          !PASSWORD_POLICY.REQUIRE_SPECIAL ||
+          /[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/.test(pw),
+        banned:
+          pw.length > 0 &&
+          (PASSWORD_BANNED.indexOf(pw) !== -1 ||
+            PASSWORD_BANNED.indexOf(pw.toLowerCase()) !== -1),
+      };
+      var passCount = 0;
+      ["len", "upper", "lower", "num", "special"].forEach(function (k) {
+        if (state[k]) passCount++;
+      });
+      state.passCount = passCount;
+      state.totalChecks = 5;
+      if (confirmPw !== undefined) {
+        state.match = !!pw && pw === confirmPw;
+      }
+      state.allOk =
+        passCount === 5 &&
+        !state.banned &&
+        (confirmPw === undefined || state.match);
+      return state;
+    }
+
+    /**
+     * isValidEmail — تحقق مستقل (خارج نظام bind/validateForm) لصيغة إيميل،
+     * لاستخدامه بدل تكرار regex الإيميل محليًا (كان مكرر في
+     * 12_JS_HR.html باسم EMPIMP_EMAIL_RX).
+     * @param {string} value
+     * @returns {boolean}
+     */
+    function isValidEmail(value) {
+      return EMAIL_RE.test(String(value || "").trim());
+    }
+
+    /**
+     * isValidEgyptPhone — تحقق مستقل (خارج نظام bind/validateForm) لرقم
+     * تليفون مصري، لاستخدامه في تحقق سريع على قيمة خام (string) بدل تكرار
+     * نفس الـ regex محليًا في كل شاشة (كان مكرر في 16_JS_VodafoneCash.html).
+     * @param {string} value
+     * @returns {boolean}
+     */
+    function isValidEgyptPhone(value) {
+      return EG_PHONE_RE.test(String(value || "").trim());
+    }
+
+    /**
+     * passwordStrengthMeta — يحوّل passCount (0-5) إلى {pct, color, label}
+     * موحّد لعرض شريط القوة، عشان الألوان/التسميات متطابقة في كل الشاشات.
+     */
+    function passwordStrengthMeta(passCount, pwLength) {
+      pwLength = pwLength === undefined ? passCount : pwLength;
+      if (!pwLength) return { pct: 0, color: "#e5e7eb", label: "—" };
+      var levels = [
+        { color: "#ef4444", label: I18N.t("VF_PW_WEAK") },
+        { color: "#ef4444", label: I18N.t("VF_PW_WEAK") },
+        { color: "#eab308", label: I18N.t("VF_PW_MEDIUM") },
+        { color: "#22c55e", label: I18N.t("VF_PW_STRONG") },
+        { color: "#16a34a", label: I18N.t("VF_PW_VERY_STRONG") },
+      ];
+      var idx = Math.max(0, Math.min(passCount, 5) - 1);
+      var lvl = levels[idx] || levels[0];
+      return { pct: (passCount / 5) * 100, color: lvl.color, label: lvl.label };
+    }
+
+    // ─── تصدير الـ namespace العام ───────────────────────────────────────
+    global.VF = {
+      validate: validate,
+      validateForm: validateForm,
+      bind: bind,
+      bindAll: bindAll,
+      clear: clear,
+      clearForm: clearForm,
+      quickSave: quickSave,
+      checkDuplicate: checkDuplicate,
+      business: business,
+      showSuccess: showSuccess,
+      RULES: RULES,
+      passwordPolicy: PASSWORD_POLICY,
+      checkPasswordRequirements: checkPasswordRequirements,
+      passwordStrengthMeta: passwordStrengthMeta,
+      isValidEgyptPhone: isValidEgyptPhone,
+      isValidEmail: isValidEmail,
+    };
+  })(window);
+</script>

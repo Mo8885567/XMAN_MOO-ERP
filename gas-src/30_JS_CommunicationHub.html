@@ -1,0 +1,988 @@
+<script>
+  // ════════════════════════════════════════════════════════════════
+  // 30_JS_CommunicationHub.html — [COMMHUB-P3] صندوق Communication Hub
+  // الداخلي (Internal Inbox) — راجع COMMUNICATION_HUB_SPEC.md §8.
+  //
+  // ده شاشة جديدة منفصلة تماماً عن "مركز محادثات واتساب" القديم
+  // (19_JS_WhatsApp.html / WA_CENTER) اللي بيشتغل على WA_Conversations/
+  // WA_Messages القديمة. الشاشة دي بتشتغل على المعمارية الجديدة
+  // متعددة القنوات (CommHub_Conversations / CommHub_Messages) وبتدعم
+  // الأوضاع التلاتة (AI/Human/Hybrid) بما فيها اعتماد/تعديل/رفض ردود
+  // الذكاء الاصطناعي المقترحة.
+  //
+  // يتكلم مع الباك اند عبر الدوال في Code_CommunicationHub.gs:
+  //   getCommHubConversations / getCommHubMessages / commHubSendMessage
+  //   commHubResolveSuggestedReply / updateCommHubConversation
+  //   markCommHubConversationRead / getCommHubSettings / saveCommHubSettings
+  //   getCommHubDashboard / commHubReconnectProvider
+  //
+  // إعادة استخدام: نفس أصناف CSS الموجودة فعلاً لمركز واتساب القديم
+  // (.wa-conv-*, .wa-chat-*, .wa-messages-*, .wa-input-*, .wa-spinner...)
+  // — صفر CSS جديد، فقط IDs جديدة بادئة "ch-" عشان الشاشتين يقدروا
+  // يتعايشوا بدون تعارض في نفس الـ DOM لو الاتنين اتفتحوا (مش متوقع
+  // لكن للأمان).
+  //
+  // التسجيل: صفحة "communication_hub" في 01_JS_Core_Auth.html + عنصر
+  // قائمة جانبية في 02_JS_UI_Shell.html (راجع تعليقات التركيب أسفل
+  // الملف).
+  // ════════════════════════════════════════════════════════════════
+
+  // ── صلاحية العرض: viewCommunicationHub أو manageCommunicationHub ──
+  function canOpenCommHub() {
+    return canDo("viewCommunicationHub") || canDo("manageCommunicationHub");
+  }
+
+  function renderCommunicationHubPage() {
+    if (!canOpenCommHub()) {
+      return (
+        '<div style="padding:40px;text-align:center;color:var(--text3)">' +
+        '<i class="ti ti-lock" style="font-size:48px;display:block;margin-bottom:16px"></i>' +
+        "<p>ليس لديك صلاحية فتح Communication Hub</p></div>"
+      );
+    }
+
+    return (
+      '<div class="wa-center-page" id="ch-page">' +
+      // ── شريط الأدوات العلوي ──
+      '<div class="wa-center-topbar">' +
+      '<div style="display:flex;align-items:center;gap:12px">' +
+      '<div style="width:36px;height:36px;background:linear-gradient(135deg,#6366F1,#4338CA);border-radius:10px;display:flex;align-items:center;justify-content:center">' +
+      '<i class="ti ti-messages" style="color:#fff;font-size:18px"></i>' +
+      "</div>" +
+      "<div>" +
+      '<h2 style="margin:0;font-size:16px;font-weight:700;color:var(--text1)">Communication Hub</h2>' +
+      '<div style="font-size:12px;color:var(--text3)" id="ch-status">جارٍ التحميل...</div>' +
+      "</div>" +
+      "</div>" +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+      (canDo("manageCommunicationHub")
+        ? '<button onclick="CH_INBOX.openSettings()" class="wa-center-action-btn" title="إعدادات الذكاء الاصطناعي"><i class="ti ti-settings"></i></button>' +
+          '<button onclick="CH_INBOX.openDashboard()" class="wa-center-action-btn" title="لوحة المراقبة"><i class="ti ti-activity"></i></button>'
+        : "") +
+      '<button onclick="CH_INBOX.refresh()" class="wa-center-action-btn" title="تحديث" id="ch-refresh-btn"><i class="ti ti-refresh"></i></button>' +
+      "</div>" +
+      "</div>" +
+      // ── الجسم ثنائي/ثلاثي الأعمدة ──
+      '<div class="wa-center-body">' +
+      // عمود 1: قائمة المحادثات
+      '<div class="wa-conv-sidebar" id="ch-conv-sidebar">' +
+      '<div class="wa-conv-search-wrap">' +
+      '<div class="wa-conv-search-box">' +
+      '<i class="ti ti-search" style="font-size:14px;color:var(--text3)"></i>' +
+      '<input id="ch-conv-search" type="text" placeholder="بحث بالاسم أو الرقم..." class="wa-conv-search-input" oninput="CH_INBOX.onSearch(this.value)">' +
+      "</div>" +
+      '<div class="wa-conv-filters">' +
+      '<button class="wa-filter-btn active" data-filter="all" onclick="CH_INBOX.setFilter(\'all\', this)">الكل</button>' +
+      '<button class="wa-filter-btn" data-filter="pending" onclick="CH_INBOX.setFilter(\'pending\', this)"><span style="color:#f59e0b">●</span> تحتاج تدخل</button>' +
+      '<button class="wa-filter-btn" data-filter="unread" onclick="CH_INBOX.setFilter(\'unread\', this)">غير مقروءة</button>' +
+      '<button class="wa-filter-btn" data-filter="pinned" onclick="CH_INBOX.setFilter(\'pinned\', this)"><i class="ti ti-pin" style="font-size:11px"></i> مثبّتة</button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="wa-conv-list" id="ch-conv-list">' +
+      '<div class="wa-conv-loading" id="ch-conv-loading">' +
+      '<div class="wa-spinner"></div>' +
+      "<span>جارٍ تحميل المحادثات...</span>" +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // عمود 2: منطقة الرسائل
+      '<div class="wa-chat-main" id="ch-chat-main">' +
+      '<div class="wa-chat-empty" id="ch-chat-empty">' +
+      '<div style="text-align:center;color:var(--text3)">' +
+      '<i class="ti ti-messages" style="font-size:56px;display:block;margin-bottom:16px;opacity:.25"></i>' +
+      '<p style="font-size:15px;font-weight:600;margin:0 0 8px">اختر محادثة للبدء</p>' +
+      '<p style="font-size:13px;margin:0">اختر من القائمة على اليمين</p>' +
+      "</div>" +
+      "</div>" +
+      '<div class="wa-chat-header" id="ch-chat-header" style="display:none">' +
+      '<div class="wa-chat-contact-info" id="ch-chat-contact-info"></div>' +
+      '<div style="display:flex;gap:6px;align-items:center" id="ch-chat-actions"></div>' +
+      "</div>" +
+      '<div class="wa-messages-area" id="ch-messages-area" style="display:none">' +
+      '<div class="wa-messages-list" id="ch-messages-list"></div>' +
+      "</div>" +
+      '<div class="wa-input-bar" id="ch-input-bar" style="display:none">' +
+      '<div id="ch-suggested-box"></div>' +
+      '<div class="wa-input-row">' +
+      '<textarea id="ch-msg-input" class="wa-msg-input" placeholder="اكتب ردك..." rows="1" ' +
+      'oninput="CH_INBOX.onInputChange(this)" ' +
+      'onkeydown="CH_INBOX.onInputKeydown(event)"></textarea>' +
+      '<button id="ch-send-btn" class="wa-send-btn" onclick="CH_INBOX.sendMessage()" title="إرسال">' +
+      '<i class="ti ti-send" style="font-size:18px"></i>' +
+      "</button>" +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      // عمود 3: لوحة معلومات العميل (مخفية افتراضياً)
+      '<div class="wa-customer-panel" id="ch-customer-panel" style="display:none">' +
+      '<div id="ch-customer-panel-content"></div>' +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function bindCommunicationHubPage() {
+    if (!canOpenCommHub()) return;
+    CH_INBOX.refresh();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // CH_INBOX — منطق صندوق المحادثات
+  // ═══════════════════════════════════════════════════════════════
+  var CH_INBOX = (function () {
+    var _conversations = [];
+    var _currentConvId = null;
+    var _currentConv = null;
+    var _filter = "all";
+    var _search = "";
+    var POLL_INTERVAL_MS = 8000;
+
+    // ── تحميل قائمة المحادثات ──────────────────────────────────
+
+    function refresh() {
+      var loadingEl = document.getElementById("ch-conv-loading");
+      if (loadingEl) loadingEl.style.display = "flex";
+
+      var filters = { limit: 100 };
+      if (_filter === "pending") filters.status = "pending";
+      if (_filter === "unread") filters.unread_only = true;
+      if (_filter === "pinned") filters.pinned_only = true;
+      if (_search) filters.search = _search;
+
+      _gsr(
+        "getCommHubConversations",
+        [APP.currentUser.username, filters, SESSION.token],
+        {
+          onSuccess: function (r) {
+            _conversations = r.data || [];
+            _renderConvList();
+            _updateStatusLine();
+          },
+          onError: function (r) {
+            var el = document.getElementById("ch-conv-list");
+            if (el)
+              el.innerHTML =
+                '<div class="wa-empty-conv"><i class="ti ti-alert-triangle" style="font-size:28px;display:block;margin-bottom:8px"></i>' +
+                _esc(r.message) +
+                "</div>";
+          },
+        },
+      );
+    }
+
+    function silentRefresh() {
+      _gsr(
+        "getCommHubConversations",
+        [
+          APP.currentUser.username,
+          { limit: 100, status: _filter === "pending" ? "pending" : undefined },
+          SESSION.token,
+        ],
+        {
+          timeout: 15000,
+          onSuccess: function (r) {
+            _conversations = r.data || [];
+            _renderConvList();
+            _updateStatusLine();
+            if (_currentConvId) _loadMessages(_currentConvId, true);
+          },
+          onError: function () {},
+        },
+      );
+    }
+
+    // [WA-POLL-UNIFY] بيستخدم createTabPolling() الموحّدة (Core_Utilities.html)
+    // بدل setInterval يدوي مكرر — نفس السلوك بالظبط، الفرق بس إن الكود
+    // بقى مصدر واحد مشترك مع _waStartCenterPolling (19_JS_WhatsApp.html).
+    var _poller = createTabPolling({
+      intervalMs: POLL_INTERVAL_MS,
+      domId: "ch-page",
+      callback: silentRefresh,
+    });
+
+    function startPolling() {
+      _poller.start();
+    }
+    function stopPolling() {
+      _poller.stop();
+    }
+
+    function _updateStatusLine() {
+      var el = document.getElementById("ch-status");
+      if (!el) return;
+      var pending = _conversations.filter(function (c) {
+        return c.status === "pending";
+      }).length;
+      el.textContent = pending
+        ? pending + " محادثة تحتاج تدخّل بشري"
+        : _conversations.length + " محادثة";
+    }
+
+    function setFilter(f, btn) {
+      _filter = f;
+      var parent = btn.parentElement;
+      Array.prototype.forEach.call(parent.children, function (b) {
+        b.classList.remove("active");
+      });
+      btn.classList.add("active");
+      refresh();
+    }
+
+    function onSearch(val) {
+      _search = val;
+      clearTimeout(_searchDebounce);
+      var _searchDebounce = setTimeout(refresh, 350);
+    }
+
+    function _renderConvList() {
+      var el = document.getElementById("ch-conv-list");
+      if (!el) return;
+      if (!_conversations.length) {
+        el.innerHTML =
+          '<div class="wa-empty-conv"><i class="ti ti-inbox" style="font-size:32px;display:block;margin-bottom:10px;opacity:.4"></i>لا توجد محادثات</div>';
+        return;
+      }
+
+      el.innerHTML = _conversations
+        .map(function (c) {
+          var initial = String(c.contact_name || c.phone || "?")
+            .charAt(0)
+            .toUpperCase();
+          var modeBadge =
+            c.mode === "ai_only"
+              ? '<span title="AI فقط" style="color:#6366F1"><i class="ti ti-robot"></i></span>'
+              : c.mode === "human_only"
+                ? '<span title="بشري فقط" style="color:#0EA5E9"><i class="ti ti-user"></i></span>'
+                : '<span title="Hybrid" style="color:#10B981"><i class="ti ti-robot-face"></i></span>';
+          var pendingDot =
+            c.status === "pending"
+              ? '<span style="color:#f59e0b;margin-inline-start:4px">●</span>'
+              : "";
+          return (
+            '<div class="wa-conv-item' +
+            (c.conversation_id === _currentConvId ? " active" : "") +
+            '" onclick="CH_INBOX.openConversation(\'' +
+            c.conversation_id +
+            "')\">" +
+            '<div class="wa-conv-avatar">' +
+            initial +
+            "</div>" +
+            '<div class="wa-conv-info">' +
+            '<div class="wa-conv-name">' +
+            (c.pinned === true || c.pinned === "TRUE"
+              ? '<i class="ti ti-pin" style="font-size:11px;color:var(--text3)"></i> '
+              : "") +
+            _esc(c.contact_name || c.phone || "") +
+            " " +
+            modeBadge +
+            pendingDot +
+            "</div>" +
+            '<div class="wa-conv-preview">' +
+            _esc(c.last_message_preview || "") +
+            "</div>" +
+            "</div>" +
+            '<div class="wa-conv-meta">' +
+            '<span class="wa-conv-time">' +
+            _formatTime(c.last_message_at) +
+            "</span>" +
+            (Number(c.unread_count) > 0
+              ? '<span class="wa-conv-badge">' + c.unread_count + "</span>"
+              : "") +
+            "</div>" +
+            "</div>"
+          );
+        })
+        .join("");
+    }
+
+    // ── فتح محادثة ─────────────────────────────────────────────
+
+    function openConversation(convId) {
+      _currentConvId = convId;
+      _currentConv = _conversations.find(function (c) {
+        return c.conversation_id === convId;
+      });
+      if (!_currentConv) return;
+
+      document.getElementById("ch-chat-empty").style.display = "none";
+      document.getElementById("ch-chat-header").style.display = "flex";
+      document.getElementById("ch-messages-area").style.display = "flex";
+      document.getElementById("ch-input-bar").style.display = "block";
+
+      _renderConvList();
+      _renderChatHeader();
+      _loadMessages(convId, false);
+
+      if (Number(_currentConv.unread_count) > 0) {
+        _gsr(
+          "markCommHubConversationRead",
+          [APP.currentUser.username, convId, SESSION.token],
+          { onSuccess: function () {}, onError: function () {} },
+        );
+        _currentConv.unread_count = 0;
+      }
+    }
+
+    function _renderChatHeader() {
+      var c = _currentConv;
+      var infoEl = document.getElementById("ch-chat-contact-info");
+      var initial = String(c.contact_name || c.phone || "?")
+        .charAt(0)
+        .toUpperCase();
+      infoEl.innerHTML =
+        '<div class="wa-chat-avatar">' +
+        initial +
+        "</div>" +
+        "<div>" +
+        '<div style="font-weight:700;font-size:13.5px">' +
+        _esc(c.contact_name || c.phone || "") +
+        "</div>" +
+        '<div style="font-size:11.5px;color:var(--text3)" dir="ltr">' +
+        _esc(c.phone || "") +
+        "</div>" +
+        "</div>";
+
+      var actionsEl = document.getElementById("ch-chat-actions");
+      var modeOptions = ["ai_only", "human_only", "hybrid"]
+        .map(function (m) {
+          var label =
+            m === "ai_only"
+              ? "AI فقط"
+              : m === "human_only"
+                ? "بشري فقط"
+                : "Hybrid";
+          return (
+            '<option value="' +
+            m +
+            '"' +
+            (c.mode === m ? " selected" : "") +
+            ">" +
+            label +
+            "</option>"
+          );
+        })
+        .join("");
+
+      actionsEl.innerHTML =
+        (canDo("manageCommunicationHub") || canDo("replyCommunicationHub")
+          ? '<select class="form-input" style="font-size:12px;padding:4px 8px;width:auto" onchange="CH_INBOX.changeMode(this.value)">' +
+            modeOptions +
+            "</select>"
+          : "") +
+        '<button class="wa-center-action-btn" title="' +
+        (c.pinned === true || c.pinned === "TRUE" ? "إلغاء التثبيت" : "تثبيت") +
+        '" onclick="CH_INBOX.togglePin()"><i class="ti ti-pin' +
+        (c.pinned === true || c.pinned === "TRUE" ? "-filled" : "") +
+        '"></i></button>' +
+        '<button class="wa-center-action-btn" title="تعليم كمُنجزة" onclick="CH_INBOX.resolveConversation()"><i class="ti ti-check"></i></button>';
+    }
+
+    function changeMode(mode) {
+      if (!_currentConvId) return;
+      _gsr(
+        "updateCommHubConversation",
+        [
+          APP.currentUser.username,
+          _currentConvId,
+          { mode: mode },
+          SESSION.token,
+        ],
+        {
+          onSuccess: function () {
+            _currentConv.mode = mode;
+            NotificationEngine.success("تم تغيير الوضع");
+            _renderConvList();
+          },
+          onError: function (r) {
+            NotificationEngine.error(r.message);
+          },
+        },
+      );
+    }
+
+    function togglePin() {
+      if (!_currentConvId) return;
+      var newVal = !(
+        _currentConv.pinned === true || _currentConv.pinned === "TRUE"
+      );
+      _gsr(
+        "updateCommHubConversation",
+        [
+          APP.currentUser.username,
+          _currentConvId,
+          { pinned: newVal },
+          SESSION.token,
+        ],
+        {
+          onSuccess: function () {
+            _currentConv.pinned = newVal;
+            _renderChatHeader();
+            _renderConvList();
+          },
+          onError: function (r) {
+            NotificationEngine.error(r.message);
+          },
+        },
+      );
+    }
+
+    function resolveConversation() {
+      if (!_currentConvId) return;
+      _gsr(
+        "updateCommHubConversation",
+        [
+          APP.currentUser.username,
+          _currentConvId,
+          { status: "resolved" },
+          SESSION.token,
+        ],
+        {
+          onSuccess: function () {
+            NotificationEngine.success("تم تعليم المحادثة كمُنجزة");
+            _currentConv.status = "resolved";
+            refresh();
+          },
+          onError: function (r) {
+            NotificationEngine.error(r.message);
+          },
+        },
+      );
+    }
+
+    // ── الرسائل ────────────────────────────────────────────────
+
+    function _loadMessages(convId, silent) {
+      if (!silent) {
+        document.getElementById("ch-messages-list").innerHTML =
+          '<div class="wa-msg-loading"><div class="wa-spinner"></div></div>';
+      }
+      _gsr(
+        "getCommHubMessages",
+        [APP.currentUser.username, convId, SESSION.token],
+        {
+          onSuccess: function (r) {
+            if (_currentConvId !== convId) return;
+            _renderMessages(r.data || []);
+          },
+          onError: function (r) {
+            if (!silent) NotificationEngine.error(r.message);
+          },
+        },
+      );
+    }
+
+    function _renderMessages(messages) {
+      var listEl = document.getElementById("ch-messages-list");
+      var suggestedEl = document.getElementById("ch-suggested-box");
+      var suggested = null;
+
+      var html = messages
+        .filter(function (m) {
+          if (m.status === "suggested" || m.status === "rejected") {
+            if (m.status === "suggested") suggested = m;
+            return false;
+          }
+          return true;
+        })
+        .map(function (m) {
+          var isOut = m.direction === "out";
+          var bubbleClass = isOut ? "wa-bubble-out" : "wa-bubble-in";
+          var wrapClass = isOut ? "wa-msg-out" : "wa-msg-in";
+          var originBadge =
+            m.origin === "ai"
+              ? '<div class="wa-msg-ai-badge"><i class="ti ti-robot" style="font-size:10px"></i> رد آلي</div>'
+              : m.origin === "system"
+                ? '<div class="wa-msg-ai-badge" style="background:rgba(148,163,184,.15);color:var(--text3)">رسالة نظام</div>'
+                : "";
+          return (
+            '<div class="wa-msg-wrap ' +
+            wrapClass +
+            '">' +
+            '<div class="wa-msg-bubble ' +
+            bubbleClass +
+            '">' +
+            originBadge +
+            '<div class="wa-msg-content">' +
+            _esc(m.content || "") +
+            "</div>" +
+            '<div class="wa-msg-meta">' +
+            (m.status === "failed"
+              ? '<i class="ti ti-alert-circle" style="color:#ef4444;font-size:11px"></i>'
+              : "") +
+            '<span class="wa-msg-time">' +
+            _formatTime(m.created_at) +
+            "</span>" +
+            "</div>" +
+            "</div>" +
+            "</div>"
+          );
+        })
+        .join("");
+
+      listEl.innerHTML = html;
+      listEl.scrollTop = listEl.scrollHeight;
+
+      // ── صندوق الرد المقترح من الـ AI (Hybrid mode) ──
+      if (suggested) {
+        suggestedEl.innerHTML =
+          '<div style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.25);border-radius:10px;padding:10px 12px;margin-bottom:10px">' +
+          '<div style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--palette-indigo-500);font-weight:600;margin-bottom:6px">' +
+          '<i class="ti ti-robot"></i> رد مقترح من المساعد الذكي' +
+          (suggested.ai_confidence
+            ? ' <span style="color:var(--text3);font-weight:400">(ثقة ' +
+              Math.round(suggested.ai_confidence * 100) +
+              "%)</span>"
+            : "") +
+          "</div>" +
+          '<div id="ch-suggested-text" contenteditable="true" style="font-size:13.5px;line-height:1.5;background:var(--bg1);border-radius:6px;padding:8px;margin-bottom:8px;white-space:pre-wrap">' +
+          _esc(suggested.content || "") +
+          "</div>" +
+          '<div style="display:flex;gap:6px">' +
+          '<button class="btn btn-primary" style="font-size:12px;padding:5px 12px" onclick="CH_INBOX.resolveSuggested(\'' +
+          suggested.message_id +
+          "','approve')\"><i class=\"ti ti-check\"></i> اعتماد وإرسال</button>" +
+          '<button class="btn btn-outline" style="font-size:12px;padding:5px 12px" onclick="CH_INBOX.resolveSuggested(\'' +
+          suggested.message_id +
+          "','edit')\"><i class=\"ti ti-pencil\"></i> تعديل وإرسال</button>" +
+          '<button class="btn btn-ghost" style="font-size:12px;padding:5px 12px;color:#ef4444" onclick="CH_INBOX.resolveSuggested(\'' +
+          suggested.message_id +
+          "','reject')\"><i class=\"ti ti-x\"></i> رفض</button>" +
+          "</div>" +
+          "</div>";
+      } else {
+        suggestedEl.innerHTML = "";
+      }
+    }
+
+    function resolveSuggested(messageId, action) {
+      var editedText = null;
+      if (action === "edit") {
+        var el = document.getElementById("ch-suggested-text");
+        editedText = el ? el.textContent.trim() : "";
+        if (!editedText) {
+          NotificationEngine.error("النص لا يمكن أن يكون فارغاً");
+          return;
+        }
+      }
+      _gsr(
+        "commHubResolveSuggestedReply",
+        [
+          APP.currentUser.username,
+          messageId,
+          action,
+          editedText,
+          SESSION.token,
+        ],
+        {
+          onSuccess: function (r) {
+            NotificationEngine.success(r.message);
+            if (_currentConvId) _loadMessages(_currentConvId, false);
+          },
+          onError: function (r) {
+            NotificationEngine.error(r.message);
+          },
+        },
+      );
+    }
+
+    // ── إرسال رد يدوي ──────────────────────────────────────────
+
+    function onInputChange(el) {
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, 120) + "px";
+    }
+
+    function onInputKeydown(e) {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    }
+
+    function sendMessage() {
+      if (!_currentConvId) return;
+      var input = document.getElementById("ch-msg-input");
+      var text = input.value.trim();
+      if (!text) return;
+
+      input.disabled = true;
+      _gsr(
+        "commHubSendMessage",
+        [
+          APP.currentUser.username,
+          _currentConvId,
+          { type: "text", text: text },
+          SESSION.token,
+        ],
+        {
+          onSuccess: function () {
+            input.value = "";
+            input.style.height = "auto";
+            input.disabled = false;
+            _loadMessages(_currentConvId, false);
+          },
+          onError: function (r) {
+            input.disabled = false;
+            NotificationEngine.error(r.message);
+          },
+        },
+      );
+    }
+
+    // ── إعدادات الذكاء الاصطناعي (Modal) ──────────────────────
+
+    function openSettings() {
+      if (!canDo("manageCommunicationHub")) return;
+      openModal(
+        "إعدادات Communication Hub",
+        '<div id="ch-settings-body" style="min-height:160px;display:flex;align-items:center;justify-content:center"><div class="wa-spinner"></div></div>',
+      );
+      _gsr("getCommHubSettings", [APP.currentUser.username, SESSION.token], {
+        onSuccess: function (r) {
+          _renderSettingsForm(r.data || {});
+        },
+        onError: function (r) {
+          document.getElementById("ch-settings-body").innerHTML =
+            '<div style="color:#ef4444;text-align:center">' +
+            _esc(r.message) +
+            "</div>";
+        },
+      });
+    }
+
+    function _renderSettingsForm(s) {
+      var el = document.getElementById("ch-settings-body");
+      if (!el) return;
+      var modeOptions = [
+        ["hybrid", "مختلط (AI يقترح، الموظف يوافق)"],
+        ["ai_only", "AI فقط"],
+        ["human_only", "موظف فقط"],
+      ]
+        .map(function (o) {
+          return (
+            '<option value="' +
+            o[0] +
+            '"' +
+            (s.default_mode === o[0] ? " selected" : "") +
+            ">" +
+            o[1] +
+            "</option>"
+          );
+        })
+        .join("");
+      el.innerHTML =
+        '<div style="width:100%;max-width:460px;margin:0 auto;text-align:right">' +
+        _field(
+          "رسالة الترحيب (سياق للـ AI)",
+          "ch-set-greeting",
+          s.greeting_message,
+          "text",
+        ) +
+        _field(
+          "رسالة خارج ساعات العمل",
+          "ch-set-away",
+          s.away_message,
+          "text",
+        ) +
+        '<div style="display:flex;gap:10px">' +
+        _field(
+          "بداية ساعات العمل (HH:mm)",
+          "ch-set-hs",
+          s.working_hours_start,
+          "text",
+          true,
+        ) +
+        _field(
+          "نهاية ساعات العمل (HH:mm)",
+          "ch-set-he",
+          s.working_hours_end,
+          "text",
+          true,
+        ) +
+        "</div>" +
+        '<div style="display:flex;gap:10px">' +
+        _field(
+          "أقصى ردود AI بالمحادثة",
+          "ch-set-max",
+          s.max_ai_replies_per_conversation,
+          "number",
+          true,
+        ) +
+        _field(
+          "حد الثقة (0-1)",
+          "ch-set-conf",
+          s.confidence_threshold,
+          "number",
+          true,
+        ) +
+        "</div>" +
+        _field(
+          "كلمات التصعيد (مفصولة بفاصلة)",
+          "ch-set-esc",
+          s.escalation_keywords,
+          "text",
+        ) +
+        '<div style="margin-bottom:14px">' +
+        '<label style="display:block;font-size:12.5px;font-weight:600;margin-bottom:5px">الوضع الافتراضي للمحادثات الجديدة</label>' +
+        '<select id="ch-set-mode" class="form-input" style="width:100%">' +
+        modeOptions +
+        "</select>" +
+        "</div>" +
+        _field(
+          "أرقام محظورة (Blacklist — مفصولة بفاصلة)",
+          "ch-set-blacklist",
+          s.blacklist_numbers,
+          "text",
+        ) +
+        _field(
+          "أرقام مسموح بها فقط (Whitelist — اتركها فاضية للسماح للكل)",
+          "ch-set-whitelist",
+          s.whitelist_numbers,
+          "text",
+        ) +
+        '<button id="ch-save-settings-btn" class="btn btn-primary" style="width:100%;margin-top:6px" onclick="CH_INBOX.saveSettings()">' +
+        '<i class="ti ti-device-floppy"></i> حفظ الإعدادات' +
+        "</button>" +
+        "</div>";
+    }
+
+    function _field(label, id, value, type, half) {
+      return (
+        '<div style="' +
+        (half ? "flex:1;" : "") +
+        'margin-bottom:14px">' +
+        '<label style="display:block;font-size:12.5px;font-weight:600;margin-bottom:5px">' +
+        label +
+        "</label>" +
+        '<input type="' +
+        type +
+        '" id="' +
+        id +
+        '" class="form-input" style="width:100%" value="' +
+        _esc(value == null ? "" : value) +
+        '">' +
+        "</div>"
+      );
+    }
+
+    // [SE-ROLLOUT] عبر SaveEngine.run بدل _gsr اليدوي
+    function saveSettings() {
+      SaveEngine.run({
+        screen: "comm_hub_settings",
+        entity: "comm_hub_settings",
+        buttonId: "ch-save-settings-btn",
+        collect: function () {
+          return {
+            greeting_message: _val("ch-set-greeting"),
+            away_message: _val("ch-set-away"),
+            working_hours_start: _val("ch-set-hs"),
+            working_hours_end: _val("ch-set-he"),
+            max_ai_replies_per_conversation: Number(_val("ch-set-max")) || 10,
+            confidence_threshold: Number(_val("ch-set-conf")) || 0.6,
+            escalation_keywords: _val("ch-set-esc"),
+            default_mode: _val("ch-set-mode"),
+            blacklist_numbers: _val("ch-set-blacklist"),
+            whitelist_numbers: _val("ch-set-whitelist"),
+          };
+        },
+        fn: "saveCommHubSettings",
+        params: function (data) {
+          return [data, APP.currentUser.username, SESSION.token];
+        },
+        onSuccess: function () {
+          closeModal();
+        },
+      });
+    }
+
+    function _val(id) {
+      var el = document.getElementById(id);
+      return el ? el.value.trim() : "";
+    }
+
+    // ── لوحة المراقبة (Dashboard) — Modal بسيط ─────────────────
+
+    function openDashboard() {
+      if (!canDo("manageCommunicationHub")) return;
+      openModal(
+        "لوحة مراقبة Communication Hub",
+        '<div id="ch-dash-body" style="min-height:160px;display:flex;align-items:center;justify-content:center"><div class="wa-spinner"></div></div>',
+      );
+      _loadDashboard();
+    }
+
+    function _loadDashboard() {
+      _gsr("getCommHubDashboard", [APP.currentUser.username, SESSION.token], {
+        timeout: 15000,
+        onSuccess: function (r) {
+          _renderDashboard(r);
+        },
+        onError: function (r) {
+          var el = document.getElementById("ch-dash-body");
+          if (el)
+            el.innerHTML =
+              '<div style="color:#ef4444;text-align:center">' +
+              _esc(r.message) +
+              "</div>";
+        },
+      });
+    }
+
+    function _renderDashboard(r) {
+      var el = document.getElementById("ch-dash-body");
+      if (!el) return;
+      var st = r.status || {};
+      var q = r.queue || {};
+      var connected = !!st.connected;
+
+      el.innerHTML =
+        '<div style="width:100%;max-width:420px;margin:0 auto">' +
+        '<div style="display:flex;align-items:center;gap:10px;padding:12px;border-radius:10px;background:' +
+        (connected ? "rgba(16,185,129,.1)" : "rgba(239,68,68,.1)") +
+        ';margin-bottom:16px">' +
+        '<i class="ti ' +
+        (connected ? "ti-plug-connected" : "ti-plug-connected-x") +
+        '" style="font-size:22px;color:' +
+        (connected ? "#10B981" : "#ef4444") +
+        '"></i>' +
+        "<div>" +
+        '<div style="font-weight:700;font-size:13.5px">' +
+        (connected ? "متصل" : "غير متصل") +
+        "</div>" +
+        (st.connected_number
+          ? '<div style="font-size:11.5px;color:var(--text3)" dir="ltr">' +
+            _esc(st.connected_number) +
+            "</div>"
+          : "") +
+        "</div>" +
+        "</div>" +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">' +
+        _statBox("رسائل اليوم (صادر)", q.today_sent || 0) +
+        _statBox("رسائل اليوم (وارد)", q.today_received || 0) +
+        _statBox("في الانتظار (Queue)", q.pending || 0) +
+        _statBox("فشلت نهائياً (DLQ)", q.failed || 0) +
+        _statBox("غير مقروءة", r.unread_total || 0) +
+        _statBox("تحتاج تدخّل بشري", r.pending_conversations || 0) +
+        "</div>" +
+        '<div style="display:flex;gap:8px">' +
+        '<button class="btn btn-outline" style="flex:1" onclick="CH_INBOX._loadDashboardPublic()"><i class="ti ti-refresh"></i> تحديث</button>' +
+        '<button class="btn btn-primary" style="flex:1" onclick="CH_INBOX.reconnect()"><i class="ti ti-plug"></i> إعادة اتصال</button>' +
+        "</div>" +
+        "</div>";
+    }
+
+    function _statBox(label, value) {
+      return (
+        '<div style="background:var(--bg2);border-radius:10px;padding:10px 12px;text-align:center">' +
+        '<div style="font-size:20px;font-weight:800">' +
+        value +
+        "</div>" +
+        '<div style="font-size:11px;color:var(--text3)">' +
+        label +
+        "</div>" +
+        "</div>"
+      );
+    }
+
+    function reconnect() {
+      _gsr(
+        "commHubReconnectProvider",
+        [APP.currentUser.username, "whatsapp", SESSION.token],
+        {
+          onSuccess: function (r) {
+            NotificationEngine.success(r.message);
+            _loadDashboard();
+          },
+          onError: function (r) {
+            NotificationEngine.error(r.message);
+          },
+        },
+      );
+    }
+
+    // ── أدوات مساعدة ───────────────────────────────────────────
+
+    function _formatTime(dateStr) {
+      if (!dateStr) return "";
+      try {
+        var d = new Date(dateStr);
+        var now = new Date();
+        var isToday = d.toDateString() === now.toDateString();
+        if (isToday) {
+          return fmtTime(d);
+        }
+        return fmtDate(d);
+      } catch (e) {
+        return "";
+      }
+    }
+
+    function _esc(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    return {
+      refresh: refresh,
+      silentRefresh: silentRefresh,
+      startPolling: startPolling,
+      stopPolling: stopPolling,
+      setFilter: setFilter,
+      onSearch: onSearch,
+      openConversation: openConversation,
+      changeMode: changeMode,
+      togglePin: togglePin,
+      resolveConversation: resolveConversation,
+      resolveSuggested: resolveSuggested,
+      onInputChange: onInputChange,
+      onInputKeydown: onInputKeydown,
+      sendMessage: sendMessage,
+      openSettings: openSettings,
+      saveSettings: saveSettings,
+      openDashboard: openDashboard,
+      _loadDashboardPublic: _loadDashboard,
+      reconnect: reconnect,
+    };
+  })();
+
+  // بدء الـ polling بعد تحميل الصفحة (لو المستخدم عنده صلاحية)
+  if (typeof APP !== "undefined" && APP.currentUser && canOpenCommHub()) {
+    CH_INBOX.startPolling();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // ملحوظات التركيب (Manual Integration Steps):
+  //
+  // 1) في 01_JS_Core_Auth.html — أضف case جديد في switch(page) (بجوار
+  //    case "whatsapp_center"):
+  //
+  //      case "communication_hub":
+  //        if (!canOpenCommHub()) {
+  //          c.innerHTML = renderAccessDenied("ليس لديك صلاحية فتح Communication Hub");
+  //          break;
+  //        }
+  //        c.innerHTML = renderCommunicationHubPage();
+  //        bindCommunicationHubPage();
+  //        break;
+  //
+  // 2) في 02_JS_UI_Shell.html — أضف عنصر قائمة جانبية جديد (بجوار
+  //    عنصر whatsapp_center الموجود، داخل نفس مجموعة "العملاء" أو
+  //    مجموعة مستقلة "التواصل"):
+  //
+  //      {
+  //        page: "communication_hub",
+  //        icon: navIcon("ti-messages", "#6366F1"),
+  //        label: "Communication Hub",
+  //        requiredPerms: ["viewCommunicationHub", "manageCommunicationHub"],
+  //      },
+  //
+  // 3) في شاشة الصلاحيات (Permissions_Frontend.html) — تأكد إن الثلاث
+  //    صلاحيات الجديدة (manageCommunicationHub, viewCommunicationHub,
+  //    replyCommunicationHub) ظاهرة تحت قسم "الواتساب" — بيحصل تلقائياً
+  //    لأنها مضافة في ALL_PERMISSIONS (Code_Permissions.gs).
+  // ─────────────────────────────────────────────────────────────
+</script>

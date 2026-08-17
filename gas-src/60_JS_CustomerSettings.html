@@ -1,0 +1,778 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 60_JS_CustomerSettings.html — شاشة إعدادات العملاء العامة
+  // ═══════════════════════════════════════════════════════════════════
+  // [CUST-SETTINGS-2026-08-07] نفس معمارية 57_JS_InventorySettings.html
+  // حرفيًا (Field Builders موحّدة + data-cset-key + TabEngine)، بادئة
+  // العناصر/الكلاسات هنا "cset" بدل "inv" لتفادي أي تصادم أسماء دوال مع
+  // ملف إعدادات المخزون (الاتنين بيتحمّلوا في نفس الـ Global scope في GAS).
+  // الـ CSS: بيُعاد استخدام كلاسات .invset-* الموجودة أصلاً في
+  // Style_08_Settings.html (عامة/غير خاصة بالمخزون فعليًا في التصميم)
+  // بدل تكرار نفس الأنماط بأسماء تانية.
+  // ═══════════════════════════════════════════════════════════════════
+
+  var CSET_SECTIONS = [
+    { key: "general", label: "خصائص عامة", icon: "ti-adjustments" },
+    { key: "parties", label: "جهات التعامل", icon: "ti-users-group" },
+    { key: "customer_fields", label: "الحقول الإجبارية للإدخال للعملاء", icon: "ti-forms" },
+    { key: "supplier_fields", label: "الحقول الإجبارية للإدخال للموردين", icon: "ti-forms" },
+    { key: "zones", label: "مناطق العملاء", icon: "ti-map-pin" },
+    { key: "types", label: "أنواع العملاء", icon: "ti-users-group" },
+    { key: "numbering", label: "ترقيم العملاء", icon: "ti-list-numbers" },
+    { key: "groups", label: "تصنيف العملاء", icon: "ti-category" },
+    { key: "credit", label: "سياسة الائتمان", icon: "ti-credit-card" },
+    { key: "balances", label: "أرصدة العملاء", icon: "ti-wallet" },
+    { key: "log", label: "سجل التغييرات", icon: "ti-history" },
+  ];
+
+  var _csetTabsCtrl = null;
+  var _csetCurrentData = null;
+  var _csetLogLoaded = false;
+
+  // ── Field Builders (نفس نمط _invRow/_invToggle...، بادئة cset) ──────
+  function _csetRow(labelText, controlHtml, hint) {
+    return (
+      '<div class="invset-field-row">' +
+      '<div class="invset-field-label">' +
+      "<label>" +
+      labelText +
+      "</label>" +
+      (hint ? '<span class="invset-field-hint">' + hint + "</span>" : "") +
+      "</div>" +
+      '<div class="invset-field-control">' +
+      controlHtml +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function _csetToggle(key) {
+    return (
+      '<label class="invset-switch">' +
+      '<input type="checkbox" data-cset-key="' +
+      key +
+      '" data-cset-type="bool">' +
+      '<span class="invset-switch-track"><span class="invset-switch-thumb"></span></span>' +
+      "</label>"
+    );
+  }
+
+  function _csetNumber(key, opts) {
+    opts = opts || {};
+    return (
+      '<input class="input invset-input-sm" type="number" data-cset-key="' +
+      key +
+      '" data-cset-type="number"' +
+      (opts.min !== undefined ? ' min="' + opts.min + '"' : "") +
+      (opts.max !== undefined ? ' max="' + opts.max + '"' : "") +
+      ">"
+    );
+  }
+
+  function _csetText(key, opts) {
+    opts = opts || {};
+    return (
+      '<input class="input invset-input-sm" type="text" data-cset-key="' +
+      key +
+      '" data-cset-type="text"' +
+      (opts.placeholder ? ' placeholder="' + opts.placeholder + '"' : "") +
+      ">"
+    );
+  }
+
+  function _csetSelect(key, options) {
+    var opts = (options || [])
+      .map(function (o) {
+        return '<option value="' + o.value + '">' + o.label + "</option>";
+      })
+      .join("");
+    return '<select class="input invset-input-sm" data-cset-key="' + key + '" data-cset-type="text">' + opts + "</select>";
+  }
+
+  // ── تاب 1: الإعدادات العامة (الحقول الإلزامية) ──────────────────────
+  function _csetPanelGeneral() {
+    return (
+      '<div class="invset-section-heading" style="margin-top:0"><i class="ti ti-history-toggle"></i><h3>أعمار الديون</h3></div>' +
+      '<div class="invset-section-title">جدول أعمار الديون يمثل تحليلاً زمنيًا لديون الزبائن الواجبة التحصيل أو القبض بحيث يكون مقسم إلى مجموعة من الفترات، واتي تساعد المحاسب أو قسم التحصيل على معرفة الوقت الفعلي الذي يستطيع فيه المحاسب أن يطالب الزبون قانونيًا بمبلغ الفاتورة المرسلة إليه.</div>' +
+      _csetRow("عرض شاشة تسوية أعمار الديون بعد اتمام كل عملية", _csetToggle("debt_aging_show_after_operation")) +
+      _csetRow(
+        "فترات أعمار الديون (يوم)",
+        _csetNumber("debt_aging_period_1", { min: 1 }) +
+          _csetNumber("debt_aging_period_2", { min: 1 }) +
+          _csetNumber("debt_aging_period_3", { min: 1 }) +
+          _csetNumber("debt_aging_period_4", { min: 1 }),
+      ) +
+      '<div class="invset-section-heading"><i class="ti ti-adjustments"></i><h3>خصائص عامة</h3></div>' +
+      _csetRow("عند فتح الفاتورة ماهو العميل الافتراضي الذي تود ظهوره", _csetText("default_customer_on_invoice_open")) +
+      _csetRow("عند فتح الفاتورة ماهو المورد الافتراضي الذي تود ظهوره", _csetText("default_supplier_on_invoice_open")) +
+      _csetRow(
+        "طريقة التعامل في حالة تجاوز حد الائتمان",
+        _csetSelect("credit_limit_exceed_behavior", [
+          { value: "warn_on_finish", label: "ظهور تنبيه في حالة تجاوز حد الائتمان" },
+          { value: "warn_only", label: "تنبيه فقط بدون منع" },
+          { value: "block", label: "منع استكمال العملية" },
+        ]),
+      ) +
+      _csetRow(
+        "عند عميل جديد جعل طبيعة التعامل الافتراضية هي؟",
+        _csetSelect("default_new_customer_nature", [
+          { value: "cash", label: "كاش" },
+          { value: "credit", label: "آجل" },
+        ]),
+      ) +
+      _csetRow(
+        "عند مورد جديد جعل طبيعة التعامل الافتراضية هي؟",
+        _csetSelect("default_new_supplier_nature", [
+          { value: "credit", label: "آجل" },
+          { value: "cash", label: "كاش" },
+        ]),
+      ) +
+      _csetRow(
+        "إمكانية التعامل مع الموردين خلال كل الفروع",
+        _csetToggle("allow_supplier_cross_branch"),
+      ) +
+      '<div class="invset-section-title">قواعد إنشاء العميل — بتتفعّل فعليًا في التحقق قبل الحفظ (BusinessRulesEngine)</div>' +
+      _csetRow("السماح بإنشاء عميل بدون رقم هاتف", _csetToggle("allow_customer_without_phone")) +
+      _csetRow(
+        "السماح بتكرار اسم العميل",
+        _csetToggle("allow_duplicate_customer_name"),
+        "لو اتقفل: أي اسم عميل مكرر (نفس الاسم بالظبط) هيترفض عند الحفظ",
+      ) +
+      _csetRow("إلزام البريد الإلكتروني", _csetToggle("require_email")) +
+      _csetRow("إلزام العنوان", _csetToggle("require_address")) +
+      _csetRow("إلزام الرقم الضريبي", _csetToggle("require_tax_number")) +
+      _csetRow("إلزام نوع العميل", _csetToggle("require_customer_type"))
+    );
+  }
+
+  // ── تاب: جهات التعامل (تصنيف عملاء/موردين موحّد بعملة وحد ائتمان وحساب أستاذ) ──
+  function _csetPanelParties() {
+    return (
+      '<div class="invset-section-title">هو تصنيف يمكنك اعطائه للعملاء و الموردين على حد سواء .. يفيدك في وضع حساب أستاذ لهذه الفئة . و في التقارير بالطبع</div>' +
+      '<div class="cset-table-wrap">' +
+      '<table class="invset-num-table" id="cset-parties-table">' +
+      "<thead><tr><th>الاسم</th><th>العملة</th><th>حد الائتمان</th><th>حساب الاستاذ</th><th>نشط</th><th></th></tr></thead>" +
+      '<tbody id="cset-parties-list"></tbody>' +
+      "</table></div>" +
+      '<button type="button" class="btn btn-outline-primary" id="cset-add-party-btn" style="margin-top:10px">' +
+      '<i class="ti ti-plus"></i> جديد</button>'
+    );
+  }
+
+  function _csetPartyRowHtml(p, i) {
+    p = p || {};
+    return (
+      '<tr data-party-row data-party-index="' +
+      i +
+      '">' +
+      '<td><input class="input invset-input-sm" data-party-field="name" value="' + (p.name || "") + '"></td>' +
+      '<td><input class="input invset-input-sm" data-party-field="currency" value="' + (p.currency || "") + '"></td>' +
+      '<td><input class="input invset-input-sm" type="number" min="0" data-party-field="credit_limit" value="' +
+      (p.credit_limit != null ? p.credit_limit : 0) +
+      '"></td>' +
+      '<td><input class="input invset-input-sm" data-party-field="ledger_account" value="' + (p.ledger_account || "") + '"></td>' +
+      '<td style="text-align:center"><label class="invset-switch"><input type="checkbox" data-party-field="active"' +
+      (p.active === false ? "" : " checked") +
+      '><span class="invset-switch-track"><span class="invset-switch-thumb"></span></span></label></td>' +
+      '<td><button type="button" class="btn btn-sm btn-outline-danger" data-remove-party><i class="ti ti-trash"></i></button></td>' +
+      "</tr>"
+    );
+  }
+
+  function _csetRenderPartiesList(parties) {
+    var container = document.getElementById("cset-parties-list");
+    if (!container) return;
+    container.innerHTML = (parties || []).map(_csetPartyRowHtml).join("");
+    container.querySelectorAll("[data-remove-party]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        btn.closest("[data-party-row]").remove();
+      });
+    });
+  }
+
+  function _csetGatherParties() {
+    var container = document.getElementById("cset-parties-list");
+    if (!container) return [];
+    var out = [];
+    container.querySelectorAll("[data-party-row]").forEach(function (row) {
+      var get = function (f) {
+        var el = row.querySelector('[data-party-field="' + f + '"]');
+        return el ? el.value : "";
+      };
+      var name = (get("name") || "").trim();
+      if (!name) return;
+      out.push({
+        name: name,
+        currency: get("currency") || "",
+        credit_limit: Number(get("credit_limit") || 0),
+        ledger_account: get("ledger_account") || "",
+        active: !!row.querySelector('[data-party-field="active"]').checked,
+      });
+    });
+    return out;
+  }
+
+  // ── تاب: الحقول الإجبارية للإدخال (عملاء/موردين) ─────────────────────
+  var CSET_ENTRY_FIELDS = [
+    { key: "entry_require_party_category", label: "خانة جهة التعامل" },
+    { key: "entry_require_group_name", label: "خانة اسم المجموعة" },
+    { key: "entry_require_zone", label: "خانة المنطقة" },
+    { key: "entry_require_address", label: "العنوان" },
+    { key: "entry_require_phone", label: "خانة التليفون", digitsKey: "entry_phone_digits" },
+    { key: "entry_require_photo", label: "صورة" },
+    { key: "entry_require_id_number", label: "خانة رقم الهوية", digitsKey: "entry_id_digits" },
+  ];
+
+  function _csetEntryFieldsPanel(prefix, extraFields) {
+    var fields = CSET_ENTRY_FIELDS.map(function (f) {
+      return { key: prefix + "_" + f.key, label: f.label, digitsKey: f.digitsKey ? prefix + "_" + f.digitsKey : null };
+    }).concat(extraFields || []);
+    return (
+      '<div class="invset-section-title">هي الخانات التي يجب على مدخل البيانات ادخالها عند تسجيل ' +
+      (prefix === "customer" ? "العميل" : "المورد") +
+      " في البرنامج</div>" +
+      fields
+        .map(function (f) {
+          var row = _csetRow(f.label, _csetToggle(f.key));
+          if (f.digitsKey) {
+            row += _csetRow("عدد خانات " + f.label.replace("خانة ", ""), _csetNumber(f.digitsKey, { min: 1, max: 20 }));
+          }
+          return row;
+        })
+        .join("")
+    );
+  }
+
+  function _csetPanelCustomerFields() {
+    return _csetEntryFieldsPanel("customer", [
+      { key: "customer_entry_require_blacklist", label: "Black List" },
+      { key: "customer_entry_require_shipping_company", label: "شركة الشحن" },
+    ]);
+  }
+
+  function _csetPanelSupplierFields() {
+    return _csetEntryFieldsPanel("supplier");
+  }
+
+  // ── تاب: مناطق العملاء (مناطق الزيارات) ─────────────────────────────
+  function _csetPanelZones() {
+    return (
+      '<div class="invset-section-title">يمكنك تقسيم المناطق التي يتواجد فيها العملاء بشكل شجري، حيث يمكنك من خلال ذلك اجراء عمليات كثيرة على كل منطقة و ما تحتويها .. بالإضافة الى التقارير</div>' +
+      '<div class="cset-table-wrap">' +
+      '<table class="invset-num-table" id="cset-zones-table">' +
+      "<thead><tr><th>الحالة</th><th>الكود</th><th>الاسم</th><th></th></tr></thead>" +
+      '<tbody id="cset-zones-list"></tbody>' +
+      "</table></div>" +
+      '<button type="button" class="btn btn-outline-primary" id="cset-add-zone-btn" style="margin-top:10px">' +
+      '<i class="ti ti-plus"></i> جديد</button>'
+    );
+  }
+
+  function _csetZoneRowHtml(z, i) {
+    z = z || {};
+    return (
+      '<tr data-zone-row data-zone-index="' +
+      i +
+      '">' +
+      '<td style="text-align:center"><label class="invset-switch"><input type="checkbox" data-zone-field="active"' +
+      (z.active === false ? "" : " checked") +
+      '><span class="invset-switch-track"><span class="invset-switch-thumb"></span></span></label></td>' +
+      '<td><input class="input invset-input-sm" data-zone-field="code" value="' + (z.code || "") + '"></td>' +
+      '<td><input class="input invset-input-sm" data-zone-field="name" value="' + (z.name || "") + '"></td>' +
+      '<td><button type="button" class="btn btn-sm btn-outline-danger" data-remove-zone><i class="ti ti-trash"></i></button></td>' +
+      "</tr>"
+    );
+  }
+
+  function _csetRenderZonesList(zones) {
+    var container = document.getElementById("cset-zones-list");
+    if (!container) return;
+    container.innerHTML = (zones || []).map(_csetZoneRowHtml).join("");
+    container.querySelectorAll("[data-remove-zone]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        btn.closest("[data-zone-row]").remove();
+      });
+    });
+  }
+
+  function _csetGatherZones() {
+    var container = document.getElementById("cset-zones-list");
+    if (!container) return [];
+    var out = [];
+    container.querySelectorAll("[data-zone-row]").forEach(function (row) {
+      var get = function (f) {
+        var el = row.querySelector('[data-zone-field="' + f + '"]');
+        return el ? el.value : "";
+      };
+      var name = (get("name") || "").trim();
+      if (!name) return;
+      out.push({
+        name: name,
+        code: get("code") || "",
+        active: !!row.querySelector('[data-zone-field="active"]').checked,
+      });
+    });
+    return out;
+  }
+
+  // ── تاب 2: أنواع العملاء (قائمة قابلة للتعديل بدل Enum ثابت) ────────
+  function _csetPanelTypes() {
+    return (
+      '<div class="invset-section-title">أنواع العملاء المتاحة عند إنشاء/تعديل عميل (id ثابت يُستخدم في التخزين، الاسم قابل للتعديل)</div>' +
+      '<div id="cset-types-list"></div>' +
+      '<button type="button" class="btn btn-outline-primary" id="cset-add-type-btn" style="margin-top:10px">' +
+      '<i class="ti ti-plus"></i> إضافة نوع جديد</button>'
+    );
+  }
+
+  function _csetRenderTypesList(types) {
+    var container = document.getElementById("cset-types-list");
+    if (!container) return;
+    container.innerHTML = (types || [])
+      .map(function (t, i) {
+        return (
+          '<div class="invset-field-row" data-type-row data-type-index="' +
+          i +
+          '">' +
+          '<div class="invset-field-label" style="flex:1">' +
+          '<input class="input invset-input-sm" data-type-field="key" placeholder="key (مثال: individual)" value="' +
+          (t.key || "") +
+          '" style="width:150px">' +
+          '<input class="input invset-input-sm" data-type-field="label" placeholder="الاسم المعروض" value="' +
+          (t.label || "") +
+          '" style="width:180px;margin-inline-start:8px">' +
+          "</div>" +
+          '<button type="button" class="btn btn-sm btn-outline-danger" data-remove-type>' +
+          '<i class="ti ti-trash"></i></button>' +
+          "</div>"
+        );
+      })
+      .join("");
+    container.querySelectorAll("[data-remove-type]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        btn.closest("[data-type-row]").remove();
+      });
+    });
+  }
+
+  function _csetGatherTypes() {
+    var container = document.getElementById("cset-types-list");
+    if (!container) return [];
+    var out = [];
+    container.querySelectorAll("[data-type-row]").forEach(function (row) {
+      var keyEl = row.querySelector('[data-type-field="key"]');
+      var labelEl = row.querySelector('[data-type-field="label"]');
+      var key = keyEl ? keyEl.value.trim() : "";
+      var label = labelEl ? labelEl.value.trim() : "";
+      if (key) out.push({ key: key, label: label || key });
+    });
+    return out;
+  }
+
+  // ── تاب 3: ترقيم العملاء ─────────────────────────────────────────
+  function _csetPanelNumbering() {
+    return (
+      '<div class="invset-section-title">مثال: ' +
+      "<code>CUS-00001</code>" +
+      " — الإعدادات دي بتتستهلك فعليًا عند إضافة عميل جديد (getNextCustomerCode)</div>" +
+      _csetRow("البادئة (Prefix)", _csetText("numbering_prefix", { placeholder: "CUS-" })) +
+      _csetRow("عدد الأرقام", _csetNumber("numbering_digits", { min: 1, max: 10 })) +
+      _csetRow("بداية التسلسل", _csetNumber("numbering_start_from", { min: 1 })) +
+      _csetRow(
+        "إعادة الترقيم سنويًا",
+        _csetToggle("numbering_reset_yearly"),
+        "لو اتفعّل: التسلسل بيرجع للبداية كل سنة ميلادية جديدة",
+      )
+    );
+  }
+
+  // ── تاب 4: تصنيف العملاء (مجموعات + سياساتها) ───────────────────────
+  function _csetPanelGroups() {
+    return (
+      '<div class="invset-section-title">كل مجموعة عملاء ليها قائمة أسعار وخصم افتراضي وشروط دفع وحد ائتمان مستقل — بتتقرأ فعليًا عبر CustomerSettingsEngine.getGroup(key)</div>' +
+      '<div id="cset-groups-list"></div>' +
+      '<button type="button" class="btn btn-outline-primary" id="cset-add-group-btn" style="margin-top:10px">' +
+      '<i class="ti ti-plus"></i> إضافة مجموعة جديدة</button>'
+    );
+  }
+
+  function _csetGroupRowHtml(g, i) {
+    g = g || {};
+    return (
+      '<div class="invset-panel-placeholder" style="align-items:stretch;text-align:right;padding:14px;border:1px solid var(--border);border-radius:8px;margin-bottom:10px" data-group-row data-group-index="' +
+      i +
+      '">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
+      '<strong>مجموعة #' +
+      (i + 1) +
+      "</strong>" +
+      '<button type="button" class="btn btn-sm btn-outline-danger" data-remove-group>' +
+      '<i class="ti ti-trash"></i></button>' +
+      "</div>" +
+      _csetRow(
+        "المفتاح (key) / الاسم",
+        '<input class="input invset-input-sm" data-group-field="key" placeholder="key" value="' +
+          (g.key || "") +
+          '" style="width:110px">' +
+          '<input class="input invset-input-sm" data-group-field="label" placeholder="الاسم" value="' +
+          (g.label || "") +
+          '" style="width:120px;margin-inline-start:6px">',
+      ) +
+      _csetRow(
+        "قائمة الأسعار",
+        '<input class="input invset-input-sm" data-group-field="price_list" value="' + (g.price_list || "") + '">',
+      ) +
+      _csetRow(
+        "خصم افتراضي %",
+        '<input class="input invset-input-sm" type="number" min="0" max="100" data-group-field="default_discount_percent" value="' +
+          (g.default_discount_percent != null ? g.default_discount_percent : 0) +
+          '">',
+      ) +
+      _csetRow(
+        "شروط الدفع (أيام)",
+        '<input class="input invset-input-sm" type="number" min="0" data-group-field="payment_terms_days" value="' +
+          (g.payment_terms_days != null ? g.payment_terms_days : 0) +
+          '">',
+      ) +
+      _csetRow(
+        "حد ائتماني",
+        '<input class="input invset-input-sm" type="number" min="0" data-group-field="credit_limit" value="' +
+          (g.credit_limit != null ? g.credit_limit : 0) +
+          '">',
+      ) +
+      "</div>"
+    );
+  }
+
+  function _csetRenderGroupsList(groups) {
+    var container = document.getElementById("cset-groups-list");
+    if (!container) return;
+    container.innerHTML = (groups || []).map(_csetGroupRowHtml).join("");
+    container.querySelectorAll("[data-remove-group]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        btn.closest("[data-group-row]").remove();
+      });
+    });
+  }
+
+  function _csetGatherGroups() {
+    var container = document.getElementById("cset-groups-list");
+    if (!container) return [];
+    var out = [];
+    container.querySelectorAll("[data-group-row]").forEach(function (row) {
+      var get = function (f) {
+        var el = row.querySelector('[data-group-field="' + f + '"]');
+        return el ? el.value : "";
+      };
+      var key = (get("key") || "").trim();
+      if (!key) return;
+      out.push({
+        key: key,
+        label: (get("label") || key).trim(),
+        price_list: get("price_list") || "",
+        default_discount_percent: Number(get("default_discount_percent") || 0),
+        payment_terms_days: Number(get("payment_terms_days") || 0),
+        credit_limit: Number(get("credit_limit") || 0),
+      });
+    });
+    return out;
+  }
+
+  // ── تاب 5: سياسة الائتمان ────────────────────────────────────────
+  function _csetPanelCredit() {
+    return (
+      '<div class="invset-section-title">مربوطة فعليًا في addSaleInvoice عند فاتورة بيع آجلة — راجع overrideCreditLimit في الصلاحيات</div>' +
+      _csetRow("الحد الائتماني الافتراضي", _csetNumber("default_credit_limit", { min: 0 }), "0 = بدون حد افتراضي عام (يبقى لكل عميل/مجموعة على حدة)") +
+      _csetRow("مدة السماح بالدفع الافتراضية (أيام)", _csetNumber("default_payment_term_days", { min: 0 })) +
+      _csetRow("منع البيع عند تجاوز الحد", _csetToggle("block_sale_over_credit_limit")) +
+      _csetRow(
+        "السماح بموافقة المدير",
+        _csetToggle("allow_manager_override_credit_limit"),
+        "لو اتفعّل: أي مستخدم عنده صلاحية \"تجاوز الحد الائتماني\" يقدر يكمل الفاتورة رغم تجاوز الحد",
+      ) +
+      _csetRow("تنبيه عند قرب انتهاء مدة السماح (أيام قبل الاستحقاق)", _csetNumber("near_term_alert_days", { min: 0 }))
+    );
+  }
+
+  // ── تاب 6: أرصدة العملاء ─────────────────────────────────────────
+  function _csetPanelBalances() {
+    return (
+      _csetRow("تفعيل فتح رصيد أول المدة", _csetToggle("enable_opening_balance")) +
+      _csetRow("إلزام تاريخ بداية الرصيد", _csetToggle("opening_balance_requires_date")) +
+      _csetRow(
+        "مفتاح الحساب المحاسبي المرتبط",
+        _csetText("opening_balance_account_key", { placeholder: "ar_account" }),
+        "من مفاتيح POSTING_CONFIG_KEYS الموجودة في شاشة إعدادات الترحيل المحاسبي",
+      ) +
+      _csetRow(
+        "تحديث الرصيد تلقائيًا من القيود",
+        _csetToggle("auto_update_balance_from_journal"),
+        "هذا هو السلوك الفعلي الحالي لحساب رصيد العميل (_computePartyLiveBalance) — الإعداد توثيقي",
+      )
+    );
+  }
+
+  function _csetPanelLog() {
+    return (
+      '<div id="cset-log-list" class="invset-log-list">' +
+      '<div class="invset-panel-placeholder"><i class="ti ti-history" style="font-size:28px;opacity:.35"></i>' +
+      "<p>جارِ التحميل...</p></div></div>"
+    );
+  }
+
+  var CSET_PANEL_BUILDERS = {
+    general: _csetPanelGeneral,
+    parties: _csetPanelParties,
+    customer_fields: _csetPanelCustomerFields,
+    supplier_fields: _csetPanelSupplierFields,
+    zones: _csetPanelZones,
+    types: _csetPanelTypes,
+    numbering: _csetPanelNumbering,
+    groups: _csetPanelGroups,
+    credit: _csetPanelCredit,
+    balances: _csetPanelBalances,
+    log: _csetPanelLog,
+  };
+
+  function renderCustomerSettings() {
+    var tabsBtns = CSET_SECTIONS.map(function (s, i) {
+      return (
+        '<button type="button" class="invset-tab' +
+        (i === 0 ? " active" : "") +
+        '" data-tab="' +
+        s.key +
+        '"><i class="ti ' +
+        s.icon +
+        '"></i><span>' +
+        s.label +
+        "</span></button>"
+      );
+    }).join("");
+
+    var panels = CSET_SECTIONS.map(function (s, i) {
+      var builder = CSET_PANEL_BUILDERS[s.key];
+      var innerHtml = builder ? builder() : '<div class="invset-panel-placeholder"><p>' + s.label + "</p></div>";
+      return (
+        '<div class="invset-panel' +
+        (i === 0 ? " active" : "") +
+        '" id="cset-panel-' +
+        s.key +
+        '" data-panel="' +
+        s.key +
+        '">' +
+        '<div class="invset-section-heading"><i class="ti ' +
+        s.icon +
+        '"></i><h3>' +
+        s.label +
+        "</h3></div>" +
+        innerHtml +
+        "</div>"
+      );
+    }).join("");
+
+    return (
+      '<div class="invset-wrap">' +
+      '<div class="page-header"><div>' +
+      "<h2>إعدادات العملاء والموردين</h2>" +
+      '<p class="page-subtitle">المرجع الوحيد لكل سياسات العملاء والموردين في النظام</p>' +
+      "</div>" +
+      '<div class="invset-header-actions">' +
+      '<button type="button" class="btn btn-secondary" id="cset-reset-btn">استرجاع الافتراضي</button>' +
+      '<button type="button" class="btn btn-primary" id="cset-save-btn">حفظ الإعدادات</button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="invset-body">' +
+      '<div class="invset-tabs" id="cset-tabs">' +
+      tabsBtns +
+      "</div>" +
+      '<div class="invset-panels" id="cset-panels">' +
+      panels +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function bindCustomerSettings() {
+    if (_csetTabsCtrl && _csetTabsCtrl.destroy) _csetTabsCtrl.destroy();
+    _csetTabsCtrl = TabEngine.init({
+      scope: document.getElementById("cset-tabs").parentElement,
+      tabSelector: ".invset-tab",
+      panelPrefix: "cset-panel-",
+      activeClass: "active",
+    });
+
+    var saveBtn = document.getElementById("cset-save-btn");
+    var resetBtn = document.getElementById("cset-reset-btn");
+    if (saveBtn) saveBtn.addEventListener("click", _csetSave);
+    if (resetBtn) resetBtn.addEventListener("click", _csetResetToDefault);
+
+    var addTypeBtn = document.getElementById("cset-add-type-btn");
+    if (addTypeBtn) {
+      addTypeBtn.addEventListener("click", function () {
+        var current = _csetGatherTypes();
+        current.push({ key: "", label: "" });
+        _csetRenderTypesList(current);
+      });
+    }
+    var addGroupBtn = document.getElementById("cset-add-group-btn");
+    if (addGroupBtn) {
+      addGroupBtn.addEventListener("click", function () {
+        var current = _csetGatherGroups();
+        current.push({ key: "", label: "", price_list: "", default_discount_percent: 0, payment_terms_days: 0, credit_limit: 0 });
+        _csetRenderGroupsList(current);
+      });
+    }
+    var addPartyBtn = document.getElementById("cset-add-party-btn");
+    if (addPartyBtn) {
+      addPartyBtn.addEventListener("click", function () {
+        var current = _csetGatherParties();
+        current.push({ name: "", currency: "", credit_limit: 0, ledger_account: "", active: true });
+        _csetRenderPartiesList(current);
+      });
+    }
+    var addZoneBtn = document.getElementById("cset-add-zone-btn");
+    if (addZoneBtn) {
+      addZoneBtn.addEventListener("click", function () {
+        var current = _csetGatherZones();
+        current.push({ name: "", code: "", active: true });
+        _csetRenderZonesList(current);
+      });
+    }
+
+    _csetLogLoaded = false;
+    var logTabBtn = document.querySelector('#cset-tabs .invset-tab[data-tab="log"]');
+    if (logTabBtn) logTabBtn.addEventListener("click", _csetLoadLogIfNeeded);
+
+    _csetLoad();
+  }
+
+  function _csetApplyToUI(data) {
+    if (!data) return;
+    var root = document.getElementById("cset-panels");
+    if (!root) return;
+    root.querySelectorAll("[data-cset-key]").forEach(function (el) {
+      var key = el.dataset.csetKey;
+      if (!(key in data)) return;
+      if (el.dataset.csetType === "bool") {
+        el.checked = !!data[key];
+      } else {
+        el.value = data[key] == null ? "" : data[key];
+      }
+    });
+    _csetRenderTypesList(data.customer_types || []);
+    _csetRenderGroupsList(data.customer_groups || []);
+    _csetRenderPartiesList(data.party_categories || []);
+    _csetRenderZonesList(data.customer_zones || []);
+  }
+
+  function _csetGatherFromUI() {
+    var root = document.getElementById("cset-panels");
+    var out = {};
+    if (!root) return out;
+    root.querySelectorAll("[data-cset-key]").forEach(function (el) {
+      var key = el.dataset.csetKey;
+      if (el.dataset.csetType === "bool") {
+        out[key] = !!el.checked;
+      } else if (el.dataset.csetType === "number") {
+        out[key] = Number(el.value || 0);
+      } else {
+        out[key] = el.value || "";
+      }
+    });
+    out.customer_types = _csetGatherTypes();
+    out.customer_groups = _csetGatherGroups();
+    out.party_categories = _csetGatherParties();
+    out.customer_zones = _csetGatherZones();
+    return out;
+  }
+
+  function _csetLoadLogIfNeeded() {
+    if (_csetLogLoaded) return;
+    var listEl = document.getElementById("cset-log-list");
+    if (!listEl) return;
+    _csetLogLoaded = true;
+    _gsr("getAuditLog", [50, { table: "CustomerSettings" }], {
+      label: "CustomerSettings.auditLog",
+      onSuccess: function (res) {
+        var rows = (res && res.success && res.data) || [];
+        if (!rows.length) {
+          listEl.innerHTML = '<div class="invset-panel-placeholder"><p>لا يوجد تغييرات مسجّلة بعد</p></div>';
+          return;
+        }
+        listEl.innerHTML =
+          '<table class="invset-num-table"><thead><tr><th>التاريخ</th><th>المستخدم</th><th>التفاصيل</th></tr></thead><tbody>' +
+          rows
+            .map(function (r) {
+              return "<tr><td>" + (r.timestamp || "") + "</td><td>" + (r.user || "") + "</td><td>" + (r.details || "") + "</td></tr>";
+            })
+            .join("") +
+          "</tbody></table>";
+      },
+      onError: function () {
+        _csetLogLoaded = false;
+        listEl.innerHTML = '<div class="invset-panel-placeholder"><p>تعذّر تحميل السجل</p></div>';
+      },
+    });
+  }
+
+  function _csetLoad() {
+    _gsr("getCustomerSettings", [APP.currentUser.username, SESSION ? SESSION.token : null], {
+      label: "CustomerSettings.get",
+      onSuccess: function (res) {
+        if (res && res.success) {
+          _csetCurrentData = res.data;
+          _csetApplyToUI(_csetCurrentData);
+        }
+      },
+      onError: function () {
+        if (typeof showToast === "function") showToast("تعذّر تحميل إعدادات العملاء", "error");
+      },
+    });
+  }
+
+  function _csetSave() {
+    var payload = { callerUser: APP.currentUser.username, settings: _csetGatherFromUI() };
+    _gsr("saveCustomerSettings", [payload, SESSION ? SESSION.token : null], {
+      label: "CustomerSettings.save",
+      onSuccess: function (res) {
+        if (res && res.success) {
+          _csetCurrentData = res.data;
+          _csetApplyToUI(_csetCurrentData);
+          if (typeof showToast === "function") showToast("تم حفظ إعدادات العملاء", "success");
+        } else if (typeof showToast === "function") {
+          showToast((res && res.message) || "فشل الحفظ", "error");
+        }
+      },
+      onError: function () {
+        if (typeof showToast === "function") showToast("خطأ في الاتصال أثناء الحفظ", "error");
+      },
+    });
+  }
+
+  function _csetResetToDefault() {
+    showConfirm({
+      title: "استرجاع الإعدادات الافتراضية",
+      message: "هل تريد استرجاع كل إعدادات العملاء للقيم الافتراضية؟",
+      confirmText: "استرجاع",
+      confirmClass: "btn-danger",
+      onConfirm: function () {
+        _gsr("resetCustomerSettings", [{ callerUser: APP.currentUser.username }, SESSION ? SESSION.token : null], {
+          label: "CustomerSettings.reset",
+          onSuccess: function (res) {
+            if (res && res.success) {
+              _csetCurrentData = res.data;
+              _csetApplyToUI(_csetCurrentData);
+              if (typeof showToast === "function") showToast("تم استرجاع الإعدادات الافتراضية", "success");
+            } else if (typeof showToast === "function") {
+              showToast((res && res.message) || "فشل الاسترجاع", "error");
+            }
+          },
+          onError: function () {
+            if (typeof showToast === "function") showToast("خطأ في الاتصال", "error");
+          },
+        });
+      },
+    });
+  }
+</script>

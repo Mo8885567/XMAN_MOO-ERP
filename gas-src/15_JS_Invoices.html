@@ -1,0 +1,2944 @@
+<script>
+  // ═══════════════════════════════════════════════════════════════════
+  // 15_JS_Invoices.html — موديول الفواتير (بيع + شراء)
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-CE  [COLUMN-ENGINE] تعريف أعمدة الجداول الرئيسية الأربعة:
+  // فواتير البيع، فواتير الشراء، مرتجع البيع، مرتجع الشراء — بنفس
+  // نمط _poRegisterColumns/_poRenderTable في 22_JS_PurchaseOrders.html
+  // (أول شاشة طُبِّق عليها Dynamic Columns). راجع 34_JS_ColumnEngine.html.
+  //
+  // ملاحظة: جداول "الأذونات المعلّقة" أعلى شاشتي الفواتير (pendingSection
+  // في renderSaleInvoices/renderPurchaseInvoices) تُركت كما هي — قوائم
+  // مؤقتة بإجراء واحد (إنشاء فاتورة) وليست بيانات رئيسية تحتاج تخصيصًا.
+  // ─────────────────────────────────────────────────────────────
+  var _invColumnsRegistered = {};
+
+  function _sinvRegisterColumns() {
+    if (_invColumnsRegistered.sale_invoices) return;
+    _invColumnsRegistered.sale_invoices = true;
+    ColumnEngine.register(
+      "sale_invoices",
+      [
+        {
+          key: "id",
+          label: "رقم الفاتورة",
+          type: "text",
+          width: 120,
+          frozen: "right",
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px;color:var(--accent)">' +
+              esc(v || "") +
+              "</span>"
+            );
+          },
+        },
+        { key: "date", label: "التاريخ", type: "date", width: 100 },
+        {
+          key: "party",
+          label: "العميل",
+          type: "text",
+          width: 180,
+          format: function (v) {
+            return "<b>" + esc(v || "—") + "</b>";
+          },
+        },
+        {
+          key: "permit_id",
+          label: "إذن الصرف",
+          type: "text",
+          width: 120,
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px;color:var(--text3)">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "net_total",
+          label: "الإجمالي",
+          type: "currency",
+          width: 130,
+          format: function (v) {
+            return (
+              '<span class="sensitive-balance" style="font-weight:700;color:#065f46">' +
+              formatMoney(v || 0, { decimals: 0 }) +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "payment_status",
+          label: "حالة الدفع",
+          type: "badge",
+          width: 110,
+          format: function (v) {
+            return _invStatusBadge(v);
+          },
+        },
+        {
+          key: "shipment_id",
+          label: "الشحن",
+          type: "custom",
+          width: 140,
+          sortable: false,
+          format: function (v, row) {
+            if (!row.shipment_id && !row.shipping_company_id)
+              return '<span style="color:var(--text3);font-size:12px">—</span>';
+            var co = row.shipping_company_id
+              ? (APP.data.shippingCompanies || []).find(function (c) {
+                  return c.id === row.shipping_company_id;
+                })
+              : null;
+            var coName = co ? co.name : row.shipping_company_id || "";
+            var shipBadge = row.shipment_id
+              ? '<span class="mono" style="font-size:10px;background:var(--accent-soft);color:var(--accent);padding:2px 6px;border-radius:4px">' +
+                esc(row.shipment_id) +
+                "</span>"
+              : "";
+            return (
+              '<div style="display:flex;flex-direction:column;gap:2px">' +
+              (coName
+                ? '<span style="font-size:11px;color:var(--text2)"><i class="ti ti-truck" style="font-size:10px"></i> ' +
+                  esc(coName) +
+                  "</span>"
+                : "") +
+              shipBadge +
+              "</div>"
+            );
+          },
+        },
+        { key: "due_date", label: "تاريخ الاستحقاق", type: "date", width: 110 },
+        { key: "created_by", label: "بواسطة", type: "text", width: 110 },
+        // ── أعمدة ذكية: مخفية افتراضيًا ──
+        {
+          key: "party_phone",
+          label: "هاتف العميل",
+          type: "text",
+          width: 120,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "vat_amount",
+          label: "ضريبة القيمة المضافة",
+          type: "currency",
+          width: 130,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "discount_amount",
+          label: "الخصم",
+          type: "currency",
+          width: 110,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "notes",
+          label: "ملاحظات",
+          type: "text",
+          width: 200,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "created_at",
+          label: "تاريخ الإنشاء",
+          type: "date",
+          width: 110,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+      ],
+      { title: "فواتير البيع", rowKey: "id", contextMenuType: "invoices" },
+    );
+  }
+
+  function _sinvRenderTable(statusFilter) {
+    var container = document.getElementById("sinv-ce-container");
+    if (!container) return;
+    _sinvRegisterColumns();
+    var invoices = (APP.data.saleInvoices || []).slice().reverse();
+    if (statusFilter) {
+      invoices = invoices.filter(function (inv) {
+        return inv.payment_status === statusFilter;
+      });
+    }
+    ColumnEngine.renderTable("sale_invoices", container, invoices, {
+      onRowClick: function (row) {
+        viewSaleInvoice(row.id);
+      },
+    });
+  }
+
+  function _pinvRegisterColumns() {
+    if (_invColumnsRegistered.purchase_invoices) return;
+    _invColumnsRegistered.purchase_invoices = true;
+    ColumnEngine.register(
+      "purchase_invoices",
+      [
+        {
+          key: "id",
+          label: "رقم الفاتورة",
+          type: "text",
+          width: 120,
+          frozen: "right",
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px;color:#5B21B6">' +
+              esc(v || "") +
+              "</span>"
+            );
+          },
+        },
+        { key: "date", label: "التاريخ", type: "date", width: 100 },
+        {
+          key: "party",
+          label: "المورد",
+          type: "text",
+          width: 180,
+          format: function (v) {
+            return "<b>" + esc(v || "—") + "</b>";
+          },
+        },
+        {
+          key: "permit_id",
+          label: "إذن الوارد",
+          type: "text",
+          width: 120,
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px;color:var(--text3)">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "net_total",
+          label: "الإجمالي",
+          type: "currency",
+          width: 130,
+          format: function (v) {
+            return (
+              '<span class="sensitive-balance" style="font-weight:700;color:#5B21B6">' +
+              formatMoney(v || 0, { decimals: 0 }) +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "payment_status",
+          label: "حالة الدفع",
+          type: "badge",
+          width: 110,
+          format: function (v) {
+            return _invStatusBadge(v);
+          },
+        },
+        { key: "due_date", label: "تاريخ الاستحقاق", type: "date", width: 110 },
+        { key: "created_by", label: "بواسطة", type: "text", width: 110 },
+        // ── أعمدة ذكية: مخفية افتراضيًا ──
+        {
+          key: "party_phone",
+          label: "هاتف المورد",
+          type: "text",
+          width: 120,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "vat_amount",
+          label: "ضريبة القيمة المضافة",
+          type: "currency",
+          width: 130,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "discount_amount",
+          label: "الخصم",
+          type: "currency",
+          width: 110,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "notes",
+          label: "ملاحظات",
+          type: "text",
+          width: 200,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "created_at",
+          label: "تاريخ الإنشاء",
+          type: "date",
+          width: 110,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+      ],
+      { title: "فواتير الشراء", rowKey: "id", contextMenuType: "invoices" },
+    );
+  }
+
+  function _pinvRenderTable(statusFilter) {
+    var container = document.getElementById("pinv-ce-container");
+    if (!container) return;
+    _pinvRegisterColumns();
+    var invoices = (APP.data.purchaseInvoices || []).slice().reverse();
+    if (statusFilter) {
+      invoices = invoices.filter(function (inv) {
+        return inv.payment_status === statusFilter;
+      });
+    }
+    ColumnEngine.renderTable("purchase_invoices", container, invoices, {
+      onRowClick: function (row) {
+        viewPurchaseInvoice(row.id);
+      },
+    });
+  }
+
+  function _sretRegisterColumns() {
+    if (_invColumnsRegistered.sale_returns) return;
+    _invColumnsRegistered.sale_returns = true;
+    ColumnEngine.register(
+      "sale_returns",
+      [
+        {
+          key: "id",
+          label: "رقم المرتجع",
+          type: "text",
+          width: 120,
+          frozen: "right",
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px;color:#DC2626">' +
+              esc(v || "") +
+              "</span>"
+            );
+          },
+        },
+        { key: "date", label: "التاريخ", type: "date", width: 100 },
+        {
+          key: "party",
+          label: "العميل",
+          type: "text",
+          width: 180,
+        },
+        {
+          key: "original_invoice_id",
+          label: "رقم الفاتورة الأصلية",
+          type: "text",
+          width: 150,
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px;color:var(--accent)">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        { key: "reason", label: "السبب", type: "text", width: 160 },
+        {
+          key: "lines_json",
+          label: "البنود",
+          type: "number",
+          width: 80,
+          align: "center",
+          sortable: false,
+          format: function (v) {
+            return Array.isArray(v) ? v.length : "—";
+          },
+        },
+        {
+          key: "net_total",
+          label: "الإجمالي",
+          type: "currency",
+          width: 120,
+          format: function (v) {
+            return (
+              '<span style="font-weight:700;color:#DC2626">' +
+              formatMoney(v || 0, { decimals: 0 }) +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "_actions",
+          label: "",
+          type: "custom",
+          width: 90,
+          sortable: false,
+          filterable: false,
+          searchable: false,
+          exportable: false,
+          printable: false,
+          format: function (v, row) {
+            return withPermission(
+              '<button class="btn btn-danger btn-xs" onclick="deleteSaleReturnRow(\'' +
+                esc(row.id) +
+                "')\">" +
+                '<i class="ti ti-trash" style="font-size:12px"></i> حذف</button>',
+              "deleteSaleInvoice",
+            );
+          },
+        },
+        // ── أعمدة ذكية: مخفية افتراضيًا ──
+        {
+          key: "warehouse",
+          label: "المخزن",
+          type: "text",
+          width: 120,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "notes",
+          label: "ملاحظات",
+          type: "text",
+          width: 200,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "created_by",
+          label: "بواسطة",
+          type: "text",
+          width: 110,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+      ],
+      { title: "مرتجع البيع", rowKey: "id", contextMenuType: "invoices" },
+    );
+  }
+
+  function _sretRenderTable() {
+    var container = document.getElementById("sret-ce-container");
+    if (!container) return;
+    _sretRegisterColumns();
+    var returns = (APP.data.saleReturns || []).slice().reverse();
+    ColumnEngine.renderTable("sale_returns", container, returns, {});
+  }
+
+  function _pretRegisterColumns() {
+    if (_invColumnsRegistered.purchase_returns) return;
+    _invColumnsRegistered.purchase_returns = true;
+    ColumnEngine.register(
+      "purchase_returns",
+      [
+        {
+          key: "id",
+          label: "رقم المرتجع",
+          type: "text",
+          width: 120,
+          frozen: "right",
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px;color:#7C3AED">' +
+              esc(v || "") +
+              "</span>"
+            );
+          },
+        },
+        { key: "date", label: "التاريخ", type: "date", width: 100 },
+        {
+          key: "party",
+          label: "المورد",
+          type: "text",
+          width: 180,
+        },
+        {
+          key: "original_invoice_id",
+          label: "رقم الفاتورة الأصلية",
+          type: "text",
+          width: 150,
+          format: function (v) {
+            return (
+              '<span class="mono" style="font-size:11px;color:var(--accent)">' +
+              esc(v || "—") +
+              "</span>"
+            );
+          },
+        },
+        { key: "reason", label: "السبب", type: "text", width: 160 },
+        {
+          key: "lines_json",
+          label: "البنود",
+          type: "number",
+          width: 80,
+          align: "center",
+          sortable: false,
+          format: function (v) {
+            return Array.isArray(v) ? v.length : "—";
+          },
+        },
+        {
+          key: "net_total",
+          label: "الإجمالي",
+          type: "currency",
+          width: 120,
+          format: function (v) {
+            return (
+              '<span style="font-weight:700;color:#7C3AED">' +
+              formatMoney(v || 0, { decimals: 0 }) +
+              "</span>"
+            );
+          },
+        },
+        {
+          key: "_actions",
+          label: "",
+          type: "custom",
+          width: 90,
+          sortable: false,
+          filterable: false,
+          searchable: false,
+          exportable: false,
+          printable: false,
+          format: function (v, row) {
+            return withPermission(
+              '<button class="btn btn-danger btn-xs" onclick="deletePurchaseReturnRow(\'' +
+                esc(row.id) +
+                "')\">" +
+                '<i class="ti ti-trash" style="font-size:12px"></i> حذف</button>',
+              "deletePurchaseInvoice",
+            );
+          },
+        },
+        // ── أعمدة ذكية: مخفية افتراضيًا ──
+        {
+          key: "warehouse",
+          label: "المخزن",
+          type: "text",
+          width: 120,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "notes",
+          label: "ملاحظات",
+          type: "text",
+          width: 200,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+        {
+          key: "created_by",
+          label: "بواسطة",
+          type: "text",
+          width: 110,
+          category: "حقول إضافية",
+          defaultVisible: false,
+        },
+      ],
+      { title: "مرتجع الشراء", rowKey: "id", contextMenuType: "invoices" },
+    );
+  }
+
+  function _pretRenderTable() {
+    var container = document.getElementById("pret-ce-container");
+    if (!container) return;
+    _pretRegisterColumns();
+    var returns = (APP.data.purchaseReturns || []).slice().reverse();
+    ColumnEngine.renderTable("purchase_returns", container, returns, {});
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §SALES-DASH  لوحة تحكم المبيعات
+  // ─────────────────────────────────────────────────────────────
+  function bindSalesDashboard() {
+    ensureExtendedData(function () {
+      var _set = function (id, val, sensitive) {
+        var el = document.getElementById(id);
+        if (el) {
+          el.textContent = val;
+          if (sensitive) el.classList.add("sensitive-balance");
+        }
+      };
+      var invoices = APP.data.saleInvoices || APP.data.sale_invoices || [];
+      var returns_ = APP.data.saleReturns || APP.data.sale_returns || [];
+      var customers = APP.data.customers || [];
+      var today = (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().slice(0, 10));
+
+      var totalSales = invoices.reduce(function (s, i) {
+        return s + parseFloat(i.total || i.grand_total || 0);
+      }, 0);
+      var todayInv = invoices.filter(function (i) {
+        return (i.date || i.invoice_date || "").slice(0, 10) === today;
+      });
+
+      _set("sld-stat-invoices", invoices.length);
+      _set(
+        "sld-stat-total",
+        formatMoney(totalSales, { withSymbol: false }),
+        true,
+      );
+      _set("sld-stat-customers", customers.length);
+      _set("sld-stat-returns", returns_.length);
+      _set("sld-stat-today", todayInv.length);
+      _set("sld-stat-catalog", "—");
+
+      // Recent invoices table
+      var tbody = document.getElementById("sld-recent-invoices");
+      if (tbody) {
+        var recent = invoices.slice(-6).reverse();
+        tbody.innerHTML = !recent.length
+          ? '<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text3)">لا توجد فواتير</td></tr>'
+          : recent
+              .map(function (inv) {
+                var total = parseFloat(inv.total || inv.grand_total || 0);
+                return (
+                  "<tr><td style='font-weight:600;color:var(--primary)'>" +
+                  esc(inv.ref || inv.invoice_no || inv.id || "") +
+                  "</td>" +
+                  "<td>" +
+                  esc(inv.customer_name || inv.customer || "") +
+                  "</td>" +
+                  "<td style='text-align:center;font-weight:700' class='sensitive-balance'>" +
+                  formatMoney(total, { withSymbol: false }) +
+                  "</td>" +
+                  "<td style='color:var(--text3);font-size:12px'>" +
+                  (inv.date || inv.invoice_date || "").slice(0, 10) +
+                  "</td></tr>"
+                );
+              })
+              .join("");
+      }
+
+      // Top customers
+      var custDiv = document.getElementById("sld-top-customers");
+      if (custDiv) {
+        var custMap = {};
+        invoices.forEach(function (inv) {
+          var name = inv.customer_name || inv.customer || "غير محدد";
+          custMap[name] =
+            (custMap[name] || 0) +
+            parseFloat(inv.total || inv.grand_total || 0);
+        });
+        var sorted = Object.keys(custMap)
+          .sort(function (a, b) {
+            return custMap[b] - custMap[a];
+          })
+          .slice(0, 5);
+        custDiv.innerHTML = !sorted.length
+          ? '<p style="color:var(--text3)">لا توجد بيانات</p>'
+          : sorted
+              .map(function (name, i) {
+                return (
+                  '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">' +
+                  '<span style="display:flex;align-items:center;gap:8px"><b style="color:var(--text3);font-size:11px">' +
+                  (i + 1) +
+                  "</b>" +
+                  esc(name) +
+                  "</span>" +
+                  '<b class="sensitive-balance" style="color:var(--success)">' +
+                  formatMoney(custMap[name]) +
+                  "</b></div>"
+                );
+              })
+              .join("");
+      }
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §PURCHASES-DASH  لوحة تحكم المشتريات
+  // ─────────────────────────────────────────────────────────────
+  function bindPurchasesDashboard() {
+    ensureExtendedData(function () {
+      var _set = function (id, val, sensitive) {
+        var el = document.getElementById(id);
+        if (el) {
+          el.textContent = val;
+          if (sensitive) el.classList.add("sensitive-balance");
+        }
+      };
+      var invoices =
+        APP.data.purchaseInvoices || APP.data.purchase_invoices || [];
+      var returns_ =
+        APP.data.purchaseReturns || APP.data.purchase_returns || [];
+      var suppliers = APP.data.suppliers || [];
+      var pos = APP.data.purchaseOrders || APP.data.purchase_orders || [];
+      var today = (typeof DateEngine !== "undefined" ? DateEngine.forPicker(new Date()) : new Date().toISOString().slice(0, 10));
+
+      var totalPurch = invoices.reduce(function (s, i) {
+        return s + parseFloat(i.total || i.grand_total || 0);
+      }, 0);
+      var todayInv = invoices.filter(function (i) {
+        return (i.date || i.invoice_date || "").slice(0, 10) === today;
+      });
+
+      _set("pud-stat-invoices", invoices.length);
+      _set(
+        "pud-stat-total",
+        formatMoney(totalPurch, { withSymbol: false }),
+        true,
+      );
+      _set("pud-stat-suppliers", suppliers.length);
+      _set("pud-stat-po", pos.length);
+      _set("pud-stat-returns", returns_.length);
+      _set("pud-stat-today", todayInv.length);
+
+      // Recent invoices table
+      var tbody = document.getElementById("pud-recent-invoices");
+      if (tbody) {
+        var recent = invoices.slice(-6).reverse();
+        tbody.innerHTML = !recent.length
+          ? '<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text3)">لا توجد فواتير</td></tr>'
+          : recent
+              .map(function (inv) {
+                var total = parseFloat(inv.total || inv.grand_total || 0);
+                return (
+                  "<tr><td style='font-weight:600;color:#7C3AED'>" +
+                  esc(inv.ref || inv.invoice_no || inv.id || "") +
+                  "</td>" +
+                  "<td>" +
+                  esc(inv.supplier_name || inv.supplier || "") +
+                  "</td>" +
+                  "<td style='text-align:center;font-weight:700' class='sensitive-balance'>" +
+                  formatMoney(total, { withSymbol: false }) +
+                  "</td>" +
+                  "<td style='color:var(--text3);font-size:12px'>" +
+                  (inv.date || inv.invoice_date || "").slice(0, 10) +
+                  "</td></tr>"
+                );
+              })
+              .join("");
+      }
+
+      // Top suppliers
+      var suppDiv = document.getElementById("pud-top-suppliers");
+      if (suppDiv) {
+        var suppMap = {};
+        invoices.forEach(function (inv) {
+          var name = inv.supplier_name || inv.supplier || "غير محدد";
+          suppMap[name] =
+            (suppMap[name] || 0) +
+            parseFloat(inv.total || inv.grand_total || 0);
+        });
+        var sorted = Object.keys(suppMap)
+          .sort(function (a, b) {
+            return suppMap[b] - suppMap[a];
+          })
+          .slice(0, 5);
+        suppDiv.innerHTML = !sorted.length
+          ? '<p style="color:var(--text3)">لا توجد بيانات</p>'
+          : sorted
+              .map(function (name, i) {
+                return (
+                  '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">' +
+                  '<span style="display:flex;align-items:center;gap:8px"><b style="color:var(--text3);font-size:11px">' +
+                  (i + 1) +
+                  "</b>" +
+                  esc(name) +
+                  "</span>" +
+                  '<b class="sensitive-balance" style="color:#7C3AED">' +
+                  formatMoney(suppMap[name]) +
+                  "</b></div>"
+                );
+              })
+              .join("");
+      }
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-A  Bind — فواتير البيع
+  // ─────────────────────────────────────────────────────────────
+  function bindSaleInvoices() {
+    // [COLUMN-ENGINE] الجدول والبحث انتقلا لـ ColumnEngine (يربط نفسه
+    // بقائمة السياق مباشرة عبر options.contextMenuType عند التسجيل)
+    var newBtn = document.getElementById("sinv-new-btn");
+    if (newBtn)
+      newBtn.addEventListener("click", function () {
+        openCreateSaleInvoiceModal(null);
+      });
+
+    // فلتر الحالة (البحث النصي أصبح جزءًا من ColumnEngine toolbar)
+    document.querySelectorAll(".sinv-filter-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll(".sinv-filter-btn").forEach(function (b) {
+          b.style.background = "transparent";
+          b.style.color = "var(--text2)";
+        });
+        this.style.background = "var(--accent)";
+        this.style.color = "#fff";
+        _currentSaleInvStatus = this.dataset.status;
+        _sinvRenderTable(_currentSaleInvStatus);
+      });
+    });
+
+    _sinvRenderTable(_currentSaleInvStatus);
+  }
+
+  var _currentSaleInvStatus = "";
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-B  Bind — فواتير الشراء
+  // ─────────────────────────────────────────────────────────────
+  function bindPurchaseInvoices() {
+    // [COLUMN-ENGINE] الجدول والبحث انتقلا لـ ColumnEngine
+    var newBtn = document.getElementById("pinv-new-btn");
+    if (newBtn)
+      newBtn.addEventListener("click", function () {
+        openCreatePurchaseInvoiceModal(null);
+      });
+
+    document.querySelectorAll(".pinv-filter-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll(".pinv-filter-btn").forEach(function (b) {
+          b.style.background = "transparent";
+          b.style.color = "var(--text2)";
+        });
+        this.style.background = "#5B21B6";
+        this.style.color = "#fff";
+        _currentPurchInvStatus = this.dataset.status;
+        _pinvRenderTable(_currentPurchInvStatus);
+      });
+    });
+
+    _pinvRenderTable(_currentPurchInvStatus);
+  }
+
+  var _currentPurchInvStatus = "";
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-C  [COLUMN-ENGINE] _filterInvoiceTable/_findInvoiceById القديمتان
+  // أُزيلتا — البحث أصبح جزءًا من ColumnEngine toolbar تلقائيًا (يبحث في
+  // الأعمدة الظاهرة القابلة للبحث فقط، حسب بند "البحث" من المواصفات).
+  // ─────────────────────────────────────────────────────────────
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-D  Modal إنشاء فاتورة بيع
+  // ─────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // §INV-TB  [ERP-REDESIGN] شريط الإجراءات العلوي الاحترافي
+  // ─────────────────────────────────────────────────────────────
+  // بديل بصري لـ modal-header/modal-actions القديمة — بيستخدم نفس
+  // الأزرار ونفس استدعاءات الدوال الموجودة (closeModal / save*Invoice /
+  // _addSaleInvLine / _addPurchInvLine) بدون أي دالة جديدة في السيرفر.
+  function _buildInvoiceToolbar(opts) {
+    var isSale = opts.prefix === "sinv";
+    var saveCall = isSale ? "saveSaleInvoice()" : "savePurchaseInvoice()";
+    var addLineCall = isSale ? "_addSaleInvLine()" : "_addPurchInvLine()";
+    var saveBtn = withPermission(
+      '<button class="inv-tbtn inv-tbtn-primary" id="' +
+        opts.prefix +
+        '-save-btn" onclick="' +
+        saveCall +
+        '" data-tip="حفظ الفاتورة">' +
+        '<i class="ti ti-device-floppy"></i><span class="inv-tbtn-label">حفظ</span>' +
+        '<span class="inv-kbd">Ctrl+S</span></button>',
+      opts.permKey,
+    );
+    return (
+      '<div class="inv-toolbar">' +
+      '<div class="inv-toolbar-title">' +
+      '<div class="inv-toolbar-icon" style="background:' +
+      opts.color +
+      "22;color:" +
+      opts.color +
+      '"><i class="' +
+      (opts.icon || "ti ti-file-invoice") +
+      '"></i></div>' +
+      "<div><h2>" +
+      esc(opts.title) +
+      '</h2><div class="inv-toolbar-sub">فاتورة جديدة — لسه ما اتحفظتش</div></div>' +
+      "</div>" +
+      '<div class="inv-toolbar-actions">' +
+      '<button class="inv-tbtn" onclick="' +
+      addLineCall +
+      '" data-tip="إضافة صنف جديد (Alt+A)">' +
+      '<i class="ti ti-plus"></i><span class="inv-tbtn-label">إضافة صنف</span></button>' +
+      '<button class="inv-tbtn" disabled data-tip="متاحة بعد حفظ الفاتورة">' +
+      '<i class="ti ti-printer"></i><span class="inv-tbtn-label">طباعة</span></button>' +
+      '<button class="inv-tbtn" disabled data-tip="متاحة بعد حفظ الفاتورة">' +
+      '<i class="ti ti-file-export"></i><span class="inv-tbtn-label">تصدير PDF</span></button>' +
+      '<button class="inv-tbtn" disabled data-tip="متاحة بعد حفظ الفاتورة">' +
+      '<i class="ti ti-copy"></i><span class="inv-tbtn-label">نسخ</span></button>' +
+      '<div class="inv-toolbar-divider"></div>' +
+      '<button class="inv-tbtn inv-tbtn-danger" onclick="closeModal(\'' +
+      opts.modalId +
+      '\')" data-tip="إلغاء (Esc)">' +
+      '<i class="ti ti-x"></i><span class="inv-tbtn-label">إلغاء</span></button>' +
+      saveBtn +
+      "</div>" +
+      '<div class="inv-toolbar-spacer"></div>' +
+      '<span class="inv-status-pill"><i class="ti ti-circle-dot" style="font-size:10px;vertical-align:middle"></i> مسودة</span>' +
+      "</div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-KB  [ERP-REDESIGN] تنقّل واختصارات لوحة المفاتيح
+  // ─────────────────────────────────────────────────────────────
+  // Enter بين حقول نفس الصف (زي Tab)، وEnter في آخر حقل بآخر صف
+  // بيضيف صف جديد تلقائيًا (بيسهّل الإدخال بقارئ الباركود بدون فأرة).
+  // Ctrl+S = حفظ، Esc = إلغاء، Alt+A = إضافة صنف. استخدام Event
+  // Delegation على مستوى الـ overlay بدل ربط كل خلية على حدة.
+  function _bindInvoiceKeyboardNav(prefix, modalId) {
+    var overlay = document.getElementById(modalId);
+    if (!overlay) return;
+    var fieldOrder = ["item", "color", "qty", "price"];
+
+    overlay.addEventListener("keydown", function (e) {
+      var t = e.target;
+      var isLineField =
+        t &&
+        t.tagName === "INPUT" &&
+        fieldOrder.some(function (f) {
+          return t.classList.contains(prefix + "-line-" + f);
+        });
+
+      if (isLineField && e.key === "Enter") {
+        e.preventDefault();
+        var row = t.closest("tr");
+        var curField = fieldOrder.find(function (f) {
+          return t.classList.contains(prefix + "-line-" + f);
+        });
+        var nextField = fieldOrder[fieldOrder.indexOf(curField) + 1];
+        if (nextField) {
+          var nextInput = row.querySelector(
+            "." + prefix + "-line-" + nextField,
+          );
+          if (nextInput) {
+            nextInput.focus();
+            nextInput.select && nextInput.select();
+            return;
+          }
+        }
+        // آخر حقل في الصف: لو ده آخر صف في الجدول، ضيف صف جديد وركّز عليه
+        var tbody = document.getElementById(prefix + "-lines-body");
+        var isLastRow = row === tbody.lastElementChild;
+        if (isLastRow) {
+          if (prefix === "sinv") _addSaleInvLine();
+          else _addPurchInvLine();
+          var newRow = tbody.lastElementChild;
+          var firstInput =
+            newRow && newRow.querySelector("." + prefix + "-line-item");
+          if (firstInput) firstInput.focus();
+        } else {
+          var nextRow = row.nextElementSibling;
+          var nextRowFirst =
+            nextRow && nextRow.querySelector("." + prefix + "-line-item");
+          if (nextRowFirst) nextRowFirst.focus();
+        }
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (prefix === "sinv") saveSaleInvoice();
+        else savePurchaseInvoice();
+        return;
+      }
+      if (e.key === "Escape") {
+        closeModal(modalId);
+        return;
+      }
+      if (e.altKey && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        if (prefix === "sinv") _addSaleInvLine();
+        else _addPurchInvLine();
+      }
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-SF  [ERP-REDESIGN] شريط إجماليات ثابت أسفل الشاشة
+  // ─────────────────────────────────────────────────────────────
+  // يعرض بشكل بارز أهم الأرقام أثناء التمرير في الجدول — نفس القيم
+  // المعروضة أصلاً في inv-totals-card (لا مصدر بيانات جديد).
+  function _renderInvoiceStickyFooter(prefix) {
+    return (
+      '<div class="inv-sticky-footer">' +
+      '<div class="inv-sf-item"><span>عدد الأصناف</span><b id="' +
+      prefix +
+      '-sf-count">—</b></div>' +
+      '<div class="inv-sf-item"><span>قبل الخصم</span><b id="' +
+      prefix +
+      '-sf-subtotal">0.00 ج.م</b></div>' +
+      '<div class="inv-sf-item"><span>الضريبة</span><b id="' +
+      prefix +
+      '-sf-vat">0.00 ج.م</b></div>' +
+      '<div class="inv-sf-grand"><span>الإجمالي النهائي</span><b id="' +
+      prefix +
+      '-sf-nettotal">0.00 ج.م</b></div>' +
+      "</div>"
+    );
+  }
+
+  // [ERP-REDESIGN 2026-07-04] استُبدلت شاشة المودال بصفحة كاملة على غرار
+  // الصورة المرجعية المطلوبة — الدالة القديمة بقيت أدناه بمسمى مختلف
+  // (_legacyOpenCreateSaleInvoiceModal) للرجوع إليها فقط عند الحاجة؛ غير
+  // مستخدمة حاليًا من أي زر في الواجهة. يمكن حذفها بأمان بعد التأكد من
+  // استقرار الشاشة الجديدة (29_JS_InvoiceWorkspace.html) في الإنتاج.
+  function openCreateSaleInvoiceModal(permitId) {
+    openSaleInvoiceWorkspace(permitId);
+  }
+
+  function _legacyOpenCreateSaleInvoiceModal(permitId) {
+    // اجمع بنود الإذن
+    var lines = _buildInvoiceLinesFromPermit(permitId, "OUT");
+    var party = lines.length ? lines[0]._tx.party || "" : "";
+    var date =
+      typeof DateEngine !== "undefined"
+        ? DateEngine.forPicker(new Date())
+        : new Date().toISOString().split("T")[0]; // [PERF/FIX] توقيت محلي بدل UTC، مع fallback لو DateEngine مش متحمّل
+
+    var linesHtml = _renderInvoiceLinesEditor(lines, "sinv");
+
+    var modal = _buildModal(
+      "sinv-modal",
+      "إنشاء فاتورة بيع",
+      "#2563EB",
+      _buildInvoiceToolbar({
+        prefix: "sinv",
+        title: "إنشاء فاتورة بيع",
+        icon: "ti ti-file-invoice",
+        color: "#2563EB",
+        modalId: "sinv-modal",
+        permKey: "addSaleInvoice",
+      }) +
+        '<div class="inv-content-pad">' +
+        '<div class="inv-header-grid inv-header-cards">' +
+        '<div class="inv-field-card"><label class="inv-field-label"><i class="ti ti-user"></i>العميل</label>' +
+        '<input class="input" id="sinv-party" value="' +
+        esc(party) +
+        '" placeholder="اسم العميل"></div>' +
+        '<div class="inv-field-card"><label class="inv-field-label"><i class="ti ti-calendar"></i>تاريخ الفاتورة</label>' +
+        '<input class="input" type="date" id="sinv-date" value="' +
+        date +
+        '"></div>' +
+        '<div class="inv-field-card"><label class="inv-field-label"><i class="ti ti-file-barcode"></i>رقم الإذن</label>' +
+        '<input class="input" id="sinv-permit" value="' +
+        esc(permitId || "") +
+        '" placeholder="رقم إذن الصرف" readonly></div>' +
+        '<div class="inv-field-card"><label class="inv-field-label"><i class="ti ti-cash"></i>شروط الدفع</label>' +
+        '<div class="inv-payment-toggle">' +
+        '<label><input type="radio" name="sinv-payment" value="كاش" checked> كاش</label>' +
+        '<label><input type="radio" name="sinv-payment" value="آجل"> آجل</label>' +
+        "</div></div>" +
+        '<div class="inv-field-card" id="sinv-due-wrap" style="display:none"><label class="inv-field-label"><i class="ti ti-calendar-due"></i>تاريخ الاستحقاق</label>' +
+        '<input class="input" type="date" id="sinv-due-date"></div>' +
+        "</div>" +
+        '<div class="inv-section-card inv-lines-section">' +
+        '<div class="inv-section-head"><i class="ti ti-list-details" aria-hidden="true"></i><h3>بنود الفاتورة</h3><span class="inv-badge-count" id="sinv-items-count">' +
+        (lines.length || 1) +
+        " صنف</span></div>" +
+        '<div class="inv-section-body" style="padding:0">' +
+        '<div class="inv-table-wrap"><table class="inv-table" id="sinv-lines-table">' +
+        '<thead><tr><th>الصنف</th><th>اللون</th><th style="text-align:center">الكمية</th><th style="text-align:left">سعر الوحدة</th><th style="text-align:left">الإجمالي</th><th></th></tr></thead>' +
+        '<tbody id="sinv-lines-body">' +
+        linesHtml +
+        "</tbody></table></div>" +
+        '<div class="inv-add-line-bar">' +
+        '<button class="btn btn-outline btn-sm" onclick="_addSaleInvLine()"><i class="ti ti-plus" style="font-size:12px"></i> إضافة صنف</button>' +
+        '<span class="inv-hint"><i class="ti ti-keyboard"></i> Enter للانتقال بين الحقول وإضافة صف جديد تلقائيًا — مثالي مع قارئ الباركود</span>' +
+        "</div></div></div>" +
+        _renderInvoiceTotalsSection("sinv") +
+        '<div class="inv-notes-shipping-grid">' +
+        '<div><label class="form-label">ملاحظات</label>' +
+        '<textarea class="input" id="sinv-notes" rows="3" placeholder="أي ملاحظات على الفاتورة..." style="resize:vertical;width:100%;box-sizing:border-box"></textarea></div>' +
+        "</div>" +
+        // ── قسم الشحن (المرحلة 3) ──
+        (function () {
+          var cos = APP.data.shippingCompanies || [];
+          var activeCos = cos.filter(function (c) {
+            return c.active !== false && c.active !== "FALSE";
+          });
+          if (!activeCos.length) return ""; // لو مفيش شركات شحن — اخفي القسم
+          var coOpts =
+            '<option value="">— بدون شحن —</option>' +
+            activeCos
+              .map(function (c) {
+                return (
+                  '<option value="' +
+                  esc(c.id) +
+                  '" data-method="' +
+                  esc(c.costing_method || "fixed") +
+                  '">' +
+                  esc(c.name) +
+                  "</option>"
+                );
+              })
+              .join("");
+          return (
+            '<div style="margin-top:14px;padding:12px 14px;background:var(--surface2);border-radius:var(--radius-sm);border:1px solid var(--border)">' +
+            '<div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px;display:flex;align-items:center;gap:6px">' +
+            '<i class="ti ti-truck" style="color:var(--accent)"></i> خيارات الشحن (اختياري)</div>' +
+            '<div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;gap:10px">' +
+            '<div><label class="form-label" style="font-size:12px">شركة الشحن</label>' +
+            '<select class="input" id="sinv-shipping-co" onchange="_onSinvShippingCoChange()" style="font-size:13px">' +
+            coOpts +
+            "</select></div>" +
+            '<div><label class="form-label" style="font-size:12px">تكلفة الشحن <span id="sinv-ship-cost-hint" style="color:var(--text3);font-weight:400"></span></label>' +
+            '<input class="input" type="number" id="sinv-shipping-cost" placeholder="0.00" min="0" step="0.01" oninput="_onSinvTotalsUpdate()" style="font-size:13px"></div>' +
+            '<div><label class="form-label" style="font-size:12px">يتحمل التكلفة</label>' +
+            '<select class="input" id="sinv-shipping-on" style="font-size:13px">' +
+            '<option value="company">شركتنا</option>' +
+            '<option value="customer">العميل</option>' +
+            "</select></div>" +
+            "</div></div>"
+          );
+        })() +
+        "</div>" + // إغلاق .inv-content-pad
+        _renderInvoiceStickyFooter("sinv"),
+
+      // Footer buttons (مخفية بصريًا — الأزرار الفعلية بقت في inv-toolbar،
+      // فاضلة هنا فقط للتوافق مع بنية _buildModal ولا تُعرض للمستخدم)
+      '<button class="btn btn-outline" onclick="closeModal(\'sinv-modal\')">إلغاء</button>' +
+        withPermission(
+          '<button class="btn btn-primary" onclick="saveSaleInvoice()"><i class="ti ti-device-floppy" style="font-size:14px"></i> حفظ الفاتورة</button>',
+          "addSaleInvoice",
+        ),
+      1080,
+      "inv-modal-box",
+    );
+
+    document.body.appendChild(modal);
+    _bindInvoiceTotalsCalc("sinv");
+    _bindInvoiceKeyboardNav("sinv", "sinv-modal");
+
+    // إظهار/إخفاء حقل تاريخ الاستحقاق
+    document
+      .querySelectorAll('input[name="sinv-payment"]')
+      .forEach(function (radio) {
+        radio.addEventListener("change", function () {
+          document.getElementById("sinv-due-wrap").style.display =
+            this.value === "آجل" ? "" : "none";
+        });
+      });
+
+    _calcInvoiceTotals("sinv");
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-E  Modal إنشاء فاتورة شراء
+  // ─────────────────────────────────────────────────────────────
+  function openCreatePurchaseInvoiceModal(permitId) {
+    openPurchaseInvoiceWorkspace(permitId);
+  }
+
+  function _legacyOpenCreatePurchaseInvoiceModal(permitId) {
+    var lines = _buildInvoiceLinesFromPermit(permitId, "IN");
+    var party = lines.length ? lines[0]._tx.party || "" : "";
+    var date =
+      typeof DateEngine !== "undefined"
+        ? DateEngine.forPicker(new Date())
+        : new Date().toISOString().split("T")[0]; // [PERF/FIX] توقيت محلي بدل UTC، مع fallback لو DateEngine مش متحمّل
+
+    var linesHtml = _renderInvoiceLinesEditor(lines, "pinv");
+
+    var modal = _buildModal(
+      "pinv-modal",
+      "إنشاء فاتورة شراء",
+      "#5B21B6",
+      _buildInvoiceToolbar({
+        prefix: "pinv",
+        title: "إنشاء فاتورة شراء",
+        icon: "ti ti-file-invoice",
+        color: "#5B21B6",
+        modalId: "pinv-modal",
+        permKey: "addPurchaseInvoice",
+      }) +
+        '<div class="inv-content-pad">' +
+        '<div class="inv-header-grid inv-header-cards">' +
+        '<div class="inv-field-card"><label class="inv-field-label"><i class="ti ti-building-store"></i>المورد</label>' +
+        '<input class="input" id="pinv-party" value="' +
+        esc(party) +
+        '" placeholder="اسم المورد"></div>' +
+        '<div class="inv-field-card"><label class="inv-field-label"><i class="ti ti-calendar"></i>تاريخ الفاتورة</label>' +
+        '<input class="input" type="date" id="pinv-date" value="' +
+        date +
+        '"></div>' +
+        '<div class="inv-field-card"><label class="inv-field-label"><i class="ti ti-file-barcode"></i>رقم الإذن</label>' +
+        '<input class="input" id="pinv-permit" value="' +
+        esc(permitId || "") +
+        '" placeholder="رقم إذن الوارد" readonly></div>' +
+        '<div class="inv-field-card"><label class="inv-field-label"><i class="ti ti-cash"></i>شروط الدفع</label>' +
+        '<div class="inv-payment-toggle">' +
+        '<label><input type="radio" name="pinv-payment" value="كاش" checked> كاش</label>' +
+        '<label><input type="radio" name="pinv-payment" value="آجل"> آجل</label>' +
+        "</div></div>" +
+        '<div class="inv-field-card" id="pinv-due-wrap" style="display:none"><label class="inv-field-label"><i class="ti ti-calendar-due"></i>تاريخ الاستحقاق</label>' +
+        '<input class="input" type="date" id="pinv-due-date"></div>' +
+        "</div>" +
+        '<div class="inv-section-card inv-lines-section">' +
+        '<div class="inv-section-head"><i class="ti ti-list-details" aria-hidden="true"></i><h3>بنود الفاتورة</h3><span class="inv-badge-count" id="pinv-items-count">' +
+        (lines.length || 1) +
+        " صنف</span></div>" +
+        '<div class="inv-section-body" style="padding:0">' +
+        '<div class="inv-table-wrap"><table class="inv-table" id="pinv-lines-table">' +
+        '<thead><tr><th>الصنف</th><th>اللون</th><th style="text-align:center">الكمية</th><th style="text-align:left">سعر الوحدة</th><th style="text-align:left">الإجمالي</th><th></th></tr></thead>' +
+        '<tbody id="pinv-lines-body">' +
+        linesHtml +
+        "</tbody></table></div>" +
+        '<div class="inv-add-line-bar">' +
+        '<button class="btn btn-outline btn-sm" onclick="_addPurchInvLine()"><i class="ti ti-plus" style="font-size:12px"></i> إضافة صنف</button>' +
+        '<span class="inv-hint"><i class="ti ti-keyboard"></i> Enter للانتقال بين الحقول وإضافة صف جديد تلقائيًا — مثالي مع قارئ الباركود</span>' +
+        "</div></div></div>" +
+        _renderInvoiceTotalsSection("pinv") +
+        '<div class="inv-notes-shipping-grid">' +
+        '<div><label class="form-label">ملاحظات</label>' +
+        '<textarea class="input" id="pinv-notes" rows="3" placeholder="أي ملاحظات على الفاتورة..." style="resize:vertical;width:100%;box-sizing:border-box"></textarea></div>' +
+        "</div>" +
+        "</div>" + // إغلاق .inv-content-pad
+        _renderInvoiceStickyFooter("pinv"),
+
+      '<button class="btn btn-outline" onclick="closeModal(\'pinv-modal\')">إلغاء</button>' +
+        withPermission(
+          '<button class="btn btn-primary" onclick="savePurchaseInvoice()" style="background:#5B21B6;border-color:#5B21B6"><i class="ti ti-device-floppy" style="font-size:14px"></i> حفظ الفاتورة</button>',
+          "addPurchaseInvoice",
+        ),
+      1080,
+      "inv-modal-box",
+    );
+
+    document.body.appendChild(modal);
+    _bindInvoiceTotalsCalc("pinv");
+    _bindInvoiceKeyboardNav("pinv", "pinv-modal");
+
+    document
+      .querySelectorAll('input[name="pinv-payment"]')
+      .forEach(function (radio) {
+        radio.addEventListener("change", function () {
+          document.getElementById("pinv-due-wrap").style.display =
+            this.value === "آجل" ? "" : "none";
+        });
+      });
+
+    _calcInvoiceTotals("pinv");
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-F  بناء بنود الفاتورة من الإذن
+  // ─────────────────────────────────────────────────────────────
+  function _buildInvoiceLinesFromPermit(permitId, txType) {
+    if (!permitId) return [];
+    var txs = APP.data.transactions || [];
+    return txs
+      .filter(function (tx) {
+        return (
+          tx.type === txType &&
+          (tx.permit_id === permitId || tx.id === permitId)
+        );
+      })
+      .map(function (tx) {
+        var item =
+          (APP.data.items || []).find(function (i) {
+            return i.id === tx.item_id;
+          }) || {};
+        return {
+          _tx: tx,
+          item_id: tx.item_id,
+          item_name: item.name || tx.item_id,
+          color: tx.color || "—",
+          qty: Number(tx.quantity || 0),
+          unit_price: Number(item.selling_price || item.cost_price || 0),
+        };
+      });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-G  Render بنود الجدول القابلة للتعديل
+  // ─────────────────────────────────────────────────────────────
+  function _renderInvoiceLinesEditor(lines, prefix) {
+    if (!lines.length) return _blankInvLine(prefix, 0);
+    return lines
+      .map(function (line, i) {
+        return _buildInvLineRow(
+          prefix,
+          i,
+          line.item_name,
+          line.color,
+          line.qty,
+          line.unit_price,
+          line.item_id,
+        );
+      })
+      .join("");
+  }
+
+  function _buildInvLineRow(
+    prefix,
+    idx,
+    itemName,
+    color,
+    qty,
+    unitPrice,
+    itemId,
+  ) {
+    var total = (Number(qty) * Number(unitPrice)).toFixed(0);
+    return (
+      '<tr id="' +
+      prefix +
+      "-line-" +
+      idx +
+      '">' +
+      '<td style="display:flex;align-items:center;gap:0"><span class="inv-row-num">' +
+      (idx + 1) +
+      '</span><input class="input input-sm ' +
+      prefix +
+      '-line-item" data-idx="' +
+      idx +
+      '" value="' +
+      esc(itemName || "") +
+      '" placeholder="اسم الصنف" oninput="_calcInvoiceTotals(\'' +
+      prefix +
+      '\')" style="min-width:120px" data-item-id="' +
+      esc(itemId || "") +
+      '"></td>' +
+      '<td><input class="input input-sm ' +
+      prefix +
+      '-line-color" data-idx="' +
+      idx +
+      '" value="' +
+      esc(color || "") +
+      '" placeholder="اللون" style="min-width:80px"></td>' +
+      '<td><input class="input input-sm ' +
+      prefix +
+      '-line-qty" type="number" data-idx="' +
+      idx +
+      '" value="' +
+      qty +
+      '" min="0" oninput="_calcInvoiceTotals(\'' +
+      prefix +
+      '\')" style="text-align:center;width:80px"></td>' +
+      '<td><input class="input input-sm ' +
+      prefix +
+      '-line-price" type="number" data-idx="' +
+      idx +
+      '" value="' +
+      unitPrice +
+      '" min="0" step="0.01" oninput="_calcInvoiceTotals(\'' +
+      prefix +
+      '\')" style="text-align:left;width:100px"></td>' +
+      '<td style="text-align:left;font-weight:700;white-space:nowrap" id="' +
+      prefix +
+      "-line-total-" +
+      idx +
+      '">' +
+      total +
+      " ج.م</td>" +
+      '<td><button class="btn btn-delete btn-xs" onclick="_removeInvLine(\'' +
+      prefix +
+      "'," +
+      idx +
+      ')" title="حذف"><i class="ti ti-x" style="font-size:12px"></i></button></td>' +
+      "</tr>"
+    );
+  }
+
+  function _blankInvLine(prefix, idx) {
+    return _buildInvLineRow(prefix, idx, "", "", 1, 0, "");
+  }
+
+  var _invLineCounters = { sinv: 0, pinv: 0 };
+
+  function _addSaleInvLine() {
+    _invLineCounters.sinv++;
+    var tbody = document.getElementById("sinv-lines-body");
+    if (tbody) {
+      var tr = document.createElement("tbody");
+      tr.innerHTML = _blankInvLine("sinv", _invLineCounters.sinv);
+      tbody.appendChild(tr.firstChild);
+    }
+    _calcInvoiceTotals("sinv");
+  }
+
+  function _addPurchInvLine() {
+    _invLineCounters.pinv++;
+    var tbody = document.getElementById("pinv-lines-body");
+    if (tbody) {
+      var tr = document.createElement("tbody");
+      tr.innerHTML = _blankInvLine("pinv", _invLineCounters.pinv);
+      tbody.appendChild(tr.firstChild);
+    }
+    _calcInvoiceTotals("pinv");
+  }
+
+  function _removeInvLine(prefix, idx) {
+    var row = document.getElementById(prefix + "-line-" + idx);
+    if (row) row.remove();
+    _calcInvoiceTotals(prefix);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-H  قسم الإجماليات
+  // ─────────────────────────────────────────────────────────────
+  function _renderInvoiceTotalsSection(prefix) {
+    return (
+      '<div class="inv-section-card">' +
+      '<div class="inv-section-head"><i class="ti ti-calculator" aria-hidden="true"></i><h3>إجماليات الفاتورة</h3></div>' +
+      '<div class="inv-section-body inv-totals-card">' +
+      '<div class="inv-totals-grid">' +
+      '<div><label class="form-label">الخصم</label>' +
+      '<div style="display:flex;gap:6px">' +
+      '<input class="input" type="number" id="' +
+      prefix +
+      '-discount-val" value="0" min="0" step="0.01" oninput="_calcInvoiceTotals(\'' +
+      prefix +
+      '\')" style="flex:1">' +
+      '<select class="form-select" id="' +
+      prefix +
+      '-discount-type" onchange="_calcInvoiceTotals(\'' +
+      prefix +
+      '\')" style="width:90px">' +
+      '<option value="percent">%</option><option value="fixed">ج.م</option>' +
+      "</select></div></div>" +
+      '<div><label class="form-label">ضريبة القيمة المضافة (VAT %)</label>' +
+      '<input class="input" type="number" id="' +
+      prefix +
+      '-vat" value="0" min="0" max="100" step="0.01" oninput="_calcInvoiceTotals(\'' +
+      prefix +
+      "')\"></div>" +
+      "</div>" +
+      '<div class="inv-totals-summary">' +
+      '<div class="inv-total-row"><span>المجموع قبل الخصم</span><b id="' +
+      prefix +
+      '-subtotal">0.00 ج.م</b></div>' +
+      '<div class="inv-total-row"><span>الخصم</span><span style="color:var(--danger)" id="' +
+      prefix +
+      '-discount-display">0.00 ج.م</span></div>' +
+      '<div class="inv-total-row"><span>بعد الخصم</span><b id="' +
+      prefix +
+      '-after-discount">0.00 ج.م</b></div>' +
+      '<div class="inv-total-row"><span>الضريبة (VAT)</span><span style="color:var(--warning)" id="' +
+      prefix +
+      '-vat-display">0.00 ج.م</span></div>' +
+      '<div class="inv-total-row grand">' +
+      '<span>الإجمالي النهائي</span><span id="' +
+      prefix +
+      '-nettotal">0.00 ج.م</span></div>' +
+      "</div></div></div>"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-I  حساب الإجماليات
+  // ─────────────────────────────────────────────────────────────
+  function _bindInvoiceTotalsCalc(prefix) {
+    _calcInvoiceTotals(prefix);
+  }
+
+  // [UX-01-FIX-2026-07] دالة مشتركة واحدة لحساب خصم البند — كانت مكررة
+  // بين _calcInvoiceTotals (العرض) و_collectInvoiceData (الحفظ)، وأي
+  // تعديل مستقبلي (قاعدة تقريب، سقف أقصى) كان لازم يتطبق في المكانين
+  // يدويًا؛ نسيان أحدهما كان يخلق فرق بين الرقم المعروض والمحفوظ.
+  function _calcLineDiscountAmount(gross, lineDiscVal, lineDiscType) {
+    var lineDiscAmount =
+      lineDiscVal > 0
+        ? lineDiscType === "percent"
+          ? gross * (lineDiscVal / 100)
+          : lineDiscVal
+        : 0;
+    return Math.min(lineDiscAmount, gross);
+  }
+
+  function _calcInvoiceTotals(prefix) {
+    var tbody = document.getElementById(prefix + "-lines-body");
+    if (!tbody) return;
+
+    var subtotal = 0;
+    var rows = tbody.querySelectorAll("tr");
+    rows.forEach(function (row, i) {
+      var qtyEl = row.querySelector("." + prefix + "-line-qty");
+      var priceEl = row.querySelector("." + prefix + "-line-price");
+      if (!qtyEl || !priceEl) return;
+      var qty = Number(qtyEl.value || 0);
+      var price = Number(priceEl.value || 0);
+      var gross = qty * price;
+      // [ERP-REDESIGN] خصم على مستوى الصنف (عمود "الخصم" في الشاشة الجديدة)
+      var discEl = row.querySelector("." + prefix + "-line-disc");
+      var discTypeEl = row.querySelector("." + prefix + "-line-disc-type");
+      var lineDiscVal = discEl ? Number(discEl.value || 0) : 0;
+      var lineDiscType = discTypeEl ? discTypeEl.value : "fixed";
+      var lineDiscAmount = _calcLineDiscountAmount(
+        gross,
+        lineDiscVal,
+        lineDiscType,
+      );
+      var total = gross - lineDiscAmount;
+      subtotal += total;
+      // تحديث إجمالي الصف
+      var idx = qtyEl.dataset.idx;
+      var totalEl = document.getElementById(prefix + "-line-total-" + idx);
+      if (totalEl) totalEl.textContent = total.toFixed(2);
+    });
+
+    var discVal = Number(
+      (document.getElementById(prefix + "-discount-val") || {}).value || 0,
+    );
+    var discType =
+      (document.getElementById(prefix + "-discount-type") || {}).value ||
+      "percent";
+    var vatPct = Number(
+      (document.getElementById(prefix + "-vat") || {}).value || 0,
+    );
+
+    var discAmount =
+      discType === "percent" ? subtotal * (discVal / 100) : discVal;
+    discAmount = Math.min(discAmount, subtotal);
+    var afterDisc = subtotal - discAmount;
+    var vatAmount = afterDisc * (vatPct / 100);
+    var netTotal = afterDisc + vatAmount;
+
+    var _setText = function (id, val) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = val;
+    };
+    var paidNow = Number(
+      (document.getElementById(prefix + "-paid-now") || {}).value || 0,
+    );
+    var remaining = netTotal - paidNow;
+
+    _setText(prefix + "-subtotal", NumberEngine.currency(subtotal));
+    _setText(prefix + "-discount-display", NumberEngine.currency(discAmount));
+    _setText(prefix + "-after-discount", NumberEngine.currency(afterDisc));
+    _setText(prefix + "-vat-display", NumberEngine.currency(vatAmount));
+    _setText(prefix + "-nettotal", NumberEngine.currency(netTotal));
+    _setText(prefix + "-items-count", rows.length + " صنف");
+    _setText(prefix + "-paid-display", NumberEngine.currency(paidNow));
+    _setText(prefix + "-remaining", NumberEngine.currency(remaining));
+
+    // [ERP-REDESIGN] تغذية شريط الإجماليات الثابت أسفل الشاشة (لو موجود)
+    _setText(prefix + "-sf-count", rows.length);
+    _setText(prefix + "-sf-subtotal", NumberEngine.currency(subtotal));
+    _setText(prefix + "-sf-vat", NumberEngine.currency(vatAmount));
+    _setText(prefix + "-sf-nettotal", NumberEngine.currency(netTotal));
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-J  جمع بيانات الفاتورة من الـ Modal
+  // ─────────────────────────────────────────────────────────────
+  // [AUDIT-FIX-2026-08-08 §RISK-2b] معرّف Idempotency لكل محاولة حفظ —
+  // يُولَّد مرة واحدة لكل نموذج مفتوح (prefix) ويُعاد إرساله لو حصل
+  // Retry تلقائي أو Double-click، فالسيرفر يرفض التكرار بدل إنشاء فاتورتين.
+  // يُمسح بعد نجاح الحفظ (_clearInvoiceClientRequestId) عشان الفاتورة
+  // التالية تاخد معرّف جديد.
+  var _invoiceClientRequestIds = {};
+  function _getInvoiceClientRequestId(prefix) {
+    if (!_invoiceClientRequestIds[prefix]) {
+      _invoiceClientRequestIds[prefix] =
+        prefix +
+        "_" +
+        Date.now().toString(36) +
+        "_" +
+        Math.random().toString(36).slice(2, 10);
+    }
+    return _invoiceClientRequestIds[prefix];
+  }
+  function _clearInvoiceClientRequestId(prefix) {
+    delete _invoiceClientRequestIds[prefix];
+  }
+
+  function _collectInvoiceData(prefix) {
+    var tbody = document.getElementById(prefix + "-lines-body");
+    var lines = [];
+    if (tbody) {
+      tbody.querySelectorAll("tr").forEach(function (row) {
+        var itemEl = row.querySelector("." + prefix + "-line-item");
+        var colorEl = row.querySelector("." + prefix + "-line-color");
+        var qtyEl = row.querySelector("." + prefix + "-line-qty");
+        var priceEl = row.querySelector("." + prefix + "-line-price");
+        // [ERP-REDESIGN] حقول إضافية من شاشة إنشاء الفاتورة الجديدة
+        // (29_JS_InvoiceWorkspace.html) — اختيارية، تُقرأ فقط لو موجودة
+        var discEl = row.querySelector("." + prefix + "-line-disc");
+        var discTypeEl = row.querySelector("." + prefix + "-line-disc-type");
+        var whEl = row.querySelector("." + prefix + "-line-warehouse");
+        var descEl = row.querySelector("." + prefix + "-line-desc");
+        if (!itemEl) return;
+        var qty = Number((qtyEl || {}).value || 0);
+        var price = Number((priceEl || {}).value || 0);
+        if (!itemEl.value.trim() && qty === 0) return;
+        var gross = qty * price;
+        var lineDiscVal = discEl ? Number(discEl.value || 0) : 0;
+        var lineDiscType = discTypeEl ? discTypeEl.value : "fixed";
+        var lineDiscAmount = _calcLineDiscountAmount(
+          gross,
+          lineDiscVal,
+          lineDiscType,
+        );
+        lines.push({
+          item_id: itemEl.dataset.itemId || "",
+          item_name: itemEl.value.trim(),
+          color: colorEl ? colorEl.value.trim() : "",
+          qty: qty,
+          unit_price: price,
+          discount_value: lineDiscVal,
+          discount_type: lineDiscType,
+          discount_amount: lineDiscAmount,
+          warehouse: whEl ? whEl.value : "",
+          description: descEl ? descEl.value.trim() : "",
+          total: gross - lineDiscAmount,
+        });
+      });
+    }
+
+    var paymentMethod = "";
+    var payRadios = document.querySelectorAll(
+      'input[name="' + prefix + '-payment"]',
+    );
+    payRadios.forEach(function (r) {
+      if (r.checked) paymentMethod = r.value;
+    });
+
+    var discVal = Number(
+      (document.getElementById(prefix + "-discount-val") || {}).value || 0,
+    );
+    var discType =
+      (document.getElementById(prefix + "-discount-type") || {}).value ||
+      "percent";
+    var vatPct = Number(
+      (document.getElementById(prefix + "-vat") || {}).value || 0,
+    );
+
+    var subtotal = lines.reduce(function (s, l) {
+      return s + l.total;
+    }, 0);
+    var discAmount =
+      discType === "percent" ? subtotal * (discVal / 100) : discVal;
+    discAmount = Math.min(discAmount, subtotal);
+    var afterDisc = subtotal - discAmount;
+    var vatAmount = afterDisc * (vatPct / 100);
+    var netTotal = afterDisc + vatAmount;
+
+    return {
+      party: (
+        (document.getElementById(prefix + "-party") || {}).value || ""
+      ).trim(),
+      date: (
+        (document.getElementById(prefix + "-date") || {}).value || ""
+      ).trim(),
+      permit_id: (
+        (document.getElementById(prefix + "-permit") || {}).value || ""
+      ).trim(),
+      due_date: (
+        (document.getElementById(prefix + "-due-date") || {}).value || ""
+      ).trim(),
+      notes: (
+        (document.getElementById(prefix + "-notes") || {}).value || ""
+      ).trim(),
+      payment_status: paymentMethod,
+      discount_value: discVal,
+      discount_type: discType,
+      discount_amount: discAmount,
+      vat_percent: vatPct,
+      vat_amount: vatAmount,
+      subtotal: subtotal,
+      net_total: netTotal,
+      lines: lines,
+      // [AUDIT-FIX-2026-08-08 §RISK-2b]
+      client_request_id: _getInvoiceClientRequestId(prefix),
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-K  حفظ فاتورة بيع
+  // ─────────────────────────────────────────────────────────────
+  function saveSaleInvoice() {
+    // [SAVE-ENGINE] تم نقل هذه الشاشة بالكامل لمحرك الحفظ الموحّد
+    // (00b_JS_SaveEngine.html) — لا تعيد كتابة منطق حفظ يدوي هنا.
+    SaveEngine.run({
+      screen: "SaleInvoice",
+      entity: "sale_invoice",
+      buttonId: "sinv-save-btn",
+      rules: [
+        { field: "sinv-party", required: true, label: "اسم العميل" },
+        { field: "sinv-date", required: true, label: "تاريخ الفاتورة" },
+        {
+          test: function () {
+            return _collectInvoiceData("sinv").lines.length > 0;
+          },
+          message: "أضف بنوداً للفاتورة",
+        },
+      ],
+      collect: function () {
+        var data = _collectInvoiceData("sinv");
+        // ── إضافة بيانات الشحن (المرحلة 3) ──
+        var shipCoEl = document.getElementById("sinv-shipping-co");
+        var shipCostEl = document.getElementById("sinv-shipping-cost");
+        var shipOnEl = document.getElementById("sinv-shipping-on");
+        if (shipCoEl && shipCoEl.value) {
+          data.shipping_company_id = shipCoEl.value;
+          data.shipping_cost = Number((shipCostEl || {}).value || 0);
+          data.shipping_cost_on = (shipOnEl || {}).value || "company";
+        }
+        return data;
+      },
+      fn: "addSaleInvoice",
+      params: function (data) {
+        return [data, SESSION.token];
+      },
+      successMessage: "تم حفظ فاتورة البيع بنجاح",
+      // [UNIFY-NOTIF] مثال توضيحي مطلوب في المواصفة: "عملية بيع جديدة"
+      // — يظهر في مركز الإشعارات وقابل للضغط للانتقال لصفحة فواتير البيع
+      notifyPage: "sale-invoices",
+      notifyPerm: "viewSaleInvoices",
+      onSuccess: function (res) {
+        // [AUDIT-FIX-2026-08-08 §RISK-2b] فاتورة اتحفظت بنجاح — امسح
+        // معرّف الطلب عشان الفاتورة الجديدة (لو المستخدم فتح نموذج تاني)
+        // تاخد معرّف مختلف تماماً.
+        _clearInvoiceClientRequestId("sinv");
+        if (!APP.data.saleInvoices) APP.data.saleInvoices = [];
+        APP.data.saleInvoices.push(res.data);
+        if (
+          res.data &&
+          res.data.stock_movements &&
+          res.data.stock_movements.length
+        ) {
+          if (!APP.data.transactions) APP.data.transactions = [];
+          APP.data.transactions = APP.data.transactions.concat(
+            res.data.stock_movements,
+          );
+        }
+        // [BALANCE-COLUMN-FIX] فاتورة البيع بتغيّر رصيد العميل فعليًا في
+        // السيرفر، لكن نسخة APP.data.customers المحلية متعرفش بالتغيير ده
+        // (مفيش تحديث محلي للرصيد هنا) — فيفضل عمود "الرصيد" في جدول
+        // العملاء يعرض القيمة القديمة لحد ما المستخدم يعمل ريفريش كامل من
+        // التوب بار. نعيد تحميل العملاء صامتًا في الخلفية عشان الرصيد
+        // يظهر صحيح فورًا من غير ما ننتظر ريفريش كامل.
+        if (typeof _loadCustomers === "function") _loadCustomers();
+        // [WF-EXEC-2026] المرحلة 3 — تشغيل Workflows المرتبطة بحدث "فاتورة
+        // جديدة" + فحص "رصيد منخفض" (تجاوز/اقتراب حد الائتمان) لو مفعّلة.
+        if (
+          typeof WA_WORKFLOW_ENGINE !== "undefined" &&
+          res.data &&
+          res.data.party
+        ) {
+          var _wfCustomer = (APP.data.customers || []).find(function (c) {
+            return String(c.id) === String(res.data.party);
+          });
+          var _wfEventData = {
+            customer_id: res.data.party,
+            customer_name: (_wfCustomer && _wfCustomer.name) || "",
+            phone: (_wfCustomer && (_wfCustomer.phone || _wfCustomer.mobile)) || "",
+            invoice_id: res.data.id,
+            invoice_number: res.data.invoice_number || res.data.id,
+            invoice_total: res.data.net_total || res.data.total || 0,
+          };
+          WA_WORKFLOW_ENGINE.trigger("new_invoice", _wfEventData);
+
+          var _wfLimit = Number((_wfCustomer && _wfCustomer.credit_limit) || 0);
+          // [ملحوظة] _loadCustomers() فوق بيحدّث APP.data.customers بشكل غير
+          // متزامن (async) — رصيد _wfCustomer هنا لسه قديم (قبل الفاتورة
+          // دي)، فبنضيف قيمة الفاتورة الحالية كتقريب لأقرب رصيد فعلي.
+          var _wfBalance =
+            Number((_wfCustomer && _wfCustomer.balance) || 0) +
+            Number(_wfEventData.invoice_total || 0);
+          if (_wfLimit > 0 && _wfBalance >= _wfLimit * 0.9) {
+            WA_WORKFLOW_ENGINE.trigger(
+              "low_balance",
+              Object.assign({}, _wfEventData, {
+                balance: _wfBalance,
+                credit_limit: _wfLimit,
+              }),
+            );
+          }
+        }
+        // [ERP-REDESIGN] الشاشة أصبحت صفحة كاملة (29_JS_InvoiceWorkspace.html)
+        // بدل مودال — التوجيه بعد الحفظ يعتمد على الزر المستخدم
+        // (حفظ وجديد / حفظ وطباعة / حفظ وإغلاق)
+        if (typeof _iwAfterSave === "function") {
+          _iwAfterSave("sinv", IW_DOC_CFG.sinv, res.data && res.data.id);
+        } else {
+          renderPage(APP.currentPage);
+        }
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-L  حفظ فاتورة شراء
+  // ─────────────────────────────────────────────────────────────
+  function savePurchaseInvoice() {
+    var data = _collectInvoiceData("pinv");
+    // [PO-INVOICE-LINK] لو الفاتورة اتفتحت من زر "تحويل لفاتورة" في شاشة
+    // أمر الشراء (22_JS_PurchaseOrders.html)، APP._iwPrefillPoId بيبقى
+    // متسجّل — نبعته مع الفاتورة عشان يتحدّث أمر الشراء المصدر بعد الحفظ.
+    if (APP._iwPrefillPoId) {
+      data.po_id = APP._iwPrefillPoId;
+      APP._iwPrefillPoId = null;
+    }
+    if (!data.party) {
+      NotificationEngine.error("أدخل اسم المورد");
+      return;
+    }
+    if (!data.date) {
+      NotificationEngine.error("أدخل تاريخ الفاتورة");
+      return;
+    }
+    if (!data.lines.length) {
+      NotificationEngine.error("أضف بنوداً للفاتورة");
+      return;
+    }
+
+    // [SAVE-ENGINE] موحّد عبر 00b_JS_SaveEngine.html
+    SaveEngine.run({
+      screen: "PurchaseInvoice",
+      entity: "purchase_invoice",
+      buttonId: "pinv-save-btn",
+      data: data,
+      fn: "addPurchaseInvoice",
+      params: function (d) {
+        return [d, SESSION.token];
+      },
+      successMessage: "تم حفظ فاتورة الشراء بنجاح",
+      onSuccess: function (res) {
+        // [AUDIT-FIX-2026-08-08 §RISK-2b]
+        _clearInvoiceClientRequestId("pinv");
+        if (!APP.data.purchaseInvoices) APP.data.purchaseInvoices = [];
+        APP.data.purchaseInvoices.push(res.data);
+        if (
+          res.data &&
+          res.data.stock_movements &&
+          res.data.stock_movements.length
+        ) {
+          if (!APP.data.transactions) APP.data.transactions = [];
+          APP.data.transactions = APP.data.transactions.concat(
+            res.data.stock_movements,
+          );
+        }
+        // [BALANCE-COLUMN-FIX] نفس إصلاح فاتورة البيع — فاتورة الشراء بتغيّر
+        // رصيد المورد فعليًا بالسيرفر، فنعيد تحميل الموردين صامتًا عشان
+        // عمود الرصيد يعرض القيمة الصحيحة فورًا بدل ما ينتظر ريفريش كامل.
+        if (typeof _loadSuppliers === "function") _loadSuppliers();
+        if (typeof _iwAfterSave === "function") {
+          _iwAfterSave("pinv", IW_DOC_CFG.pinv, res.data && res.data.id);
+        } else {
+          renderPage(APP.currentPage);
+        }
+      },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-M  عرض وطباعة الفاتورة
+  // ─────────────────────────────────────────────────────────────
+  function viewSaleInvoice(id) {
+    var inv = (APP.data.saleInvoices || []).find(function (i) {
+      return i.id === id;
+    });
+    if (!inv) {
+      NotificationEngine.error("فاتورة غير موجودة");
+      return;
+    }
+    _showInvoicePrintModal(inv, "بيع");
+  }
+
+  function viewPurchaseInvoice(id) {
+    var inv = (APP.data.purchaseInvoices || []).find(function (i) {
+      return i.id === id;
+    });
+    if (!inv) {
+      NotificationEngine.error("فاتورة غير موجودة");
+      return;
+    }
+    _showInvoicePrintModal(inv, "شراء");
+  }
+
+  function printSaleInvoice(id) {
+    viewSaleInvoice(id);
+  }
+  function printPurchaseInvoice(id) {
+    viewPurchaseInvoice(id);
+  }
+
+  function _showInvoicePrintModal(inv, type) {
+    var settings = APP.data.companySettings || {};
+    var compName = settings.company_name || "MOO.ERP";
+    // [FIX-BUG-2&6] إضافة معلومات الشركة الكاملة في هيدر الطباعة
+    var compPhone = settings.phone || "";
+    var compAddress = settings.address || "";
+    var compTaxId = settings.tax_id || "";
+    var compReg = settings.commercial_reg || "";
+    var lines = inv.lines || [];
+    var color = type === "بيع" ? "#2563EB" : "#5B21B6";
+    var date = inv.date ? fmtDate(inv.date) : "—";
+    var dueDate = inv.due_date ? fmtDate(inv.due_date) : "—";
+    var party = type === "بيع" ? "العميل" : "المورد";
+
+    var linesHtml = lines
+      .map(function (l, i) {
+        return (
+          '<tr style="border-bottom:1px solid #e5e7eb">' +
+          '<td style="padding:8px 10px">' +
+          (i + 1) +
+          "</td>" +
+          '<td style="padding:8px 10px"><b>' +
+          esc(l.item_name || "—") +
+          "</b></td>" +
+          '<td style="padding:8px 10px">' +
+          esc(l.color || "—") +
+          "</td>" +
+          '<td style="padding:8px 10px;text-align:center">' +
+          Number(l.qty || 0) +
+          "</td>" +
+          '<td style="padding:8px 10px;text-align:left">' +
+          Number(l.unit_price || 0).toFixed(0) +
+          "</td>" +
+          '<td style="padding:8px 10px;text-align:left;font-weight:700">' +
+          Number(l.total || 0).toFixed(0) +
+          "</td>" +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    var printHtml =
+      '<div id="inv-print-area" style="font-family:\'IBM Plex Sans Arabic\',sans-serif;direction:rtl;background:#fff;color:#111;padding:24px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid ' +
+      color +
+      ';padding-bottom:16px;margin-bottom:16px">' +
+      '<div><div style="font-size:24px;font-weight:900;color:' +
+      color +
+      '">' +
+      esc(compName) +
+      "</div>" +
+      // [FIX-BUG-2&6] عرض العنوان + الهاتف + الرقم الضريبي + السجل التجاري
+      (compAddress
+        ? '<div style="font-size:12px;color:#374151;margin-top:2px"> ' +
+          esc(compAddress) +
+          "</div>"
+        : "") +
+      (compPhone
+        ? '<div style="font-size:12px;color:#374151"> ' +
+          esc(compPhone) +
+          "</div>"
+        : "") +
+      (compTaxId
+        ? '<div style="font-size:12px;color:#6B7280">رقم ضريبي: ' +
+          esc(compTaxId) +
+          "</div>"
+        : "") +
+      (compReg
+        ? '<div style="font-size:12px;color:#6B7280">سجل تجاري: ' +
+          esc(compReg) +
+          "</div>"
+        : "") +
+      "</div>" +
+      '<div style="text-align:left">' +
+      '<div style="font-size:20px;font-weight:900;color:' +
+      color +
+      '">فاتورة ' +
+      type +
+      "</div>" +
+      '<div style="font-size:13px;color:#374151"><b>رقم:</b> ' +
+      esc(inv.id || "—") +
+      "</div>" +
+      '<div style="font-size:13px;color:#374151"><b>التاريخ:</b> ' +
+      date +
+      "</div>" +
+      "</div></div>" +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;font-size:13px">' +
+      '<div style="background:#F9FAFB;border-radius:8px;padding:12px">' +
+      "<b>" +
+      party +
+      ":</b> " +
+      esc(inv.party || "—") +
+      "<br>" +
+      "<b>رقم الإذن:</b> " +
+      esc(inv.permit_id || "—") +
+      "</div>" +
+      '<div style="background:#F9FAFB;border-radius:8px;padding:12px">' +
+      "<b>شروط الدفع:</b> " +
+      esc(inv.payment_status || "—") +
+      "<br>" +
+      (inv.due_date ? "<b>تاريخ الاستحقاق:</b> " + dueDate : "") +
+      "</div>" +
+      "</div>" +
+      '<table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px">' +
+      '<thead><tr style="background:' +
+      color +
+      ';color:#fff">' +
+      '<th style="padding:8px 10px;text-align:center">#</th>' +
+      '<th style="padding:8px 10px">الصنف</th>' +
+      '<th style="padding:8px 10px">اللون</th>' +
+      '<th style="padding:8px 10px;text-align:center">الكمية</th>' +
+      '<th style="padding:8px 10px;text-align:left">سعر الوحدة</th>' +
+      '<th style="padding:8px 10px;text-align:left">الإجمالي</th>' +
+      "</tr></thead><tbody>" +
+      linesHtml +
+      "</tbody></table>" +
+      '<div style="display:flex;justify-content:flex-start">' +
+      '<div style="background:#F9FAFB;border-radius:8px;padding:16px;min-width:260px;font-size:13px">' +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:6px"><span>المجموع</span><b>' +
+      Number(inv.subtotal || 0).toFixed(0) +
+      " ج.م</b></div>" +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:6px;color:#EF4444"><span>الخصم</span><b>- ' +
+      Number(inv.discount_amount || 0).toFixed(0) +
+      " ج.م</b></div>" +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:6px;color:#F59E0B"><span>VAT (' +
+      Number(inv.vat_percent || 0) +
+      "%)</span><b>" +
+      Number(inv.vat_amount || 0).toFixed(0) +
+      " ج.م</b></div>" +
+      '<div style="display:flex;justify-content:space-between;font-size:16px;font-weight:900;border-top:2px solid ' +
+      color +
+      ";padding-top:8px;margin-top:4px;color:" +
+      color +
+      '"><span>الإجمالي النهائي</span><b>' +
+      Number(inv.net_total || 0).toFixed(0) +
+      " ج.م</b></div>" +
+      // ── بيانات الشحن (المرحلة 3) — تُعرض فقط لو فيه شركة شحن ──
+      (inv.shipping_company_id
+        ? (function () {
+            var co = (APP.data.shippingCompanies || []).find(function (c) {
+              return c.id === inv.shipping_company_id;
+            });
+            var coName = co ? co.name : inv.shipping_company_id;
+            var costOnLabel =
+              inv.shipping_cost_on === "customer" ? "على العميل" : "على الشركة";
+            return (
+              '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #e5e7eb;font-size:12px;color:#374151">' +
+              '<b style="color:' +
+              color +
+              '"> الشحن:</b> ' +
+              esc(coName) +
+              (Number(inv.shipping_cost || 0) > 0
+                ? " — تكلفة: <b>" +
+                  Number(inv.shipping_cost).toFixed(0) +
+                  " ج.م</b> (" +
+                  costOnLabel +
+                  ")"
+                : "") +
+              (inv.shipment_id
+                ? ' — رقم الشحنة: <span style="font-family:monospace">' +
+                  esc(inv.shipment_id) +
+                  "</span>"
+                : "") +
+              "</div>"
+            );
+          })()
+        : "") +
+      "</div></div>" +
+      (inv.notes
+        ? '<div style="margin-top:16px;font-size:12px;color:#6B7280;border-top:1px dashed #e5e7eb;padding-top:10px"><b>ملاحظات:</b> ' +
+          esc(inv.notes) +
+          "</div>"
+        : "") +
+      "</div>";
+
+    var modal = _buildModal(
+      "inv-view-modal",
+      "عرض الفاتورة",
+      color,
+      printHtml,
+      '<button class="btn btn-outline" onclick="closeModal(\'inv-view-modal\')">إغلاق</button>' +
+        '<button class="btn btn-primary" onclick="_printInvoiceArea()" style="background:' +
+        color +
+        ";border-color:" +
+        color +
+        '"><i class="ti ti-printer" style="font-size:14px"></i> طباعة</button>',
+      750,
+    );
+    document.body.appendChild(modal);
+  }
+
+  function _printInvoiceArea() {
+    var area = document.getElementById("inv-print-area");
+    if (!area) return;
+    var win = window.open("", "_blank", "width=800,height=700");
+    win.document.write(
+      '<html dir="rtl"><head><meta charset="UTF-8"><title>فاتورة</title>' +
+        '<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;700;900&display=swap" rel="stylesheet">' +
+        '<style>body{font-family:"IBM Plex Sans Arabic",sans-serif;margin:20px}@media print{body{margin:0}}</style></head>' +
+        "<body>" +
+        area.innerHTML +
+        "</body></html>",
+    );
+    win.document.close();
+    win.onload = function () {
+      win.print();
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-N  حذف الفواتير
+  // ─────────────────────────────────────────────────────────────
+  function deleteSaleInvoiceConfirm(id) {
+    confirmDelete(
+      "حذف/إلغاء فاتورة البيع",
+      "هل تريد حذف فاتورة البيع رقم " + id + "؟",
+      function () {
+        // [INVSET-CANCEL-REASON] سبب الإلغاء يُطلب هنا في الواجهة كتسهيل،
+        // لكن الفحص الحقيقي والملزم يتم في الـ Backend (deleteSaleInvoice)
+        // بناءً على إعداد require_cancel_reason — لو الإعداد مفعّل والسبب
+        // فاضي، الـ Backend هيرفض العملية حتى لو تم تجاوز هذه النافذة.
+        var reason = window.prompt(
+          "سبب الإلغاء/الحذف (اتركه فارغًا إذا لم يكن مطلوبًا):",
+          "",
+        );
+        if (reason === null) return; // المستخدم ضغط إلغاء على نافذة السبب
+        DL.Invoices.deleteSaleInvoice(id, {
+          onSuccess: function (res) {
+            NotificationEngine.success("تم الحذف");
+            APP.data.saleInvoices = (APP.data.saleInvoices || []).filter(
+              function (i) {
+                return i.id !== id;
+              },
+            );
+            // [PERF-FIX-INV] تحديث UI بدون fade بعد الحذف المحلي
+            APP._fromSilentRefresh = true;
+            renderPage(APP.currentPage);
+            APP._fromSilentRefresh = false;
+          },
+          onError: function (res) {
+            NotificationEngine.error((res && res.message) || "خطأ");
+          },
+        }, reason);
+      },
+    );
+  }
+
+  function deletePurchaseInvoiceConfirm(id) {
+    confirmDelete(
+      "حذف/إلغاء فاتورة الشراء",
+      "هل تريد حذف فاتورة الشراء رقم " + id + "؟",
+      function () {
+        var reason = window.prompt(
+          "سبب الإلغاء/الحذف (اتركه فارغًا إذا لم يكن مطلوبًا):",
+          "",
+        );
+        if (reason === null) return;
+        DL.Invoices.deletePurchaseInvoice(id, {
+          onSuccess: function (res) {
+            NotificationEngine.success("تم الحذف");
+            APP.data.purchaseInvoices = (
+              APP.data.purchaseInvoices || []
+            ).filter(function (i) {
+              return i.id !== id;
+            });
+            // [PERF-FIX-INV] تحديث UI بدون fade بعد الحذف المحلي
+            APP._fromSilentRefresh = true;
+            renderPage(APP.currentPage);
+            APP._fromSilentRefresh = false;
+          },
+          onError: function (res) {
+            NotificationEngine.error((res && res.message) || "خطأ");
+          },
+        }, reason);
+      },
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-O  بناء الـ Modal العام (نفس بنية modal-header/modal-icon
+  // الموحّدة في كل شاشات النظام — اللون بييجي كـ accent على الأيقونة فقط)
+  // ─────────────────────────────────────────────────────────────
+  function _buildModal(
+    id,
+    title,
+    color,
+    bodyHtml,
+    footerHtml,
+    maxWidth,
+    extraClass,
+  ) {
+    var div = document.createElement("div");
+    div.innerHTML =
+      '<div class="modal-overlay" id="' +
+      id +
+      '" onclick="if(event.target===this)closeModal(\'' +
+      id +
+      "')\">" +
+      '<div class="modal-box' +
+      (extraClass ? " " + extraClass : "") +
+      '"' +
+      (maxWidth ? ' style="max-width:' + maxWidth + 'px"' : "") +
+      ">" +
+      '<div class="modal-header">' +
+      '<div class="modal-header-left">' +
+      '<div class="modal-icon" style="background:' +
+      color +
+      "22;color:" +
+      color +
+      '"><i class="ti ti-file-invoice"></i></div>' +
+      "<div><h2>" +
+      esc(title) +
+      "</h2></div>" +
+      "</div>" +
+      '<button class="modal-close" onclick="closeModal(\'' +
+      id +
+      '\')"><i class="ti ti-x"></i></button>' +
+      "</div>" +
+      '<div class="modal-body">' +
+      bodyHtml +
+      "</div>" +
+      '<div class="modal-actions">' +
+      footerHtml +
+      "</div>" +
+      "</div></div>";
+    return div.firstChild;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // نهاية 15_JS_Invoices.html
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ═══════════════════════════════════════════════════════════════════
+  // §RETURNS  مرتجع البيع ومرتجع الشراء
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────
+  // §RET-A  Bind — مرتجع البيع
+  // ─────────────────────────────────────────────────────────────
+  function bindSaleReturns() {
+    // [COLUMN-ENGINE] الجدول والبحث انتقلا لـ ColumnEngine
+    var newBtn = document.getElementById("sret-new-btn");
+    if (newBtn)
+      newBtn.addEventListener("click", function () {
+        openCreateSaleReturnModal();
+      });
+
+    _sretRenderTable();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §RET-B  Bind — مرتجع الشراء
+  // ─────────────────────────────────────────────────────────────
+  function bindPurchaseReturns() {
+    // [COLUMN-ENGINE] الجدول والبحث انتقلا لـ ColumnEngine
+    var newBtn = document.getElementById("pret-new-btn");
+    if (newBtn)
+      newBtn.addEventListener("click", function () {
+        openCreatePurchaseReturnModal();
+      });
+
+    _pretRenderTable();
+  }
+
+  // [COLUMN-ENGINE] _filterReturnTable القديمة أُزيلت — البحث أصبح جزءًا
+  // من ColumnEngine toolbar تلقائيًا.
+
+  // ─────────────────────────────────────────────────────────────
+  // §RET-C  Modal مرتجع البيع
+  // ─────────────────────────────────────────────────────────────
+  function openCreateSaleReturnModal(invoiceId) {
+    openSaleReturnWorkspace(invoiceId);
+  }
+
+  function _legacyOpenCreateSaleReturnModal(invoiceId) {
+    var date =
+      typeof DateEngine !== "undefined"
+        ? DateEngine.forPicker(new Date())
+        : new Date().toISOString().split("T")[0]; // [PERF/FIX] توقيت محلي بدل UTC، مع fallback لو DateEngine مش متحمّل
+
+    // ابني الـ lines من الفاتورة الأصلية لو موجودة
+    var prefillLines = "";
+    var prefillParty = "";
+    if (invoiceId) {
+      var inv = (APP.data.saleInvoices || []).find(function (i) {
+        return i.id === invoiceId;
+      });
+      if (inv) {
+        prefillParty = inv.party || "";
+        var lines = Array.isArray(inv.lines_json) ? inv.lines_json : [];
+        prefillLines = lines
+          .map(function (l, idx) {
+            return _renderReturnLineRow(l, idx, "sret");
+          })
+          .join("");
+      }
+    }
+    if (!prefillLines) {
+      prefillLines = _renderReturnLineRow({}, 0, "sret");
+    }
+
+    var modal = _buildModal(
+      "sret-modal",
+      "مرتجع بيع جديد",
+      "#DC2626",
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">' +
+        '<div><label class="form-label">العميل</label>' +
+        '<input class="input" id="sret-party" value="' +
+        esc(prefillParty) +
+        '" placeholder="اسم العميل"></div>' +
+        '<div><label class="form-label">التاريخ</label>' +
+        '<input class="input" type="date" id="sret-date" value="' +
+        date +
+        '"></div>' +
+        '<div><label class="form-label">رقم الفاتورة الأصلية</label>' +
+        '<input class="input" id="sret-orig-inv" value="' +
+        esc(invoiceId || "") +
+        '" placeholder="اختياري"></div>' +
+        '<div><label class="form-label">المخزن</label>' +
+        '<select class="input" id="sret-warehouse">' +
+        _txWarehouseOpts() +
+        "</select></div>" +
+        '<div style="grid-column:1/-1"><label class="form-label">سبب الإرجاع</label>' +
+        '<input class="input" id="sret-reason" placeholder="مثال: عيب مصنعي، خطأ في الطلب..."></div>' +
+        "</div>" +
+        '<div class="card" style="margin-bottom:12px;padding:0;overflow:hidden">' +
+        '<div style="padding:10px 14px;background:#FEF2F2;border-bottom:1px solid #FCA5A5;font-weight:700;font-size:13px;color:#DC2626">بنود المرتجع</div>' +
+        '<div class="table-wrap" style="margin:0"><table id="sret-lines-table">' +
+        '<thead><tr><th>الصنف</th><th>اللون</th><th style="text-align:center">الكمية</th><th style="text-align:left">سعر الوحدة</th><th style="text-align:left">الإجمالي</th><th></th></tr></thead>' +
+        '<tbody id="sret-lines-body">' +
+        prefillLines +
+        "</tbody></table></div>" +
+        '<div style="padding:10px 14px">' +
+        '<button class="btn btn-outline btn-sm" onclick="_addReturnLine(\'sret\')"><i class="ti ti-plus" style="font-size:12px"></i> إضافة صنف</button>' +
+        "</div></div>" +
+        _renderInvoiceTotalsSection("sret") +
+        '<div><label class="form-label">ملاحظات</label>' +
+        '<textarea class="input" id="sret-notes" rows="2" placeholder="ملاحظات..." style="resize:vertical;width:100%;box-sizing:border-box"></textarea></div>',
+
+      '<button class="btn btn-outline" onclick="closeModal(\'sret-modal\')">إلغاء</button>' +
+        withPermission(
+          '<button class="btn btn-danger" onclick="saveSaleReturn()"><i class="ti ti-device-floppy" style="font-size:14px"></i> حفظ المرتجع</button>',
+          "addSaleInvoice",
+        ),
+    );
+
+    document.body.appendChild(modal);
+    _bindInvoiceTotalsCalc("sret");
+    _calcInvoiceTotals("sret");
+
+    if (window.SplitSelect) {
+      SplitSelect.init("sret-warehouse", {
+        label: "المخزن",
+        icon: "ti-building-warehouse",
+        searchable: true,
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §RET-D  Modal مرتجع الشراء
+  // ─────────────────────────────────────────────────────────────
+  function openCreatePurchaseReturnModal(invoiceId) {
+    openPurchaseReturnWorkspace(invoiceId);
+  }
+
+  function _legacyOpenCreatePurchaseReturnModal(invoiceId) {
+    var date =
+      typeof DateEngine !== "undefined"
+        ? DateEngine.forPicker(new Date())
+        : new Date().toISOString().split("T")[0]; // [PERF/FIX] توقيت محلي بدل UTC، مع fallback لو DateEngine مش متحمّل
+
+    var prefillLines = "";
+    var prefillParty = "";
+    if (invoiceId) {
+      var inv = (APP.data.purchaseInvoices || []).find(function (i) {
+        return i.id === invoiceId;
+      });
+      if (inv) {
+        prefillParty = inv.party || "";
+        var lines = Array.isArray(inv.lines_json) ? inv.lines_json : [];
+        prefillLines = lines
+          .map(function (l, idx) {
+            return _renderReturnLineRow(l, idx, "pret");
+          })
+          .join("");
+      }
+    }
+    if (!prefillLines) {
+      prefillLines = _renderReturnLineRow({}, 0, "pret");
+    }
+
+    var modal = _buildModal(
+      "pret-modal",
+      "مرتجع شراء جديد",
+      "#7C3AED",
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">' +
+        '<div><label class="form-label">المورد</label>' +
+        '<input class="input" id="pret-party" value="' +
+        esc(prefillParty) +
+        '" placeholder="اسم المورد"></div>' +
+        '<div><label class="form-label">التاريخ</label>' +
+        '<input class="input" type="date" id="pret-date" value="' +
+        date +
+        '"></div>' +
+        '<div><label class="form-label">رقم الفاتورة الأصلية</label>' +
+        '<input class="input" id="pret-orig-inv" value="' +
+        esc(invoiceId || "") +
+        '" placeholder="اختياري"></div>' +
+        '<div><label class="form-label">المخزن</label>' +
+        '<select class="input" id="pret-warehouse">' +
+        _txWarehouseOpts() +
+        "</select></div>" +
+        '<div style="grid-column:1/-1"><label class="form-label">سبب الإرجاع</label>' +
+        '<input class="input" id="pret-reason" placeholder="مثال: بضاعة تالفة، مخالفة للمواصفات..."></div>' +
+        "</div>" +
+        '<div class="card" style="margin-bottom:12px;padding:0;overflow:hidden">' +
+        '<div style="padding:10px 14px;background:#F5F3FF;border-bottom:1px solid #C4B5FD;font-weight:700;font-size:13px;color:#7C3AED">بنود المرتجع</div>' +
+        '<div class="table-wrap" style="margin:0"><table id="pret-lines-table">' +
+        '<thead><tr><th>الصنف</th><th>اللون</th><th style="text-align:center">الكمية</th><th style="text-align:left">سعر الوحدة</th><th style="text-align:left">الإجمالي</th><th></th></tr></thead>' +
+        '<tbody id="pret-lines-body">' +
+        prefillLines +
+        "</tbody></table></div>" +
+        '<div style="padding:10px 14px">' +
+        '<button class="btn btn-outline btn-sm" onclick="_addReturnLine(\'pret\')"><i class="ti ti-plus" style="font-size:12px"></i> إضافة صنف</button>' +
+        "</div></div>" +
+        _renderInvoiceTotalsSection("pret") +
+        '<div><label class="form-label">ملاحظات</label>' +
+        '<textarea class="input" id="pret-notes" rows="2" placeholder="ملاحظات..." style="resize:vertical;width:100%;box-sizing:border-box"></textarea></div>',
+
+      '<button class="btn btn-outline" onclick="closeModal(\'pret-modal\')">إلغاء</button>' +
+        withPermission(
+          '<button class="btn" style="background:#7C3AED;color:#fff" onclick="savePurchaseReturn()"><i class="ti ti-device-floppy" style="font-size:14px"></i> حفظ المرتجع</button>',
+          "addPurchaseInvoice",
+        ),
+    );
+
+    document.body.appendChild(modal);
+    _bindInvoiceTotalsCalc("pret");
+    _calcInvoiceTotals("pret");
+
+    if (window.SplitSelect) {
+      SplitSelect.init("pret-warehouse", {
+        label: "المخزن",
+        icon: "ti-building-warehouse",
+        searchable: true,
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §RET-E  صف بند المرتجع
+  // ─────────────────────────────────────────────────────────────
+  function _renderReturnLineRow(line, idx, prefix) {
+    var items = APP.data.items || [];
+    var colors = APP.data.colors || [];
+    var itemOpts = items
+      .map(function (it) {
+        var sel =
+          line.item_id === it.id || line.item_name === it.name
+            ? " selected"
+            : "";
+        return (
+          '<option value="' +
+          esc(it.id) +
+          '"' +
+          sel +
+          ">" +
+          esc(it.name) +
+          "</option>"
+        );
+      })
+      .join("");
+    var colorOpts =
+      '<option value="">—</option>' +
+      colors
+        .map(function (c) {
+          var sel = (line.color || "") === c.name ? " selected" : "";
+          return (
+            '<option value="' +
+            esc(c.name) +
+            '"' +
+            sel +
+            ">" +
+            esc(c.name) +
+            "</option>"
+          );
+        })
+        .join("");
+    var qty = line.qty || line.quantity || 1;
+    var price = line.unit_price || line.price || 0;
+    return (
+      '<tr class="' +
+      prefix +
+      '-line-row">' +
+      '<td><select class="input input-sm ' +
+      prefix +
+      '-item-sel" onchange="_calcReturnLine(this)">' +
+      '<option value="">-- اختر صنف --</option>' +
+      itemOpts +
+      "</select></td>" +
+      '<td><select class="input input-sm ' +
+      prefix +
+      '-color-sel">' +
+      colorOpts +
+      "</select></td>" +
+      '<td><input type="number" class="input input-sm ' +
+      prefix +
+      '-qty" value="' +
+      qty +
+      '" min="1" style="width:70px;text-align:center" onchange="_calcReturnLine(this)"></td>' +
+      '<td><input type="number" class="input input-sm ' +
+      prefix +
+      '-price" value="' +
+      price +
+      '" min="0" step="0.01" style="width:90px" onchange="_calcReturnLine(this)"></td>' +
+      '<td class="' +
+      prefix +
+      '-line-total" style="font-weight:600">' +
+      Number(qty * price).toFixed(0) +
+      "</td>" +
+      '<td><button class="btn btn-outline btn-xs" onclick="this.closest(\'tr\').remove()"><i class="ti ti-trash" style="font-size:12px"></i></button></td>' +
+      "</tr>"
+    );
+  }
+
+  // [FIX] _calcReturnLine كانت مستدعاة من onchange في صفوف مرتجع البيع/الشراء
+  // (_renderReturnLineRow) لكنها لم تكن موجودة أصلاً — تسبب ذلك في ReferenceError
+  // عند تغيير الصنف/الكمية/السعر، ولم يكن سعر الصنف يُملأ تلقائيًا ولا إجمالي
+  // الصف يتحدّث. تم تنفيذها هنا لتعمل مع صفوف مرتجع البيع (sret) والشراء (pret).
+  function _calcReturnLine(el) {
+    var row = el.closest("tr");
+    if (!row) return;
+    var prefix = /(^|\s)(sret|pret)-line-row(\s|$)/.test(row.className)
+      ? row.className.indexOf("sret-line-row") !== -1
+        ? "sret"
+        : "pret"
+      : null;
+    if (!prefix) return;
+
+    var itemSel = row.querySelector("." + prefix + "-item-sel");
+    var qtyEl = row.querySelector("." + prefix + "-qty");
+    var priceEl = row.querySelector("." + prefix + "-price");
+    var totalEl = row.querySelector("." + prefix + "-line-total");
+
+    // لو المستخدم غيّر الصنف: نملأ السعر تلقائيًا من بيانات الصنف
+    // (فقط لو حقل السعر فاضي أو صفر، حتى لا نطغى على سعر أدخله المستخدم يدويًا)
+    if (
+      el === itemSel &&
+      priceEl &&
+      (!priceEl.value || Number(priceEl.value) === 0)
+    ) {
+      var itemId = itemSel.value;
+      var item = (APP.data.items || []).find(function (it) {
+        return it.id === itemId;
+      });
+      if (item) {
+        var defaultPrice =
+          item.unit_price || item.price || item.sale_price || 0;
+        if (defaultPrice) priceEl.value = defaultPrice;
+      }
+    }
+
+    var qty = Number((qtyEl && qtyEl.value) || 0);
+    var price = Number((priceEl && priceEl.value) || 0);
+    if (totalEl) totalEl.textContent = Number(qty * price).toFixed(0);
+  }
+
+  function _addReturnLine(prefix) {
+    var tbody = document.getElementById(prefix + "-lines-body");
+    if (!tbody) return;
+    var idx = tbody.querySelectorAll("tr").length;
+    tbody.insertAdjacentHTML(
+      "beforeend",
+      _renderReturnLineRow({}, idx, prefix),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §RET-F  جمع بيانات المرتجع وإرسالها
+  // ─────────────────────────────────────────────────────────────
+  function _collectReturnLines(prefix) {
+    var lines = [];
+    document
+      .querySelectorAll("." + prefix + "-line-row")
+      .forEach(function (row) {
+        var itemSel = row.querySelector("." + prefix + "-item-sel");
+        var colorSel = row.querySelector("." + prefix + "-color-sel");
+        var qtyInput = row.querySelector("." + prefix + "-qty");
+        var priceInput = row.querySelector("." + prefix + "-price");
+        var itemId = itemSel ? itemSel.value : "";
+        var qty = Number(qtyInput ? qtyInput.value : 0);
+        if (!itemId || qty <= 0) return;
+        var item = (APP.data.items || []).find(function (i) {
+          return i.id === itemId;
+        });
+        lines.push({
+          item_id: itemId,
+          item_name: item ? item.name : itemId,
+          color: colorSel ? colorSel.value : "",
+          qty: qty,
+          quantity: qty,
+          unit_price: Number(priceInput ? priceInput.value : 0),
+          total: qty * Number(priceInput ? priceInput.value : 0),
+        });
+      });
+    return lines;
+  }
+
+  function saveSaleReturn() {
+    var party = (document.getElementById("sret-party") || {}).value || "";
+    var date = (document.getElementById("sret-date") || {}).value || "";
+    var origInv = (document.getElementById("sret-orig-inv") || {}).value || "";
+    var reason = (document.getElementById("sret-reason") || {}).value || "";
+    var warehouse =
+      (document.getElementById("sret-warehouse") || {}).value || "";
+    var notes = (document.getElementById("sret-notes") || {}).value || "";
+    var discVal = Number(
+      // [BUG-FIX 2026-07-04] كان يقرأ id="sret-disc-val" وهو غير موجود؛
+      // العنصر الفعلي المُولَّد من _renderInvoiceTotalsSection هو
+      // "sret-discount-val" — فكان الخصم دائمًا صفرًا مهما أدخل المستخدم
+      (document.getElementById("sret-discount-val") || {}).value || 0,
+    );
+    var discType =
+      // كان يقرأ radio باسم "sret-disc-type" غير موجود أصلاً؛ العنصر
+      // الفعلي select#sret-discount-type (راجع _renderInvoiceTotalsSection)
+      (document.getElementById("sret-discount-type") || {}).value || "fixed";
+    var vatPct = Number((document.getElementById("sret-vat") || {}).value || 0);
+
+    var lines = _collectReturnLines("sret");
+    if (!lines.length) {
+      NotificationEngine.error("أضف بند واحد على الأقل");
+      return;
+    }
+    if (!party.trim()) {
+      NotificationEngine.error("أدخل اسم العميل");
+      return;
+    }
+
+    var subtotal = lines.reduce(function (s, l) {
+      return s + (l.total || 0);
+    }, 0);
+
+    NotificationEngine.loading("جاري الحفظ...");
+    callServer(
+      "addSaleReturn",
+      {
+        party: party,
+        date: date,
+        original_invoice_id: origInv,
+        reason: reason,
+        warehouse: warehouse,
+        notes: notes,
+        subtotal: subtotal,
+        discount_value: discVal,
+        discount_type: discType,
+        vat_percent: vatPct,
+        lines: lines,
+      },
+      function (res) {
+        if (res && res.success) {
+          finishLoadingToast("تم حفظ مرتجع البيع بنجاح ", "success");
+          // [AUDIT-FIX-RETURNS-JOURNAL-2026-08-08] callServer هنا خام (مش
+          // عبر SaveEngine.run)، فمحتاج نتعامل مع journal_warning يدويًا —
+          // نفس الحقل اللي SaveEngine بيتعرف عليه تلقائيًا في شاشات تانية.
+          if (res.journal_warning) {
+            NotificationEngine.warning(res.journal_warning);
+          }
+          closeModal("sret-modal");
+          APP.data.saleReturns = APP.data.saleReturns || [];
+          APP.data.saleReturns.push({
+            id: res.data.id,
+            party: party,
+            date: date,
+            original_invoice_id: origInv,
+            reason: reason,
+            net_total: res.data.net_total,
+            lines_json: lines,
+          });
+          renderPage("sale-returns");
+        } else {
+          finishLoadingToast((res && res.message) || "خطأ في الحفظ", "error");
+        }
+      },
+    );
+  }
+
+  function savePurchaseReturn() {
+    var party = (document.getElementById("pret-party") || {}).value || "";
+    var date = (document.getElementById("pret-date") || {}).value || "";
+    var origInv = (document.getElementById("pret-orig-inv") || {}).value || "";
+    var reason = (document.getElementById("pret-reason") || {}).value || "";
+    var warehouse =
+      (document.getElementById("pret-warehouse") || {}).value || "";
+    var notes = (document.getElementById("pret-notes") || {}).value || "";
+    var discVal = Number(
+      // [BUG-FIX 2026-07-04] نفس خطأ مرتجع البيع — راجع التعليق هناك
+      (document.getElementById("pret-discount-val") || {}).value || 0,
+    );
+    var discType =
+      (document.getElementById("pret-discount-type") || {}).value || "fixed";
+    var vatPct = Number((document.getElementById("pret-vat") || {}).value || 0);
+
+    var lines = _collectReturnLines("pret");
+    if (!lines.length) {
+      NotificationEngine.error("أضف بند واحد على الأقل");
+      return;
+    }
+    if (!party.trim()) {
+      NotificationEngine.error("أدخل اسم المورد");
+      return;
+    }
+
+    var subtotal = lines.reduce(function (s, l) {
+      return s + (l.total || 0);
+    }, 0);
+
+    NotificationEngine.loading("جاري الحفظ...");
+    callServer(
+      "addPurchaseReturn",
+      {
+        party: party,
+        date: date,
+        original_invoice_id: origInv,
+        reason: reason,
+        warehouse: warehouse,
+        notes: notes,
+        subtotal: subtotal,
+        discount_value: discVal,
+        discount_type: discType,
+        vat_percent: vatPct,
+        lines: lines,
+      },
+      function (res) {
+        if (res && res.success) {
+          finishLoadingToast("تم حفظ مرتجع الشراء بنجاح ", "success");
+          // [AUDIT-FIX-RETURNS-JOURNAL-2026-08-08] نفس إصلاح مرتجع البيع.
+          if (res.journal_warning) {
+            NotificationEngine.warning(res.journal_warning);
+          }
+          closeModal("pret-modal");
+          APP.data.purchaseReturns = APP.data.purchaseReturns || [];
+          APP.data.purchaseReturns.push({
+            id: res.data.id,
+            party: party,
+            date: date,
+            original_invoice_id: origInv,
+            reason: reason,
+            net_total: res.data.net_total,
+            lines_json: lines,
+          });
+          renderPage("purchase-returns");
+        } else {
+          finishLoadingToast((res && res.message) || "خطأ في الحفظ", "error");
+        }
+      },
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // §RET-G  حذف مرتجع
+  // ─────────────────────────────────────────────────────────────
+  function deleteSaleReturnRow(id) {
+    confirmDelete("حذف مرتجع", "حذف مرتجع البيع " + id + "؟", function () {
+      callServer("deleteSaleReturn", id, function (res) {
+        if (res && res.success) {
+          APP.data.saleReturns = (APP.data.saleReturns || []).filter(
+            function (r) {
+              return r.id !== id;
+            },
+          );
+          NotificationEngine.success("تم الحذف");
+          APP._fromSilentRefresh = true; // [PERF-FIX-INV]
+          renderPage("sale-returns");
+          APP._fromSilentRefresh = false;
+        } else {
+          NotificationEngine.error((res && res.message) || "فشل الحذف");
+        }
+      });
+    });
+  }
+
+  function deletePurchaseReturnRow(id) {
+    confirmDelete("حذف مرتجع", "حذف مرتجع الشراء " + id + "؟", function () {
+      callServer("deletePurchaseReturn", id, function (res) {
+        if (res && res.success) {
+          APP.data.purchaseReturns = (APP.data.purchaseReturns || []).filter(
+            function (r) {
+              return r.id !== id;
+            },
+          );
+          NotificationEngine.success("تم الحذف");
+          APP._fromSilentRefresh = true; // [PERF-FIX-INV]
+          renderPage("purchase-returns");
+          APP._fromSilentRefresh = false;
+        } else {
+          NotificationEngine.error((res && res.message) || "فشل الحذف");
+        }
+      });
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // زر "إنشاء مرتجع" من داخل شاشة الفواتير
+  // ─────────────────────────────────────────────────────────────
+  function openSaleReturnFromInvoice(invoiceId) {
+    openSaleReturnWorkspace(invoiceId);
+  }
+
+  function openPurchaseReturnFromInvoice(invoiceId) {
+    openPurchaseReturnWorkspace(invoiceId);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // نهاية §RETURNS
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ── Context Menu Functions — الفواتير ───────────────────────
+  window.ctx_viewInvoice = function (id) {
+    var row = document.querySelector('[data-id="' + id + '"]');
+    var type = row
+      ? row.dataset.type
+      : String(id).startsWith("PI")
+        ? "purchase"
+        : "sale";
+    if (type === "purchase") viewPurchaseInvoice(id);
+    else viewSaleInvoice(id);
+  };
+  window.ctx_editInvoice = function (id) {
+    var row = document.querySelector('[data-id="' + id + '"]');
+    var type = row
+      ? row.dataset.type
+      : String(id).startsWith("PI")
+        ? "purchase"
+        : "sale";
+    if (type === "purchase") viewPurchaseInvoice(id);
+    else viewSaleInvoice(id);
+  };
+  window.ctx_printInvoice = function (id) {
+    var row = document.querySelector('[data-id="' + id + '"]');
+    var type = row
+      ? row.dataset.type
+      : String(id).startsWith("PI")
+        ? "purchase"
+        : "sale";
+    if (type === "purchase") viewPurchaseInvoice(id, true);
+    else viewSaleInvoice(id, true);
+  };
+  window.ctx_deleteInvoice = function (id) {
+    var row = document.querySelector('[data-id="' + id + '"]');
+    var type = row
+      ? row.dataset.type
+      : String(id).startsWith("PI")
+        ? "purchase"
+        : "sale";
+    if (type === "purchase") deletePurchaseInvoiceConfirm(id);
+    else deleteSaleInvoiceConfirm(id);
+  };
+  window.ctx_sendInvoiceWA = function (id) {
+    var row = document.querySelector('[data-id="' + id + '"]');
+    var phone = row ? row.dataset.phone : "";
+    var name = row ? row.dataset.name : id;
+    if (!phone) return NotificationEngine.warning("لا يوجد رقم هاتف لهذا الطرف");
+    var msg = encodeURIComponent("مرحباً " + name + "،\nفاتورة رقم: " + id);
+    window.open(
+      "https://wa.me/" + phone.replace(/[^0-9]/g, "") + "?text=" + msg,
+      "_blank",
+    );
+  };
+  window.ctx_copyInvoiceRef = function (id) {
+    var row = document.querySelector('[data-id="' + id + '"]');
+    var ref = row && row.dataset.ref ? row.dataset.ref : id;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(ref).then(function () {
+        NotificationEngine.success("تم نسخ الرقم: " + ref);
+      });
+    } else {
+      NotificationEngine.info("الرقم: " + ref);
+    }
+  };
+  window.ctx_duplicateInvoice = function (id) {
+    var row = document.querySelector('[data-id="' + id + '"]');
+    var type = row
+      ? row.dataset.type
+      : String(id).startsWith("PI")
+        ? "purchase"
+        : "sale";
+    NotificationEngine.loading("جاري فتح فاتورة مشابهة...");
+    var allInvoices =
+      type === "purchase"
+        ? APP.data.purchaseInvoices || APP.data.invoices || []
+        : APP.data.saleInvoices || APP.data.invoices || [];
+    var src = allInvoices.find(function (inv) {
+      return inv.id === id;
+    });
+    if (!src) return finishLoadingToast("لم يتم العثور على الفاتورة", "error");
+    setTimeout(function () {
+      var newBtn = document.getElementById(
+        type === "purchase" ? "pinv-new-btn" : "sinv-new-btn",
+      );
+      if (newBtn) {
+        newBtn.click();
+        setTimeout(function () {
+          var partySel = document.getElementById(
+            type === "purchase" ? "pinv-party" : "sinv-party",
+          );
+          if (partySel && src.party_id) {
+            partySel.value = src.party_id;
+            partySel.dispatchEvent(new Event("change"));
+          }
+          dismissLoadingToast();
+        }, 300);
+      } else {
+        dismissLoadingToast();
+      }
+    }, 100);
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // §INV-SHIP  تكامل الشحن مع الفاتورة — المرحلة 3
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * _onSinvShippingCoChange — يُحدَّث عند تغيير شركة الشحن في فاتورة البيع
+   * يُجري حساباً تلقائياً للتكلفة ويُعبّئ الحقل
+   */
+  function _onSinvShippingCoChange(prefix) {
+    // [BUG-FIX 2026-07-04] الدالة كانت مربوطة بـ "sinv" فقط، ودالة قراءة
+    // الإجمالي كانت بتدوّر على id="sinv-net-total" وهو غير موجود أصلاً
+    // (الـ id الحقيقي المُولَّد من _renderInvoiceTotalsSection هو
+    // "<prefix>-nettotal" بدون شرطة) — فكانت invoiceTotal = 0 دائمًا،
+    // وبالتالي حساب الشحن كنسبة % من قيمة الفاتورة كان يرجع صفر دومًا.
+    // اتصلحت هنا + اتعمّمت الدالة لتقبل أي بادئة مستند (تُستخدم الآن من
+    // شاشة إنشاء الفاتورة الجديدة كاملة الصفحة — 29_JS_InvoiceWorkspace.html).
+    prefix = prefix || "sinv";
+    var coEl = document.getElementById(prefix + "-shipping-co");
+    var costEl = document.getElementById(prefix + "-shipping-cost");
+    var hint = document.getElementById(prefix + "-ship-cost-hint");
+    if (!coEl || !coEl.value) {
+      if (costEl) costEl.value = "";
+      if (hint) hint.textContent = "";
+      return;
+    }
+    var companyId = coEl.value;
+    // اقرأ إجمالي الفاتورة من الحقل الحالي
+    var netEl = document.getElementById(prefix + "-nettotal");
+    var invoiceTotal = netEl
+      ? Number(netEl.textContent.replace(/[^0-9.]/g, "") || 0)
+      : 0;
+
+    if (hint) hint.textContent = "⏳ جاري الحساب...";
+    _gsr(
+      "calcShippingCost",
+      [companyId, invoiceTotal, null, null, null],
+      {
+        label: "INV.calcShippingCost",
+        onSuccess: function (res) {
+          if (costEl) costEl.value = res.cost.toFixed(2);
+          if (hint) {
+            var methodLabels = {
+              fixed: "مبلغ ثابت",
+              by_weight: "حسب الوزن",
+              by_volume: "حسب الحجم",
+              by_distance: "حسب المسافة",
+              by_invoice_value: "% من الفاتورة",
+              tiers: "شرائح أسعار",
+            };
+            hint.textContent =
+              "(" + (methodLabels[res.method] || res.method) + ")";
+          }
+        },
+        onError: function (res) {
+          if (hint) hint.textContent = (res && res.message) || "";
+        },
+      },
+    );
+  }
+
+  /**
+   * _onSinvTotalsUpdate — hook يُستدعى عند تغيير تكلفة الشحن يدوياً
+   * (يمكن توسيعه مستقبلاً لإضافة الشحن على الإجمالي)
+   */
+  function _onSinvTotalsUpdate() {
+    // placeholder — الشحن لا يُضاف على net_total تلقائياً في المرحلة الحالية
+    // بل يُحفظ كحقل منفصل ويُعرض في تفاصيل الفاتورة
+  }
+</script>

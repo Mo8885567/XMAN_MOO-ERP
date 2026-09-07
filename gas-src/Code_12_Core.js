@@ -816,6 +816,16 @@ var DOPOST_PUBLIC_FUNCTIONS = [
   "refreshSession",
   "getCatalogPublicData",
   "getScriptUrl",
+  // [FIX] Forgot-password flow: these must run BEFORE the user has a
+  // session (that's the whole point of "forgot password"). They are not
+  // unprotected — each one enforces its own security internally
+  // (rate limiting, hashed OTP with expiry, one-time reset token
+  // verified server-side — see Code_32_ForgotPassword.js). Without this,
+  // doPost's session gate (SEC-FIX-4) rejected them with "session
+  // required" even though they were already in DOPOST_ALLOWED_FUNCTIONS.
+  "requestPasswordReset",
+  "verifyPasswordResetOtp",
+  "resetPasswordWithToken",
 ];
 
 // [SEC-FIX-4] Looks for a valid session token inside args and actually verifies it via validateSession.

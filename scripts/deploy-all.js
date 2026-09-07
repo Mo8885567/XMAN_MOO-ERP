@@ -108,18 +108,27 @@ function run(cmd, cmdArgs, opts = {}) {
   // arguments — so any argument containing a space (like a commit message)
   // gets split into several separate arguments by the shell. Quote any
   // argument that contains whitespace so it survives as one piece.
-  const safeArgs = needsShell
-    ? cmdArgs.map((a) =>
-        /\s/.test(a) && !(a.startsWith('"') && a.endsWith('"'))
-          ? `"${a.replace(/"/g, '\\"')}"`
-          : a,
-      )
-    : cmdArgs;
-  const res = spawnSync(cmd, safeArgs, {
-    stdio: "inherit",
-    shell: needsShell,
-    ...opts,
-  });
+  const quote = (a) =>
+    /\s/.test(a) && !(a.startsWith('"') && a.endsWith('"'))
+      ? `"${a.replace(/"/g, '\\"')}"`
+      : a;
+  // DEP0190: spawnSync warns whenever shell is truthy AND a separate args
+  // array (non-empty) is also passed, because it can no longer guarantee
+  // the args were safely escaped before being joined into the shell's
+  // command line. We already do that escaping ourselves above, so avoid
+  // the warning by handing spawnSync ONE fully-assembled command string
+  // and no args array at all — same resulting command, no warning.
+  const res = needsShell
+    ? spawnSync([cmd, ...cmdArgs.map(quote)].join(" "), {
+        stdio: "inherit",
+        shell: true,
+        ...opts,
+      })
+    : spawnSync(cmd, cmdArgs, {
+        stdio: "inherit",
+        shell: false,
+        ...opts,
+      });
   return res;
 }
 
@@ -212,10 +221,10 @@ function buildStatic() {
 // ── [4] clasp push ────────────────────────────────────────────
 function claspPush() {
   step(4, "Pushing backend code to Apps Script (clasp push)");
-  const claspCheck = spawnSync("clasp", ["--version"], {
-    shell: process.platform === "win32",
-    encoding: "utf8",
-  });
+  const claspCheck =
+    process.platform === "win32"
+      ? spawnSync("clasp --version", { shell: true, encoding: "utf8" })
+      : spawnSync("clasp", ["--version"], { shell: false, encoding: "utf8" });
   if (claspCheck.status !== 0) {
     fatal(
       "clasp is not installed or not logged in. Install with: npm i -g @google/clasp then clasp login",

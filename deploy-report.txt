@@ -1,5 +1,5 @@
 deploy-all.js run report
-Date: 8/15/2026, 11:12:09 PM
+Date: 9/7/2026, 4:39:15 PM
 ============================================================
 
 
@@ -34,7 +34,7 @@ Functions in DOPOST_PUBLIC_FUNCTIONS: 14
 ------------------------------------------------------------
   [3] Building the static frontend (public/index.html + catalog.html)
 ------------------------------------------------------------
-$ C:\Program Files\nodejs\node.exe D:\X-MAN\MOO_ERP\moo-erp-vercel\scripts\build-static.js
+$ C:\Program Files\nodejs\node.exe D:\X-MAN\MOO_ERP\العملا\XMAN_MOO-ERP\scripts\build-static.js
 [OK] Frontend built successfully.
 
 ------------------------------------------------------------
@@ -46,15 +46,8 @@ $ clasp push --force
 ------------------------------------------------------------
   [5] Updating the active deployment (clasp deploy -i)
 ------------------------------------------------------------
-$ clasp deploy --deploymentId AKfycbxgrlbvU9lJK97EIj7QgryPUzWV7X0JW_bAQZpaKW4ltltLn72_RjxOUzLxvyacvueYgA --description update  15/8/26 
-[OK] Deployment (AKfycbxgrlbvU9lJK97EIj7QgryPUzWV7X0JW_bAQZpaKW4ltltLn72_RjxOUzLxvyacvueYgA) updated — the URL (GAS_URL) stays the same.
+$ clasp deploy --deploymentId AKfycbzWmC6ZySa6L6vIukRcAF8SZlWIDfcmnM9q8y-J-IhtchDSJAbfKf0MJqSDJtAZIwwpFA --description update  6 
+$ clasp deploy -i AKfycbzWmC6ZySa6L6vIukRcAF8SZlWIDfcmnM9q8y-J-IhtchDSJAbfKf0MJqSDJtAZIwwpFA -d update  6 
+[FAIL] clasp deploy failed — check the message above.
 
-------------------------------------------------------------
-  [6] Pushing the built frontend via Git (will trigger auto-deploy on Vercel)
-------------------------------------------------------------
-$ git add -A
-$ git commit -m update  15/8/26 
-$ git push
-[OK] Pushed to Git — Vercel will start building and deploying automatically within a minute or two.
-
-🎉 All steps completed successfully.
+[FATAL] Stopping — fix this issue before deploying anything.

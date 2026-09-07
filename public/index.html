@@ -18713,6 +18713,7 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
     "transferVouchers",
     "bankReconciliations",
     "cheques",
+    "fixedAssets",
     "departments",
     "jobTitles",
     "employees",
@@ -18965,84 +18966,83 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
   // ─────────────────────────────────────────────────────────────
   function _fetchExtendedDataFromServer(_isRetry) {
     APP.extLoading = true;
-    // ✅ [PERF-SPLIT] كانت DL.Core.getAllDataExtended نداء واحد بيخلي الباك-إند
-    // يقرأ 24 قسم بالتتابع جوه تنفيذ Apps Script واحد، وده كان بياخد وقت
-    // كافي إنه يضرب مهلة الـ 30 ثانية (خصوصًا على /dev deployment) ويظهر
-    // "[DL] Core.getAllDataExtended → انتهت المهلة" في الكونسول.
-    // [PERF-SPLIT-2026-07-28] وبعد التقسيم الأول (Core/Lazy) كان Lazy لوحدها
-    // لسه بتقرا 14 قسم بالتتابع (محاسبة + HR مع بعض) وفضلت تضرب المهلة مع
-    // نمو البيانات. الحل الجذري: Lazy اتقسمت هي كمان لدومينين (محاسبة/HR)
-    // كل واحد بنداء مستقل، وبننادي التلاتة (Core + Lazy-Acc + Lazy-HR)
-    // بالتوازي هنا بدل نداءين، فالزمن الكلي = أبطأ نداء من التلاتة (نص
-    // عدد الأقسام تقريبًا لكل نداء) مش مجموعهم — من غير أي تغيير في أي
-    // مكان تاني (كل الشاشات لسه بتنادي ensureExtendedData بنفس الشكل).
-    var _mergedExtData = {};
-    var _coreDone = false,
-      _lazyAccDone = false,
-      _lazyHrDone = false,
-      _lazyFinDone = false,
-      _hadExtError = false,
-      _extErrorResult = null;
+    // ✅ [REBUILD-ACC-HR-2026] الدالة دي كانت بتعمل 4 نداءات متوازية لأربع
+    // endpoints قديمة منفصلة (getAllDataExtendedCore + getAccountingExtendedLazy
+    // + getHRExtendedLazy + getFinanceSummaryLight)، كل واحدة بمهلتها
+    // الخاصة ومهلة أمان إضافية 35 ثانية فوقهم — تعقيد كبير وسبب متكرر
+    // لكروت المحاسبة/HR اللي بتفضل عالقة على "تحميل" (خصوصًا على /dev
+    // deployment الأبطأ، زي ما موثّق في تعليقات Code_12e_Dashboard_Reports.js).
+    // دلوقتي بقت بتستخدم نفس المحرك الحديث الموحّد اللي باقي الشاشات
+    // (الأصناف/المخزون/العملاء...) بتعتمد عليه بالفعل: DL.Core.getAllDataByLevel
+    // (Code_53_DataRegistryEngine.js) — نداء واحد بس بمستوى BACKGROUND،
+    // معاه كاش سيرفر جاهز ومفتاح صلاحيات مستقل لكل دور، ومهلة واحدة
+    // واضحة بدل تعقيد الأربعة نداءات المتوازية والـ safety timer المنفصل.
+    //
+    // البيانات الراجعة من الـ registry بمفاتيح مسبوقة (accCashBoxes،
+    // hrEmployees...) — بنعيد تسميتها هنا لنفس الأسماء المسطّحة اللي كل
+    // شاشات المحاسبة/HR القديمة (11_JS_Accounting.html، 12_JS_HR.html،
+    // 17_JS_ExecutiveDashboard.html...) لسه بتقرأها من APP.data مباشرة،
+    // فمفيش أي كود تاني محتاج يتغيّر غير المصدر هنا.
+    var LEVEL3_FIELD_MAP = {
+      accCashBoxes: "cashBoxes",
+      accBankAccounts: "bankAccounts",
+      accJournalEntries: "journalEntries",
+      accReceiptVouchers: "receiptVouchers",
+      accPaymentVouchers: "paymentVouchers",
+      accExpenses: "expenses",
+      accTransferVouchers: "transferVouchers",
+      accBankReconciliations: "bankReconciliations",
+      accCheques: "cheques",
+      accFixedAssets: "fixedAssets",
+      hrEmployees: "employees",
+      hrDepartments: "departments",
+      hrJobTitles: "jobTitles",
+      hrLeaveTypes: "leaveTypes",
+      hrLeaveRequests: "leaveRequests",
+      hrLoanRequests: "loanRequests",
+      hrPayrollPeriods: "payrollPeriods",
+      hrAttendance: "attendance",
+      accSettings: "accountingSettings",
+      hrSettingsBundle: "hrSettings",
+    };
 
-    // ✅ [FIX-2026-08-08] مهلة أمان: لو نداء واحد من الأربعة اتعلّق (تايم
-    // أوت شبكة، تجميد التاب في الخلفية، أو استثناء جوه onSuccess نفسه
-    // منع نداء الكولباك) كانت كل الشاشة المعتمدة على ensureExtendedData
-    // (كروت المحاسبة في الداشبورد التنفيذي وغيرها) بتفضل عالقة على حالة
-    // التحميل للأبد، لأن _checkAllDone بينتظر الأربعة مع بعض بدون أي حد
-    // أقصى للوقت. دلوقتي لو نداء اتأخر أكتر من 25 ثانية بنعتبره "فشل"
-    // ونكمل بالباقي بدل التعليق الدائم.
-    var _safetyTimer = setTimeout(function () {
-      var stuck = [];
-      if (!_coreDone) {
-        stuck.push("core");
-        _coreDone = true;
-      }
-      if (!_lazyAccDone) {
-        stuck.push("lazyAcc");
-        _lazyAccDone = true;
-      }
-      if (!_lazyHrDone) {
-        stuck.push("lazyHr");
-        _lazyHrDone = true;
-      }
-      if (!_lazyFinDone) {
-        stuck.push("lazyFin");
-        _lazyFinDone = true;
-      }
-      if (stuck.length) {
-        if (typeof console !== "undefined" && console.warn) {
-          console.warn(
-            "[ensureExtendedData] نداء(نداءات) اتعلّقت بدون رد:",
-            stuck,
-          );
-        }
-        _hadExtError = true;
-        _checkAllDone();
-      }
-    }, 35000); // [FIX-2026-08-08] لازم يفضل أكبر من أطول timeout فردي (30000) وإلا هيقفل قبل ما نداء الـ core ياخد فرصته كاملة
-
-    function _checkAllDone() {
-      if (!_coreDone || !_lazyAccDone || !_lazyHrDone || !_lazyFinDone) return;
-      clearTimeout(_safetyTimer);
-      APP.extLoading = false;
-
-      if (_hadExtError) {
+    DL.Core.getAllDataByLevel([3], {
+      label: "Auth.ensureExtendedData(level3)",
+      timeout: 30000,
+      onSuccess: function (result) {
+        APP.extLoading = false;
+        var raw = (result && result.data) || {};
+        var mapped = {};
+        Object.keys(LEVEL3_FIELD_MAP).forEach(function (rawKey) {
+          var flatKey = LEVEL3_FIELD_MAP[rawKey];
+          if (raw[rawKey] !== undefined) mapped[flatKey] = raw[rawKey];
+        });
+        _applyExtData(mapped);
+        _saveExtCache(mapped);
+        APP.extLoaded = true;
+        var cbs = _extCallbacks.slice();
+        _extCallbacks = [];
+        cbs.forEach(function (fn) {
+          fn();
+        });
+      },
+      onError: function (errResult) {
+        APP.extLoading = false;
         if (!_isRetry) {
-          // [FIX] أول فشل (كاش سيرفر تالف أو خطأ مؤقت) — حاول مرة واحدة إضافية
+          // أول فشل (تايم أوت مؤقت/كاش سيرفر تالف) — حاول مرة واحدة إضافية
           // بنسخة fresh قبل ما نسيب الشاشات فاضية للمستخدم
           _fetchExtendedDataFromServer(true);
           return;
         }
-        // ✅ [FIX-2026-08-08] حتى لو فشل نداء أو أكتر بعد إعادة المحاولة،
-        // نطبّق اللي نجح فعلاً بدل ما نسيب كل الكروت فاضية — أفضل من
-        // "لا شيء" خالص، والمستخدم لسه بيشوف رسالة الخطأ عشان يعرف إن
-        // في بيانات ناقصة ويقدر يضغط تحديث لاحقًا.
-        APP.extLoaded = Object.keys(_mergedExtData).length > 0;
-        if (APP.extLoaded) {
-          _applyExtData(_mergedExtData);
+        // حتى بعد إعادة المحاولة — لو فيه بيانات كاش قديمة محلية سليمة
+        // نستخدمها بدل ما نسيب الكروت فاضية تمامًا، ونعرض تنبيه بالخطأ
+        var cached = _loadExtCache();
+        if (cached) {
+          _applyExtData(cached);
+          APP.extLoaded = true;
         }
         showToast(
-          (_extErrorResult && _extErrorResult.message) ||
+          (errResult && errResult.message) ||
             I18N.t("AUTH_MSG_LOAD_EXTENDED_ERROR"),
           "error",
         );
@@ -19051,105 +19051,8 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
         cbsErr.forEach(function (fn) {
           fn();
         });
-        return;
-      }
-
-      _applyExtData(_mergedExtData);
-      _saveExtCache(_mergedExtData);
-      APP.extLoaded = true;
-      var cbs = _extCallbacks.slice();
-      _extCallbacks = [];
-      cbs.forEach(function (fn) {
-        fn();
-      });
-    }
-
-    DL.Core.getAllDataExtendedCore(
-      APP.currentUser ? APP.currentUser.username : null,
-      SESSION ? SESSION.token : null,
-      {
-        // [FIX-2026-08-08] كانت 20000 — بعد إضافة نداء getFinanceSummaryLight
-        // الرابع المتوازي بقى في ضغط أكبر على قراءة نفس الـ Spreadsheet في
-        // نفس اللحظة، فنداء core (الأهم لأنه مصدر cashBoxes) بقى بياخد وقت
-        // أطول من 20 ثانية أحيانًا ويتحسب "عالق" غلط. رفعناها لـ 30000 زي
-        // باقي التلاتة نداءات التانية بالظبط.
-        timeout: 30000,
-        onSuccess: function (result) {
-          Object.assign(_mergedExtData, result.data || {});
-          _coreDone = true;
-          _checkAllDone();
-        },
-        onError: function (result) {
-          _hadExtError = true;
-          _extErrorResult = _extErrorResult || result;
-          _coreDone = true;
-          _checkAllDone();
-        },
       },
-    );
-
-    DL.Core.getAccountingExtendedLazy(
-      APP.currentUser ? APP.currentUser.username : null,
-      SESSION ? SESSION.token : null,
-      {
-        timeout: 30000,
-        onSuccess: function (result) {
-          Object.assign(_mergedExtData, result.data || {});
-          _lazyAccDone = true;
-          _checkAllDone();
-        },
-        onError: function (result) {
-          _hadExtError = true;
-          _extErrorResult = _extErrorResult || result;
-          _lazyAccDone = true;
-          _checkAllDone();
-        },
-      },
-    );
-
-    DL.Core.getHRExtendedLazy(
-      APP.currentUser ? APP.currentUser.username : null,
-      SESSION ? SESSION.token : null,
-      {
-        timeout: 30000,
-        onSuccess: function (result) {
-          Object.assign(_mergedExtData, result.data || {});
-          _lazyHrDone = true;
-          _checkAllDone();
-        },
-        onError: function (result) {
-          _hadExtError = true;
-          _extErrorResult = _extErrorResult || result;
-          _lazyHrDone = true;
-          _checkAllDone();
-        },
-      },
-    );
-
-    // ✅ [PERF-FINANCE-LIGHT-2026-08-08] ملخّص خفيف لفواتير البيع/الشراء
-    // (بدون lines_json) بالتوازي مع التلاتة اللي فوق — عشان كروت
-    // "إيرادات/مبيعات اليوم" و"ذمم مدينة/دائنة" في الداشبورد التنفيذي
-    // تلاقي بيانات حقيقية بدل ما تفضل صفر دايماً (كانت معتمدة على
-    // saleInvoices/purchaseInvoices الكاملة اللي ON_DEMAND ومش بتتحمّل
-    // إلا لما المستخدم يفتح شاشة الفواتير نفسها).
-    DL.Core.getFinanceSummaryLight(
-      APP.currentUser ? APP.currentUser.username : null,
-      SESSION ? SESSION.token : null,
-      {
-        timeout: 20000,
-        onSuccess: function (result) {
-          Object.assign(_mergedExtData, result.data || {});
-          _lazyFinDone = true;
-          _checkAllDone();
-        },
-        onError: function (result) {
-          _hadExtError = true;
-          _extErrorResult = _extErrorResult || result;
-          _lazyFinDone = true;
-          _checkAllDone();
-        },
-      },
-    );
+    });
   }
 
   /**

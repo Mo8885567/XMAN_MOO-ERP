@@ -648,6 +648,27 @@ function _buildDataBundleFiltered(predicate, authCtx) {
         value = def.requiresAuth
           ? fn(authCtx.callerUser, authCtx.sessionToken)
           : fn();
+        // [FIX-BG-UNWRAP-2026-09] عدد كبير من الـ custom getters (كل
+        // _bgGet* الخاصة بحقول BACKGROUND: accCashBoxes/accExpenses/
+        // accPaymentVouchers/hrEmployees/... إلخ) بتنادي دوال الأعمال
+        // الأصلية (getExpenses/getCashBoxes/getEmployees/...) اللي بترجع
+        // شكل استجابة موحّد {success, data} أو errResponse {success:false,
+        // message} — مش array خام. من غير الفك ده، الحقل في APP.data كان
+        // بيبقى object الاستجابة نفسه بدل الـ array، فأي .filter/.forEach/
+        // .reduce عليه (زي xdComputeFinance في لوحة التحكم التنفيذية) كان
+        // بيطلع "X.filter is not a function" ويكسر رسم الشاشة بالكامل.
+        // الفحص هنا عام ومركزي (بدل تعديل كل _bgGet* لوحده) ومحصور بدقة:
+        // بيتفعّل بس لو القيمة كائن فيه success بالظبط (شكل استجابة موحّد)
+        // — مش array أصلاً، وده بيسيب _bgGetAccountingSettings/_bgGetHrSettings
+        // (بترجع كائنات ثابتة عادية من غير success) من غير أي تغيير.
+        if (
+          value &&
+          typeof value === "object" &&
+          !Array.isArray(value) &&
+          typeof value.success === "boolean"
+        ) {
+          value = value.success ? value.data !== undefined ? value.data : [] : [];
+        }
       } else if (def.sheet) {
         var headers = def.headersConst
           ? this[def.headersConst]

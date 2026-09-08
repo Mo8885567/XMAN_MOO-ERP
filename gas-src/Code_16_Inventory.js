@@ -677,14 +677,11 @@ function addWarehouse(wh) {
         });
       });
     }
-    // [VALIDATION-ENGINE-MIGRATION] موحّد عبر ValidationEngine.isDuplicate
-    // (نفس المنطق: تكرار الاسم أو الكود — بمقارنة غير حساسة لحالة الأحرف الآن،
-    // بما يتفق مع باقي المشروع مثل Code_20_Sales.js)
-    if (
-      ValidationEngine.isDuplicate(existing, "name", wh.name) ||
-      (wh.code && ValidationEngine.isDuplicate(existing, "code", wh.code))
-    )
-      return errResponse("هذا المخزن موجود بالفعل");
+    // [DUPLICATE-CHECK-REMOVED] كان فيه تحقق يمنع تكرار الاسم أو الكود بين
+    // المخازن (عبر ValidationEngine.isDuplicate) — اتلغى بناءً على طلب
+    // صريح، عشان يسمح بإضافة أكتر من مخزن بنفس النوع/الاسم من غير رفض.
+    // الكود التلقائي (AutoNumberService) لسه شغّال زي ما هو فوق، بس مبقاش
+    // فيه رفض لو الاسم أو الكود اتكرر.
 
     // [DATALAYER-ENGINE-MIGRATION] الكود القديم كان بيكتب مصفوفة بـ9 قيم فقط
     // بينما WAREHOUSE_HEADERS فيها 10 عمود (...notes, account_id, created_at) —

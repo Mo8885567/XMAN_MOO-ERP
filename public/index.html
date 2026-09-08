@@ -23282,7 +23282,10 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
       .slice(0, 10);
     // [PREFS-WIRING] gated by notif_financial
     if (_allowFinancial)
-      (d.cheques || []).forEach(function (c) {
+      // [CONSOLE-FIX] d.cheques ممكن توصل قيمة مش Array (مثلاً object خطأ)
+      // لو ensureExtendedData(level3) عدّى بالـ timeout قبل ما البيانات
+      // تتحمّل فعليًا — Array.isArray بيمنع "forEach is not a function"
+      (Array.isArray(d.cheques) ? d.cheques : []).forEach(function (c) {
         if (c.status !== "PENDING" || !c.due_date) return;
         var dueStr = String(c.due_date).slice(0, 10);
         if (dueStr > _soonStr0) return; // لسه بعيد عن الاستحقاق
@@ -23311,7 +23314,9 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
     // بفرق" في لوحة تحكم البنوك — إشعار مباشر لأي حساب بنكي محتاج مراجعة.
     // [PREFS-WIRING] gated by notif_financial
     if (_allowFinancial)
-      (d.bankReconciliations || []).forEach(function (r) {
+      // [CONSOLE-FIX] نفس دفاع cheques فوق — bankReconciliations كمان
+      // محمّلة كسول عبر ensureExtendedData(level3)
+      (Array.isArray(d.bankReconciliations) ? d.bankReconciliations : []).forEach(function (r) {
         if (r.status !== "COMPLETED") return;
         var diff = parseFloat(r.difference || 0);
         if (Math.abs(diff) < 0.01) return;

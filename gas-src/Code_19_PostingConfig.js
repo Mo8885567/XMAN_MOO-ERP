@@ -850,6 +850,10 @@ function getItemAccountingDefaults(callerUser, sessionToken) {
       ACCOUNTING_HR_HEADERS.ChartOfAccounts,
       { trimStrings: true },
     );
+    // [ACCOUNT-PARENT-INTEGRITY-2026-09-09] راجع _normalizeAccountsIsParent —
+    // بدونها حساب أب بعلم is_parent قديم غير محدَّث كان بيتحسب "افتراضي"
+    // صالح لبند الصنف ده رغم إنه ممنوع الاختيار من كل الـ selects التانية.
+    _normalizeAccountsIsParent(accounts);
     accounts = accounts.filter(function (a) {
       return _isUsablePostingAccount(a);
     });
@@ -906,6 +910,8 @@ function getPostingConfigKeys(callerUser, sessionToken) {
       ACCOUNTING_HR_HEADERS.ChartOfAccounts,
       { trimStrings: true },
     );
+    // [ACCOUNT-PARENT-INTEGRITY-2026-09-09] راجع _normalizeAccountsIsParent.
+    _normalizeAccountsIsParent(accounts);
     accounts = accounts.filter(function (a) {
       return _isUsablePostingAccount(a);
     });

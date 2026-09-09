@@ -320,7 +320,7 @@
       suppliers
         .map(function (s) {
           return (
-            '<option value="' + esc(s.name) + '">' + esc(s.name) + "</option>"
+            '<option value="' + esc(s.name) + '" data-code="' + esc(s.code || "") + '">' + esc(s.name) + "</option>"
           );
         })
         .join("");
@@ -336,7 +336,10 @@
       '<div class="iw-header-card">' +
       '<div class="iw-header-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
       '<div class="iw-field"><label class="form-label">المورد <span style="color:#ef4444">*</span></label>' +
-      '<select class="input" id="po-supplier">' +
+      // [SELECT-COLUMNS-2026-09-09] data-as-skip زي po-warehouse بالظبط —
+      // عشان initCustomSelects العامة متترقّيش السلكت ده الأول بعمود واحد
+      // بس، وتسيب الترقية الصح (مع codeField) لـ SplitSelect.init تحت.
+      '<select class="input" id="po-supplier" data-as-skip>' +
       supplierOpts +
       "</select></div>" +
       '<div class="iw-field"><label class="form-label">تاريخ الأمر</label>' +
@@ -419,6 +422,16 @@
         label: "المخزن",
         icon: "ti-building-warehouse",
         searchable: true,
+      });
+      // [SELECT-COLUMNS-2026-09-09] نفس إصلاح im-default-supplier
+      // (شاشة الأصناف) — المورد هنا كان بنفس المشكلة بالظبط.
+      SplitSelect.init("po-supplier", {
+        label: "المورد",
+        icon: "ti-truck-delivery",
+        searchable: true,
+        codeField: "code",
+        codeLabel: "الكود",
+        prefsKey: "po-supplier",
       });
     }
     try {

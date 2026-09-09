@@ -4058,7 +4058,7 @@
       '<div><label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">' +
       I18N.t("ACC_BANK_ACCOUNT") +
       "</label>" +
-      '<select id="bs_account" style="padding:8px;border:1px solid var(--border);border-radius:8px;font-family:inherit;min-width:220px"><option value="">' +
+      '<select id="bs_account" data-as-skip style="padding:8px;border:1px solid var(--border);border-radius:8px;font-family:inherit;min-width:220px"><option value="">' +
       I18N.t("MSG_LOADING_ELLIPSIS") +
       "</option></select></div>" +
       '<div><label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">' +
@@ -4100,6 +4100,8 @@
               return (
                 '<option value="' +
                 a.id +
+                '" data-code="' +
+                (a.code || "") +
                 '">' +
                 (a.name || a.code) +
                 "</option>"
@@ -4107,6 +4109,18 @@
             })
             .join("");
           _loadBankStatement();
+          // [SELECT-COLUMNS-2026-09-09] بحث + عمود كود، زي أي دروب داون
+          // حسابات تاني بالنظام.
+          if (window.SplitSelect) {
+            SplitSelect.init("bs_account", {
+              label: I18N.t("ACC_BANK_ACCOUNT"),
+              icon: "ti-building-bank",
+              searchable: true,
+              codeField: "code",
+              codeLabel: "الكود",
+              prefsKey: "bs_account",
+            });
+          }
         },
         onError: function (err) {
           var sel = document.getElementById("bs_account");

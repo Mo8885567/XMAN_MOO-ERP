@@ -718,7 +718,7 @@
       '<option value="">-- اختر مورد --</option>' +
       suppliers
         .map(function (s) {
-          return '<option value="' + esc(s.name) + '">' + esc(s.name) + "</option>";
+          return '<option value="' + esc(s.name) + '" data-code="' + esc(s.code || "") + '">' + esc(s.name) + "</option>";
         })
         .join("");
 
@@ -757,7 +757,7 @@
       "pr-convert-modal",
       "تحويل الطلب " + id + " لأمر شراء",
       '<div style="margin-bottom:14px"><label class="form-label">المورد <span style="color:#ef4444">*</span></label>' +
-        '<select class="input" id="pr-conv-supplier">' +
+        '<select class="input" id="pr-conv-supplier" data-as-skip>' +
         supplierOpts +
         "</select></div>" +
         '<div class="table-wrap"><table><thead><tr><th>الصنف</th>' +
@@ -776,6 +776,19 @@
       560,
     );
     document.body.appendChild(modal);
+    // [SELECT-COLUMNS-2026-09-09] نفس إصلاح im-default-supplier/po-supplier
+    // — data-as-skip فوق + ترقية صريحة هنا بعد إضافة المودال للـ DOM
+    // فعليًا (زي pr-warehouse تحت بالظبط).
+    if (window.SplitSelect) {
+      SplitSelect.init("pr-conv-supplier", {
+        label: "المورد",
+        icon: "ti-truck-delivery",
+        searchable: true,
+        codeField: "code",
+        codeLabel: "الكود",
+        prefsKey: "pr-conv-supplier",
+      });
+    }
   }
 
   function convertPurchaseRequestSubmit(id) {

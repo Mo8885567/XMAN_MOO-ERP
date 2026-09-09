@@ -2416,13 +2416,15 @@
         return (
           '<option value="' +
           esc(a.id) +
+          '" data-code="' +
+          esc(a.code || "") +
           '"' +
           (String(a.id) === String(acc && acc.account_id ? acc.account_id : "")
             ? " selected"
             : "") +
           (isParent ? " disabled" : "") +
           ">" +
-          esc(indent + (a.code ? "[" + a.code + "] " : "") + a.name) +
+          esc(indent + a.name) +
           "</option>"
         );
       })
@@ -2518,8 +2520,7 @@
         '<label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px">' +
         '<i class="ti ti-book-2" style="font-size:11px;margin-left:4px"></i>' +
         'الحساب المرتبط في دليل الحسابات <span style="color:var(--danger)">*</span></label>' +
-        '<input class="input" id="bank-acc-search" placeholder=" ابحث في الحسابات..." style="height:32px;border-radius:8px;font-size:12px;margin-bottom:4px">' +
-        '<select class="input" id="bank-account-id" style="height:40px;border-radius:10px;font-size:13px;direction:rtl">' +
+        '<select class="input" id="bank-account-id" data-as-skip style="height:40px;border-radius:10px;font-size:13px;direction:rtl">' +
         '<option value="">— اختر حساب البنك في دليل الحسابات —</option>' +
         accOpts +
         "</select>" +
@@ -2561,6 +2562,21 @@
         if (kindEl) {
           kindEl.addEventListener("change", _syncKindUI);
           _syncKindUI();
+        }
+        // [SELECT-COLUMNS-2026-09-09] الحساب المرتبط في دليل الحسابات:
+        // كان select طويل جدًا (كل الشجرة) بصندوق بحث يدوي منفصل
+        // (bank-acc-search) بيبني الخيارات من تاني بـ JS خام. استبدلناه
+        // بـ AppSelect نفسه (بحث مدمج + عمود كود) بدل ما يبقى نظام موازٍ،
+        // فشلنا صندوق البحث القديم بالكامل.
+        if (window.SplitSelect) {
+          SplitSelect.init("bank-account-id", {
+            label: "الحساب",
+            icon: "ti-book-2",
+            searchable: true,
+            codeField: "code",
+            codeLabel: "الكود",
+            prefsKey: "bank-account-id",
+          });
         }
         var searchEl = document.getElementById("bank-acc-search");
         var selectEl = document.getElementById("bank-account-id");
@@ -2800,12 +2816,16 @@
         return (
           '<option value="' +
           esc(a.id) +
+          '" data-code="' +
+          esc(a.code || "") +
+          '" data-bankname="' +
+          esc(a.bank_name || "") +
           '"' +
           (book && String(book.bank_account_id) === String(a.id)
             ? " selected"
             : "") +
           ">" +
-          esc(a.name + (a.bank_name ? " — " + a.bank_name : "")) +
+          esc(a.name) +
           "</option>"
         );
       })
@@ -2817,7 +2837,7 @@
       body:
         '<div class="modal-body"><div class="form-grid">' +
         '<div class="field full"><label>الحساب البنكي <span style="color:var(--danger)">*</span></label>' +
-        '<select class="input" id="chb-bank-account"' +
+        '<select class="input" id="chb-bank-account" data-as-skip' +
         (book ? " disabled" : "") +
         ">" +
         '<option value="">— اختر الحساب البنكي —</option>' +
@@ -2883,6 +2903,23 @@
           : "") +
         "</div></div>",
       onReady: function () {
+        // [SELECT-COLUMNS-2026-09-09] الحساب البنكي: عمود كود + عمود اسم
+        // البنك (كان مدموج في النص كنص واحد "الاسم — البنك").
+        // بيتقفل تلقائيًا (readOnly) لو في تعديل ودفتر مربوط بحساب
+        // بالفعل، زي الـ disabled الأصلي بالظبط.
+        if (window.SplitSelect) {
+          var chbInst = SplitSelect.init("chb-bank-account", {
+            label: "الحساب البنكي",
+            icon: "ti-building-bank",
+            searchable: true,
+            codeField: "code",
+            codeLabel: "الكود",
+            badgeField: "bankname",
+            badgeLabel: "البنك",
+            prefsKey: "chb-bank-account",
+          });
+          if (book && chbInst && chbInst.setReadOnly) chbInst.setReadOnly(true);
+        }
         document
           .getElementById("save-chb-btn")
           .addEventListener("click", function () {
@@ -7196,12 +7233,29 @@
               return (
                 "<option value='" +
                 esc(a.id) +
+                "' data-code='" +
+                esc(a.code || "") +
                 "'>" +
-                esc(a.name + " (" + a.code + ")") +
+                esc(a.name) +
                 "</option>"
               );
             })
             .join("");
+        // [SELECT-COLUMNS-2026-09-09] الأستاذ العام: قائمة حسابات ممكن
+        // تبقى طويلة جدًا (كل شجرة الحسابات) وكانت بتعرض "الاسم (الكود)"
+        // كنص واحد مدمج بدون بحث ولا تخصيص أعمدة. بقى دلوقتي زي أي
+        // دروب داون كيانات تاني بالنظام: بحث + عمود كود منفصل قابل
+        // للإخفاء/الترتيب.
+        if (window.SplitSelect) {
+          SplitSelect.init("gl-account-select", {
+            label: "الحساب",
+            icon: "ti-book",
+            searchable: true,
+            codeField: "code",
+            codeLabel: "الكود",
+            prefsKey: "gl-account-select",
+          });
+        }
       }
 
       if (btn) {
@@ -8378,12 +8432,25 @@
               return (
                 "<option value='" +
                 esc(a.id) +
+                "' data-code='" +
+                esc(a.code || "") +
                 "'>" +
-                esc(a.name + " (" + a.code + ")") +
+                esc(a.name) +
                 "</option>"
               );
             })
             .join("");
+        // [SELECT-COLUMNS-2026-09-09] نفس إصلاح gl-account-select فوق.
+        if (window.SplitSelect) {
+          SplitSelect.init("stmt-account-select", {
+            label: "الحساب",
+            icon: "ti-file-search",
+            searchable: true,
+            codeField: "code",
+            codeLabel: "الكود",
+            prefsKey: "stmt-account-select",
+          });
+        }
       }
 
       if (btn)

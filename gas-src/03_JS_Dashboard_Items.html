@@ -4758,6 +4758,8 @@ var qrcode = function() {
         return (
           '<option value="' +
           esc(s.name) +
+          '" data-code="' +
+          esc(s.code || "") +
           '"' +
           (isEdit && item.default_supplier === s.name ? " selected" : "") +
           ">" +
@@ -4769,7 +4771,12 @@ var qrcode = function() {
     return (
       '<div class="im-tab-panel" data-im-panel="purchasing">' +
       '<div class="form-grid">' +
-      '<div class="field"><label>المورد الافتراضي</label><select class="input" id="im-default-supplier" data-supplier-current="' +
+      // [SELECT-COLUMNS-2026-09-09] data-as-skip هنا لنفس سبب i-group/
+      // i-unit أعلاه: initCustomSelects() (اللي بتتنفذ تلقائيًا قبل
+      // onReady) بترقّي أي select من غير data-as-init بترقية عامة من
+      // غير أعمدة/أيقونة مخصّصة، وبتحط data-as-init فتمنع SplitSelect.init
+      // بتاع الشاشة (تحت) من تطبيق codeField/icon الصح لاحقًا.
+      '<div class="field"><label>المورد الافتراضي</label><select class="input" id="im-default-supplier" data-as-skip data-supplier-current="' +
       (isEdit ? esc(item.default_supplier || "") : "") +
       '"><option value="">' +
       (haveSuppliers ? "— اختر مورد —" : "— جاري تحميل الموردين... —") +
@@ -6779,6 +6786,8 @@ var qrcode = function() {
                   opts.push(
                     '<option value="' +
                       esc(s.name) +
+                      '" data-code="' +
+                      esc(s.code || "") +
                       '"' +
                       (current === s.name ? " selected" : "") +
                       ">" +
@@ -6926,6 +6935,25 @@ var qrcode = function() {
           // نفسه جنب السهم المنسد (addAction) — مبقاش زرار خارجي منفصل
           // زي القديم (i-group-add-btn). المنطق اللي كان في الزرار
           // القديم نقلناه هنا بالحرف نفسه.
+          // [SELECT-COLUMNS-2026-09-09] تاب "المشتريات" — المورد الافتراضي:
+          // كان لسه select عادي مترقّي ترقية عامة بعمود واحد بس (initCustomSelects)
+          // من غير عمود الكود، فمكانش زرار الترس ⚙ بيظهر أصلاً حتى لو
+          // المستخدم عايز يشوف كود المورد جنب اسمه. دلوقتي زي i-group/
+          // i-unit بالظبط: data-code على كل <option> (فوق في
+          // _imPurchasingPanelHtml + _imInitPurchasingPanel) + codeField
+          // هنا، فيبقى عنده عمودين (الاسم + الكود) وزرار التخصيص يظهر
+          // تلقائيًا زي أي دروب داون تاني بالنظام.
+          if (document.getElementById("im-default-supplier")) {
+            SplitSelect.init("im-default-supplier", {
+              label: "المورد الافتراضي",
+              icon: "ti-truck-delivery",
+              searchable: true,
+              codeField: "code",
+              codeLabel: "الكود",
+              prefsKey: "im-default-supplier",
+            });
+          }
+
           SplitSelect.init("i-group", {
             label: "المجموعة",
             icon: "ti-folder",

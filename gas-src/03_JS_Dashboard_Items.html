@@ -4649,7 +4649,12 @@ var qrcode = function() {
         '<div style="flex:2;min-width:180px"><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:3px"> صورة هذا اللون (اختياري)</label>' +
         '<div style="display:flex;align-items:center;gap:6px">' +
         '<input class="input" id="i-color-img" type="url" placeholder="https://... رابط صورة اللون" style="flex:1" ' +
-        "oninput=\"(function(){var v=this.value.trim();var p=document.getElementById('i-color-img-preview');var errEl=document.getElementById('i-color-img-err');if(errEl)errEl.style.display='none';if(!p)return;if(v){p.src=v;p.style.display='inline-block';}else{p.src='';p.style.display='none';}}).call(this)\">" +
+        // [FIX-COLOR-IMG-DRIVE-LINK] كان بيحط اللينك زي ما هو في src — روابط
+        // Google Drive بصيغة معاينة (/file/d/.../view) بترفض تتحمّل جوه
+        // <img> (hotlink/CORS) حتى لو شغالة عادي لما تُفتح مباشرة في تاب.
+        // بنمررها على _fixDriveUrl (معرّفة Global في Core_Utilities.html)
+        // اللي بتحوّلها لصيغة thumbnail?id=... القابلة للعرض فعليًا.
+        "oninput=\"(function(){var v=this.value.trim();var p=document.getElementById('i-color-img-preview');var errEl=document.getElementById('i-color-img-err');if(errEl)errEl.style.display='none';if(!p)return;if(v){p.src=(typeof _fixDriveUrl==='function'?_fixDriveUrl(v):v);p.style.display='inline-block';}else{p.src='';p.style.display='none';}}).call(this)\">" +
         '<img id="i-color-img-preview" src="" alt="" style="display:none;width:36px;height:36px;object-fit:cover;border-radius:6px;border:1.5px solid var(--border);flex-shrink:0" ' +
         // [FIX-COLOR-IMG-PREVIEW-SILENT-FAIL] قبل كده onerror كان بيخبّي
         // المربع بصمت تام لو اللينك مش رابط صورة مباشر (زي رابط صفحة
@@ -7284,7 +7289,15 @@ var qrcode = function() {
             : "";
 
           // صورة اللون (thumbnail صغير)
+          // [FIX-COLOR-IMG-DRIVE-LINK] نفس إصلاح الـ preview أعلاه، لكن هنا
+          // بيتطبّق على القيمة اللي فعليًا هتتخزن في data-color-image
+          // (ومنها في colors_json عند الحفظ) — عشان لو المستخدم لصق رابط
+          // Google Drive بصيغة /view، اللي يتحفظ فعليًا يبقى صيغة thumbnail
+          // الشغالة، مش الرابط الأصلي اللي هيفضل يفشل في كل مكان بيتعرض فيه.
           var imgVal = imageOverride || "";
+          if (imgVal && typeof _fixDriveUrl === "function") {
+            imgVal = _fixDriveUrl(imgVal);
+          }
           var imgThumb = imgVal
             ? '<img src="' +
               esc(imgVal) +

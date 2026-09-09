@@ -84,10 +84,44 @@ function addCashBox(data) {
     // [CB-03 FIX] إنشاء حساب GL إلزامي — لا تُنشأ الخزينة بدون حساب محاسبي
     var accountId = "";
     try {
+      var _coaForCode = readSheet(
+        "ChartOfAccounts",
+        ACCOUNTING_HR_HEADERS.ChartOfAccounts,
+      );
+      // [ACC-CASHBOX-CODE-FIX-2026-09-09] كان الكود بيتحسب بتسلسل تحكيمي
+      // ("11" + رقم الخزينة) من غير أي parent_id — بيطلع كود شكله شجري
+      // بس مش مربوط فعليًا بأي أب في الشجرة (زي "111" اللي بيتعارض بصريًا
+      // مع "الأصول الثابتة" ومش تحت "الأصول المتداولة" فعليًا). دلوقتي
+      // بندوّر على نفس الأب اللي حسابات الصندوق/البنك التانية تبعه (زي
+      // 1101/1102) ونولّد كود فرعي صحيح بنفس عيلتهم + نربط parent_id
+      // فعليًا عشان الحساب يظهر في مكانه الصحيح بالظبط في شجرة الحسابات.
+      var _cashParent = null;
+      var _cashSibling = _coaForCode.find(function (a) {
+        return (
+          !a.deleted_at &&
+          a.type === "ASSET" &&
+          a.parent_id &&
+          (String(a.name || "").indexOf("صندوق") !== -1 ||
+            String(a.name || "").indexOf("النقدية") !== -1 ||
+            String(a.name || "").indexOf("البنك") !== -1 ||
+            String(a.name || "").indexOf("خزنة") !== -1 ||
+            String(a.name || "").indexOf("خزينة") !== -1)
+        );
+      });
+      if (_cashSibling) {
+        _cashParent = _coaForCode.find(function (a) {
+          return a.id === _cashSibling.parent_id && !a.deleted_at;
+        });
+      }
+      var _genCode = _cashParent
+        ? _getNextChildAccountCode(_cashParent, _coaForCode)
+        : "11" + data.code; // fallback لو مفيش أي حساب نقدية/بنك موجود أصلاً نتعرف عليه
+
       var accResult = addChartAccount({
-        code: "11" + data.code,
+        code: _genCode,
         name: "خزنة — " + data.name,
         type: "ASSET",
+        parent_id: _cashParent ? _cashParent.id : undefined,
         currency: data.currency || "EGP",
         branch: data.branch || "",
         callerUser: data.callerUser,
@@ -102,7 +136,7 @@ function addCashBox(data) {
           ACCOUNTING_HR_HEADERS.ChartOfAccounts,
         );
         var existingAcc = existingAccs.find(function (a) {
-          return String(a.code) === String("11" + data.code) && !a.deleted_at;
+          return String(a.code) === String(_genCode) && !a.deleted_at;
         });
         if (existingAcc) {
           accountId = existingAcc.id;
@@ -555,5 +589,93 @@ function _seedDefaultCashBoxIfEmpty() {
   } catch (e) {
     Logger.log("[_seedDefaultCashBoxIfEmpty] خطأ: " + e.message);
     return " خطأ في إنشاء الخزينة الافتراضية: " + e.message;
+  }
+}
+
+/**
+ * [ACC-CASHBOX-CODE-FIX-2026-09-09] repairCashBoxAccountHierarchy — إصلاح
+ * لمرة واحدة (Idempotent) لحسابات الخزائن اللي اتنشأت قبل هذا التحديث
+ * بالمنطق القديم (كود "11"+رقم تحكيمي بدون parent_id، زي "111" لخزينة
+ * "الخزينة الرئيسية" اللي ظهرت تحت "الأصول الثابتة" غلط في شجرة الحسابات).
+ * بيدوّر على كل حسابات الخزائن (من شيت CashBoxes) اللي حسابها المحاسبي
+ * (account_id) لسه من غير parent_id، ويعيد ربطها بنفس أب حسابات
+ * الصندوق/البنك الحقيقي + يولّد لها كود شجري صحيح بنفس عيلتهم
+ * (_getNextChildAccountCode) — بدون ما يغيّر id الحساب نفسه، فكل القيود
+ * المحاسبية المرتبطة بيه فعليًا (JournalEntryLines) تفضل سليمة زي ما هي.
+ * بيتخطى أي حساب عنده parent_id فعلاً (يعني اتصلح قبل كده أو اتنشأ
+ * بالمنطق الجديد أصلاً) — تشغيله أكتر من مرة آمن 100%.
+ */
+function repairCashBoxAccountHierarchy(callerUser, sessionToken) {
+  try {
+    var permErr = _checkPermission(
+      callerUser,
+      "manageChartOfAccounts",
+      sessionToken,
+    );
+    if (permErr) return permErr;
+
+    var coa = readSheet("ChartOfAccounts", ACCOUNTING_HR_HEADERS.ChartOfAccounts, {
+      trimStrings: true,
+    });
+    var cashBoxes = readSheet("CashBoxes", ACCOUNTING_HR_HEADERS.CashBoxes, {
+      trimStrings: true,
+    });
+
+    var cashParent = null;
+    var cashSibling = coa.find(function (a) {
+      return (
+        !a.deleted_at &&
+        a.type === "ASSET" &&
+        a.parent_id &&
+        (String(a.name || "").indexOf("صندوق") !== -1 ||
+          String(a.name || "").indexOf("النقدية") !== -1 ||
+          String(a.name || "").indexOf("البنك") !== -1)
+      );
+    });
+    if (cashSibling) {
+      cashParent = coa.find(function (a) {
+        return a.id === cashSibling.parent_id && !a.deleted_at;
+      });
+    }
+    if (!cashParent) {
+      return errResponse(
+        "تعذّر تحديد حساب أب النقدية/البنوك (مفيش حساب صندوق/بنك مربوط أب حاليًا) — الإصلاح يحتاج مراجعة يدوية",
+      );
+    }
+
+    var sheet = getSheet("ChartOfAccounts", ACCOUNTING_HR_HEADERS.ChartOfAccounts);
+    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    var codeCol = headers.indexOf("code") + 1;
+    var parentIdCol = headers.indexOf("parent_id") + 1;
+    var levelCol = headers.indexOf("level") + 1;
+    var parentLevel = Number(cashParent.level || 1);
+
+    var fixed = [];
+    cashBoxes.forEach(function (cb) {
+      if (!cb.account_id || cb.is_active === "FALSE") return;
+      var acc = coa.find(function (a) {
+        return a.id === cb.account_id && !a.deleted_at;
+      });
+      if (!acc || acc.parent_id) return; // متصلحة أصلاً أو مالهاش حساب
+      var oldCode = acc.code;
+      var newCode = _getNextChildAccountCode(cashParent, coa);
+      var rowIdx = coa.indexOf(acc) + 2;
+      sheet.getRange(rowIdx, codeCol).setValue(newCode);
+      sheet.getRange(rowIdx, parentIdCol).setValue(cashParent.id);
+      if (levelCol > 0) sheet.getRange(rowIdx, levelCol).setValue(parentLevel + 1);
+      // تحديث نسخة الذاكرة كمان عشان الخزائن التالية في نفس الحلقة تاخد
+      // كود مختلف ومتحسبش نفس اللاحقة مرتين.
+      acc.code = newCode;
+      acc.parent_id = cashParent.id;
+      fixed.push({ cashbox: cb.name, account_id: acc.id, old_code: oldCode, new_code: newCode });
+    });
+
+    _invalidateExtCache();
+    return okResponse(
+      fixed.length ? "تم إصلاح " + fixed.length + " حساب خزينة" : "لا يوجد أي حساب خزينة محتاج إصلاح",
+      { fixed: fixed },
+    );
+  } catch (e) {
+    return errResponse("خطأ في إصلاح حسابات الخزائن: " + e.message);
   }
 }

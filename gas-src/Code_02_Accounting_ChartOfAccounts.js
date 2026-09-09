@@ -2491,6 +2491,46 @@ function _accountHasTransactions(accountId) {
     return l.account_id === accountId;
   });
 }
+/**
+ * [ACC-CASHBOX-CODE-FIX-2026-09-09] _getNextChildAccountCode — بيرجع أول كود
+ * فرعي فاضي وصحيح شجريًا تحت حساب أب معين، بنفس طول كود إخوته الحاليين
+ * (زي 1101, 1102, 1103 → التالي 1104)، بدل أكواد مقطوعة تحكيمية زي
+ * "11" + رقم تسلسلي. لو مفيش إخوة بعد، بيستخدم لاحقة من رقمين افتراضيًا
+ * (parentCode + "01").
+ */
+function _getNextChildAccountCode(parentAccount, existingAccounts) {
+  var parentCode = String(parentAccount.code);
+  var siblings = (existingAccounts || []).filter(function (a) {
+    return String(a.parent_id) === String(parentAccount.id) && !a.deleted_at;
+  });
+  var maxSuffix = 0;
+  var suffixDigits = 2;
+  siblings.forEach(function (a) {
+    var c = String(a.code);
+    if (c.indexOf(parentCode) === 0 && c.length > parentCode.length) {
+      var suffixStr = c.slice(parentCode.length);
+      var suffixNum = parseInt(suffixStr, 10);
+      if (!isNaN(suffixNum)) {
+        suffixDigits = suffixStr.length;
+        if (suffixNum > maxSuffix) maxSuffix = suffixNum;
+      }
+    }
+  });
+  var existingCodes = {};
+  (existingAccounts || []).forEach(function (a) {
+    if (!a.deleted_at) existingCodes[String(a.code)] = true;
+  });
+  var nextSuffix = maxSuffix + 1;
+  var candidate;
+  do {
+    var suffixStr = String(nextSuffix);
+    while (suffixStr.length < suffixDigits) suffixStr = "0" + suffixStr;
+    candidate = parentCode + suffixStr;
+    nextSuffix++;
+  } while (existingCodes[candidate]);
+  return candidate;
+}
+
 function addChartAccount(data) {
   _invalidateExtCache(); // [DATA-UNIFY] إسقاط كاش الحزمة الموسعة فوراً بعد أي تعديل
   try {

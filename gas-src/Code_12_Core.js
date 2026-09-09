@@ -797,6 +797,7 @@ var DOPOST_ALLOWED_FUNCTIONS = [
   "reopenBankReconciliation",
   "deleteBankReconciliation",
   "getBankAccountStatement",
+  "repairCashBoxAccountHierarchy", // Code_01_Accounting_CashBoxes.js — إصلاح حسابات الخزائن المولّدة بكود قديم بدون parent_id (راجع ACC-CASHBOX-CODE-FIX-2026-09-09)
 ];
 
 // [SEC-FIX-4] Functions allowed to be called via doPost without a prior valid session —

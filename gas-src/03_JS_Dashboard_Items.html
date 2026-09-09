@@ -5724,18 +5724,17 @@ var qrcode = function() {
       _initialWhIds,
     );
 
-    // بناء قائمة المجموعات (مفلترة حسب المخزن المختار أو كلها)
+    // [GROUPS-GLOBAL-2026-09-09] المجموعات بقت عامة على مستوى النظام
+    // كله، مش مرتبطة بمخزن معيّن (طلب المستخدم) — فمبقاش في داعي لفلترة
+    // القائمة حسب المخزن المختار؛ كل المجموعات بتظهر دايمًا. سيبنا
+    // الباراميتر whId في التوقيع عشان أي نداء قديم لسه بيمرره يفضل شغال
+    // من غير أي تعديل تاني في أماكن النداء.
     // [GROUP-HIERARCHY P6] بستخدم الدالة العامة hierGroupOptionsHtml لعرض
     // هرمي موحّد في كل شاشات اختيار المجموعة.
     function buildGroupOptions(whId) {
-      var filtered = whId
-        ? allGroups.filter(function (g) {
-            return g.warehouse_id === whId;
-          })
-        : allGroups;
-      if (!filtered.length)
-        return '<option value="">— لا توجد مجموعات لهذا المخزن —</option>';
-      return hierGroupOptionsHtml(filtered, {
+      if (!allGroups.length)
+        return '<option value="">— لا توجد مجموعات —</option>';
+      return hierGroupOptionsHtml(allGroups, {
         selectedId: isEdit ? item.group : "",
         withCols: true,
         includeEmpty: false,
@@ -6897,43 +6896,10 @@ var qrcode = function() {
             _imSyncWarehouseDisplay(whId);
           });
 
-        // ── اختيار المخزن تلقائياً عند تغيير المجموعة ───────────
-        document
-          .getElementById("i-group")
-          .addEventListener("change", function () {
-            var groupVal = this.value;
-            if (!groupVal) return;
-            var grp = allGroups.find(function (g) {
-              return (
-                (g.id || g.prefix) === groupVal ||
-                g.id === groupVal ||
-                g.prefix === groupVal
-              );
-            });
-            if (!grp || !grp.warehouse_id) return;
-            var whSel = document.getElementById("i-warehouse");
-            if (!whSel) return;
-            // اختار المخزن المناسب
-            whSel.value = grp.warehouse_id;
-            // لو القيمة ما اتغيرتش (warehouse_id مش موجود في الـ select) → جرب عبر اسم المخزن
-            if (!whSel.value || whSel.value !== grp.warehouse_id) {
-              var wh = (APP.data.warehouses || []).find(function (w) {
-                return w.id === grp.warehouse_id || w.name === grp.warehouse_id;
-              });
-              if (wh) whSel.value = wh.id;
-            }
-            // تحديث قائمة المجموعات بدون إعادة اختيار (عشان نحافظ على الاختيار الحالي)
-            var currentGroupVal = this.value;
-            document.getElementById("i-group").innerHTML = buildGroupOptions(
-              whSel.value,
-            );
-            document.getElementById("i-group").value = currentGroupVal;
-            if (window.SplitSelect) {
-              SplitSelect.refresh("i-warehouse");
-              SplitSelect.refresh("i-group");
-            }
-            _imSyncWarehouseDisplay(whSel.value);
-          });
+        // [GROUPS-GLOBAL-2026-09-09] المجموعات بقت عامة على مستوى النظام
+        // كله مش مرتبطة بمخزن معيّن، فشلنا كاسكيد "اختيار المخزن تلقائيًا
+        // عند تغيير المجموعة" اللي كان بيعتمد على grp.warehouse_id —
+        // مبقاش له معنى دلوقتي.
 
         if (window.SplitSelect) {
           // [ITEM-WAREHOUSE-MULTI-2026-08-02] i-warehouse بقى مخفي (مزامَن
@@ -8974,21 +8940,8 @@ var qrcode = function() {
 
     closeQuickAddGroupOverlay();
 
-    var warehouseOptions = (APP.data.warehouses || [])
-      .map(function (wh) {
-        return (
-          '<option value="' +
-          esc(wh.id) +
-          '"' +
-          (wh.id === opts.warehouseId ? " selected" : "") +
-          ">" +
-          esc(wh.name) +
-          (wh.code ? " (" + esc(wh.code) + ")" : "") +
-          "</option>"
-        );
-      })
-      .join("");
-
+    // [GROUPS-GLOBAL-2026-09-09] المجموعات بقت عامة على مستوى النظام
+    // كله مش مرتبطة بمخزن معيّن — شلنا حقل "المخزن *" من هنا كمان.
     var backdrop = document.createElement("div");
     backdrop.id = "qag-backdrop";
     backdrop.style.cssText =
@@ -9023,13 +8976,6 @@ var qrcode = function() {
       "<label>رمز المجموعة (Prefix) *</label>" +
       '<input class="input" id="qag-prefix" placeholder="مثال: AC" ' +
       'style="text-transform:uppercase;font-family:monospace;font-weight:700;letter-spacing:2px">' +
-      "</div>" +
-      '<div class="field">' +
-      "<label>المخزن *</label>" +
-      '<select class="input" id="qag-warehouse">' +
-      '<option value="">— اختر المخزن —</option>' +
-      warehouseOptions +
-      "</select>" +
       "</div>" +
       "</div></div></div>" +
       '<div class="sd-footer">' +
@@ -9072,7 +9018,6 @@ var qrcode = function() {
         var data = {
           name: (document.getElementById("qag-name").value || "").trim(),
           prefix: (document.getElementById("qag-prefix").value || "").trim(),
-          warehouse_id: document.getElementById("qag-warehouse").value,
           notes: "",
           parent_id: "",
           user: APP.currentUser ? APP.currentUser.username : "SYSTEM",
@@ -9081,8 +9026,6 @@ var qrcode = function() {
         if (!data.name) return NotificationEngine.error("اسم المجموعة مطلوب");
         if (!data.prefix)
           return NotificationEngine.error("رمز المجموعة (Prefix) مطلوب");
-        if (!data.warehouse_id)
-          return NotificationEngine.error("يجب اختيار المخزن");
 
         btnEl.disabled = true;
         _gsr("addGroup", [data], {
@@ -9501,15 +9444,9 @@ var qrcode = function() {
       };
     }
 
-    var warehouseOptions = APP.data.warehouses
-      .map(
-        (wh) => `
-            <option value="${esc(wh.id)}" ${isEdit && wh.id === group.warehouse_id ? "selected" : ""}>
-              ${esc(wh.name)} (${esc(wh.code || wh.id)})
-            </option>
-          `,
-      )
-      .join("");
+    // [GROUPS-GLOBAL-2026-09-09] المجموعات بقت عامة على مستوى النظام كله
+    // مش مرتبطة بمخزن معيّن (طلب المستخدم) — شلنا حقل "المخزن *" من
+    // الفورم بالكامل، فمبقاش محتاجين نبني warehouseOptions هنا.
 
     openStyledDrawer({
       title: isEdit ? "تعديل مجموعة" : "مجموعة جديدة",
@@ -9536,14 +9473,6 @@ var qrcode = function() {
                 </div>
                 <input type="hidden" id="group-parent-id" value="${esc(selectedParent.id)}">
                 <small style="color:var(--text3)">اتركها فاضية لتكون المجموعة رئيسية (Root Group)</small>
-              </div>
-
-              <div class="field full">
-                <label>المخزن <span style="color:#ef4444">*</span></label>
-                <select class="input" id="group-warehouse">
-                  <option value="">— اختر المخزن —</option>
-                  ${warehouseOptions}
-                </select>
               </div>
 
               <div class="field">
@@ -9610,7 +9539,6 @@ var qrcode = function() {
               id: isEdit ? group.id : null,
               name: document.getElementById("group-name").value.trim(),
               prefix: document.getElementById("group-prefix").value.trim(),
-              warehouse_id: document.getElementById("group-warehouse").value,
               notes: document.getElementById("group-notes").value.trim(),
               parent_id: document
                 .getElementById("group-parent-id")
@@ -9626,10 +9554,6 @@ var qrcode = function() {
             if (!data.prefix) {
               btnEl.disabled = false;
               return NotificationEngine.error("رمز المجموعة (Prefix) مطلوب");
-            }
-            if (!data.warehouse_id) {
-              btnEl.disabled = false;
-              return NotificationEngine.error("يجب اختيار المخزن");
             }
             if (isEdit && data.parent_id === group.id) {
               btnEl.disabled = false;
@@ -9710,11 +9634,9 @@ var qrcode = function() {
     setTimeout(function () {
       var idEl = document.getElementById("group-parent-id");
       var dispEl = document.getElementById("group-parent-display");
-      var whEl = document.getElementById("group-warehouse");
       if (idEl && parent) {
         idEl.value = parent.id;
         dispEl.value = parent.full_path || parent.name;
-        if (whEl && parent.warehouse_id) whEl.value = parent.warehouse_id;
       }
     }, 60);
   }

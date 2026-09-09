@@ -491,10 +491,14 @@
         window.APP &&
         APP.data &&
         APP.data._loaded !== true;
-      if (!opts.forceEmpty && _globalDataLoading && (!rows || !rows.length)) {
-        showLoading(screenId, container, opts.loadingRowCount);
-        return;
-      }
+      // [FIX-ROWS-ONLY-LOADING-2026-09-09] قبل كده كنا بنستبدل الـ
+      // container كله (بما فيه التولبار ورأس الجدول) بصندوق سبينر مستقل،
+      // فكانت الشاشة كلها بتبان "متجمّدة" لحد ما البيانات توصل. دلوقتي
+      // الجدول بيتبني عادي بالكامل (تولبار + رأس أعمدة حقيقي) زي أي رسم
+      // طبيعي، وبس منطقة الصفوف (tbody) هي اللي بتعرض حالة التحميل —
+      // بالظبط مكان رسالة "لا توجد بيانات لعرضها" (_renderBody تحت).
+      var _isLoading =
+        !opts.forceEmpty && _globalDataLoading && (!rows || !rows.length);
       _state[screenId] = {
         rows: rows || [],
         filtered: rows || [],
@@ -502,11 +506,13 @@
         opts: opts,
         sortKey: null,
         sortDir: 1,
+        loading: _isLoading,
       };
       // [FIX] احسب أفضل عرض تلقائي لكل عمود حسب محتواه الفعلي قبل رسم الجدول
       _computeAutoFitWidths(_registry[screenId].columns, _state[screenId].rows);
       _rebuildLayoutStyle(screenId);
-      container.removeAttribute("data-ce-loading");
+      if (_isLoading) container.setAttribute("data-ce-loading", "1");
+      else container.removeAttribute("data-ce-loading");
       container.setAttribute("data-ce-scope", screenId);
       container.classList.add("ce-wrap");
       container.innerHTML =
@@ -805,7 +811,13 @@
       _renderExtraRows(screenId);
 
       if (!st.filtered.length) {
-        body.innerHTML = '<div class="ce-empty">لا توجد بيانات لعرضها</div>';
+        body.innerHTML = st.loading
+          ? '<div class="ce-empty" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:48px 24px">' +
+            '<span style="width:26px;height:26px;border-radius:50%;border:3px solid var(--border);' +
+            'border-top-color:var(--accent, #3b82f6);animation:csSpin 0.7s linear infinite;display:inline-block"></span>' +
+            '<span>جار جلب البيانات...</span>' +
+            "</div>"
+          : '<div class="ce-empty">لا توجد بيانات لعرضها</div>';
         if (countEl) countEl.textContent = "";
         return;
       }

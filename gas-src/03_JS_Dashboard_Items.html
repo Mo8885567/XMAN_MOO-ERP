@@ -8517,9 +8517,21 @@ var qrcode = function() {
     var btn = document.getElementById("btn-add-group");
     if (btn) btn.addEventListener("click", () => openGroupModal(null));
 
-    var searchEl = document.getElementById("groups-search");
-    if (searchEl) {
-      searchEl.addEventListener("input", function () {
+    // [HEADER-CLEANUP-2026-09-09] زرار "بحث" وزرار "تقرير شجري" المستقلين
+    // اللي كانوا في هيدر الصفحة اتشالوا (راجع renderGroups في
+    // Templates_02.html) — البحث بقى عن طريق مربع البحث الموحّد في تولبار
+    // ColumnEngine نفسه (ce-search-groups)، والطباعة عن طريق زرار "طباعة"
+    // الموحّد في نفس التولبار. الوظيفتين مربوطين تحت عشان لسه شغالين مع
+    // العرض الشجري بالظبط زي ما كانوا.
+    _groupsTreeData = _buildGroupsTreeLocal();
+    _renderGroupsTableCE(
+      document.getElementById("groups-ce-container"),
+      _groupsTreeData.flat,
+    );
+
+    var toolbarSearchEl = document.getElementById("ce-search-groups");
+    if (toolbarSearchEl) {
+      toolbarSearchEl.addEventListener("input", function () {
         _groupsSearchQuery = this.value.trim();
         // البحث بتاع الشجرة مش جزء من فلترة ColumnEngine العادية (لأن
         // الشجرة مش جدول CE أصلاً) — فبنعيد رسمها يدويًا هنا، بس لو
@@ -8538,19 +8550,22 @@ var qrcode = function() {
       });
     }
 
-    var printBtn = document.getElementById("btn-print-groups-tree");
-    if (printBtn) printBtn.addEventListener("click", printGroupsTreeReport);
-
-    // [FIX] رسم فوري من البيانات المحمّلة أصلاً في الذاكرة (APP.data)
-    // بدل ما ننتظر رحلة سيرفر (getGroupsTree) في كل مرة — بالظبط زي باقي
-    // شاشات النظام اللي بترسم فورًا من APP.data من غير ما تعمل نداء إضافي.
-    _groupsTreeData = _buildGroupsTreeLocal();
-    // renderTable واحدة بس — ColumnEngine هو اللي بيقرر يعرض الجدول
-    // (grid) ولا يستدعي onViewModeChange (شجري) حسب آخر وضع محفوظ.
-    _renderGroupsTableCE(
-      document.getElementById("groups-ce-container"),
-      _groupsTreeData.flat,
-    );
+    // زرار "طباعة" الموحّد: في وضع "شجري" يطبع التقرير الشجري المتخصص
+    // (نفس تقرير_groups_tree القديم)، وفي وضع "جدولي" يسيب سلوك
+    // ColumnEngine الافتراضي (طباعة الجدول الظاهر) زي أي شاشة تانية.
+    var toolbarPrintEl = document.getElementById("ce-print-groups");
+    if (toolbarPrintEl) {
+      toolbarPrintEl.addEventListener(
+        "click",
+        function (e) {
+          if (ColumnEngine.getViewMode("groups") === "tree") {
+            e.stopImmediatePropagation();
+            printGroupsTreeReport();
+          }
+        },
+        true,
+      );
+    }
   }
   /**
    * printGroupsTreeReport — [GROUP-HIERARCHY P8] تقرير شجري مطبوع لكل

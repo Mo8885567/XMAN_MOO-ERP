@@ -8948,7 +8948,7 @@ var qrcode = function() {
             btnEl.disabled = false;
             NotificationEngine.success((r && r.message) || "تم إضافة المجموعة");
             var newGroup = Object.assign({}, data, {
-              id: (r && r.id) || data.prefix,
+              id: (r && r.data && r.data.id) || data.prefix,
             });
             APP.data.groups = APP.data.groups || [];
             APP.data.groups.push(newGroup);
@@ -9060,7 +9060,7 @@ var qrcode = function() {
             btnEl.disabled = false;
             NotificationEngine.success((r && r.message) || "تم إضافة الوحدة");
             var newUnit = Object.assign({}, data, {
-              id: (r && r.id) || data.name,
+              id: (r && r.data && r.data.id) || data.name,
             });
             APP.data.units = APP.data.units || [];
             APP.data.units.push(newUnit);
@@ -9333,7 +9333,7 @@ var qrcode = function() {
             btnEl.disabled = false;
             NotificationEngine.success((r && r.message) || "تم إضافة اللون");
             var newColor = Object.assign({}, data, {
-              id: (r && r.id) || data.code,
+              id: (r && r.data && r.data.id) || data.code,
             });
             APP.data.colors = APP.data.colors || [];
             APP.data.colors.push(newColor);
@@ -9501,7 +9501,7 @@ var qrcode = function() {
                 _unfreezeUI();
                 NotificationEngine.success(r.message);
                 var patchedGroup = Object.assign({}, data, {
-                  id: isEdit ? group.id : r.id || data.prefix,
+                  id: isEdit ? group.id : (r && r.data && r.data.id) || data.prefix,
                 });
                 // [FIX] مفيش داعي لرحلة سيرفر تانية (getGroupsTree) —
                 // bindGroups هترسم الشجرة فورًا من APP.data بعد الـ optimisticPatch

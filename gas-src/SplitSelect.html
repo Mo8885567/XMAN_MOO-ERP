@@ -30,6 +30,14 @@
           // [INLINE-ADD-2026-08-06] { icon, title, onClick(instance) } —
           // بيظهر كزرار "+" جوه صندوق الـ select جنب السهم المنسد.
           addAction: opts.addAction,
+          // [SELECT-COLUMNS-2026-09-09] تمرير اختياري لتعريف أعمدة
+          // مخصّصة (بدل الافتراضي التلقائي عمود واحد) — راجع
+          // 49_JS_SelectionEngine.html، ومثال استخدام في i-group/i-unit
+          // (03_JS_Dashboard_Items.html).
+          columns: opts.columns,
+          prefsKey: opts.prefsKey,
+          codeField: opts.codeField,
+          badgeField: opts.badgeField,
         });
       },
       refresh: function (idOrEl) {

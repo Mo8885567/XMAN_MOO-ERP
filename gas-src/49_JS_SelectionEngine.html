@@ -855,16 +855,17 @@
       // البيانات تحت مفتاح icon، عشان opts.iconField (لو اتحدد) يقدر
       // يعرضه في القائمة/الـ trigger من غير ما نغيّر شكل أي select تاني
       // ملوش data-icon (بيفضل زي ما هو بالظبط).
+      // [SELECT-COLUMNS-2026-09-09] كمان بننسخ أي data-* تاني موجود على
+      // الـ <option> (زي data-code / data-warehouse / data-symbol) كـ
+      // مفتاح عادي في صف البيانات — عشان أي select عايز يعرض أعمدة
+      // إضافية في وضع التخصيص يقدر يحطها كـ data attribute على الـ
+      // <option> من غير ما يحتاج يتحول بالكامل لـ AppSelect.create().
       var rows = Array.prototype.map.call(select.options, function (o) {
-        var iconAttr = o.getAttribute("data-icon");
-        var hexAttr = o.getAttribute("data-hex");
-        return {
-          value: o.value,
-          text: o.textContent,
-          disabled: o.disabled,
-          icon: iconAttr || undefined,
-          hex: hexAttr || undefined,
-        };
+        var row = { value: o.value, text: o.textContent, disabled: o.disabled };
+        if (o.dataset) {
+          for (var k in o.dataset) row[k] = o.dataset[k] || undefined;
+        }
+        return row;
       });
 
       var wrap = document.createElement("div");
@@ -911,15 +912,11 @@
       var inst = REGISTRY[select.dataset.asInit];
       if (!inst) return;
       var rows = Array.prototype.map.call(select.options, function (o) {
-        var iconAttr = o.getAttribute("data-icon");
-        var hexAttr = o.getAttribute("data-hex");
-        return {
-          value: o.value,
-          text: o.textContent,
-          disabled: o.disabled,
-          icon: iconAttr || undefined,
-          hex: hexAttr || undefined,
-        };
+        var row = { value: o.value, text: o.textContent, disabled: o.disabled };
+        if (o.dataset) {
+          for (var k in o.dataset) row[k] = o.dataset[k] || undefined;
+        }
+        return row;
       });
       var curVal = inst.multiple
         ? Array.prototype.filter.call(select.options, function (o) { return o.selected; }).map(function (o) { return o.value; })

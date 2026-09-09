@@ -5728,6 +5728,7 @@ var qrcode = function() {
         return '<option value="">— لا توجد مجموعات لهذا المخزن —</option>';
       return hierGroupOptionsHtml(filtered, {
         selectedId: isEdit ? item.group : "",
+        withCols: true,
       });
     }
 
@@ -5744,6 +5745,7 @@ var qrcode = function() {
           return (
             '<option value="' + esc(u.name) + '"' +
             (selected ? " selected" : "") +
+            ' data-symbol="' + esc(u.symbol || "") + '"' +
             ">" + esc(u.name) + "</option>"
           );
         })
@@ -6918,6 +6920,16 @@ var qrcode = function() {
             label: "المجموعة",
             icon: "ti-folder",
             searchable: true,
+            // [SELECT-COLUMNS-2026-09-09] نفس أعمدة جدول شاشة "المجموعات"
+            // الرئيسية (name/prefix/warehouse_name) — القيم بتيجي من
+            // data-code/data-warehouse المضافة على كل <option> في
+            // hierGroupOptionsHtml(withCols:true) أعلاه.
+            prefsKey: "i-group",
+            columns: [
+              { key: "text", label: "الاسم", defaultVisible: true },
+              { key: "code", label: "الكود", defaultVisible: true, width: 90 },
+              { key: "warehouse", label: "المخزن", defaultVisible: false, width: 120 },
+            ],
             addAction: {
               icon: "ti-plus",
               title: "إضافة مجموعة جديدة",
@@ -6949,6 +6961,14 @@ var qrcode = function() {
             label: "الوحدة",
             icon: "ti-ruler-2",
             searchable: true,
+            // [SELECT-COLUMNS-2026-09-09] نفس أعمدة جدول "تعريف الوحدات"
+            // (name/symbol) — القيمة بتيجي من data-symbol المضافة في
+            // buildUnitOptions أعلاه.
+            prefsKey: "i-unit",
+            columns: [
+              { key: "text", label: "الاسم", defaultVisible: true },
+              { key: "symbol", label: "الرمز", defaultVisible: true, width: 90 },
+            ],
             addAction: {
               icon: "ti-plus",
               title: "إضافة وحدة جديدة",
@@ -7905,18 +7925,32 @@ var qrcode = function() {
           var isSel =
             selectedId &&
             (selectedId === String(g.id) || selectedId === String(g.prefix));
+          // [SELECT-COLUMNS-2026-09-09] لو opts.withCols مفعّل، بنضيف
+          // data-code/data-warehouse على كل <option> — AppSelect.upgrade
+          // بيقرأهم تلقائيًا (راجع 49_JS_SelectionEngine.html) عشان
+          // عمودي "الكود"/"المخزن" يظهروا في منسدل المجموعة بالتخصيص.
+          // اختياري وما بيأثرش على أي استخدام تاني لـ hierGroupOptionsHtml.
+          var colsAttr = "";
+          if (opts.withCols) {
+            var wh = (APP.data.warehouses || []).find(function (w) {
+              return w.id === g.warehouse_id || w.name === g.warehouse_id;
+            });
+            colsAttr =
+              ' data-code="' + esc(g.prefix || "") + '"' +
+              ' data-warehouse="' + esc(wh ? wh.name : (g.warehouse_id || "")) + '"';
+          }
           return (
             '<option value="' +
             val +
             '"' +
             (isSel ? " selected" : "") +
+            colsAttr +
             ">" +
             indent +
             mark +
             esc(g.name) +
-            " (" +
-            esc(g.prefix || "") +
-            ")</option>"
+            (opts.withCols ? "" : " (" + esc(g.prefix || "") + ")") +
+            "</option>"
           );
         })
         .join("")

@@ -677,21 +677,18 @@
               <div class="page-header">
                 <div><h1 style="display:flex;align-items:center;gap:10px"><span style="display:inline-flex;align-items:center;justify-content:center;background:#EDE9FE;border-radius:10px;padding:8px;flex-shrink:0"><i class="ti ti-folders" style="font-size:27px;color:#5B21B6" aria-hidden="true"></i></span><span>المجموعات</span></h1><p>تصنيف الأصناف حسب الهيكل الشجري</p></div>
                 <div class="header-actions" style="display:flex;gap:8px;align-items:center">
-                  <div style="position:relative;display:inline-block">
-                    <button type="button" class="btn btn-outline" id="btn-groups-view-menu"><i class="ti ti-layout-grid"></i> <span id="groups-view-menu-label">شجري</span> <i class="ti ti-chevron-down" style="font-size:12px"></i></button>
-                  </div>
                   <input class="input" id="groups-search" placeholder="بحث بالاسم أو المسار الكامل..." style="width:240px">
                   <button type="button" class="btn btn-outline" id="btn-print-groups-tree"><i class="ti ti-printer"></i> تقرير شجري</button>
                   ${canDo("addGroup") ? '<button class="btn btn-primary" id="btn-add-group" onclick="openGroupModal(null)">+ مجموعة جديدة</button>' : ""}
                 </div>
               </div>`;
 
-    // ── عرضين: شجري (افتراضي) وجدولي — راجع _renderGroupsTreeView /
-    // _renderGroupsTableCE في 03_JS_Dashboard_Items.html (GROUP-HIERARCHY P3/P4)
-    html +=
-      '<div class="card" id="groups-tree-wrap"><div id="groups-tree-container"></div></div>';
-    html +=
-      '<div class="card" id="groups-grid-wrap" style="display:none"><div id="groups-ce-container"></div></div>';
+    // [VIEW-MODE-2026-09-09] عرضين (شجري/جدولي) بقوا جزء من نفس container
+    // واحد بيديره ColumnEngine بالكامل (تولبار + تبديل الوضع + الجدول) —
+    // راجع viewModes في _groupsRegisterColumns (03_JS_Dashboard_Items.html).
+    // مفيش داعي لـ wrapper مزدوج (groups-tree-wrap/groups-grid-wrap) ولا
+    // زرار "طريقة العرض" منفصل هنا بعد كده.
+    html += '<div class="card"><div id="groups-ce-container"></div></div>';
 
     return html;
   }

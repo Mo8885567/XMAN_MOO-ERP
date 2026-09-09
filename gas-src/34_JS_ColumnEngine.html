@@ -525,7 +525,9 @@
       container.classList.add("ce-wrap");
       container.innerHTML =
         _buildToolbar(screenId) +
-        '<div class="ce-table-scroll"><div class="ce-thead-row ce-grid-row" id="ce-thead-' +
+        '<div id="ce-tablewrap-' +
+        screenId +
+        '"><div class="ce-table-scroll"><div class="ce-thead-row ce-grid-row" id="ce-thead-' +
         screenId +
         '"></div><div id="ce-toprow-' +
         screenId +
@@ -533,11 +535,15 @@
         screenId +
         '"></div><div id="ce-bottomrow-' +
         screenId +
-        '"></div></div>';
+        '"></div></div></div>' +
+        '<div id="ce-customview-' +
+        screenId +
+        '" style="display:none"></div>';
       _renderHead(screenId);
       _renderBody(screenId);
       _wireToolbar(screenId);
       _wireContextMenu(screenId);
+      _applyViewMode(screenId);
     }
 
     // [COLUMN-ENGINE-EXTRA-ROWS] صف ثابت خارج آلية الفرز/الفلترة/الصفحات —
@@ -627,12 +633,159 @@
       CTX.register(body, menuType);
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // [VIEW-MODE-2026-09-09] تبديل طريقة عرض الشاشة (مثلاً "شجري"/"جدولي")
+    // كجزء رسمي من تولبار ColumnEngine نفسه، بدل ما كل شاشة تبني زرار/
+    // قائمة منسدلة خاصة بيها برّه التولبار (كان بيسبب ازدواج مربكّ لزرار
+    // "طرق العرض" الأصلي — الاتنين شكلهم "زرار تبديل عرض"). أي شاشة
+    // عايزة أكتر من طريقة عرض بس تمرّر عند التسجيل:
+    //   options: {
+    //     viewModes: [{key:'tree',label:'شجري',icon:'ti-sitemap'},
+    //                 {key:'grid',label:'جدولي',icon:'ti-table'}],
+    //     defaultViewMode: 'tree', // اختياري، أول عنصر لو مش محدد
+    //     onViewModeChange: function(mode, containerEl){ ... }
+    //   }
+    // أي وضع غير "grid" (أو غير options.nativeViewMode لو محدد) بيعتبر
+    // "وضع مخصّص" — ColumnEngine بيخفي جدوله الأصلي ويسلّم عنصر حاوية
+    // فاضي لـ onViewModeChange ترسم فيه أي محتوى (شجرة، بطاقات...).
+    // الوضع المختار بيتحفظ في نفس آلية تفضيلات الجدول (viewMode) فبيفضل
+    // متذكر بين الزيارات.
+    // ─────────────────────────────────────────────────────────────────────
+    function _getViewMode(screenId) {
+      var st = _state[screenId];
+      if (st && st.viewMode) return st.viewMode;
+      var reg = _registry[screenId];
+      var opts = (reg && reg.options) || {};
+      var modes = opts.viewModes || [];
+      if (!modes.length) return "grid";
+      var saved = _getPrefs(screenId).viewMode;
+      var valid = modes.some(function (m) {
+        return m.key === saved;
+      });
+      var mode = valid ? saved : opts.defaultViewMode || modes[0].key;
+      if (st) st.viewMode = mode;
+      return mode;
+    }
+
+    function _applyViewMode(screenId) {
+      var reg = _registry[screenId];
+      var opts = (reg && reg.options) || {};
+      var modes = opts.viewModes || [];
+      if (!modes.length) return;
+      var mode = _getViewMode(screenId);
+      var nativeKey = opts.nativeViewMode || "grid";
+      var isNative = mode === nativeKey;
+      var tableWrap = document.getElementById("ce-tablewrap-" + screenId);
+      var customWrap = document.getElementById("ce-customview-" + screenId);
+      if (tableWrap) tableWrap.style.display = isNative ? "" : "none";
+      if (customWrap) {
+        customWrap.style.display = isNative ? "none" : "";
+        if (!isNative && typeof opts.onViewModeChange === "function") {
+          opts.onViewModeChange(mode, customWrap);
+        }
+      }
+    }
+
+    function _setViewMode(screenId, key) {
+      var st = _state[screenId];
+      if (!st) return;
+      st.viewMode = key;
+      _savePrefs(screenId, { viewMode: key });
+      var reg = _registry[screenId];
+      var opts = (reg && reg.options) || {};
+      var def = (opts.viewModes || []).filter(function (m) {
+        return m.key === key;
+      })[0];
+      var lbl = document.getElementById("ce-viewmode-label-" + screenId);
+      if (lbl && def) lbl.textContent = def.label || def.key;
+      var iconEl =
+        document.getElementById("ce-viewmode-" + screenId) &&
+        document
+          .getElementById("ce-viewmode-" + screenId)
+          .querySelector("i.ti");
+      if (iconEl && def && def.icon) iconEl.className = "ti " + def.icon;
+      _applyViewMode(screenId);
+    }
+
+    function _openViewModeMenu(screenId, anchor) {
+      _closeFloatingMenu();
+      var reg = _registry[screenId];
+      var opts = (reg && reg.options) || {};
+      var modes = opts.viewModes || [];
+      if (!modes.length) return;
+      var current = _getViewMode(screenId);
+      var menu = document.createElement("div");
+      menu.className = "ce-floating-menu";
+      menu.style.cssText =
+        "position:fixed;z-index:9999;background:var(--surface);border:1px solid var(--border);" +
+        "border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);padding:6px;min-width:160px";
+      var rect = anchor.getBoundingClientRect();
+      menu.style.top = rect.bottom + 6 + "px";
+      menu.style.left = rect.left + "px";
+      menu.innerHTML = modes
+        .map(function (m) {
+          var isActive = m.key === current;
+          return (
+            '<div class="ce-menu-item" data-mode="' +
+            _esc(m.key) +
+            '" style="display:flex;gap:8px;align-items:center;padding:8px 10px;' +
+            "border-radius:8px;cursor:pointer;font-size:12.5px;" +
+            (isActive ? "color:var(--accent);font-weight:700;" : "") +
+            '"><i class="ti ' +
+            (m.icon || "ti-layout-grid") +
+            '"></i>' +
+            _esc(m.label || m.key) +
+            (isActive
+              ? '<i class="ti ti-check" style="margin-right:auto"></i>'
+              : "") +
+            "</div>"
+          );
+        })
+        .join("");
+      document.body.appendChild(menu);
+      menu.querySelectorAll(".ce-menu-item").forEach(function (item) {
+        item.addEventListener("mouseenter", function () {
+          item.style.background = "var(--surface2)";
+        });
+        item.addEventListener("mouseleave", function () {
+          item.style.background = "";
+        });
+        item.addEventListener("click", function () {
+          _setViewMode(screenId, item.getAttribute("data-mode"));
+          _closeFloatingMenu();
+        });
+      });
+      setTimeout(function () {
+        document.addEventListener("click", _closeFloatingMenuOnce);
+      }, 0);
+    }
+
     function _buildToolbar(screenId) {
       var reg = _registry[screenId];
       var title = reg.options.title || "";
       var hideSearch = !!reg.options.hideSearch;
+      var viewModes = reg.options.viewModes || [];
+      var viewModeHtml = "";
+      if (viewModes.length) {
+        var vmKey = _getViewMode(screenId);
+        var vmDef =
+          viewModes.filter(function (m) {
+            return m.key === vmKey;
+          })[0] || viewModes[0];
+        viewModeHtml =
+          '<button class="ce-btn" id="ce-viewmode-' +
+          screenId +
+          '"><i class="ti ' +
+          (vmDef.icon || "ti-layout-grid") +
+          '"></i> <span id="ce-viewmode-label-' +
+          screenId +
+          '">' +
+          _esc(vmDef.label || vmDef.key) +
+          '</span> <i class="ti ti-chevron-down" style="font-size:11px"></i></button>';
+      }
       return (
         '<div class="ce-toolbar">' +
+        viewModeHtml +
         (hideSearch
           ? ""
           : '<div class="ce-search"><i class="ti ti-search"></i><input type="text" id="ce-search-' +
@@ -1597,6 +1750,12 @@
     // §CE-08  ربط أزرار الـ Toolbar (بحث / تخصيص / تصدير / طباعة / عروض)
     // ─────────────────────────────────────────────────────────────────────
     function _wireToolbar(screenId) {
+      var viewModeBtn = document.getElementById("ce-viewmode-" + screenId);
+      if (viewModeBtn)
+        viewModeBtn.onclick = function (e) {
+          _openViewModeMenu(screenId, e.currentTarget);
+        };
+
       var searchEl = document.getElementById("ce-search-" + screenId);
       if (searchEl) {
         var t = null;
@@ -2167,6 +2326,8 @@
       printData: printData,
       applyPreset: applyPreset,
       saveCurrentAsPreset: saveCurrentAsPreset,
+      getViewMode: _getViewMode,
+      setViewMode: _setViewMode,
       // internal — مستخدمة عبر onclick في الـ HTML المُولَّد فقط
       _onSort: _onSort,
       _custToggle: _custToggle,

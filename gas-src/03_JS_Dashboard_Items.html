@@ -7970,7 +7970,6 @@ var qrcode = function() {
 
   var _groupsTreeData = null; // { tree:[...nested], flat:[...] } من getGroupsTree()
   var _groupsExpanded = {}; // id -> true/false (حالة الطي/التوسيع محفوظة بين إعادة الرسم)
-  var _groupsView = "tree"; // "tree" | "grid"
   var _groupsSearchQuery = "";
 
   function _groupsRegisterColumns() {
@@ -8078,7 +8077,27 @@ var qrcode = function() {
           },
         },
       ],
-      { rowKey: "id", title: "قائمة المجموعات", contextMenuType: "groups" },
+      { rowKey: "id", title: "قائمة المجموعات", contextMenuType: "groups",
+        // [VIEW-MODE-2026-09-09] "شجري/جدولي" بقى جزء من تولبار
+        // ColumnEngine نفسه (زرار موحّد جنب "طرق العرض") بدل زرار/قائمة
+        // منسدلة خاصة بشاشة المجموعات وحدها كانت مبنية برّه التولبار
+        // (راجع Templates_02.html — renderGroups) وبتسبب ازدواج مربك مع
+        // زرار "طرق العرض" الأصلي. المنطق الفعلي لرسم الشجرة (توسيع/طي/
+        // بحث) لسه في _renderGroupsTreeView زي ما هو — إحنا بس بنسلّمها
+        // للـ ColumnEngine تستدعيها هي وقت الحاجة عبر onViewModeChange.
+        viewModes: [
+          { key: "tree", label: "شجري", icon: "ti-sitemap" },
+          { key: "grid", label: "جدولي", icon: "ti-table" },
+        ],
+        defaultViewMode: "tree",
+        nativeViewMode: "grid",
+        onViewModeChange: function (mode, containerEl) {
+          _renderGroupsTreeView(
+            containerEl,
+            _groupsTreeData ? _groupsTreeData.tree : [],
+          );
+        },
+      },
     );
   }
 
@@ -8487,125 +8506,35 @@ var qrcode = function() {
     });
   }
 
-  var _groupsViewLabels = { tree: "شجري", grid: "جدولي" };
-
-  function _updateGroupsViewMenuLabel() {
-    var lbl = document.getElementById("groups-view-menu-label");
-    if (lbl) lbl.textContent = _groupsViewLabels[_groupsView] || "";
-  }
-
-  // قائمة منسدلة صغيرة (نفس أسلوب ce-floating-menu في ColumnEngine) بتفتح
-  // تحت زر "طريقة العرض" وتقفل تلقائيًا عند أي ضغطة برّه القائمة.
-  function _openGroupsViewMenu(anchor) {
-    var existing = document.getElementById("groups-view-floating-menu");
-    if (existing) {
-      existing.remove();
-      return;
-    }
-    var menu = document.createElement("div");
-    menu.id = "groups-view-floating-menu";
-    menu.className = "ce-floating-menu";
-    menu.style.cssText =
-      "position:fixed;z-index:9999;background:var(--surface);border:1px solid var(--border);" +
-      "border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);padding:6px;min-width:150px";
-    var rect = anchor.getBoundingClientRect();
-    menu.style.top = rect.bottom + 6 + "px";
-    menu.style.left = rect.left + "px";
-    menu.innerHTML = [
-      ["ti-sitemap", "شجري", "tree"],
-      ["ti-table", "جدولي", "grid"],
-    ]
-      .map(function (o) {
-        var isActive = _groupsView === o[2];
-        return (
-          '<div class="ce-menu-item" data-view="' +
-          o[2] +
-          '" style="display:flex;gap:8px;align-items:center;padding:8px 10px;' +
-          "border-radius:8px;cursor:pointer;font-size:12.5px;" +
-          (isActive ? "color:var(--accent);font-weight:700;" : "") +
-          '"><i class="ti ' +
-          o[0] +
-          '"></i>' +
-          o[1] +
-          (isActive
-            ? '<i class="ti ti-check" style="margin-right:auto"></i>'
-            : "") +
-          "</div>"
-        );
-      })
-      .join("");
-    document.body.appendChild(menu);
-    menu.querySelectorAll(".ce-menu-item").forEach(function (item) {
-      item.addEventListener("mouseenter", function () {
-        item.style.background = "var(--surface2)";
-      });
-      item.addEventListener("mouseleave", function () {
-        item.style.background = "";
-      });
-      item.addEventListener("click", function () {
-        _groupsView = item.getAttribute("data-view");
-        _updateGroupsViewMenuLabel();
-        _renderCurrentGroupsView();
-        menu.remove();
-      });
-    });
-    setTimeout(function () {
-      document.addEventListener("click", _closeGroupsViewMenuOnce);
-    }, 0);
-  }
-
-  function _closeGroupsViewMenuOnce(e) {
-    var menu = document.getElementById("groups-view-floating-menu");
-    if (menu && !menu.contains(e.target)) menu.remove();
-    document.removeEventListener("click", _closeGroupsViewMenuOnce);
-  }
-
-  function _renderCurrentGroupsView() {
-    var treeWrap = document.getElementById("groups-tree-wrap");
-    var gridWrap = document.getElementById("groups-grid-wrap");
-    if (!treeWrap || !gridWrap) return;
-    if (_groupsView === "tree") {
-      treeWrap.style.display = "";
-      gridWrap.style.display = "none";
-      _renderGroupsTreeView(
-        document.getElementById("groups-tree-container"),
-        _groupsTreeData ? _groupsTreeData.tree : [],
-      );
-    } else {
-      treeWrap.style.display = "none";
-      gridWrap.style.display = "";
-      _renderGroupsTableCE(
-        document.getElementById("groups-ce-container"),
-        _groupsTreeData ? _groupsTreeData.flat : [],
-      );
-    }
-  }
+  // [VIEW-MODE-2026-09-09] كل منطق زرار/قائمة "شجري ⇄ جدولي" الخاص بشاشة
+  // المجموعات وحدها (_groupsViewLabels/_openGroupsViewMenu/
+  // _closeGroupsViewMenuOnce/_updateGroupsViewMenuLabel/_renderCurrentGroupsView)
+  // اتشال نهائيًا — التبديل بقى جزء رسمي من تولبار ColumnEngine نفسه
+  // (viewModes في _groupsRegisterColumns أعلى الملف)، فمفيش زرار مكرر
+  // برّه التولبار ولا حالة (state) مزدوجة نديرها يدويًا هنا.
 
   function bindGroups() {
     var btn = document.getElementById("btn-add-group");
     if (btn) btn.addEventListener("click", () => openGroupModal(null));
 
-    // [VIEW-MODE-MENU] الزرار الواحد "طريقة العرض" بيفتح قائمة منسدلة
-    // (نفس أسلوب ce-floating-menu/ce-menu-item المستخدم في ColumnEngine
-    // لقائمة "تصدير") بدل زرين منفصلين ياخدوا مساحة في التولبار.
-    var viewMenuBtn = document.getElementById("btn-groups-view-menu");
-    if (viewMenuBtn) {
-      _updateGroupsViewMenuLabel();
-      viewMenuBtn.addEventListener("click", function (e) {
-        e.stopPropagation();
-        _openGroupsViewMenu(viewMenuBtn);
-      });
-    }
-
     var searchEl = document.getElementById("groups-search");
     if (searchEl) {
       searchEl.addEventListener("input", function () {
         _groupsSearchQuery = this.value.trim();
-        if (_groupsView === "tree")
-          _renderGroupsTreeView(
-            document.getElementById("groups-tree-container"),
-            _groupsTreeData ? _groupsTreeData.tree : [],
+        // البحث بتاع الشجرة مش جزء من فلترة ColumnEngine العادية (لأن
+        // الشجرة مش جدول CE أصلاً) — فبنعيد رسمها يدويًا هنا، بس لو
+        // الوضع الحالي "شجري" فعلاً (نسأل ColumnEngine عن الوضع الحالي
+        // بدل الاعتماد على متغيّر محلي كان بيتكرر مع حالته الداخلية).
+        if (ColumnEngine.getViewMode("groups") === "tree") {
+          var treeContainer = document.getElementById(
+            "ce-customview-groups",
           );
+          if (treeContainer)
+            _renderGroupsTreeView(
+              treeContainer,
+              _groupsTreeData ? _groupsTreeData.tree : [],
+            );
+        }
       });
     }
 
@@ -8616,7 +8545,12 @@ var qrcode = function() {
     // بدل ما ننتظر رحلة سيرفر (getGroupsTree) في كل مرة — بالظبط زي باقي
     // شاشات النظام اللي بترسم فورًا من APP.data من غير ما تعمل نداء إضافي.
     _groupsTreeData = _buildGroupsTreeLocal();
-    _renderCurrentGroupsView();
+    // renderTable واحدة بس — ColumnEngine هو اللي بيقرر يعرض الجدول
+    // (grid) ولا يستدعي onViewModeChange (شجري) حسب آخر وضع محفوظ.
+    _renderGroupsTableCE(
+      document.getElementById("groups-ce-container"),
+      _groupsTreeData.flat,
+    );
   }
   /**
    * printGroupsTreeReport — [GROUP-HIERARCHY P8] تقرير شجري مطبوع لكل

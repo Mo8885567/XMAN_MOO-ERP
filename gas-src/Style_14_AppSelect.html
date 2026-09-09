@@ -423,5 +423,7 @@
   .as-colpop-item:hover { background: var(--surface2); }
   .as-colpop-item.dragging { opacity: .4; }
   .as-colpop-item label { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; flex: 1 1 auto; }
-  .as-colpop-grip { color: var(--text3); flex: 0 0 auto; }
+  .as-colpop-grip { color: var(--text3); flex: 0 0 auto; touch-action: none; cursor: grab; }
+  .as-colpop-item.dragging { position: relative; }
+  .as-colpop-item.dragging .as-colpop-grip { cursor: grabbing; }
 </style>

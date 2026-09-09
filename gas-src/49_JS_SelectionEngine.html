@@ -273,7 +273,7 @@
         '<div class="as-colpop-title">أعمدة القائمة</div>' +
         '<div class="as-colpop-list">' +
         this._effCols.map(function (c) {
-          return '<div class="as-colpop-item" draggable="true" data-key="' + esc(c.key) + '">' +
+          return '<div class="as-colpop-item" data-key="' + esc(c.key) + '">' +
             '<i class="ti ti-grip-vertical as-colpop-grip"></i>' +
             '<label><input type="checkbox" data-key="' + esc(c.key) + '"' + (c._visible ? " checked" : "") + '> ' + esc(c.label || c.key) + "</label>" +
             "</div>";
@@ -302,27 +302,82 @@
         });
       });
 
-      var dragged = null;
-      pop.querySelectorAll(".as-colpop-item").forEach(function (item) {
-        item.addEventListener("dragstart", function () { dragged = item; item.classList.add("dragging"); });
-        item.addEventListener("dragend", function () { item.classList.remove("dragging"); });
-        item.addEventListener("dragover", function (e) { e.preventDefault(); });
-        item.addEventListener("drop", function (e) {
+      // [DRAG-TOUCH-2026-09-09] كان السحب/الإفلات شغال بـ HTML5 Drag&Drop
+      // الأصلي (dragstart/dragover/drop) بس — وده API مبني على الماوس بس
+      // ومش بيشتغل على الموبايل/التابلت (Touch) خالص من غير أي polyfill،
+      // فكان زرار الترس شغال يفتح اللوحة لكن السحب نفسه معطّل عمليًا على
+      // أي جهاز لمس. استبدلناه بتطبيق يدوي بـ Pointer Events (بيوحّد
+      // الماوس واللمس والقلم في نفس الأحداث)، بيحرّك الصف فعليًا تحت
+      // الإصبع/المؤشر ويعيد ترتيب باقي الصفوف حواليه بنفس فلسفة الإفلات
+      // القديمة، والسحب بيبدأ بس من مقبض الـ grip (⋮⋮) عشان ما يمنعش
+      // scroll اللوحة أو الضغط على checkbox بالغلط.
+      (function () {
+        var list = pop.querySelector(".as-colpop-list");
+        var items = function () { return Array.prototype.slice.call(list.children); };
+        var dragItem = null, startY = 0, activePointerId = null;
+
+        function onPointerMove(e) {
+          if (!dragItem) return;
           e.preventDefault();
-          if (!dragged || dragged === item) return;
-          var list = pop.querySelector(".as-colpop-list");
-          var items = Array.prototype.slice.call(list.children);
-          var from = items.indexOf(dragged), to = items.indexOf(item);
-          if (from < to) list.insertBefore(dragged, item.nextSibling);
-          else list.insertBefore(dragged, item);
-          var newOrderKeys = Array.prototype.map.call(list.children, function (el) { return el.getAttribute("data-key"); });
+          var dy = e.clientY - startY;
+          dragItem.style.transform = "translateY(" + dy + "px)";
+          var rect = dragItem.getBoundingClientRect();
+          var midY = rect.top + rect.height / 2;
+          items().forEach(function (it) {
+            if (it === dragItem) return;
+            var r = it.getBoundingClientRect();
+            var itMid = r.top + r.height / 2;
+            if (midY < itMid && dragItem.nextSibling !== it) {
+              list.insertBefore(dragItem, it);
+              dragItem.style.transform = "translateY(0)";
+              startY = e.clientY;
+            } else if (midY > itMid && it.nextSibling !== dragItem) {
+              list.insertBefore(dragItem, it.nextSibling);
+              dragItem.style.transform = "translateY(0)";
+              startY = e.clientY;
+            }
+          });
+        }
+
+        function onPointerUp(e) {
+          if (!dragItem) return;
+          if (activePointerId != null && dragItem.releasePointerCapture) {
+            try { dragItem.releasePointerCapture(activePointerId); } catch (err) {}
+          }
+          document.removeEventListener("pointermove", onPointerMove);
+          document.removeEventListener("pointerup", onPointerUp);
+          document.removeEventListener("pointercancel", onPointerUp);
+          dragItem.style.transform = "";
+          dragItem.style.zIndex = "";
+          dragItem.classList.remove("dragging");
+          dragItem = null;
+          var newOrderKeys = items().map(function (el) { return el.getAttribute("data-key"); });
           var byKey = {}; self._effCols.forEach(function (c) { byKey[c.key] = c; });
           self._effCols = newOrderKeys.map(function (k) { return byKey[k]; });
           self._saveColumnPrefs();
           self._renderColHead();
           self._renderList(self._filtered.length ? self._filtered : self._flat);
+        }
+
+        list.querySelectorAll(".as-colpop-grip").forEach(function (grip) {
+          grip.addEventListener("pointerdown", function (e) {
+            var item = grip.closest(".as-colpop-item");
+            if (!item) return;
+            e.preventDefault();
+            dragItem = item;
+            activePointerId = e.pointerId;
+            startY = e.clientY;
+            item.classList.add("dragging");
+            item.style.zIndex = "1";
+            if (item.setPointerCapture) {
+              try { item.setPointerCapture(e.pointerId); } catch (err) {}
+            }
+            document.addEventListener("pointermove", onPointerMove);
+            document.addEventListener("pointerup", onPointerUp);
+            document.addEventListener("pointercancel", onPointerUp);
+          });
         });
-      });
+      })();
 
       function outside(e) {
         if (!pop.contains(e.target) && e.target !== anchorEl && !anchorEl.contains(e.target)) {

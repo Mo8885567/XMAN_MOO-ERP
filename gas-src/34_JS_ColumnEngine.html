@@ -72,6 +72,9 @@
         ".ce-th-resize{position:absolute;top:0;bottom:0;left:-3px;width:7px;cursor:col-resize;",
         "z-index:5;background:transparent}",
         ".ce-th-resize:hover,.ce-th-resize.ce-resizing{background:var(--accent)}",
+        ".ce-th.ce-th-dragging{opacity:.4}",
+        ".ce-th.ce-th-dragover-before{box-shadow:inset 3px 0 0 var(--accent)}",
+        ".ce-th.ce-th-dragover-after{box-shadow:inset -3px 0 0 var(--accent)}",
         ".ce-colctx-menu{position:fixed;z-index:9999;background:var(--surface);",
         "border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);",
         "padding:6px;min-width:220px;max-height:80vh;overflow:auto;font-size:12.5px}",
@@ -656,7 +659,7 @@
           return (
             '<div class="ce-th ce-frozen" data-col="' +
             c.key +
-            '" style="justify-content:' +
+            '" draggable="true" style="justify-content:' +
             (c.align === "left"
               ? "flex-start"
               : c.align === "right"
@@ -669,7 +672,7 @@
             "')\">" +
             '<div class="ce-th-resize" data-resize-col="' +
             c.key +
-            '"></div>' +
+            '" draggable="false"></div>' +
             (c.label !== undefined && c.label !== null ? c.label : c.key) +
             "</div>"
           );
@@ -711,6 +714,88 @@
           _startColumnResize(screenId, key, handle, e.clientX);
         });
       });
+
+      _wireHeaderDragDrop(screenId, head);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-11b  سحب وإفلات رؤوس الأعمدة مباشرة (بدون فتح نافذة "تخصيص
+    // الجدول") لتغيير ترتيبها — نفس آلية الحفظ المستخدمة في نافذة
+    // التخصيص (prefs.order عبر PreferenceService) فيبقى الترتيب متزامن
+    // بين الاتنين.
+    // ─────────────────────────────────────────────────────────────────────
+    function _wireHeaderDragDrop(screenId, head) {
+      var dragged = null;
+      var draggedKey = null;
+      head.querySelectorAll(".ce-th").forEach(function (th) {
+        th.addEventListener("dragstart", function (e) {
+          dragged = th;
+          draggedKey = th.getAttribute("data-col");
+          th.classList.add("ce-th-dragging");
+          if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = "move";
+            try {
+              e.dataTransfer.setData("text/plain", draggedKey);
+            } catch (err) {}
+          }
+        });
+        th.addEventListener("dragend", function () {
+          th.classList.remove("ce-th-dragging");
+          head.querySelectorAll(".ce-th").forEach(function (t) {
+            t.classList.remove("ce-th-dragover-before", "ce-th-dragover-after");
+          });
+          dragged = null;
+          draggedKey = null;
+        });
+        th.addEventListener("dragover", function (e) {
+          if (!dragged || dragged === th) return;
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+          var rect = th.getBoundingClientRect();
+          var before = e.clientX - rect.left < rect.width / 2;
+          // اتجاه RTL: النص بيتحرك يمين-لشمال، فبنعكس منطق "قبل/بعد"
+          // حسب اتجاه الحاوية بدل ما نفترض LTR دايمًا
+          var rtl = getComputedStyle(head).direction === "rtl";
+          if (rtl) before = !before;
+          th.classList.toggle("ce-th-dragover-before", before);
+          th.classList.toggle("ce-th-dragover-after", !before);
+        });
+        th.addEventListener("dragleave", function () {
+          th.classList.remove("ce-th-dragover-before", "ce-th-dragover-after");
+        });
+        th.addEventListener("drop", function (e) {
+          e.preventDefault();
+          var targetKey = th.getAttribute("data-col");
+          var before = th.classList.contains("ce-th-dragover-before");
+          th.classList.remove("ce-th-dragover-before", "ce-th-dragover-after");
+          if (!draggedKey || draggedKey === targetKey) return;
+          _reorderColumn(screenId, draggedKey, targetKey, before);
+        });
+      });
+    }
+
+    // إعادة ترتيب عمود واحد ووضعه قبل/بعد عمود هدف، ثم حفظ الترتيب
+    // الجديد بالكامل (كل الأعمدة، الظاهرة والمخفية) في prefs.order
+    function _reorderColumn(screenId, fromKey, toKey, before) {
+      var cols = _effectiveColumns(screenId);
+      var fromIdx = cols.findIndex(function (c) {
+        return c.key === fromKey;
+      });
+      var toIdx = cols.findIndex(function (c) {
+        return c.key === toKey;
+      });
+      if (fromIdx === -1 || toIdx === -1) return;
+      var moved = cols.splice(fromIdx, 1)[0];
+      toIdx = cols.findIndex(function (c) {
+        return c.key === toKey;
+      });
+      cols.splice(before ? toIdx : toIdx + 1, 0, moved);
+      var order = cols.map(function (c) {
+        return c.key;
+      });
+      _savePrefs(screenId, { order: order });
+      _rebuildLayoutStyle(screenId);
+      _renderHead(screenId);
     }
 
     function _startColumnResize(screenId, key, handleEl, startX) {

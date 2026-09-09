@@ -392,8 +392,93 @@
       if (!this.columns || !this.el.colHead) return;
       var cols = this._visibleColumns();
       this.el.colHead.innerHTML = cols.map(function (c) {
-        return '<span class="as-colhead-cell" style="' + (c.width ? "flex:0 0 " + c.width + "px" : "flex:1") + '">' + esc(c.label || c.key) + "</span>";
+        return '<span class="as-colhead-cell" data-key="' + esc(c.key) + '" style="' + (c.width ? "flex:0 0 " + c.width + "px" : "flex:1") + '">' + esc(c.label || c.key) + "</span>";
       }).join("");
+      this._wireColHeadDragDrop();
+    };
+
+    // ─────────────────────────────────────────────────────────────────────
+    // [COLHEAD-DRAG-2026-09-09] سحب وإفلات رؤوس الأعمدة مباشرة من صف
+    // الرأس نفسه جوه المنسدل — من غير فتح لوحة "تخصيص الأعمدة" (زرار
+    // الترس) خالص. بنفس فلسفة Pointer Events المستخدمة في _openColumnSettings
+    // (بتشتغل بالماوس واللمس والقلم مع بعض)، لكن أفقي بدل رأسي لأن رؤوس
+    // الأعمدة هنا صف واحد جنب بعضه مش عمود. الترتيب بيتحفظ في نفس
+    // prefsKey ("select:" + this.prefsKey) فيفضل متزامن مع لوحة التخصيص.
+    // ─────────────────────────────────────────────────────────────────────
+    Instance.prototype._wireColHeadDragDrop = function () {
+      var self = this;
+      var head = this.el.colHead;
+      if (!head || head.children.length < 2) return; // عمود واحد بس = مفيش داعي للسحب
+      var dragCell = null, activePointerId = null;
+
+      function cells() { return Array.prototype.slice.call(head.children); }
+
+      function clearDragOverMarks() {
+        cells().forEach(function (c) {
+          c.classList.remove("as-colhead-dragover-before", "as-colhead-dragover-after");
+        });
+      }
+
+      function onPointerMove(e) {
+        if (!dragCell) return;
+        e.preventDefault();
+        var target = document.elementFromPoint(e.clientX, e.clientY);
+        var cell = target && target.closest ? target.closest(".as-colhead-cell") : null;
+        clearDragOverMarks();
+        if (!cell || cell === dragCell || !head.contains(cell)) return;
+        var r = cell.getBoundingClientRect();
+        var before = e.clientX - r.left < r.width / 2;
+        if (isRTL()) before = !before;
+        cell.classList.add(before ? "as-colhead-dragover-before" : "as-colhead-dragover-after");
+      }
+
+      function onPointerUp(e) {
+        if (!dragCell) return;
+        if (activePointerId != null && dragCell.releasePointerCapture) {
+          try { dragCell.releasePointerCapture(activePointerId); } catch (err) {}
+        }
+        document.removeEventListener("pointermove", onPointerMove);
+        document.removeEventListener("pointerup", onPointerUp);
+        document.removeEventListener("pointercancel", onPointerUp);
+        dragCell.classList.remove("as-colhead-dragging");
+        var target = document.elementFromPoint(e.clientX, e.clientY);
+        var cell = target && target.closest ? target.closest(".as-colhead-cell") : null;
+        var before = cell && cell.classList.contains("as-colhead-dragover-before");
+        clearDragOverMarks();
+        if (cell && cell !== dragCell && head.contains(cell)) {
+          var fromKey = dragCell.getAttribute("data-key");
+          var toKey = cell.getAttribute("data-key");
+          var byKey = {}; self._effCols.forEach(function (c) { byKey[c.key] = c; });
+          var order = self._effCols.map(function (c) { return c.key; });
+          var fromIdx = order.indexOf(fromKey);
+          order.splice(fromIdx, 1);
+          var toIdx = order.indexOf(toKey);
+          order.splice(before ? toIdx : toIdx + 1, 0, fromKey);
+          self._effCols = order.map(function (k) { return byKey[k]; });
+          self._saveColumnPrefs();
+          self._renderColHead();
+          self._renderList(self._filtered.length ? self._filtered : self._flat);
+        }
+        dragCell = null;
+      }
+
+      cells().forEach(function (cell) {
+        cell.style.touchAction = "none";
+        cell.style.cursor = "grab";
+        cell.addEventListener("pointerdown", function (e) {
+          if (e.button !== undefined && e.button !== 0) return;
+          e.preventDefault();
+          dragCell = cell;
+          activePointerId = e.pointerId;
+          cell.classList.add("as-colhead-dragging");
+          if (cell.setPointerCapture) {
+            try { cell.setPointerCapture(e.pointerId); } catch (err) {}
+          }
+          document.addEventListener("pointermove", onPointerMove);
+          document.addEventListener("pointerup", onPointerUp);
+          document.addEventListener("pointercancel", onPointerUp);
+        });
+      });
     };
 
     Instance.prototype._bindEvents = function () {

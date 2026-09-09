@@ -2064,7 +2064,17 @@
       var html = rowHtml(true, 0);
       for (var r = 0; r < rowCount; r++) html += rowHtml(false, r);
       container.setAttribute("data-ce-loading", "1");
-      container.innerHTML = '<div class="ce-loading-skel">' + html + "</div>";
+      // [FIX-CONFINE-SKEL-2026-09-09] الشيمر كان بيترسم كصفوف طليقة من
+      // غير أي إطار/حدود، فبصريًا كان بيبان كأنه "منتشر" في الشاشة كلها
+      // بدل ما يبان بوضوح إنه جوه صندوق الجدول بالظبط (بنفس شكل حدوده
+      // ونصف قطر زواياه لما البيانات الحقيقية توصل). ضفنا إطار/زوايا
+      // مطابقين لإطار الجدول الحقيقي (var(--border) + border-radius)
+      // عشان يبان بوضوح إنه تحميل *داخل* محتوى الجدول بس، مش أي حاجة
+      // تانية في الصفحة.
+      container.innerHTML =
+        '<div class="ce-loading-skel" style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface1)">' +
+        html +
+        "</div>";
     }
 
     return {

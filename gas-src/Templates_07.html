@@ -990,10 +990,12 @@
                     var opt = document.createElement("option");
                     opt.value = a.id;
                     opt.text =
-                      (a.code ? "[" + a.code + "] " : "") + (a.name || "");
+                      (a.code ? "[" + a.code + "] " : "") + (a.name || "") +
+                      (a.is_parent ? " (حساب أب — للعرض فقط)" : "");
+                    if (a.is_parent) opt.disabled = true;
                     if (String(a.id) === String(curVal)) opt.selected = true;
                     sel.appendChild(opt);
-                    return { value: a.id, text: opt.text, disabled: false };
+                    return { value: a.id, text: opt.text, disabled: !!a.is_parent };
                   });
                   renderList(mapped);
                 },

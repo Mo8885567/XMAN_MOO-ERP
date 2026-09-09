@@ -4894,22 +4894,38 @@ var qrcode = function() {
       if (expectedType && a.type && a.type !== expectedType) return false;
       return true;
     }
+    // [ACC-PARENT-VISIBLE-2026-09-09] حسابات الأب (المجموعات) بقت تتعرض في
+    // القائمة "مجمّدة" (رمادية، ماينفعش تتختار بالماوس) بدل ما تتشال خالص —
+    // عشان المستخدم يشوف شجرة الحسابات كاملة بسياقها بدل قايمة مبتورة.
+    // المنع الفعلي للاختيار لسه شغال عادي (disabled + فحص وقت الحفظ).
+    function _accIsDisplayable(a, expectedType) {
+      if (!a) return false;
+      if (a.deleted_at) return false;
+      if (a.is_active === false || a.is_active === "FALSE") return false;
+      if (expectedType && a.type && a.type !== expectedType) return false;
+      return true;
+    }
     function accOptions(fieldVal, expectedType) {
       var all = chartOfAccounts || [];
-      var usable = all.filter(function (a) {
-        return _accIsUsable(a, expectedType);
+      var displayable = all.filter(function (a) {
+        return _accIsDisplayable(a, expectedType);
+      });
+      var displayedIds = {};
+      displayable.forEach(function (a) {
+        displayedIds[a.id] = true;
       });
       var html = '<option value="">— اختر حساب —</option>';
       // [ACC-FIELD-FILTER-2026-08-08] لو القيمة المحفوظة فعلاً (تعديل صنف
-      // قديم) بقت مش صالحة دلوقتي (حساب أب / محذوف / موقوف / نوع غلط) —
-      // منعرضهاش كأنها اختفت بصمت، ده هيوهم المستخدم إن الحقل فاضي. بدل
-      // كده بنضيفها كخيار محدد ومعلّم بتحذير، عشان يلاحظ ويصلّحها بنفسه.
-      if (isEdit && fieldVal) {
+      // قديم) بقت مش صالحة دلوقتي (محذوف / موقوف / نوع غلط) ومش هتظهر في
+      // القائمة أصلاً — منعرضهاش كأنها اختفت بصمت، ده هيوهم المستخدم إن
+      // الحقل فاضي. بدل كده بنضيفها كخيار محدد ومعلّم بتحذير، عشان يلاحظ
+      // ويصلّحها بنفسه. حساب "أب" مش محتاج المعاملة دي لأنه هيظهر أصلاً في
+      // القائمة تحت (مجمّد) زي كل الحسابات الأب التانية.
+      if (isEdit && fieldVal && !displayedIds[fieldVal]) {
         var savedAcc = all.find(function (a) {
           return a.id === fieldVal;
         });
-        var savedUsable = savedAcc && _accIsUsable(savedAcc, expectedType);
-        if (savedAcc && !savedUsable) {
+        if (savedAcc) {
           html +=
             '<option value="' +
             esc(savedAcc.id) +
@@ -4918,15 +4934,19 @@ var qrcode = function() {
             " (حساب غير صالح للترحيل — راجعه)</option>";
         }
       }
-      html += usable
+      html += displayable
         .map(function (a) {
+          var usable = _accIsUsable(a, expectedType);
           return (
             '<option value="' +
             esc(a.id) +
             '"' +
             (isEdit && fieldVal === a.id ? " selected" : "") +
+            (!usable ? ' disabled data-invalid="1"' : "") +
             ">" +
+            (!usable ? "🔒 " : "") +
             esc(a.code ? a.code + " — " + a.name : a.name) +
+            (!usable ? " (حساب أب — للعرض فقط)" : "") +
             "</option>"
           );
         })

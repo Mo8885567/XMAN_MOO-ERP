@@ -63,7 +63,11 @@ function searchAccountsLookup(query, expectedType, callerUser, sessionToken, lim
     rows = rows.filter(function (a) {
       if (a.deleted_at) return false;
       if (a.is_active === false || a.is_active === "FALSE") return false;
-      if (a.is_parent === true || a.is_parent === "TRUE") return false; // نعرض الحسابات القابلة للترحيل فقط
+      // [ACC-PARENT-VISIBLE-2026-09-09] الحسابات الأب مبقتش بتتشال من
+      // النتائج خالص — بترجع "مجمّدة" (is_parent: true) عشان الواجهة
+      // تعرضها رمادية غير قابلة للاختيار بدل ما تختفي وتبوّظ سياق شجرة
+      // الحسابات على المستخدم. المنع الفعلي للاختيار بيفضل في الواجهة
+      // (disabled) + فحص الحفظ في السيرفر (findInvalidAccountField).
       if (expectedType && a.type !== expectedType) return false;
       if (!q) return true;
       var code = String(a.code || "").toLowerCase();
@@ -76,7 +80,13 @@ function searchAccountsLookup(query, expectedType, callerUser, sessionToken, lim
     });
 
     var results = rows.slice(0, limit).map(function (a) {
-      return { id: a.id, code: a.code, name: a.name, type: a.type };
+      return {
+        id: a.id,
+        code: a.code,
+        name: a.name,
+        type: a.type,
+        is_parent: a.is_parent === true || a.is_parent === "TRUE",
+      };
     });
 
     return okResponse("", { results: results, total: rows.length });

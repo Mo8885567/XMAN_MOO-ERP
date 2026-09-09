@@ -230,6 +230,11 @@ var BusinessRulesEngine = (function () {
           "ChartOfAccounts",
           ACCOUNTING_HR_HEADERS.ChartOfAccounts,
         );
+        // [ACCOUNT-PARENT-INTEGRITY-2026-09-09] نفس التصحيح المطبّق في
+        // getChartAccounts/searchAccountsLookup — راجع _normalizeAccountsIsParent
+        // (Code_19). بدون ده، حساب "أب" فعليًا بعلم is_parent قديم غير محدَّث
+        // ممكن يعدّي هنا رغم إنه اتمنع من الاختيار في كل الـ selects.
+        _normalizeAccountsIsParent(accounts);
         for (var i = 0; i < relevant.length; i++) {
           var fieldKey = relevant[i][0];
           var fieldLabel = relevant[i][1];

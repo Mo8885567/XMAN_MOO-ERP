@@ -57,6 +57,9 @@ function searchAccountsLookup(query, expectedType, callerUser, sessionToken, lim
       ACCOUNTING_HR_HEADERS.ChartOfAccounts,
       { trimStrings: true },
     );
+    // [ACCOUNT-PARENT-INTEGRITY-2026-09-09] نفس التصحيح المطبّق في
+    // getChartAccounts — راجع _normalizeAccountsIsParent (Code_19).
+    _normalizeAccountsIsParent(rows);
     rows = rows.filter(function (a) {
       if (a.deleted_at) return false;
       if (a.is_active === false || a.is_active === "FALSE") return false;
@@ -107,6 +110,9 @@ function getChartAccounts(includeInactive, callerUser, sessionToken, asOfDate) {
     rows = rows.filter(function (r) {
       return !r.deleted_at;
     });
+    // [ACCOUNT-PARENT-INTEGRITY-2026-09-09] تصحيح is_parent فعليًا من علاقات
+    // parent_id الحقيقية قبل أي فلترة/استخدام — راجع _normalizeAccountsIsParent.
+    _normalizeAccountsIsParent(rows);
     if (!includeInactive) {
       rows = rows.filter(function (r) {
         return r.is_active !== false && r.is_active !== "FALSE";

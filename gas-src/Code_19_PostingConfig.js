@@ -705,6 +705,28 @@ var POSTING_CONFIG_KEYS = [
   },
 ];
 
+/**
+ * [ACCOUNT-PARENT-INTEGRITY-2026-09-09] _normalizeAccountsIsParent — أي حساب
+ * ليه ولد واحد على الأقل (حساب تاني بعمود parent_id بتاعه بيشاور عليه) لازم
+ * يتحسب "أب" فعليًا، حتى لو عمود is_parent المخزون في الشيت لسه FALSE (بيحصل
+ * كتير بعد الترحيل اليدوي أو استيراد قديم لدليل الحسابات مالوش دخل بمسار
+ * addChartAccount العادي اللي بيحدّث علم الأب تلقائيًا). ده نقطة توحيد واحدة
+ * قبل أي استخدام لـ ChartOfAccounts في أي سليكت بالنظام — بترفّع is_parent
+ * لـ true لو فيه ولد حقيقي، وميغيّرش true موجودة أصلاً ولا تلمس أي عمود تاني.
+ * الحسابات المحذوفة مش بتُحسب كـ"ولد" بيخلي الأب أب.
+ */
+function _normalizeAccountsIsParent(rows) {
+  var parentIds = {};
+  (rows || []).forEach(function (r) {
+    if (r.deleted_at) return;
+    if (r.parent_id) parentIds[String(r.parent_id)] = true;
+  });
+  (rows || []).forEach(function (r) {
+    if (parentIds[String(r.id)]) r.is_parent = true;
+  });
+  return rows;
+}
+
 /** A posting account must be an active, non-deleted leaf of the required type. */
 function _isUsablePostingAccount(account, expectedType) {
   if (!account || account.deleted_at) return false;

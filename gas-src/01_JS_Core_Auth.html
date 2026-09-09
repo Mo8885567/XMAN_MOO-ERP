@@ -3591,9 +3591,16 @@
       hrSettingsBundle: "hrSettings",
     };
 
+    // [FIX-TIMEOUT-LEVEL3-2026-09] level3 (محاسبة+HR — 19 حقل/شيت) نفس
+    // ثقل getAllData تقريبًا (راجع تعليق DL.Core.getAllData في
+    // 31_JS_DataLayer.html اللي اتعملها نفس الفيكس فوق من 25 لـ 45 ثانية)،
+    // لكنها فضلت واقفة على 30 ثانية بس. لما الكاش يكون فاضي (بعد أي عملية
+    // كتابة أو انتهاء TTL) وبيقرا الـ 19 شيت من الصفر، 30 ثانية مش كفاية
+    // دايمًا → "انتهت المهلة" وهمي (الرد كان واصل فعلاً بس متأخر عن
+    // الـ watchdog). رفعناها لـ 45 ثانية لتطابق getAllData.
     DL.Core.getAllDataByLevel([3], {
       label: "Auth.ensureExtendedData(level3)",
-      timeout: 30000,
+      timeout: 45000,
       onSuccess: function (result) {
         APP.extLoading = false;
         var raw = (result && result.data) || {};

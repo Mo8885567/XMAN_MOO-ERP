@@ -11060,6 +11060,12 @@
       // بالظبط سبب شاشة "الأصناف" اللي بتفضل فاضية بلا أي خطأ ظاهر.
       var _sessionTokenSafe =
         (typeof SESSION !== "undefined" && SESSION && SESSION.token) || null;
+      // [FIX-TIMEOUT-LEVEL3-2026-09] level 3 (BACKGROUND: محاسبة+HR، 19
+      // حقل/شيت) بنفس ثقل getAllData تقريبًا (راجع تعليقها فوق — اتعملها
+      // نفس الفيكس من 25→45 ثانية) — 30 ثانية كانت مش كفاية لما الكاش
+      // يكون فاضي وبتقرا كل الشيتات من الصفر، فبتظهر "انتهت المهلة" وهمي.
+      // باقي المستويات (1/2/4) أخف بكتير فسايبينها على 30 ثانية زي ما هي.
+      var _byLevelTimeout = (levels || []).indexOf(3) !== -1 ? 45000 : 30000;
       _gsr(
         "getAllDataByLevel",
         [
@@ -11068,7 +11074,10 @@
           _sessionTokenSafe,
         ],
         Object.assign(
-          { label: "Core.getAllDataByLevel(" + levels + ")", timeout: 30000 },
+          {
+            label: "Core.getAllDataByLevel(" + levels + ")",
+            timeout: _byLevelTimeout,
+          },
           opts,
         ),
       );
@@ -19006,9 +19015,16 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
       hrSettingsBundle: "hrSettings",
     };
 
+    // [FIX-TIMEOUT-LEVEL3-2026-09] level3 (محاسبة+HR — 19 حقل/شيت) نفس
+    // ثقل getAllData تقريبًا (راجع تعليق DL.Core.getAllData في
+    // 31_JS_DataLayer.html اللي اتعملها نفس الفيكس فوق من 25 لـ 45 ثانية)،
+    // لكنها فضلت واقفة على 30 ثانية بس. لما الكاش يكون فاضي (بعد أي عملية
+    // كتابة أو انتهاء TTL) وبيقرا الـ 19 شيت من الصفر، 30 ثانية مش كفاية
+    // دايمًا → "انتهت المهلة" وهمي (الرد كان واصل فعلاً بس متأخر عن
+    // الـ watchdog). رفعناها لـ 45 ثانية لتطابق getAllData.
     DL.Core.getAllDataByLevel([3], {
       label: "Auth.ensureExtendedData(level3)",
-      timeout: 30000,
+      timeout: 45000,
       onSuccess: function (result) {
         APP.extLoading = false;
         var raw = (result && result.data) || {};

@@ -231,15 +231,22 @@
       // من عرض الجدول الفعلي — فبيفضل فراغ بعد آخر عمود (زي ما ظهر في شاشة
       // المخازن، بعكس المجموعات اللي كان مجموع عروضها قريب من عرض الجدول
       // بالصدفة).
-      // [FIX-2] أول حل كان بيدي المساحة الفاضية كلها لآخر عمود بس
-      // (minmax(..,1fr) على آخر عمود فقط)، فكان العمود ده بيتضخم لوحده
-      // والباقي فاضل بعرضه الثابت الضيق → توزيع غير متساوي بين الأعمدة
-      // (بالظبط الشكوى اللي ظهرت في شاشة "الوظائف": عمود "القسم" واخد كل
-      // المساحة الفاضية والاسم/الكود ضيقين). الحل: كل الأعمدة الظاهرة
-      // (ما عدا المثبتة/frozen، عشان حسبة sticky offset تحت متعتمدش على
-      // عرض ثابت) بتاخد minmax(عرضها, 1fr) بدل عمود واحد بس، فـ CSS Grid
-      // بيوزّع أي مساحة فاضية بالتساوي على كل الأعمدة دي مع احترام أقل
-      // عرض لكل عمود.
+      // [FIX-3-2026-09-09] الحل بتاع [FIX-2] (كل الأعمدة الظاهرة تاخد
+      // minmax(عرضها,1fr)) كان بيسبب مشكلة تانية: أي عمود بتوسّعه
+      // (سواء بالسحب اليدوي من ce-th-resize) كان بيغيّر أقل عرض لعمود
+      // واحد بس، لكن المساحة الفاضية الإجمالية (container - مجموع كل
+      // الأعمدة) كانت لسه بتتوزّع بالتساوي على كل أعمدة الـ 1fr مجتمعة
+      // (مش العمود اللي بيتسحب بس) — فكل الأعمدة كانت "بتتفاعل" مع بعض
+      // لحظة السحب (أعمدة تكبر/تصغر من غير ما تتلمس). وبالنسبة للعمود
+      // المثبت (frozen) بالذات، عرضه px صريح أصلاً ومش جزء من توزيع الـ
+      // 1fr، فبيبان وكأنه "مش بيوسع" لأن أي مساحة فاضية إضافية بتتوزّع
+      // على البقية بس مش عليه.
+      // الحل الصحيح: كل الأعمدة (مثبتة أو لأ) تاخد عرضها الفعلي px
+      // بالظبط — مفيش أي عمود بيانات مرن. وبنضيف "عمود حشو" (filler)
+      // وهمي إضافي في نهاية الشبكة بعرض minmax(0,1fr) هو بس اللي بياخد
+      // أي مساحة فاضية متبقية (لو الحاوية أعرض من مجموع الأعمدة) — ده
+      // بيحقق نفس الهدف الأصلي (مفيش فراغ غريب بعد آخر عمود) من غير ما
+      // يخلي تغيير عرض عمود واحد يأثر على عرض باقي الأعمدة إطلاقًا.
       var gridTemplate = fitToWidth
         ? visibleCols
             .map(function () {
@@ -251,11 +258,9 @@
             .join(" ")
         : visibleCols
             .map(function (c) {
-              var isFrozen = c._frozen === "left" || c._frozen === "right";
-              return isFrozen
-                ? c._width + "px"
-                : "minmax(" + c._width + "px, 1fr)";
+              return c._width + "px";
             })
+            .concat(visibleCols.length ? ["minmax(0, 1fr)"] : [])
             .join(" ");
 
 
@@ -850,16 +855,14 @@
       var visibleCols = cols.filter(function (c) {
         return c._visible;
       });
-      // نفس منطق التوزيع بالتساوي في _rebuildLayoutStyle أعلاه (راجع
-      // شرح [FIX-2] هناك) — كل الأعمدة غير المثبتة تاخد minmax(width,1fr)
-      // مش عمود واحد بس، عشان يفضل التوزيع متساوي حتى أثناء السحب اللحظي.
+      // نفس منطق [FIX-3-2026-09-09] في _rebuildLayoutStyle أعلاه — كل
+      // الأعمدة px ثابت + عمود حشو minmax(0,1fr) واحد في الآخر، عشان
+      // السحب اللحظي لعمود واحد ميأثرش على عرض باقي الأعمدة.
       var gridTemplate = visibleCols
         .map(function (c) {
-          var isFrozen = c._frozen === "left" || c._frozen === "right";
-          return isFrozen
-            ? c._width + "px"
-            : "minmax(" + c._width + "px, 1fr)";
+          return c._width + "px";
         })
+        .concat(visibleCols.length ? ["minmax(0, 1fr)"] : [])
         .join(" ");
       var styleId = "ce-layout-" + screenId;
       var el = document.getElementById(styleId);
@@ -1884,13 +1887,26 @@
         footer: footer,
       });
 
-      _renderCustList(screenId, "");
-      var searchBox = document.getElementById("ce-cust-search-box");
-      if (searchBox) {
-        searchBox.addEventListener("input", function () {
-          _renderCustList(screenId, searchBox.value);
+      // [FIX-2026-09-09] openStyledDrawer بيحقن محتوى الـ body الحقيقي
+      // بشكل غير متزامن (جوه requestAnimationFrame خاص بيه، مع سبينر
+      // مؤقت placeholder — راجع "[PERF]" في Core_UIManagers.html) لتحسين
+      // سرعة فتح الـ drawer. فكان استدعاء _renderCustList هنا فورًا
+      // بيحصل قبل ما #ce-cust-list يتولد أصلاً في الـ DOM، فبيرجع null
+      // ويطلع بلا أي عمود ظاهر (القائمة فاضية للأبد لأن مفيش استدعاء
+      // تاني بعدها). الحل: نأجّل الاستدعاء لـ frame بعد اللي بيحقن فيه
+      // الـ drawer محتواه (rAF متسجّل بعد rAF بتاعه بينفّذ بعده بالظبط
+      // في نفس الـ frame التالي، بس بنستخدم rAF متداخل لضمان إضافي).
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          _renderCustList(screenId, "");
+          var searchBox = document.getElementById("ce-cust-search-box");
+          if (searchBox) {
+            searchBox.addEventListener("input", function () {
+              _renderCustList(screenId, searchBox.value);
+            });
+          }
         });
-      }
+      });
     }
 
     function _renderCustList(screenId, term) {

@@ -8035,12 +8035,6 @@ var qrcode = function() {
           },
         },
         {
-          key: "warehouse_name",
-          label: "المخزن",
-          type: "text",
-          width: 140,
-        },
-        {
           key: "children_count",
           label: "الفرعيات",
           type: "number",
@@ -8101,9 +8095,8 @@ var qrcode = function() {
     );
   }
 
-  /** تجهيز صفوف المجموعات (اسم المخزن + الأب + عدد الأصناف/الفرعيات) قبل تمريرها لـ ColumnEngine */
+  /** تجهيز صفوف المجموعات (الأب + عدد الأصناف/الفرعيات) قبل تمريرها لـ ColumnEngine */
   function _groupsPrepareRowsForCE(flatTree) {
-    var warehouses = APP.data.warehouses || [];
     var byId = {};
     (flatTree || []).forEach(function (g) {
       byId[g.id] = g;
@@ -8117,12 +8110,7 @@ var qrcode = function() {
         );
       })
       .map(function (g) {
-        var whId = g.warehouse_id || "";
-        var wh = warehouses.find(function (w) {
-          return w.id === whId || w.name === whId;
-        });
         var row = Object.assign({}, g);
-        row.warehouse_name = wh ? wh.name : whId || "غير محدد";
         row.parent_name =
           g.parent_id && byId[g.parent_id] ? byId[g.parent_id].name : "";
         row.children_count = (g.children || []).length;
@@ -8174,19 +8162,10 @@ var qrcode = function() {
   // في كل المستويات (العمود الأول بس بيتحرك بالـ indent حسب العمق)
   var GRP_TREE_COLS = [
     { key: "prefix", label: "الكود", width: 74 },
-    { key: "warehouse", label: "المخزن", width: 130 },
     { key: "level", label: "المستوى", width: 64 },
     { key: "children", label: "الفرعيات", width: 84 },
     { key: "items", label: "عدد الأصناف", width: 96 },
   ];
-
-  function _grpTreeWarehouseName(whId) {
-    if (!whId) return "—";
-    var wh = (APP.data.warehouses || []).find(function (w) {
-      return w.id === whId || w.name === whId;
-    });
-    return wh ? wh.name : whId;
-  }
 
   function _renderGroupTreeNode(node, depth) {
     var q = _groupsSearchQuery;
@@ -8211,8 +8190,6 @@ var qrcode = function() {
           .join("") +
         "</div>";
     }
-
-    var whName = _grpTreeWarehouseName(node.warehouse_id);
 
     return (
       '<div class="grp-tree-node" data-id="' +
@@ -8248,23 +8225,15 @@ var qrcode = function() {
       'px;flex-shrink:0;text-align:center;font-size:12.5px;font-weight:700;color:var(--text2,var(--text))">' +
       esc(node.prefix || "—") +
       "</div>" +
-      // ── عمود المخزن ──
-      '<div style="width:' +
-      GRP_TREE_COLS[1].width +
-      'px;flex-shrink:0;text-align:center;font-size:12px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' +
-      esc(whName) +
-      '">' +
-      esc(whName) +
-      "</div>" +
       // ── عمود المستوى ──
       '<div style="width:' +
-      GRP_TREE_COLS[2].width +
+      GRP_TREE_COLS[1].width +
       'px;flex-shrink:0;text-align:center;font-size:12px;color:var(--text3)">' +
       depth +
       "</div>" +
       // ── عمود الفرعيات ──
       '<div style="width:' +
-      GRP_TREE_COLS[3].width +
+      GRP_TREE_COLS[2].width +
       'px;flex-shrink:0;text-align:center">' +
       (node.children.length
         ? '<span style="font-size:11px;background:#EDE9FE;color:#5B21B6;border-radius:20px;padding:1px 9px;font-weight:700">' +
@@ -8274,7 +8243,7 @@ var qrcode = function() {
       "</div>" +
       // ── عمود عدد الأصناف ──
       '<div style="width:' +
-      GRP_TREE_COLS[4].width +
+      GRP_TREE_COLS[3].width +
       'px;flex-shrink:0;text-align:center">' +
       (node.item_count
         ? '<span style="font-size:11px;background:#e0f2fe;color:#0369a1;border-radius:20px;padding:1px 9px;font-weight:700">' +
@@ -8299,15 +8268,12 @@ var qrcode = function() {
       'px;flex-shrink:0;text-align:center">الكود</div>' +
       '<div style="width:' +
       GRP_TREE_COLS[1].width +
-      'px;flex-shrink:0;text-align:center">المخزن</div>' +
-      '<div style="width:' +
-      GRP_TREE_COLS[2].width +
       'px;flex-shrink:0;text-align:center">المستوى</div>' +
       '<div style="width:' +
-      GRP_TREE_COLS[3].width +
+      GRP_TREE_COLS[2].width +
       'px;flex-shrink:0;text-align:center">الفرعيات</div>' +
       '<div style="width:' +
-      GRP_TREE_COLS[4].width +
+      GRP_TREE_COLS[3].width +
       'px;flex-shrink:0;text-align:center">عدد الأصناف</div>' +
       "</div>"
     );

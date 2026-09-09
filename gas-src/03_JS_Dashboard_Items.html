@@ -4633,7 +4633,6 @@ var qrcode = function() {
               esc(c.hex || "") +
               '">' +
               esc(c.name) +
-              (c.code ? " (" + esc(c.code) + ")" : "") +
               "</option>"
             );
           })
@@ -4660,10 +4659,6 @@ var qrcode = function() {
       (extraUnits.length ? extraUnits.map(unitRowHtml).join("") : "") +
       "</div>" +
       '<button type="button" class="btn btn-outline btn-sm" id="im-unit-add">+ إضافة وحدة</button>' +
-      "</div>" +
-      '<div class="field full">' +
-      "<label>معاينة مصفوفة الألوان × المقاسات (Variants)</label>" +
-      '<div id="im-variants-preview" style="font-size:12px;color:var(--text3)">أضف ألوان ومقاسات فوق لعرض المصفوفة</div>' +
       "</div>" +
       "</div>" +
       "</div>"
@@ -5729,6 +5724,7 @@ var qrcode = function() {
       return hierGroupOptionsHtml(filtered, {
         selectedId: isEdit ? item.group : "",
         withCols: true,
+        includeEmpty: false,
       });
     }
 
@@ -6821,6 +6817,22 @@ var qrcode = function() {
             label: "اختار لون",
             icon: "ti-palette",
             searchable: true,
+            // [SELECT-COLUMNS-2026-09-09] نفس نمط منسدلات المخزن/المجموعة/
+            // الوحدة — عمود الكود من data-code، وعمود "اللون" بيعرض دائرة
+            // بلون الـ hex الفعلي (data-hex) بدل النص الخام.
+            prefsKey: "i-color-select",
+            columns: [
+              { key: "text", label: "الاسم", defaultVisible: true },
+              { key: "code", label: "الكود", defaultVisible: true, width: 90 },
+              {
+                key: "hex", label: "اللون", defaultVisible: false, width: 70,
+                format: function (v) {
+                  return v
+                    ? '<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:' + esc(v) + ';border:1px solid rgba(255,255,255,.25)"></span>'
+                    : "—";
+                },
+              },
+            ],
             addAction: {
               icon: "ti-plus",
               title: "إضافة لون جديد",
@@ -6831,9 +6843,7 @@ var qrcode = function() {
                     if (!colorSel) return;
                     var opt = document.createElement("option");
                     opt.value = newColor.code || newColor.name;
-                    opt.textContent =
-                      newColor.name +
-                      (newColor.code ? " (" + newColor.code + ")" : "");
+                    opt.textContent = newColor.name;
                     opt.dataset.name = newColor.name;
                     opt.dataset.code = newColor.code || "";
                     opt.dataset.hex = newColor.hex || "";

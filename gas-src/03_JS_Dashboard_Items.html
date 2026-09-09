@@ -4351,6 +4351,19 @@ var qrcode = function() {
         icon: "ti-building-warehouse",
         placeholder: "اختر المخزن (يمكن أكثر من مخزن)",
         value: _pendingSelectedIds,
+        // [SELECT-COLUMNS] نفس الأعمدة الرئيسية لجدول شاشة "المخازن" —
+        // زرار الترس (⚙) جوه القائمة بيسمح بإظهار/إخفاء أي عمود وسحب
+        // وإفلات لإعادة ترتيبهم، والاختيار بيتحفظ لحساب المستخدم نفسه
+        // (يظهر تاني بنفس الشكل في أي مرة يفتح فيها القائمة).
+        prefsKey: "item-warehouses",
+        columns: [
+          { key: "name", label: "الاسم", defaultVisible: true },
+          { key: "code", label: "الكود", defaultVisible: true, width: 80 },
+          { key: "type", label: "النوع", defaultVisible: true, width: 90 },
+          { key: "manager", label: "المسؤول", defaultVisible: false, width: 110 },
+          { key: "location", label: "الموقع", defaultVisible: false, width: 120 },
+          { key: "status", label: "الحالة", defaultVisible: false, width: 80 },
+        ],
         onChange: function (value) {
           if (_onChange) _onChange((value || []).slice());
         },

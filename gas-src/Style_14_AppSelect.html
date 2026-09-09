@@ -377,4 +377,51 @@
   @media (max-width: 640px) {
     .as-panel { left: 8px !important; right: 8px !important; width: auto !important; }
   }
+
+  /* ═══ 7. [SELECT-COLUMNS-2026-09-09] دروب داون بأعمدة قابلة للتخصيص ═══
+     زرار الترس داخل صف البحث + صف رؤوس الأعمدة + خلايا الصف بدل اسم
+     مفرد + لوحة تخصيص الأعمدة (إظهار/إخفاء + سحب وإفلات). */
+  .as-col-gear {
+    flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border: none; border-radius: var(--radius-sm);
+    background: transparent; color: var(--text3); cursor: pointer;
+  }
+  .as-col-gear:hover { background: var(--surface2); color: var(--text); }
+
+  .as-col-head {
+    display: flex; align-items: center; gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--border);
+    font-size: var(--text-2xs); font-weight: 600; color: var(--text3);
+    flex: 0 0 auto;
+  }
+  .as-colhead-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .as-opt-cols .as-opt-body { flex: 1 1 auto; min-width: 0; }
+  .as-opt-row-cells { display: flex; align-items: center; gap: var(--space-2); width: 100%; }
+  .as-opt-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); }
+
+  .as-colpop {
+    z-index: 1000000;
+    min-width: 220px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+    padding: var(--space-2);
+  }
+  .as-colpop-title {
+    font-size: var(--text-2xs); font-weight: 700; color: var(--text3);
+    padding: var(--space-1) var(--space-2) var(--space-2);
+  }
+  .as-colpop-list { max-height: 300px; overflow-y: auto; }
+  .as-colpop-item {
+    display: flex; align-items: center; gap: var(--space-2);
+    padding: var(--space-2); border-radius: var(--radius-sm);
+    cursor: grab; font-size: var(--text-sm); color: var(--text);
+  }
+  .as-colpop-item:hover { background: var(--surface2); }
+  .as-colpop-item.dragging { opacity: .4; }
+  .as-colpop-item label { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; flex: 1 1 auto; }
+  .as-colpop-grip { color: var(--text3); flex: 0 0 auto; }
 </style>

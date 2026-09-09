@@ -1,5 +1,5 @@
 deploy-all.js run report
-Date: 9/9/2026, 10:11:03 AM
+Date: 9/9/2026, 10:35:28 AM
 ============================================================
 
 
@@ -12,7 +12,7 @@ Date: 9/9/2026, 10:11:03 AM
   [2] Checking allowlist (google.script.run vs DOPOST_ALLOWED_FUNCTIONS)
 ------------------------------------------------------------
 Unique functions called from the frontend: 352
-Functions in DOPOST_ALLOWED_FUNCTIONS: 562
+Functions in DOPOST_ALLOWED_FUNCTIONS: 563
 Functions in DOPOST_PUBLIC_FUNCTIONS: 17
 
 === Real gaps — function exists in the backend but is not permitted in doPost (0) ===

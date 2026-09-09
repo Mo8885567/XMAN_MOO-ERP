@@ -98,6 +98,17 @@
       this._value = this.multiple ? [] : null;
       this._query = "";
       this._open = false;
+      // [SELECT-COLUMNS-2026-09-09] وضع "دروب داون بأعمدة": بدل ما كل
+      // صف/option يعرض النص بس، يقدر يعرض أكتر من عمود (زي جدول مصغّر)،
+      // مع زرار ترس (⚙) يفتح لوحة صغيرة لإظهار/إخفاء الأعمدة وسحب/إفلات
+      // لإعادة ترتيبها، وبيتحفظ التفضيل على حساب المستخدم (نفس آلية
+      // ColumnEngine: getTablePrefs/saveTablePrefs من 24_JS_UserPreferences.html)
+      // تحت مفتاح "select:" + prefsKey عشان ما يتصادمش مع تفضيلات جداول
+      // ColumnEngine نفسها. opts.columns: [{key,label,defaultVisible,width}]
+      this.columns = opts.columns || null;
+      this.prefsKey = opts.prefsKey || null;
+      this._effCols = null;
+      if (this.columns) this._loadColumnPrefs();
       this._activeIndex = -1;
       this._cache = {};
       this._nativeSelect = opts._nativeSelect || null;
@@ -178,7 +189,9 @@
         '<div class="as-search-row" style="display:none">' +
         '<i class="ti ti-search" aria-hidden="true"></i>' +
         '<input type="text" class="as-search-input" autocomplete="off" aria-label="' + esc(o.searchPlaceholder || "بحث...") + '" placeholder="' + esc(o.searchPlaceholder || "بحث...") + '">' +
+        (o.columns ? '<button type="button" class="as-col-gear" title="تخصيص الأعمدة" aria-label="تخصيص الأعمدة"><i class="ti ti-adjustments-horizontal"></i></button>' : "") +
         "</div>" +
+        (o.columns ? '<div class="as-col-head" id="' + this.id + '-colhead"></div>' : "") +
         '<div class="as-list"><div class="as-viewport" id="' + this.id + '-listbox" role="listbox" aria-multiselectable="' + (this.multiple ? "true" : "false") + '"></div></div>' +
         (this.multiple ? '<div class="as-footer"><button type="button" data-act="clear">مسح الكل</button><button type="button" data-act="all">تحديد الكل</button></div>' : "");
       document.body.appendChild(panel);
@@ -189,10 +202,122 @@
         icon: trigger.querySelector(".as-icon"),
         searchRow: panel.querySelector(".as-search-row"),
         searchInput: panel.querySelector(".as-search-input"), list: panel.querySelector(".as-list"),
-        viewport: panel.querySelector(".as-viewport") };
+        viewport: panel.querySelector(".as-viewport"),
+        colGear: panel.querySelector(".as-col-gear"), colHead: panel.querySelector(".as-col-head") };
+      if (this.columns) this._renderColHead();
 
       if (o.disabled) root.setAttribute("data-disabled", "true");
       if (o.readOnly) { root.setAttribute("data-readonly", "true"); root.setAttribute("aria-readonly", "true"); }
+    };
+
+    // ═══ §1b — تفضيلات أعمدة الدروب داون (إظهار/إخفاء + ترتيب) ═══
+    Instance.prototype._loadColumnPrefs = function () {
+      var prefs = (this.prefsKey && typeof getTablePrefs === "function")
+        ? (getTablePrefs("select:" + this.prefsKey) || {}) : {};
+      var visible = prefs.visible || {};
+      var order = prefs.order || [];
+      var byKey = {};
+      this.columns.forEach(function (c) { byKey[c.key] = c; });
+      var ordered = order.length
+        ? order.map(function (k) { return byKey[k]; }).filter(Boolean)
+        : this.columns.slice();
+      this.columns.forEach(function (c) { if (ordered.indexOf(c) === -1) ordered.push(c); });
+      this._effCols = ordered.map(function (c) {
+        return Object.assign({}, c, {
+          _visible: visible.hasOwnProperty(c.key) ? !!visible[c.key] : (c.defaultVisible !== false),
+        });
+      });
+    };
+
+    Instance.prototype._saveColumnPrefs = function () {
+      if (!this.prefsKey || typeof saveTablePrefs !== "function") return;
+      var visible = {}, order = [];
+      this._effCols.forEach(function (c) { visible[c.key] = !!c._visible; order.push(c.key); });
+      saveTablePrefs("select:" + this.prefsKey, { visible: visible, order: order });
+    };
+
+    Instance.prototype._visibleColumns = function () {
+      return (this._effCols || []).filter(function (c) { return c._visible; });
+    };
+
+    // لوحة تخصيص الأعمدة: تشيك بوكس لإظهار/إخفاء + سحب وإفلات لإعادة الترتيب
+    Instance.prototype._openColumnSettings = function (anchorEl) {
+      var self = this;
+      var existing = document.getElementById("as-colpop");
+      if (existing) existing.remove();
+      var pop = document.createElement("div");
+      pop.id = "as-colpop";
+      pop.className = "as-colpop";
+      pop.innerHTML =
+        '<div class="as-colpop-title">أعمدة القائمة</div>' +
+        '<div class="as-colpop-list">' +
+        this._effCols.map(function (c) {
+          return '<div class="as-colpop-item" draggable="true" data-key="' + esc(c.key) + '">' +
+            '<i class="ti ti-grip-vertical as-colpop-grip"></i>' +
+            '<label><input type="checkbox" data-key="' + esc(c.key) + '"' + (c._visible ? " checked" : "") + '> ' + esc(c.label || c.key) + "</label>" +
+            "</div>";
+        }).join("") +
+        "</div>";
+      document.body.appendChild(pop);
+      var r = anchorEl.getBoundingClientRect();
+      pop.style.position = "fixed";
+      pop.style.top = (r.bottom + 4) + "px";
+      pop.style.left = (isRTL() ? r.right - pop.offsetWidth : r.left) + "px";
+      // منع تجاوز حواف الشاشة
+      requestAnimationFrame(function () {
+        var pr = pop.getBoundingClientRect();
+        if (pr.right > window.innerWidth) pop.style.left = (window.innerWidth - pr.width - 8) + "px";
+        if (pr.left < 0) pop.style.left = "8px";
+      });
+
+      pop.querySelectorAll('input[type="checkbox"]').forEach(function (chk) {
+        chk.addEventListener("change", function () {
+          var key = chk.getAttribute("data-key");
+          var col = self._effCols.filter(function (c) { return c.key === key; })[0];
+          if (col) col._visible = chk.checked;
+          self._saveColumnPrefs();
+          self._renderColHead();
+          self._renderList(self._filtered.length ? self._filtered : self._flat);
+        });
+      });
+
+      var dragged = null;
+      pop.querySelectorAll(".as-colpop-item").forEach(function (item) {
+        item.addEventListener("dragstart", function () { dragged = item; item.classList.add("dragging"); });
+        item.addEventListener("dragend", function () { item.classList.remove("dragging"); });
+        item.addEventListener("dragover", function (e) { e.preventDefault(); });
+        item.addEventListener("drop", function (e) {
+          e.preventDefault();
+          if (!dragged || dragged === item) return;
+          var list = pop.querySelector(".as-colpop-list");
+          var items = Array.prototype.slice.call(list.children);
+          var from = items.indexOf(dragged), to = items.indexOf(item);
+          if (from < to) list.insertBefore(dragged, item.nextSibling);
+          else list.insertBefore(dragged, item);
+          var newOrderKeys = Array.prototype.map.call(list.children, function (el) { return el.getAttribute("data-key"); });
+          var byKey = {}; self._effCols.forEach(function (c) { byKey[c.key] = c; });
+          self._effCols = newOrderKeys.map(function (k) { return byKey[k]; });
+          self._saveColumnPrefs();
+          self._renderColHead();
+          self._renderList(self._filtered.length ? self._filtered : self._flat);
+        });
+      });
+
+      function outside(e) {
+        if (!pop.contains(e.target) && e.target !== anchorEl && !anchorEl.contains(e.target)) {
+          pop.remove();
+          document.removeEventListener("click", outside, true);
+        }
+      }
+      setTimeout(function () { document.addEventListener("click", outside, true); }, 0);
+    };
+
+    Instance.prototype._renderColHead = function () {
+      if (!this.columns || !this.el.colHead) return;
+      var cols = this._visibleColumns();
+      this.el.colHead.innerHTML = cols.map(function (c) {
+        return '<span class="as-colhead-cell" style="' + (c.width ? "flex:0 0 " + c.width + "px" : "flex:1") + '">' + esc(c.label || c.key) + "</span>";
+      }).join("");
     };
 
     Instance.prototype._bindEvents = function () {
@@ -217,6 +342,13 @@
       this.el.searchInput.addEventListener("input", function () { doSearch(this.value); });
       this.el.searchInput.addEventListener("click", function (e) { e.stopPropagation(); });
 
+      if (this.el.colGear) {
+        this.el.colGear.addEventListener("click", function (e) {
+          e.stopPropagation();
+          self._openColumnSettings(self.el.colGear);
+        });
+      }
+
       this.el.viewport.addEventListener("click", function (e) {
         var toggle = e.target.closest(".as-opt-tree-toggle");
         if (toggle) { e.stopPropagation(); self._toggleExpand(toggle.closest(".as-option").getAttribute("data-key")); return; }
@@ -236,7 +368,18 @@
 
       document.addEventListener("click", function (e) {
         if (self._destroyed) return;
-        if (!self.root.contains(e.target) && !self.el.panel.contains(e.target)) self.close();
+        // [FIX-2026-09-09] بنستخدم composedPath() بدل contains(e.target):
+        // في وضع multiple، اختيار عنصر بيعمل _renderList فورًا (لتحديث
+        // علامة ✓)، وده بيشيل نفس الـ node اللي اتضغط عليه من الشجرة قبل
+        // ما نفس حدث الـ click يوصل لـ document. contains() على node
+        // اتشال بترجع false دايمًا حتى لو الضغطة فعليًا جوه الـ dropdown،
+        // فكان بيقفل بعد كل اختيار. composedPath() بتحفظ المسار الأصلي
+        // وقت الحدث نفسه، فمش بتتأثر بأي إعادة رسم لاحقة.
+        var path = typeof e.composedPath === "function" ? e.composedPath() : null;
+        var inside = path
+          ? (path.indexOf(self.root) !== -1 || path.indexOf(self.el.panel) !== -1)
+          : (self.root.contains(e.target) || self.el.panel.contains(e.target));
+        if (!inside) self.close();
       });
       window.addEventListener("resize", function () { if (self._open) self._position(); });
       window.addEventListener("scroll", function () { if (self._open) self._position(); }, true);
@@ -349,12 +492,27 @@
         : (row.depth ? '<span style="width:18px;flex:0 0 auto"></span>' : "");
       var desc = self.descField && item[self.descField] ? '<div class="as-opt-desc">' + esc(item[self.descField]) + "</div>" : "";
       var badge = self.badgeField && item[self.badgeField] != null ? '<span class="as-opt-badge">' + esc(item[self.badgeField]) + "</span>" : "";
-      return '<div class="' + cls + '" id="' + self.id + '-opt-' + esc(row.key) + '" data-key="' + esc(row.key) + '" data-indent' + (self.multiple ? " data-multi" : "") +
+      // [SELECT-COLUMNS] لو مُفعَّل وضع الأعمدة، الصف بيتعرض كخلايا بدل
+      // اسم واحد بس — كل خلية حسب ترتيب/إظهار الأعمدة الحالي (_effCols).
+      var bodyHTML;
+      if (self.columns) {
+        var cols = self._visibleColumns();
+        bodyHTML = cols.map(function (c, i) {
+          var raw = item[c.key];
+          var val = c.format ? c.format(raw, item) : esc(raw == null ? "" : raw);
+          return '<span class="as-opt-cell" style="' + (c.width ? "flex:0 0 " + c.width + "px" : "flex:1") + '">' +
+            (i === 0 ? highlight(String(raw == null ? "" : raw), self._query) : val) + "</span>";
+        }).join("");
+        bodyHTML = '<span class="as-opt-row-cells">' + bodyHTML + "</span>" + desc;
+      } else {
+        bodyHTML = '<span class="as-opt-name">' + highlight(text, self._query) + "</span>" + desc;
+      }
+      return '<div class="' + cls + (self.columns ? " as-opt-cols" : "") + '" id="' + self.id + '-opt-' + esc(row.key) + '" data-key="' + esc(row.key) + '" data-indent' + (self.multiple ? " data-multi" : "") +
         ' style="--as-depth:' + (row.depth || 0) + '" role="option" aria-selected="' + selected + '"' + (disabled ? ' aria-disabled="true"' : "") + '>' +
         toggle +
         '<span class="as-opt-check"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M13.7 3.7 6 11.4 2.3 7.7 1 9l5 5 9-9z"/></svg></span>' +
         media +
-        '<span class="as-opt-body"><span class="as-opt-name">' + highlight(text, self._query) + "</span>" + desc + "</span>" +
+        '<span class="as-opt-body">' + bodyHTML + "</span>" +
         badge + "</div>";
     };
 
@@ -522,7 +680,7 @@
       this.root.classList.add("as-open");
       this.root.setAttribute("aria-expanded", "true");
       this.el.panel._instRef = this;
-      var showSearch = this.opts.searchable !== false && (this.opts.searchable || this._flat.length > SEARCH_THRESHOLD || this.opts.serverSearch);
+      var showSearch = !!this.columns || (this.opts.searchable !== false && (this.opts.searchable || this._flat.length > SEARCH_THRESHOLD || this.opts.serverSearch));
       this.el.searchRow.style.display = showSearch ? "flex" : "none";
       this._query = "";
       this.el.searchInput.value = "";

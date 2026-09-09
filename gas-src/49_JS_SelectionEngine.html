@@ -105,7 +105,15 @@
       // ColumnEngine: getTablePrefs/saveTablePrefs من 24_JS_UserPreferences.html)
       // تحت مفتاح "select:" + prefsKey عشان ما يتصادمش مع تفضيلات جداول
       // ColumnEngine نفسها. opts.columns: [{key,label,defaultVisible,width}]
-      this.columns = opts.columns || null;
+      // [UNIFIED-2026-09-09] بقى ده الشكل الافتراضي (Default) لكل عناصر
+      // AppSelect في النظام كله — مش استثناء لحقل بعينه. أي select عنده
+      // opts.columns صريحة (زي منسدل المخازن) بيستخدمها زي ما هي، وأي
+      // select تاني (حتى لو مفعّل بـ .upgrade() على <select> عادي بحقل
+      // واحد بس) بياخد تلقائيًا عمود افتراضي واحد (الاسم) + عمود الكود
+      // لو opts.codeField متاح + عمود الحالة لو badgeField متاح — بنفس
+      // شريط الأدوات وزرار الترس، عشان الشكل يبقى موحّد فعلاً في كل
+      // مكان. للاستثناء الصريح (تعطيل الوضع ده تمامًا) مرّر columns:false.
+      this.columns = opts.columns !== undefined ? opts.columns : this._buildDefaultColumns(opts);
       this.prefsKey = opts.prefsKey || null;
       this._effCols = null;
       if (this.columns) this._loadColumnPrefs();
@@ -189,9 +197,9 @@
         '<div class="as-search-row" style="display:none">' +
         '<i class="ti ti-search" aria-hidden="true"></i>' +
         '<input type="text" class="as-search-input" autocomplete="off" aria-label="' + esc(o.searchPlaceholder || "بحث...") + '" placeholder="' + esc(o.searchPlaceholder || "بحث...") + '">' +
-        (o.columns ? '<button type="button" class="as-col-gear" title="تخصيص الأعمدة" aria-label="تخصيص الأعمدة"><i class="ti ti-adjustments-horizontal"></i></button>' : "") +
+        (this.columns && this.columns.length > 1 ? '<button type="button" class="as-col-gear" title="تخصيص الأعمدة" aria-label="تخصيص الأعمدة"><i class="ti ti-adjustments-horizontal"></i></button>' : "") +
         "</div>" +
-        (o.columns ? '<div class="as-col-head" id="' + this.id + '-colhead"></div>' : "") +
+        (this.columns ? '<div class="as-col-head" id="' + this.id + '-colhead"></div>' : "") +
         '<div class="as-list"><div class="as-viewport" id="' + this.id + '-listbox" role="listbox" aria-multiselectable="' + (this.multiple ? "true" : "false") + '"></div></div>' +
         (this.multiple ? '<div class="as-footer"><button type="button" data-act="clear">مسح الكل</button><button type="button" data-act="all">تحديد الكل</button></div>' : "");
       document.body.appendChild(panel);
@@ -211,6 +219,19 @@
     };
 
     // ═══ §1b — تفضيلات أعمدة الدروب داون (إظهار/إخفاء + ترتيب) ═══
+    // [UNIFIED-2026-09-09] بيبني تعريف أعمدة افتراضي لأي select ملوش
+    // opts.columns صريحة، عشان شريط الأدوات + زرار الترس يبقوا موجودين
+    // بشكل موحّد في كل حقل منسدل بالنظام، حتى لو عمود واحد بس (الاسم).
+    // أي حقل تاني (codeField/badgeField) اتحدد وقت الإنشاء بيتضاف
+    // تلقائيًا كعمود إضافي من غير أي تعديل يدوي لكل شاشة على حدة.
+    Instance.prototype._buildDefaultColumns = function (opts) {
+      if (opts.iconOnlyTrigger) return null; // منسدلات مصغّرة بأيقونة بس — الشكل الجدولي هيبوّظ شكلها
+      var cols = [{ key: this.textField, label: opts.columnLabel || opts.label || opts.placeholder || "الاسم" }];
+      if (opts.codeField) cols.push({ key: opts.codeField, label: opts.codeLabel || "الكود", width: 90 });
+      if (this.badgeField) cols.push({ key: this.badgeField, label: opts.badgeLabel || "الحالة", width: 90 });
+      return cols;
+    };
+
     Instance.prototype._loadColumnPrefs = function () {
       var prefs = (this.prefsKey && typeof getTablePrefs === "function")
         ? (getTablePrefs("select:" + this.prefsKey) || {}) : {};
@@ -857,6 +878,11 @@
       opts.textField = opts.textField || "text";
       opts.hexField = opts.hexField || (rows.some(function (r) { return r.hex; }) ? "hex" : null);
       opts.multiple = opts.multiple != null ? opts.multiple : select.multiple;
+      // [UNIFIED-2026-09-09] مفتاح حفظ تفضيلات الأعمدة تلقائيًا من id
+      // الـ <select> الأصلي نفسه (فريد أصلاً في كل شاشة) — عشان أي select
+      // اتترقّى بـ upgrade() يقدر يحفظ تفضيل المستخدم من غير أي تمرير
+      // يدوي لـ prefsKey في كل نداء على حدة.
+      opts.prefsKey = opts.prefsKey || select.id || undefined;
       opts._nativeSelect = select;
       opts.value = opts.value !== undefined ? opts.value
         : (select.multiple ? Array.prototype.filter.call(select.options, function (o) { return o.selected; }).map(function (o) { return o.value; })

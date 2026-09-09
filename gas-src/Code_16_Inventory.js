@@ -265,10 +265,13 @@ function addGroup(g) {
     // لرفض القيم اللي مسافات فاضية بس زي "   ").
     if (!ValidationEngine.isRequired(g.name))
       return errResponse("اسم المجموعة مطلوب");
+    // [GROUPS-GLOBAL-2026-09-09] المجموعات بقت عامة على مستوى النظام
+    // كله مش مرتبطة بمخزن معيّن (طلب المستخدم) — شلنا اشتراط
+    // warehouse_id هنا وفي updateGroup تحت. عمود warehouse_id في شيت
+    // Groups نفسه سيبناه موجود (لتوافق أي بيانات قديمة) لكنه بقى اختياري
+    // وغير مستخدم فعليًا من الواجهة.
     if (!ValidationEngine.isRequired(g.prefix))
       return errResponse("رمز المجموعة (Prefix) مطلوب");
-    if (!ValidationEngine.isRequired(g.warehouse_id))
-      return errResponse("يجب اختيار المخزن");
 
     const existing = getSheetData("Groups");
     // [FIX] الرمز (prefix) بقى ممكن يتكرر عمدًا — المعرّف الحقيقي والفريد
@@ -358,8 +361,6 @@ function updateGroup(g) {
       return errResponse("اسم المجموعة مطلوب");
     if (!ValidationEngine.isRequired(g.prefix))
       return errResponse("رمز المجموعة (Prefix) مطلوب");
-    if (!ValidationEngine.isRequired(g.warehouse_id))
-      return errResponse("يجب اختيار المخزن");
 
     const name = g.name.trim();
     const oldParentId = row.parent_id || "";

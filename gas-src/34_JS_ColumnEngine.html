@@ -691,101 +691,22 @@
       if (!st) return;
       st.viewMode = key;
       _savePrefs(screenId, { viewMode: key });
-      var reg = _registry[screenId];
-      var opts = (reg && reg.options) || {};
-      var def = (opts.viewModes || []).filter(function (m) {
-        return m.key === key;
-      })[0];
-      var lbl = document.getElementById("ce-viewmode-label-" + screenId);
-      if (lbl && def) lbl.textContent = def.label || def.key;
-      var iconEl =
-        document.getElementById("ce-viewmode-" + screenId) &&
-        document
-          .getElementById("ce-viewmode-" + screenId)
-          .querySelector("i.ti");
-      if (iconEl && def && def.icon) iconEl.className = "ti " + def.icon;
+      // [VIEW-MODE-MERGE-2026-09-09] الوضع بقى جزء من منسدلة "طرق العرض"
+      // نفسها (بدون زرار/تسمية/أيقونة منفصلة تتحدث هنا)، فمفيش داعي
+      // لتحديث لابل/أيقونة زرار مستقل بعد كده — راجع _openPresetMenu.
       _applyViewMode(screenId);
-    }
-
-    function _openViewModeMenu(screenId, anchor) {
-      _closeFloatingMenu();
-      var reg = _registry[screenId];
-      var opts = (reg && reg.options) || {};
-      var modes = opts.viewModes || [];
-      if (!modes.length) return;
-      var current = _getViewMode(screenId);
-      var menu = document.createElement("div");
-      menu.className = "ce-floating-menu";
-      menu.style.cssText =
-        "position:fixed;z-index:9999;background:var(--surface);border:1px solid var(--border);" +
-        "border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);padding:6px;min-width:160px";
-      var rect = anchor.getBoundingClientRect();
-      menu.style.top = rect.bottom + 6 + "px";
-      menu.style.left = rect.left + "px";
-      menu.innerHTML = modes
-        .map(function (m) {
-          var isActive = m.key === current;
-          return (
-            '<div class="ce-menu-item" data-mode="' +
-            _esc(m.key) +
-            '" style="display:flex;gap:8px;align-items:center;padding:8px 10px;' +
-            "border-radius:8px;cursor:pointer;font-size:12.5px;" +
-            (isActive ? "color:var(--accent);font-weight:700;" : "") +
-            '"><i class="ti ' +
-            (m.icon || "ti-layout-grid") +
-            '"></i>' +
-            _esc(m.label || m.key) +
-            (isActive
-              ? '<i class="ti ti-check" style="margin-right:auto"></i>'
-              : "") +
-            "</div>"
-          );
-        })
-        .join("");
-      document.body.appendChild(menu);
-      menu.querySelectorAll(".ce-menu-item").forEach(function (item) {
-        item.addEventListener("mouseenter", function () {
-          item.style.background = "var(--surface2)";
-        });
-        item.addEventListener("mouseleave", function () {
-          item.style.background = "";
-        });
-        item.addEventListener("click", function () {
-          _setViewMode(screenId, item.getAttribute("data-mode"));
-          _closeFloatingMenu();
-        });
-      });
-      setTimeout(function () {
-        document.addEventListener("click", _closeFloatingMenuOnce);
-      }, 0);
     }
 
     function _buildToolbar(screenId) {
       var reg = _registry[screenId];
       var title = reg.options.title || "";
       var hideSearch = !!reg.options.hideSearch;
-      var viewModes = reg.options.viewModes || [];
-      var viewModeHtml = "";
-      if (viewModes.length) {
-        var vmKey = _getViewMode(screenId);
-        var vmDef =
-          viewModes.filter(function (m) {
-            return m.key === vmKey;
-          })[0] || viewModes[0];
-        viewModeHtml =
-          '<button class="ce-btn" id="ce-viewmode-' +
-          screenId +
-          '"><i class="ti ' +
-          (vmDef.icon || "ti-layout-grid") +
-          '"></i> <span id="ce-viewmode-label-' +
-          screenId +
-          '">' +
-          _esc(vmDef.label || vmDef.key) +
-          '</span> <i class="ti ti-chevron-down" style="font-size:11px"></i></button>';
-      }
+      // [VIEW-MODE-MERGE-2026-09-09] زرار "شجري/جدولي" اتلغى كزرار مستقل —
+      // اتدمج جوه منسدلة "طرق العرض" نفسها (راجع _openPresetMenu) عشان
+      // مايبقاش فيه زرارين متجاورين لهدف متشابه. الأيقونة/التسمية بتاعة
+      // "طرق العرض" فضلت زي ما هي بغض النظر عن وجود viewModes.
       return (
         '<div class="ce-toolbar">' +
-        viewModeHtml +
         (hideSearch
           ? ""
           : '<div class="ce-search"><i class="ti ti-search"></i><input type="text" id="ce-search-' +
@@ -1750,12 +1671,6 @@
     // §CE-08  ربط أزرار الـ Toolbar (بحث / تخصيص / تصدير / طباعة / عروض)
     // ─────────────────────────────────────────────────────────────────────
     function _wireToolbar(screenId) {
-      var viewModeBtn = document.getElementById("ce-viewmode-" + screenId);
-      if (viewModeBtn)
-        viewModeBtn.onclick = function (e) {
-          _openViewModeMenu(screenId, e.currentTarget);
-        };
-
       var searchEl = document.getElementById("ce-search-" + screenId);
       if (searchEl) {
         var t = null;
@@ -1860,6 +1775,11 @@
 
     function _openPresetMenu(screenId, anchor) {
       _closeFloatingMenu();
+      var reg = _registry[screenId];
+      // [VIEW-MODE-MERGE-2026-09-09] "شجري/جدولي" بقى قسم أول جوه نفس
+      // منسدلة "طرق العرض" بدل ما يكون له زرار منفصل — راجع _buildToolbar.
+      var viewModes = (reg && reg.options && reg.options.viewModes) || [];
+      var currentViewMode = viewModes.length ? _getViewMode(screenId) : null;
       var prefs = _getPrefs(screenId);
       var custom = prefs.presets || {};
       var builtin = _builtinPresets(screenId);
@@ -1873,6 +1793,30 @@
       menu.style.left = rect.left + "px";
 
       var html = "";
+      if (viewModes.length) {
+        html += viewModes
+          .map(function (m) {
+            var isActive = m.key === currentViewMode;
+            return (
+              '<div class="ce-menu-item" data-mode="' +
+              _esc(m.key) +
+              '" style="display:flex;gap:8px;align-items:center;padding:8px 10px;' +
+              "border-radius:8px;cursor:pointer;font-size:12.5px;" +
+              (isActive ? "color:var(--accent);font-weight:700;" : "") +
+              '"><i class="ti ' +
+              (m.icon || "ti-layout-grid") +
+              '"></i>' +
+              _esc(m.label || m.key) +
+              (isActive
+                ? '<i class="ti ti-check" style="margin-right:auto"></i>'
+                : "") +
+              "</div>"
+            );
+          })
+          .join("");
+        html +=
+          '<div style="padding:6px 10px;font-size:11px;color:var(--text3);border-top:1px solid var(--border);margin-top:4px;margin-bottom:2px">تخصيص الأعمدة</div>';
+      }
       html +=
         '<div class="ce-menu-item" data-preset="__default__" style="padding:8px 10px;border-radius:8px;cursor:pointer;font-size:12.5px;font-weight:600">↺ العرض الافتراضي</div>';
       Object.keys(builtin).forEach(function (name) {
@@ -1908,6 +1852,12 @@
           item.style.background = "";
         });
         item.addEventListener("click", function (e) {
+          var mode = item.getAttribute("data-mode");
+          if (mode) {
+            _setViewMode(screenId, mode);
+            _closeFloatingMenu();
+            return;
+          }
           var delName = e.target.getAttribute("data-del-preset");
           if (delName) {
             e.stopPropagation();

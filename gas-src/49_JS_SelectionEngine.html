@@ -1007,13 +1007,17 @@
       // مفتاح عادي في صف البيانات — عشان أي select عايز يعرض أعمدة
       // إضافية في وضع التخصيص يقدر يحطها كـ data attribute على الـ
       // <option> من غير ما يحتاج يتحول بالكامل لـ AppSelect.create().
+      // [HIDE-PLACEHOLDER-OPTION] الـ <option value=""> الفاضي دايمًا نصّه
+      // "— اختر ... —" بيبقى موجود أصلاً كـ placeholder على الصندوق نفسه
+      // (opts.label/placeholder)، فمفيش داعي يتكرر كصف فعلي جوه القائمة
+      // المنسدلة كمان — كان بيظهر مرتين (على الصندوق + كأول صف في القائمة).
       var rows = Array.prototype.map.call(select.options, function (o) {
         var row = { value: o.value, text: o.textContent, disabled: o.disabled };
         if (o.dataset) {
           for (var k in o.dataset) row[k] = o.dataset[k] || undefined;
         }
         return row;
-      });
+      }).filter(function (r) { return r.value !== ""; });
 
       var wrap = document.createElement("div");
       wrap.id = (select.id || "as") + "-wrap";
@@ -1064,7 +1068,7 @@
           for (var k in o.dataset) row[k] = o.dataset[k] || undefined;
         }
         return row;
-      });
+      }).filter(function (r) { return r.value !== ""; });
       var curVal = inst.multiple
         ? Array.prototype.filter.call(select.options, function (o) { return o.selected; }).map(function (o) { return o.value; })
         : select.value;

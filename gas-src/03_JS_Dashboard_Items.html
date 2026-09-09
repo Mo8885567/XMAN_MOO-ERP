@@ -4649,9 +4649,15 @@ var qrcode = function() {
         '<div style="flex:2;min-width:180px"><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:3px"> صورة هذا اللون (اختياري)</label>' +
         '<div style="display:flex;align-items:center;gap:6px">' +
         '<input class="input" id="i-color-img" type="url" placeholder="https://... رابط صورة اللون" style="flex:1" ' +
-        "oninput=\"(function(){var v=this.value.trim();var p=document.getElementById('i-color-img-preview');if(!p)return;if(v){p.src=v;p.style.display='inline-block';}else{p.src='';p.style.display='none';}}).call(this)\">" +
+        "oninput=\"(function(){var v=this.value.trim();var p=document.getElementById('i-color-img-preview');var errEl=document.getElementById('i-color-img-err');if(errEl)errEl.style.display='none';if(!p)return;if(v){p.src=v;p.style.display='inline-block';}else{p.src='';p.style.display='none';}}).call(this)\">" +
         '<img id="i-color-img-preview" src="" alt="" style="display:none;width:36px;height:36px;object-fit:cover;border-radius:6px;border:1.5px solid var(--border);flex-shrink:0" ' +
-        "onerror=\"this.style.display='none'\">" +
+        // [FIX-COLOR-IMG-PREVIEW-SILENT-FAIL] قبل كده onerror كان بيخبّي
+        // المربع بصمت تام لو اللينك مش رابط صورة مباشر (زي رابط صفحة
+        // Google Drive/واتساب عادي بيمنع hotlinking) — المستخدم كان بيحس
+        // إن الفيتشر "مش بيجيب حاجة" بدون أي تفسير. دلوقتي بنخبّي المربع
+        // *وبنظهر* رسالة تنبيه واضحة بدلاً منه.
+        "onerror=\"this.style.display='none';var e=document.getElementById('i-color-img-err');if(e)e.style.display='inline';\">" +
+        '<span id="i-color-img-err" style="display:none;font-size:11px;color:var(--danger)">⚠ تعذّر تحميل الصورة — تأكد إن الرابط رابط صورة مباشر (ينتهي بامتداد صورة أو يفتح الصورة لوحدها لا صفحة)</span>' +
         "</div></div>" +
         '<button class="btn btn-outline btn-sm" id="i-color-add" type="button" style="align-self:flex-end;height:40px">+ إضافة</button>' +
         "</div>" +

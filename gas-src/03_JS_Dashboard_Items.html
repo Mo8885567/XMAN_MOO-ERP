@@ -4913,7 +4913,7 @@ var qrcode = function() {
           html +=
             '<option value="' +
             esc(savedAcc.id) +
-            '" selected>⚠️ ' +
+            '" selected data-invalid="1">⚠️ ' +
             esc(savedAcc.code ? savedAcc.code + " — " + savedAcc.name : savedAcc.name) +
             " (حساب غير صالح للترحيل — راجعه)</option>";
         }
@@ -6695,7 +6695,18 @@ var qrcode = function() {
                 .forEach(function (sel) {
                   var key = sel.getAttribute("data-posting-key");
                   var def = res[key];
-                  if (!def || !def.id || sel.value) return; // عنده Override محفوظ بالفعل — سيبه
+                  if (!def || !def.id) return;
+                  // [ACC-AUTO-DEFAULT-2026-09-09] لو القيمة الحالية فاضية،
+                  // أو كانت قيمة قديمة اتعلّمت غير صالحة (⚠️ حساب أب/محذوف/
+                  // موقوف — data-invalid)، منعتبرهاش "Override محفوظ فعلاً"
+                  // ونستبدلها تلقائيًا بالحساب الافتراضي الصحيح، بدل ما
+                  // نسيب المستخدم غير الخبير عالق لازم يفهم الفرق بين حساب
+                  // أب وحساب فرعي عشان يقدر يحفظ الصنف. لو المستخدم فعلاً
+                  // اختار حساب صالح (Override حقيقي) بنسيبه زي ما هو.
+                  var selectedOpt = sel.options[sel.selectedIndex];
+                  var isInvalidSelected =
+                    selectedOpt && selectedOpt.getAttribute("data-invalid") === "1";
+                  if (sel.value && !isInvalidSelected) return; // عنده Override صالح فعلاً — سيبه
                   var opt = sel.querySelector('option[value="' + def.id + '"]');
                   if (opt) sel.value = def.id;
                   if (window.SplitSelect) SplitSelect.refresh(sel.id);

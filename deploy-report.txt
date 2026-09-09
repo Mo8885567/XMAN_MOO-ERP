@@ -1,5 +1,5 @@
 deploy-all.js run report
-Date: 9/8/2026, 9:22:12 PM
+Date: 9/9/2026, 8:45:01 AM
 ============================================================
 
 
@@ -46,14 +46,14 @@ $ clasp push --force
 ------------------------------------------------------------
   [5] Updating the active deployment (clasp deploy -i)
 ------------------------------------------------------------
-$ clasp deploy --deploymentId AKfycby-kd9pCTfx9UOFF3tiMeLnRlfFynh6gTIWpTxaB6EqGVSKH_g_TaiO9McTmakTZ7QRog --description update 8
+$ clasp deploy --deploymentId AKfycby-kd9pCTfx9UOFF3tiMeLnRlfFynh6gTIWpTxaB6EqGVSKH_g_TaiO9McTmakTZ7QRog --description update 9
 [OK] Deployment (AKfycby-kd9pCTfx9UOFF3tiMeLnRlfFynh6gTIWpTxaB6EqGVSKH_g_TaiO9McTmakTZ7QRog) updated — the URL (GAS_URL) stays the same.
 
 ------------------------------------------------------------
   [6] Pushing the built frontend via Git (will trigger auto-deploy on Vercel)
 ------------------------------------------------------------
 $ git add -A
-$ git commit -m update 8
+$ git commit -m update 9
 $ git push
 [OK] Pushed to Git — Vercel will start building and deploying automatically within a minute or two.
 

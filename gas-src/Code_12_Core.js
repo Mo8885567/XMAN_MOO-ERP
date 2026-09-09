@@ -98,6 +98,9 @@ var DOPOST_ALLOWED_FUNCTIONS = [
   // google.script.run is direct RPC, not routed through doPost):
   "addUnit", // Code_55_Units.js ← 03_JS_Dashboard_Items.html
   "deleteUnit", // Code_55_Units.js ← 03_JS_Dashboard_Items.html (via 07_JS_Shipping_Colors_Excel.html)
+  "getSizeGroups", // Code_16_Inventory.js ← 07_JS_Shipping_Colors_Excel.html
+  "addSizeGroup", // Code_16_Inventory.js ← 07_JS_Shipping_Colors_Excel.html
+  "updateSizeGroup", // Code_16_Inventory.js ← 07_JS_Shipping_Colors_Excel.html
   "deleteSizeGroup", // Code_16_Inventory.js ← 07_JS_Shipping_Colors_Excel.html
   "getAllDataByLevel", // Code_53_DataRegistryEngine.js ← 31_JS_DataLayer.html, 52_JS_LoadingEngine.html
   "getDocumentEngineStorageStats", // Code_50_DocumentEngine.js ← 08_JS_Users_Branding.html

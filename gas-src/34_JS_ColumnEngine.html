@@ -485,6 +485,7 @@
       // [FIX] احسب أفضل عرض تلقائي لكل عمود حسب محتواه الفعلي قبل رسم الجدول
       _computeAutoFitWidths(_registry[screenId].columns, _state[screenId].rows);
       _rebuildLayoutStyle(screenId);
+      container.removeAttribute("data-ce-loading");
       container.setAttribute("data-ce-scope", screenId);
       container.classList.add("ce-wrap");
       container.innerHTML =
@@ -1996,9 +1997,59 @@
         NotificationEngine.success("تم حفظ إعدادات الجدول ");
     }
 
+    // ── Loading Skeleton [ANIM-TABLE-REFRESH] ─────────────────────────
+    // شيميمر عام لأي شاشة مسجَّلة في ColumnEngine، يُستخدم في اللحظة اللي
+    // بيُطلب فيها إعادة جلب بيانات الجدول من السيرفر (مش بيانات محلية
+    // جاهزة في APP.data) — زي زر "التحديث العام" في التوب بار. بيحل محل
+    // renderTable() القديم مؤقتًا فوق نفس الـ container، وبيتمسح تلقائيًا
+    // أول ما renderTable() الحقيقي يترسم فوقه بالبيانات الجديدة. مفيش أي
+    // اعتماد على أعمدة الشاشة المسجّلة (Grid Template) عشان يفضل شغّال
+    // حتى لو الشاشة لسه ما اترسمتش قبل كده أصلاً.
+    function showLoading(screenId, container, rowCount) {
+      if (!container) return;
+      var reg = _registry[screenId];
+      var colCount =
+        (reg && reg.columns
+          ? reg.columns.filter(function (c) {
+              return c._visible !== false;
+            }).length
+          : 6) || 6;
+      rowCount = rowCount || 7;
+      var widths = ["78%", "45%", "60%", "35%", "55%", "40%", "65%", "50%"];
+      function bar(w) {
+        return (
+          '<div style="height:13px;border-radius:6px;width:' +
+          w +
+          ";background:linear-gradient(90deg,var(--surface2) 25%,var(--border) 50%,var(--surface2) 75%);" +
+          'background-size:200% 100%;animation:csShimmer 1.4s ease-in-out infinite"></div>'
+        );
+      }
+      function rowHtml(isHead, rIdx) {
+        var cells = "";
+        for (var i = 0; i < colCount; i++) {
+          cells +=
+            '<div style="flex:1;min-width:0">' +
+            bar(isHead ? "50%" : widths[(i + rIdx) % widths.length]) +
+            "</div>";
+        }
+        return (
+          '<div style="display:flex;gap:20px;align-items:center;padding:' +
+          (isHead ? "12px 16px" : "11px 16px") +
+          ';border-bottom:1px solid var(--border)">' +
+          cells +
+          "</div>"
+        );
+      }
+      var html = rowHtml(true, 0);
+      for (var r = 0; r < rowCount; r++) html += rowHtml(false, r);
+      container.setAttribute("data-ce-loading", "1");
+      container.innerHTML = '<div class="ce-loading-skel">' + html + "</div>";
+    }
+
     return {
       register: register,
       renderTable: renderTable,
+      showLoading: showLoading,
       appendRows: appendRows,
       openCustomize: openCustomize,
       exportData: exportData,

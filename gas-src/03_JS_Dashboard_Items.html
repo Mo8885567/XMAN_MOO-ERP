@@ -2371,6 +2371,21 @@ var qrcode = function() {
             icon.style.transform = "rotate(0deg)";
           }, 650);
         }
+        // [ANIM-TABLE-REFRESH] لو الشاشة الحالية فيها جدول ColumnEngine
+        // ظاهر (أي شاشة متحوّلة — المخازن/الأصناف/العملاء/الموردين...)،
+        // اعرض Shimmer Skeleton مكانه فورًا بدل ما يفضل الجدول القديم
+        // واقف بصمت لحد ما reloadAfterMutationFull يرجّع البيانات
+        // ويعيد رسم الصفحة كلها — نفس سلوك الأنظمة الكبرى وقت التحديث.
+        // مفيش أي تخصيص لشاشة بعينها هنا، فأي شاشة جديدة تتحوّل لـ
+        // ColumnEngine مستقبلاً هتاخد نفس السلوك تلقائيًا.
+        var ceEl = document.querySelector("#page-content [data-ce-scope]");
+        if (
+          ceEl &&
+          typeof ColumnEngine !== "undefined" &&
+          ColumnEngine.showLoading
+        ) {
+          ColumnEngine.showLoading(ceEl.getAttribute("data-ce-scope"), ceEl);
+        }
         reloadAfterMutationFull(null, null, {
           title: "جاري تحديث البيانات...",
           emoji: "",

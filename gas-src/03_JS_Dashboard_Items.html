@@ -4356,13 +4356,20 @@ var qrcode = function() {
         // وإفلات لإعادة ترتيبهم، والاختيار بيتحفظ لحساب المستخدم نفسه
         // (يظهر تاني بنفس الشكل في أي مرة يفتح فيها القائمة).
         prefsKey: "item-warehouses",
+        // [FIX-EQUAL-COLS-2026-09-09] شلنا width الثابت (px) من كل عمود:
+        // لما كان بعض الأعمدة (الكود/النوع/المسؤول/الموقع/الحالة) بعرض
+        // ثابت وعمود واحد بس (الاسم) بـ flex:1، إضافة عمود جديد من ⚙
+        // كانت بتاخد مساحتها الثابتة وتسرق من عرض باقي الأعمدة بدل ما
+        // توزّع المساحة بالتساوي بينهم كلهم. من غير width، _renderColHead
+        // و_optionHTML (49_JS_SelectionEngine.html) بيدّوا كل عمود ظاهر
+        // flex:1 فيتوزعوا بالتساوي تلقائيًا مهما كان عددهم.
         columns: [
           { key: "name", label: "الاسم", defaultVisible: true },
-          { key: "code", label: "الكود", defaultVisible: true, width: 80 },
-          { key: "type", label: "النوع", defaultVisible: true, width: 90 },
-          { key: "manager", label: "المسؤول", defaultVisible: false, width: 110 },
-          { key: "location", label: "الموقع", defaultVisible: false, width: 120 },
-          { key: "status", label: "الحالة", defaultVisible: false, width: 80 },
+          { key: "code", label: "الكود", defaultVisible: true },
+          { key: "type", label: "النوع", defaultVisible: true },
+          { key: "manager", label: "المسؤول", defaultVisible: false },
+          { key: "location", label: "الموقع", defaultVisible: false },
+          { key: "status", label: "الحالة", defaultVisible: false },
         ],
         onChange: function (value) {
           if (_onChange) _onChange((value || []).slice());

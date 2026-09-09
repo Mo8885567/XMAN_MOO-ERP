@@ -455,7 +455,14 @@
         var inside = path
           ? (path.indexOf(self.root) !== -1 || path.indexOf(self.el.panel) !== -1)
           : (self.root.contains(e.target) || self.el.panel.contains(e.target));
-        if (!inside) self.close();
+        // [FIX-COLPOP-OUTSIDE-CLICK] لوحة تخصيص الأعمدة (as-colpop) بتتبني
+        // كـ <div> مستقل ملحق بـ document.body مباشرة (مش جوه self.el.panel)
+        // عشان الـ positioning (fixed, بيتحسب من anchorEl). فكان أي ضغط على
+        // تشيك بوكس جواها بيتحسب "برا" الـ select من هنا، فيقفل المنسدلة
+        // كلها فورًا. بنستثني أي ضغط جوه as-colpop من اعتبار "برا".
+        var colPop = document.getElementById("as-colpop");
+        var insideColPop = colPop && (path ? path.indexOf(colPop) !== -1 : colPop.contains(e.target));
+        if (!inside && !insideColPop) self.close();
       });
       window.addEventListener("resize", function () { if (self._open) self._position(); });
       window.addEventListener("scroll", function () { if (self._open) self._position(); }, true);

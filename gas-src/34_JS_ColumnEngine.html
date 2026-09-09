@@ -2018,62 +2018,29 @@
         NotificationEngine.success("تم حفظ إعدادات الجدول ");
     }
 
-    // ── Loading Skeleton [ANIM-TABLE-REFRESH] ─────────────────────────
-    // شيميمر عام لأي شاشة مسجَّلة في ColumnEngine، يُستخدم في اللحظة اللي
-    // بيُطلب فيها إعادة جلب بيانات الجدول من السيرفر (مش بيانات محلية
-    // جاهزة في APP.data) — زي زر "التحديث العام" في التوب بار. بيحل محل
-    // renderTable() القديم مؤقتًا فوق نفس الـ container، وبيتمسح تلقائيًا
-    // أول ما renderTable() الحقيقي يترسم فوقه بالبيانات الجديدة. مفيش أي
-    // اعتماد على أعمدة الشاشة المسجّلة (Grid Template) عشان يفضل شغّال
+    // ── Loading State (سبينر + نص) [ANIM-TABLE-REFRESH] ────────────────
+    // بيُستخدم في اللحظة اللي بيُطلب فيها إعادة جلب بيانات الجدول من
+    // السيرفر (مش بيانات محلية جاهزة في APP.data) — زي زر "التحديث
+    // العام" في التوب بار، أو أول فتح للشاشة قبل ما البيانات توصل.
+    // بيحل محل renderTable() القديم مؤقتًا فوق نفس الـ container،
+    // وبيتمسح تلقائيًا أول ما renderTable() الحقيقي يترسم فوقه بالبيانات
+    // الجديدة. مفيش أي اعتماد على أعمدة الشاشة المسجّلة عشان يفضل شغّال
     // حتى لو الشاشة لسه ما اترسمتش قبل كده أصلاً.
+    // [FIX-SPINNER-2026-09-09] بدل شيمر الصفوف الوهمية (كان شكله غريب
+    // ومش واضح إنه "تحميل")، بقى نفس مكان/شكل رسالة "لا توجد بيانات
+    // لعرضها" (ce-empty) بالظبط — بس بدايرة تحميل (سبينر) دايرة + نص
+    // "جار جلب البيانات..." بدل النص الفاضي، عشان يبان واضح إن في تحميل
+    // فعلي شغال مش إن الجدول فاضي.
     function showLoading(screenId, container, rowCount) {
       if (!container) return;
-      var reg = _registry[screenId];
-      var colCount =
-        (reg && reg.columns
-          ? reg.columns.filter(function (c) {
-              return c._visible !== false;
-            }).length
-          : 6) || 6;
-      rowCount = rowCount || 7;
-      var widths = ["78%", "45%", "60%", "35%", "55%", "40%", "65%", "50%"];
-      function bar(w) {
-        return (
-          '<div style="height:13px;border-radius:6px;width:' +
-          w +
-          ";background:linear-gradient(90deg,var(--surface2) 25%,var(--border) 50%,var(--surface2) 75%);" +
-          'background-size:200% 100%;animation:csShimmer 1.4s ease-in-out infinite"></div>'
-        );
-      }
-      function rowHtml(isHead, rIdx) {
-        var cells = "";
-        for (var i = 0; i < colCount; i++) {
-          cells +=
-            '<div style="flex:1;min-width:0">' +
-            bar(isHead ? "50%" : widths[(i + rIdx) % widths.length]) +
-            "</div>";
-        }
-        return (
-          '<div style="display:flex;gap:20px;align-items:center;padding:' +
-          (isHead ? "12px 16px" : "11px 16px") +
-          ';border-bottom:1px solid var(--border)">' +
-          cells +
-          "</div>"
-        );
-      }
-      var html = rowHtml(true, 0);
-      for (var r = 0; r < rowCount; r++) html += rowHtml(false, r);
       container.setAttribute("data-ce-loading", "1");
-      // [FIX-CONFINE-SKEL-2026-09-09] الشيمر كان بيترسم كصفوف طليقة من
-      // غير أي إطار/حدود، فبصريًا كان بيبان كأنه "منتشر" في الشاشة كلها
-      // بدل ما يبان بوضوح إنه جوه صندوق الجدول بالظبط (بنفس شكل حدوده
-      // ونصف قطر زواياه لما البيانات الحقيقية توصل). ضفنا إطار/زوايا
-      // مطابقين لإطار الجدول الحقيقي (var(--border) + border-radius)
-      // عشان يبان بوضوح إنه تحميل *داخل* محتوى الجدول بس، مش أي حاجة
-      // تانية في الصفحة.
       container.innerHTML =
         '<div class="ce-loading-skel" style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface1)">' +
-        html +
+        '<div class="ce-empty" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:48px 24px">' +
+        '<span style="width:26px;height:26px;border-radius:50%;border:3px solid var(--border);' +
+        'border-top-color:var(--accent, #3b82f6);animation:csSpin 0.7s linear infinite;display:inline-block"></span>' +
+        '<span>جار جلب البيانات...</span>' +
+        "</div>" +
         "</div>";
     }
 

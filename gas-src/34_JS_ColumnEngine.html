@@ -474,6 +474,27 @@
         console.error("[ColumnEngine] الشاشة غير مسجّلة: " + screenId);
         return;
       }
+      // [ANIM-INITIAL-LOAD-2026-09-09] لو البيانات العامة (APP.data) لسه
+      // بتتحمّل من السيرفر لأول مرة بعد الدخول (APP.data._loaded لسه
+      // مش true) والصفوف الممرَّرة فاضية، الأرجح إن الفراغ ده مؤقت
+      // (سباق تحميل: الشاشة اترسمت قبل ما البيانات توصل) مش "فعلاً مفيش
+      // بيانات". قبل كده كنا بنعرض "لا توجد بيانات لعرضها" فورًا، وبعد
+      // ثواني الجدول الحقيقي يطلع فوقها — Flicker مربك ومنطقيًا غلط.
+      // بدل كده نعرض نفس شيمر showLoading() المستخدم أصلاً في زر
+      // "تحديث" العام. أي renderTable() لاحقة (لما البيانات توصل فعليًا
+      // وrenderPage() تتنفذ تاني، زي ما بيحصل بعد اللوجين بالفعل) هتمسح
+      // الشيمر وتعرض الجدول الحقيقي عادي من تلقاء نفسها. opts.forceEmpty
+      // بيسمح لأي شاشة تتخطى السلوك ده صراحةً لو متأكدة إن الفراغ حقيقي
+      // 100% حتى لو APP.data لسه بيتحمّل (مثلاً نتيجة بحث/فلتر فاضية).
+      var _globalDataLoading =
+        typeof window !== "undefined" &&
+        window.APP &&
+        APP.data &&
+        APP.data._loaded !== true;
+      if (!opts.forceEmpty && _globalDataLoading && (!rows || !rows.length)) {
+        showLoading(screenId, container, opts.loadingRowCount);
+        return;
+      }
       _state[screenId] = {
         rows: rows || [],
         filtered: rows || [],

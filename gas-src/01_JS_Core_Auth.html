@@ -59,9 +59,30 @@
     var _lazyMaxAttempts = 3;
 
     function _finish(errMsg) {
-      window.__LAZY_READY__ = true;
       window.__LAZY_LOADING__ = false;
-      if (errMsg) console.warn("Lazy bundle load issue:", errMsg);
+      if (errMsg) {
+        // ⚠️ [FIX-LAZY-FALSE-READY] الحزمة الفعلية (Templates_08/09/10،
+        // 03_JS_Dashboard_Items، ...) ما اتحقنتش خالص هنا — فمينفعش نعلّم
+        // __LAZY_READY__ = true وإلا renderPage()/render() هيكملوا
+        // ويصطدموا بـ "X is not defined" (bindItems/_renderPageHeader/
+        // PM_STATE...) بدل ما يستنوا بهدوء زي ما المفروض. بدل كده: نعلّم
+        // فشل نهائي ونسيب واجهة واضحة تسمح بإعادة المحاولة بدل شاشة سودا
+        // أو كراش صامت.
+        window.__LAZY_FAILED__ = true;
+        console.error("Lazy bundle load FAILED (permanently, this attempt):", errMsg);
+        var failQueue = window.__LAZY_PENDING_CB__ || [];
+        window.__LAZY_PENDING_CB__ = [];
+        failQueue.forEach(function (cb) {
+          try {
+            cb(new Error(errMsg));
+          } catch (e) {
+            console.warn("Lazy pending callback (fail-path) error:", e);
+          }
+        });
+        return;
+      }
+      window.__LAZY_READY__ = true;
+      window.__LAZY_FAILED__ = false;
       var queue = window.__LAZY_PENDING_CB__ || [];
       window.__LAZY_PENDING_CB__ = [];
       queue.forEach(function (cb) {
@@ -148,6 +169,39 @@
     } else {
       window.__LAZY_PENDING_CB__ = window.__LAZY_PENDING_CB__ || [];
       window.__LAZY_PENDING_CB__.push(cb);
+      // لو آخر محاولة فشلت نهائيًا (مش لسه بتحمّل)، اعرض شاشة خطأ واضحة
+      // فيها زرار "إعادة المحاولة" بدل ما نسيب المستدعي (renderPage/render)
+      // يستنى للأبد أو يكسر بـ ReferenceError.
+      if (window.__LAZY_FAILED__ && !window.__LAZY_LOADING__) {
+        _showLazyLoadFailedScreen();
+      }
+    }
+  }
+
+  // شاشة خطأ صريحة لفشل تحميل موديولات النظام (بدل كراش صامت بـ
+  // "X is not defined" في شاشات مختلفة كل مرة).
+  function _showLazyLoadFailedScreen() {
+    var root = document.getElementById("root");
+    if (!root) return;
+    root.innerHTML =
+      '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:70vh;gap:16px;text-align:center;padding:24px">' +
+      '<div style="font-size:40px">⚠️</div>' +
+      '<div style="font-size:18px;font-weight:700;color:#f8fafc">تعذّر تحميل موديولات النظام</div>' +
+      '<div style="font-size:13px;color:#94a3b8;max-width:420px">' +
+      "فشل تحميل جزء من ملفات النظام (على الأغلب بسبب انقطاع مؤقت في الشبكة، أو دخول المتصفح في وضع خمول أثناء التحميل). جرّب إعادة المحاولة، ولو استمرت المشكلة تأكد من الاتصال بالإنترنت وابقِ التاب مفتوح في المقدمة أثناء التحميل." +
+      "</div>" +
+      '<button id="lazy-retry-btn" style="padding:10px 24px;border-radius:8px;background:#2563eb;color:#fff;border:none;font-weight:600;cursor:pointer">إعادة المحاولة</button>' +
+      "</div>";
+    var btn = document.getElementById("lazy-retry-btn");
+    if (btn) {
+      btn.onclick = function () {
+        window.__LAZY_FAILED__ = false;
+        window.__LAZY_LOADING__ = false;
+        _loadLazyAppBundle();
+        _whenLazyReady(function () {
+          if (typeof render === "function") render(true);
+        });
+      };
     }
   }
 

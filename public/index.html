@@ -10266,6 +10266,19 @@
     // fallback نادر لو الملف الجديد لسه مش متضمّن في Index.html
     return '<div class="empty-state"><p>تعذر تحميل لوحة التحكم — تأكد من تضمين 17_JS_ExecutiveDashboard.html</p></div>';
   }
+
+  // [FIX-BINDDASHBOARD-MISSING] عند نقل الداشبورد لملف
+  // 17_JS_ExecutiveDashboard.html اتغيّر اسم دالة التهيئة إلى
+  // initExecutiveDashboard(isReRender)، لكن نداءات renderPage()
+  // (01_JS_Core_Auth.html) وxdRerenderAll() فضلت بتنادي على
+  // bindDashboard() القديمة اللي بقت غير معرّفة (ReferenceError).
+  // هنا shim بسيط بيوجّه bindDashboard() لـ initExecutiveDashboard()
+  // بنفس التوقيع (isReRender) عشان مايتكسرش أي كود قديم بينادي عليها.
+  function bindDashboard(isReRender) {
+    if (typeof initExecutiveDashboard === "function") {
+      return initExecutiveDashboard(isReRender);
+    }
+  }
 </script>
 
 

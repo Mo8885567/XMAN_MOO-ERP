@@ -1,5 +1,5 @@
 deploy-all.js run report
-Date: 9/9/2026, 3:14:58 PM
+Date: 9/9/2026, 3:19:01 PM
 ============================================================
 
 
@@ -11,7 +11,7 @@ Date: 9/9/2026, 3:14:58 PM
 ------------------------------------------------------------
   [2] Checking allowlist (google.script.run vs DOPOST_ALLOWED_FUNCTIONS)
 ------------------------------------------------------------
-Unique functions called from the frontend: 352
+Unique functions called from the frontend: 340
 Functions in DOPOST_ALLOWED_FUNCTIONS: 563
 Functions in DOPOST_PUBLIC_FUNCTIONS: 17
 
@@ -26,7 +26,7 @@ Functions in DOPOST_PUBLIC_FUNCTIONS: 17
   - getItemsUsageStats   [52_JS_LoadingEngine.html (via _gsr())]
   - sendWhatsAppCloudAPI   [19_JS_WhatsApp.html (via _gsr())]
 
-=== ℹ️  Functions that require a valid sessionToken in args (not public) — count: 335 ===
+=== ℹ️  Functions that require a valid sessionToken in args (not public) — count: 323 ===
    (client.js attaches the token automatically, so usually no action is needed here)
 
 [OK] No missing allowlist functions.

@@ -1237,20 +1237,35 @@ var ImportEngine = (function () {
   }
 
   // تحقق العلاقة (مثال: المجموعة موجودة في شيت Groups) — مع اقتراح تصحيح ذكي
+  // [IMP-WIZARD-DISPLAY-CODE] بيرجّع displayValue (الكود/الاسم القابل للقراءة)
+  // بجانب value (المعرّف الداخلي id اللي بيتخزن فعليًا) — عشان الواجهة تقدر
+  // تعرض للمستخدم نفس القيمة اللي كتبها بدل الـ id المجرد. value يفضل
+  // المستخدم في الحفظ الفعلي (customCommit/commitImportBatch) زي ما هو.
   function _impValidateRelation(rel, value, ctx) {
     var v = String(value || "").trim();
-    if (!v) return { value: "", issues: [] };
+    if (!v) return { value: "", displayValue: "", issues: [] };
     var map = ctx.relationMaps[rel.field];
-    if (!map) return { value: v, issues: [] };
+    if (!map) return { value: v, displayValue: v, issues: [] };
     var byId = map.byId[v.toLowerCase()];
     var byName = map.byName[v.toLowerCase()];
-    if (byId) return { value: String(byId[rel.idField]), issues: [] };
-    if (byName) return { value: String(byName[rel.idField]), issues: [] };
+    if (byId)
+      return {
+        value: String(byId[rel.idField]),
+        displayValue: String(byId[rel.nameField] || v),
+        issues: [],
+      };
+    if (byName)
+      return {
+        value: String(byName[rel.idField]),
+        displayValue: String(byName[rel.nameField] || v),
+        issues: [],
+      };
 
     // مش موجودة — حاول تصحيح ذكي بأقرب اسم
     var suggestion = _impFuzzyFind(v, map.names, 2);
     return {
       value: "",
+      displayValue: v, // نعرض للمستخدم بالظبط اللي كتبه حتى لو مش موجود
       rawValue: v,
       issues: [
         {
@@ -1346,6 +1361,11 @@ var ImportEngine = (function () {
         (cfg.relations || []).forEach(function (rel) {
           var rr = _impValidateRelation(rel, mapped[rel.field], ctx);
           record[rel.field] = rr.value;
+          // [IMP-WIZARD-DISPLAY-CODE] عمود إضافي للعرض فقط (الكود/الاسم) —
+          // record[rel.field] يفضل الـ id الداخلي زي ما هو لأن الحفظ الفعلي
+          // (customCommit/commitImportBatch) بيعتمد عليه.
+          record[rel.field + "_code"] =
+            rr.displayValue !== undefined ? rr.displayValue : rr.value;
           if (rr.issues && rr.issues.length) issues = issues.concat(rr.issues);
         });
 

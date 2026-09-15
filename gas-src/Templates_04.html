@@ -1307,7 +1307,10 @@
       '<button class="btn btn-primary" id="stk-post-btn"><i class="ti ti-check"></i> ترحيل الفروق</button>' +
       "</div>" +
       "</div>" +
-      '<div class="card" style="margin-bottom:16px">' +
+      // [MERGED-HEADER-2026-09] بطاقة واحدة متصلة لشريط الفلاتر + الجدول،
+      // بنفس منطق شاشة الأصناف (renderItems) — فاصل border-top بسيط
+      // بدل بطاقتين منفصلتين بفجوة بينهم.
+      '<div class="card">' +
       '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">' +
       '<div class="search-input-wrap" style="flex:1;min-width:220px">' +
       '<span class="s-icon"></span>' +
@@ -1324,13 +1327,13 @@
       '<option value="extra">زيادة</option>' +
       "</select>" +
       '<span id="stk-summary" style="color:var(--text3);font-size:12px;white-space:nowrap"></span>' +
-      "</div></div>" +
+      "</div>" +
       // [PHASE-CE/Inventory] الجدول بقى معتمد بالكامل على ColumnEngine
       // (Metadata-Driven) — شوف _stkRegisterColumns/_stkRenderTableCE في
       // 06_JS_Catalog_Stock.html. الحاوية دي بتتملى ديناميكيًا من bindStocktake().
-      '<div class="card" style="padding:0;overflow:hidden">' +
+      '<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">' +
       '<div id="stk-ce-container"></div>' +
-      "</div>" +
+      "</div></div>" +
       '<div class="card" style="margin-top:16px">' +
       '<label class="form-label">ملاحظات الجرد</label>' +
       '<textarea class="input" id="stk-notes" rows="2" placeholder="مثال: جرد نهاية الشهر / لجنة الجرد..." style="width:100%;box-sizing:border-box;resize:vertical"></textarea>' +

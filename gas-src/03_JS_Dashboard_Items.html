@@ -2356,43 +2356,15 @@ var qrcode = function() {
       });
     }
 
-    // ── زر التحديث العام (top-bar — موجود في كل الشاشات) ──────────
-    var globalRefreshBtn = document.getElementById("global-refresh-btn");
-    if (globalRefreshBtn && !globalRefreshBtn._bound) {
-      globalRefreshBtn._bound = true; // guard ضد التربيط المزدوج عند كل renderPage
-      globalRefreshBtn.addEventListener("click", function () {
-        // أنيميشن دوران على الأيقونة
-        var icon = document.getElementById("global-refresh-icon");
-        if (icon) {
-          icon.style.transition = "transform 0.6s ease";
-          icon.style.transform = "rotate(360deg)";
-          setTimeout(function () {
-            icon.style.transition = "none";
-            icon.style.transform = "rotate(0deg)";
-          }, 650);
-        }
-        // [ANIM-TABLE-REFRESH] لو الشاشة الحالية فيها جدول ColumnEngine
-        // ظاهر (أي شاشة متحوّلة — المخازن/الأصناف/العملاء/الموردين...)،
-        // اعرض Shimmer Skeleton مكانه فورًا بدل ما يفضل الجدول القديم
-        // واقف بصمت لحد ما reloadAfterMutationFull يرجّع البيانات
-        // ويعيد رسم الصفحة كلها — نفس سلوك الأنظمة الكبرى وقت التحديث.
-        // مفيش أي تخصيص لشاشة بعينها هنا، فأي شاشة جديدة تتحوّل لـ
-        // ColumnEngine مستقبلاً هتاخد نفس السلوك تلقائيًا.
-        var ceEl = document.querySelector("#page-content [data-ce-scope]");
-        if (
-          ceEl &&
-          typeof ColumnEngine !== "undefined" &&
-          ColumnEngine.showLoading
-        ) {
-          ColumnEngine.showLoading(ceEl.getAttribute("data-ce-scope"), ceEl);
-        }
-        reloadAfterMutationFull(null, null, {
-          title: "جاري تحديث البيانات...",
-          emoji: "",
-          successMsg: " تم تحديث البيانات",
-        });
-      });
-    }
+    // [MOVED-GLOBAL-REFRESH-2026-09-15] تربيط زر التحديث العام
+    // (global-refresh-btn) اتنقل لـ bindTopBar() في 02_JS_UI_Shell.html.
+    // هنا كان مربوط غلط جوه bindDashboard()، اللي بتتنادى بس لما
+    // الشاشة الحالية = "dashboard" (راجع renderPage() في
+    // 01_JS_Core_Auth.html) — يعني لو المستخدم مامرش على الداشبورد،
+    // الزر مكنش بيتربط بأي حاجة خالص من أي شاشة تانية. bindTopBar()
+    // بالعكس بتتنادى مضمون مرة مع كل renderLayout() (أول ما شل
+    // النظام يترسم بعد اللوجين) بغض النظر عن الصفحة، فهي المكان
+    // الصح للتربيط.
   }
 
   // ─────────────────────────────────────────────────────────────

@@ -23681,6 +23681,61 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
     var bd = document.getElementById("notif-backdrop");
     if (bd) bd.addEventListener("click", closeNotifDropdown);
 
+    // [FIX-GLOBAL-REFRESH-2026-09-15] زر التحديث العام (global-refresh-btn)
+    // — المفروض يشتغل من أي شاشة واقف فيها المستخدم، مش بس الداشبورد.
+    // كان مربوط قبل كده جوه bindDashboard() في 03_JS_Dashboard_Items.html،
+    // ودالة دي بتتنادى بس لما renderPage() تعرض شاشة "dashboard" تحديدًا
+    // (case "dashboard" في السويتش). يعني لو المستخدم فتح النظام وراح
+    // مباشرة على شاشة تانية (عملاء/موردين/حسابات/مخازن...) من غير ما
+    // يمر على الداشبورد أول مرة، الزر مكنش بيتربط بأي click handler
+    // خالص — فدوسة عليه ماكانتش بتعمل أي حاجة. الحل: نربطه هنا في
+    // bindTopBar() بدل كده، لأنها بتتنادى مرة واحدة مضمونة مع كل
+    // renderLayout() (يعني أول ما الشل بتاع النظام يترسم بعد اللوجين)
+    // بغض النظر عن أي صفحة المستخدم هيفتح بعد كده — فالزر بقى شغال
+    // فعليًا من أي شاشة، خصوصًا شاشات الجداول اللي بتقرا من الداتا بيز
+    // (ColumnEngine). السلوك الفعلي (مسح الكاش + جلب بيانات فريش من
+    // السيرفر + إعادة رسم الصفحة الحالية عبر renderPage(APP.currentPage))
+    // موجود بالفعل جوه reloadAfterMutationFull ومكتوب بشكل عام أصلاً —
+    // المشكلة كانت في التربيط بس مش في المنطق.
+    var globalRefreshBtn = document.getElementById("global-refresh-btn");
+    if (globalRefreshBtn && !globalRefreshBtn._bound) {
+      globalRefreshBtn._bound = true; // guard ضد التربيط المزدوج مع كل renderLayout()
+      globalRefreshBtn.addEventListener("click", function () {
+        // أنيميشن دوران على الأيقونة
+        var icon = document.getElementById("global-refresh-icon");
+        if (icon) {
+          icon.style.transition = "transform 0.6s ease";
+          icon.style.transform = "rotate(360deg)";
+          setTimeout(function () {
+            icon.style.transition = "none";
+            icon.style.transform = "rotate(0deg)";
+          }, 650);
+        }
+        // [ANIM-TABLE-REFRESH] لو الشاشة الحالية فيها جدول ColumnEngine
+        // ظاهر (أي شاشة متحوّلة — المخازن/الأصناف/العملاء/الموردين...)،
+        // اعرض Shimmer Skeleton مكانه فورًا بدل ما يفضل الجدول القديم
+        // واقف بصمت لحد ما reloadAfterMutationFull يرجّع البيانات
+        // ويعيد رسم الصفحة كلها — نفس سلوك الأنظمة الكبرى وقت التحديث.
+        // مفيش أي تخصيص لشاشة بعينها هنا، فأي شاشة جديدة تتحوّل لـ
+        // ColumnEngine مستقبلاً هتاخد نفس السلوك تلقائيًا.
+        var ceEl = document.querySelector("#page-content [data-ce-scope]");
+        if (
+          ceEl &&
+          typeof ColumnEngine !== "undefined" &&
+          ColumnEngine.showLoading
+        ) {
+          ColumnEngine.showLoading(ceEl.getAttribute("data-ce-scope"), ceEl);
+        }
+        if (typeof reloadAfterMutationFull === "function") {
+          reloadAfterMutationFull(null, null, {
+            title: "جاري تحديث البيانات...",
+            emoji: "",
+            successMsg: " تم تحديث البيانات",
+          });
+        }
+      });
+    }
+
     // Mark all as read
     var markAll = document.getElementById("notif-mark-all-btn");
     if (markAll)

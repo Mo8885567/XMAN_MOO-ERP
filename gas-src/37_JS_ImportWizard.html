@@ -86,6 +86,10 @@
     opening_stock: {
       label: "أرصدة أول المدة",
       icon: "ti-file-import",
+      // [IMP-WIZARD-OS-WH] لازم المستخدم يختار المخزن الي هيدخل عليه
+      // الرصيد الافتتاحي قبل ما يقدر يرفع الملف — نفس فلسفة الإضافة
+      // اليدوية لرصيد أول المدة (اختر المخزن أولاً).
+      requiresWarehouse: true,
       requiredCols: ["كود الصنف", "الكمية"],
       optionalCols: ["اللون", "ملاحظات"],
       templateHeaders: ["كود الصنف", "اللون", "الكمية", "ملاحظات"],
@@ -134,6 +138,7 @@
       workbook: null,
       sheetNames: [],
       activeSheet: null,
+      warehouseId: "", // [IMP-WIZARD-OS-WH] المخزن المختار (لو الكيان يتطلب ذلك)
     };
   }
 
@@ -278,10 +283,17 @@
       '<div style="text-align:center;margin-bottom:16px">' +
       '<button onclick="_iwDownloadTemplate()" class="btn btn-secondary" style="font-size:13px"> تحميل نموذج إكسيل جاهز</button>' +
       "</div>" +
+      (ui.requiresWarehouse ? _iwRenderWarehousePicker() : "") +
       '<div style="margin-bottom:10px">' +
       '<label style="font-weight:700;font-size:14px;display:block;margin-bottom:10px"> اختر ملف الإكسيل:</label>' +
       '<input type="file" id="iw-file-input" accept=".xlsx,.xls,.csv" ' +
-      'style="width:100%;padding:12px;border:2px dashed var(--accent);border-radius:10px;cursor:pointer;font-size:14px;box-sizing:border-box;background:var(--accent-soft)">' +
+      (ui.requiresWarehouse && !IW.state.warehouseId ? "disabled " : "") +
+      'style="width:100%;padding:12px;border:2px dashed var(--accent);border-radius:10px;cursor:' +
+      (ui.requiresWarehouse && !IW.state.warehouseId ? "not-allowed" : "pointer") +
+      ';font-size:14px;box-sizing:border-box;background:' +
+      (ui.requiresWarehouse && !IW.state.warehouseId ? "var(--surface2)" : "var(--accent-soft)") +
+      (ui.requiresWarehouse && !IW.state.warehouseId ? ";opacity:.6" : "") +
+      '">' +
       "</div>" +
       '<div id="iw-analysis" style="display:none"></div>';
 
@@ -290,11 +302,58 @@
       '<button onclick="closeImportWizard()" class="btn btn-secondary">إلغاء</button>',
     );
 
+    if (ui.requiresWarehouse) {
+      var whSelect = document.getElementById("iw-warehouse-select");
+      if (whSelect) {
+        whSelect.onchange = function () {
+          IW.state.warehouseId = whSelect.value || "";
+          _iwRenderUploadStage(); // إعادة الرسم لتفعيل/تعطيل اختيار الملف
+        };
+      }
+    }
+
     var fileInput = document.getElementById("iw-file-input");
     fileInput.value = "";
     fileInput.onchange = function (e) {
+      if (ui.requiresWarehouse && !IW.state.warehouseId) {
+        NotificationEngine.error("اختر المخزن أولاً قبل رفع الملف");
+        return;
+      }
       if (e.target.files[0]) _iwHandleFile(e.target.files[0]);
     };
+  }
+
+  // [IMP-WIZARD-OS-WH] عنصر اختيار المخزن الذي سيُنسب له كل صفوف الملف
+  // المستورد — يظهر فقط للكيانات التي تحتاجه (عرّفها في IW_ENTITY_UI عبر
+  // requiresWarehouse: true).
+  function _iwRenderWarehousePicker() {
+    var warehouses = (APP.data.warehouses || []).slice();
+    var options = warehouses
+      .map(function (w) {
+        return (
+          '<option value="' +
+          esc(w.id) +
+          '"' +
+          (String(w.id) === String(IW.state.warehouseId) ? " selected" : "") +
+          ">" +
+          esc(w.name) +
+          "</option>"
+        );
+      })
+      .join("");
+
+    return (
+      '<div style="background:var(--accent-soft);border:1px solid var(--accent);border-radius:10px;padding:12px 14px;margin-bottom:16px">' +
+      '<label style="font-weight:700;font-size:14px;display:block;margin-bottom:8px"> اختر المخزن الذي سيتم إدخال الرصيد الافتتاحي عليه:</label>' +
+      '<select id="iw-warehouse-select" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);font-size:14px">' +
+      '<option value="">— اختر المخزن —</option>' +
+      options +
+      "</select>" +
+      (!IW.state.warehouseId
+        ? '<div style="font-size:12px;color:var(--text3);margin-top:6px"> لازم تختار المخزن الأول عشان تقدر ترفع ملف الإكسيل</div>'
+        : '<div style="font-size:12px;color:var(--text3);margin-top:6px"> هيتم استيراد كل صفوف الملف على هذا المخزن — أي صنف غير مرتبط به هيتم رفضه تلقائيًا مع توضيح السبب</div>') +
+      "</div>"
+    );
   }
 
   function _iwDownloadTemplate() {

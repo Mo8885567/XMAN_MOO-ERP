@@ -1482,7 +1482,14 @@
     var statusBadge = statusMap[row.status] || esc(row.status || "—");
 
     var rows = [
-      ["المعرّف", '<span class="mono">' + esc(row.id) + "</span>"],
+      [
+        // [ID-TO-CODE-2026-09-15] القيمة دي بالفعل كود منسّق (WA-LOG-xxxxx)
+        // مش رقم صف داخلي خام — بس كانت متعنونة "المعرّف" فكانت بتوهم
+        // المستخدم إنها معرّف تقني داخلي. اتسمّت "الكود" عشان تبقى متسقة
+        // مع باقي الشاشة (أي حاجة المستخدم بيشوفها = كود، مش ID).
+        "الكود",
+        '<span class="mono">' + esc(row.id) + "</span>",
+      ],
       ["التاريخ", esc(dateStr)],
       ["بواسطة", esc(row.sent_by || "—")],
       ["العميل/الطرف", esc(row.customer_name || "—")],

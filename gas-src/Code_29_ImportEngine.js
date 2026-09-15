@@ -628,6 +628,30 @@ var ImportEngine = (function () {
         } else {
           ctx._osSeen[key] = true;
         }
+
+        // [IMP-WIZARD-OS-WH] لو المستخدم اختار مخزن قبل رفع الملف، لازم
+        // نتأكد إن الصنف فعلاً مرتبط بالمخزن ده. صنف من غير أي مخزن محدد
+        // له (المصفوفة فاضية) معناه "كل المخازن" فبيعدي عادي — راجع نفس
+        // المنطق في _osItemMatchesWarehouse بالواجهة (06_JS_Catalog_Stock).
+        if (ctx.warehouseId) {
+          var assigned = ctx.itemWarehouseMap
+            ? ctx.itemWarehouseMap[String(rec.item_id).trim()]
+            : null;
+          if (
+            assigned &&
+            assigned.length &&
+            assigned.indexOf(ctx.warehouseId) === -1
+          ) {
+            issues.push({
+              field: "item_id",
+              label: "كود الصنف",
+              reason: "هذا الصنف غير مرتبط بالمخزن المختار للاستيراد",
+              suggestion:
+                "اختر المخزن الصحيح لهذا الصنف، أو اربط الصنف بالمخزن المطلوب من شاشة الأصناف أولاً",
+              severity: "error",
+            });
+          }
+        }
         return issues;
       },
       // [IMP-WIZARD-OS] استيراد أرصدة أول المدة مش "إضافة سجلات جديدة
@@ -635,8 +659,26 @@ var ImportEngine = (function () {
       // الجديد) بمفتاح مركّب (item_id + color)، والشيت مالوش عمود id.
       // فبنفوّض التنفيذ الفعلي كله لدالة مخصصة بدل commitImportBatch
       // العام (راجع commitImportBatch تحت لمعرفة نقطة التفويض).
-      customCommit: function (records, user, sessionToken) {
+      customCommit: function (records, user, sessionToken, opts) {
         try {
+          opts = opts || {};
+          // [IMP-WIZARD-OS-WH] إعادة التحقق من ربط المخزن دفاعاً في العمق
+          // (نفس الفكرة الموثّقة أعلى commitImportBatch) — الحالة ممكن
+          // تتغيّر بين لحظة التحقق (validateImportRows) ولحظة الحفظ الفعلي.
+          var warehouseId = String(opts.warehouseId || "").trim();
+          var itemWhMap = null;
+          if (warehouseId) {
+            itemWhMap = {};
+            (getSheetData("ItemWarehouses") || []).forEach(function (r) {
+              if (r.deleted_at) return;
+              if (r.is_active === false || r.is_active === "false") return;
+              var iid = String(r.item_id || "").trim();
+              if (!iid) return;
+              if (!itemWhMap[iid]) itemWhMap[iid] = [];
+              itemWhMap[iid].push(String(r.warehouse_id));
+            });
+          }
+
           var lock = LockService.getScriptLock();
           lock.waitLock(20000);
           try {
@@ -670,6 +712,18 @@ var ImportEngine = (function () {
                   reason: "كود الصنف أو الكمية غير صالحة",
                 });
                 return;
+              }
+
+              if (itemWhMap) {
+                var assigned = itemWhMap[itemId];
+                if (assigned && assigned.length && assigned.indexOf(warehouseId) === -1) {
+                  rejected++;
+                  rejectedDetails.push({
+                    rowNum: rec._rowNum || i + 1,
+                    reason: "الصنف (" + itemId + ") غير مرتبط بالمخزن المختار للاستيراد",
+                  });
+                  return;
+                }
               }
 
               var found = existing.find(function (e) {
@@ -947,8 +1001,29 @@ var ImportEngine = (function () {
 
   // يبني سياق (ctx) مشتركاً لكل صفوف نفس عملية التحقق — لتجنّب قراءة
   // نفس الشيتات (Items/Groups...) مرة لكل صف (أداء)
-  function _impBuildValidationContext(cfg) {
+  function _impBuildValidationContext(cfg, opts) {
+    opts = opts || {};
     var ctx = { existingByUnique: {}, relationMaps: {} };
+
+    // [IMP-WIZARD-OS-WH] المخزن المختار (لو أي) قبل رفع الملف — بيُستخدم
+    // في businessRules الخاصة بأرصدة أول المدة للتأكد إن كل صنف في الملف
+    // فعلاً مرتبط بالمخزن ده (نفس فلسفة الإضافة اليدوية "اختر المخزن أولاً").
+    ctx.warehouseId = String(opts.warehouseId || "").trim();
+    if (ctx.warehouseId) {
+      // خريطة item_id -> [warehouse_id,...] من جدول الربط ItemWarehouses،
+      // بنبنيها مرة واحدة هنا بدل قراءتها لكل صف (أداء).
+      var linkRows = getSheetData("ItemWarehouses") || [];
+      var itemWhMap = {};
+      linkRows.forEach(function (r) {
+        if (r.deleted_at) return;
+        if (r.is_active === false || r.is_active === "false") return;
+        var iid = String(r.item_id || "").trim();
+        if (!iid) return;
+        if (!itemWhMap[iid]) itemWhMap[iid] = [];
+        itemWhMap[iid].push(String(r.warehouse_id));
+      });
+      ctx.itemWarehouseMap = itemWhMap;
+    }
 
     var existingRows = getSheetData(cfg.sheetName) || [];
     (cfg.uniqueFields || []).forEach(function (field) {
@@ -1202,8 +1277,9 @@ var ImportEngine = (function () {
    * @param {Array<Object>} rawRows - صفوف كما قرأها SheetJS (مفاتيحها = عناوين الأعمدة الأصلية)
    * @returns {{success,data:{results:[...], summary:{...}}}}
    */
-  function validateImportRows(entityType, rawRows, user, sessionToken) {
+  function validateImportRows(entityType, rawRows, user, sessionToken, opts) {
     try {
+      opts = opts || {};
       var cfg = _impGetEntityConfig(entityType);
       var permErr = _checkPermission(user, cfg.permission, sessionToken);
       if (permErr) return permErr;
@@ -1216,7 +1292,7 @@ var ImportEngine = (function () {
         );
       }
 
-      var ctx = _impBuildValidationContext(cfg);
+      var ctx = _impBuildValidationContext(cfg, opts);
       // خرائط لاكتشاف التكرار *داخل نفس الملف*
       var fileUniqueSeen = {};
       (cfg.uniqueFields || []).forEach(function (f) {
@@ -1401,7 +1477,7 @@ var ImportEngine = (function () {
       // شيت من غير عمود id...) بتفوّض التنفيذ بالكامل لدالتها الخاصة
       // بدل مسار "إضافة سجلات جديدة فقط" العام تحت.
       if (typeof cfg.customCommit === "function") {
-        return cfg.customCommit(records, user, sessionToken);
+        return cfg.customCommit(records, user, sessionToken, opts);
       }
 
       var lock = LockService.getScriptLock();
@@ -1773,8 +1849,8 @@ function analyzeImportStructure(entityType, fileHeaders, user, sessionToken) {
   return ImportEngine.analyzeImportStructure(entityType, fileHeaders, user, sessionToken);
 }
 
-function validateImportRows(entityType, rawRows, user, sessionToken) {
-  return ImportEngine.validateImportRows(entityType, rawRows, user, sessionToken);
+function validateImportRows(entityType, rawRows, user, sessionToken, opts) {
+  return ImportEngine.validateImportRows(entityType, rawRows, user, sessionToken, opts);
 }
 
 function commitImportBatch(entityType, records, user, sessionToken, opts) {

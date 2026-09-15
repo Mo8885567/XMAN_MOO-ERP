@@ -602,8 +602,12 @@
         ? '<button class="btn btn-primary" id="btn-add-item">+ إضافة صنف جديد</button>'
         : "") +
       "</div></div>" +
-      // ── شريط البحث والفلاتر ──
-      '<div class="card" style="margin-bottom:12px">' +
+      // ── شريط البحث والفلاتر + الجدول [MERGED-HEADER-2026-09] — بطاقة واحدة
+      // بدل بطاقتين منفصلتين (فلاتر أعلى + تولبار ColumnEngine جوه بطاقة
+      // تانية تحت شريط عداد مستقل). دلوقتي الكل بطاقة واحدة متصلة، وشريط
+      // عداد "X صنف" اتشال لتفادي ازدواج مع عداد ColumnEngine ("X صف")
+      // بنفس منطق hideSearch اللي اتطبق قبل كده لمنع ازدواج مربع البحث.
+      '<div class="card">' +
       '<div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:10px;align-items:center">' + // بحث نصي
       '<div style="position:relative">' +
       '<span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:16px;color:var(--text3)"></span>' +
@@ -657,19 +661,18 @@
       '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">فلتر بالألوان</div>' +
       '<input id="item-color-q" class="input" placeholder="اكتب اسم اللون..." style="width:100%;padding:6px 8px">' +
       "</div>" +
-      "</div></div></div>" +
-      // ── شريط النتائج ──
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding:0 2px">' +
-      '<span id="item-count" style="font-size:13px;color:var(--text3)">' +
-      items.length +
-      " صنف</span>" +
-      "</div>" +
+      "</div></div>" +
       // ── الجدول [COLUMN-ENGINE] — أعمدة ديناميكية بالكامل (Metadata-Driven)
       // راجع _itemsRegisterColumns/_renderItemsTableCE في
       // 03_JS_Dashboard_Items.html. لا يوجد أي <th>/<td> ثابت هنا بعد الآن —
       // زر "تخصيص الجدول" داخل التولبار يتولى الإظهار/الإخفاء/الترتيب/
       // التثبيت/عروض محفوظة، ونفس المحرك المستخدم في كتالوج الأصناف.
-      '<div class="card"><div id="items-ce-container"></div></div>'
+      // [MERGED-HEADER-2026-09] فاصل بسيط بدل بطاقة منفصلة — تولبار
+      // ColumnEngine (عداد/طرق العرض/تصدير/طباعة) هيظهر مباشرة تحت
+      // شريط الفلاتر جوه نفس البطاقة.
+      '<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">' +
+      '<div id="items-ce-container"></div>' +
+      "</div></div>"
     );
   }
   function renderGroups() {

@@ -3876,10 +3876,20 @@
     }
 
     // ── فلترة الأصناف بناءً على المخزن المختار ─────────────────
-    // (نفس منطق شاشة "المخزون الحالي": مجموعة الصنف مرتبطة بالمخزن،
-    // أو للصنف رصيد فعلي فيه)
+    // [FIX-OS-ITEM-WH] كانت الدالة بتشيك بس على مخزن مجموعة الصنف
+    // (group.warehouse_id) أو وجود رصيد فعلي سابق — وده بيتجاهل تعريف
+    // الصنف المباشر على المخازن (item.warehouse_ids، نفس checkboxes
+    // "المخازن" في شاشة الصنف نفسها)، فأي صنف معرّف على مخزن مباشرة
+    // بدون مروره بمجموعة، أو أول مرة بيتضاف له رصيد، مكانش بيظهر خالص.
     function _osItemMatchesWarehouse(item, whId) {
       if (!whId) return true;
+
+      if (Array.isArray(item.warehouse_ids) && item.warehouse_ids.length) {
+        return item.warehouse_ids.some(function (id) {
+          return String(id) === String(whId);
+        });
+      }
+
       var grp = (APP.data.groups || []).find(function (g) {
         return g.id === item.group;
       });

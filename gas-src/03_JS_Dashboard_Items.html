@@ -4265,9 +4265,9 @@ var qrcode = function() {
       filtered,
     );
 
-    // تحديث العداد
-    var countEl = document.getElementById("item-count");
-    if (countEl) countEl.textContent = filtered.length + " صنف";
+    // [MERGED-HEADER-2026-09] عداد "item-count" اتشال من الهيدر بعد الدمج —
+    // عداد ColumnEngine ("X صف") هو الوحيد المعروض دلوقتي، وبيتحدّث تلقائيًا
+    // جوه _renderItemsTableCE أعلاه.
 
     var clearBtn = document.getElementById("item-clear-filters");
     if (clearBtn) clearBtn.style.display = anyActive ? "inline-block" : "none";

@@ -612,9 +612,13 @@
         }
         // ──────────────────────────────────────────────────────────────
       });
-      document.addEventListener("click", function (e) {
-        if (!e.target.closest("#po-item-wrap")) closePanel();
-      });
+      // [FIX-DROPDOWN-CONTAINING-BLOCK 2026-09-15] الضغط بره بقى
+      // مسؤولية initSearchableIdPanel/initFixedDropdownPanel — الـ panel
+      // بقت بتتنقّل لـ document.body وقت الفتح (عشان تفلت من أي أب
+      // بيعمل containing block بـ transform/will-change/contain)، يعني
+      // الشرط القديم closest("#po-item-wrap") كان هيقفلها فورًا مع أول
+      // ضغطة جوه القائمة نفسها. كمان الـ listener ده كان بيتراكم مع كل
+      // إعادة بناء للحقل.
     }
 
     openStyledDrawer({
@@ -1627,9 +1631,13 @@
           }
         }
       });
-      document.addEventListener("click", function (e) {
-        if (!e.target.closest("#po-item-wrap")) closePanel();
-      });
+      // [FIX-DROPDOWN-CONTAINING-BLOCK 2026-09-15] الضغط بره بقى
+      // مسؤولية initSearchableIdPanel/initFixedDropdownPanel — الـ panel
+      // بقت بتتنقّل لـ document.body وقت الفتح (عشان تفلت من أي أب
+      // بيعمل containing block بـ transform/will-change/contain)، يعني
+      // الشرط القديم closest("#po-item-wrap") كان هيقفلها فورًا مع أول
+      // ضغطة جوه القائمة نفسها. كمان الـ listener ده كان بيتراكم مع كل
+      // إعادة بناء للحقل.
     })();
 
     // ── جدول المقاسات ───────────────────────────────────────────────

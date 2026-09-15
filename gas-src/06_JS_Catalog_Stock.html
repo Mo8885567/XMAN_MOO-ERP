@@ -3998,6 +3998,9 @@
     function refreshItemDropdown(whId) {
       var wrap = document.getElementById("os-item-wrap");
       if (!wrap) return;
+      // [FIX-DROPDOWN-CONTAINING-BLOCK] رجّع الـ panel المتنقّلة قبل
+      // إعادة بناء الـ wrap عشان ما تتسيبش في body.
+      _restoreFixedPanel(document.getElementById("os-id-panel"));
       wrap.outerHTML = buildItemDropdown("", whId);
       bindItemDropdown();
       // مسح اللون المختار سابقًا لأن الصنف اتغيّر
@@ -4095,9 +4098,12 @@
         refreshColorDropdown(itemCodeToId(code));
       });
 
-      document.addEventListener("click", function (e) {
-        if (!e.target.closest("#os-item-wrap")) closePanel();
-      });
+      // [FIX-DROPDOWN-CONTAINING-BLOCK] الضغط بره بقى مسؤولية
+      // initFixedDropdownPanel (بيسجّل listener وقت الفتح بس وبيشيله
+      // وقت القفل). الـ listener القديم هنا كان: (1) بيتراكم مع كل
+      // إعادة بناء للحقل، (2) بيقفل القائمة غلط بعد ما بقت متنقّلة
+      // لـ body (مش جوه #os-item-wrap) فكان الضغط على خانة البحث
+      // أو على أي صنف يقفلها.
     }
 
     // يبني HTML الـ custom dropdown للألوان
@@ -4145,6 +4151,13 @@
     }
 
     // يربط أحداث الـ custom dropdown بعد الـ render
+    // [FIX-DROPDOWN-CONTAINING-BLOCK 2026-09-15] اتوحّد بالكامل على
+    // initFixedDropdownPanel (Core_UIManagers) — نفس الكنترولر بتاع
+    // دروب داون الصنف. الكود القديم كان بيدير الفتح/القفل + الـ
+    // scroll/resize listeners + الضغط بره يدويًا، وكان بيفضل بيحسب
+    // إحداثيات viewport لعنصر containing block بتاعه الـ drawer نفسه
+    // (لأن .edit-drawer فيه will-change/transform) فالقائمة كانت
+    // بتتحسب بره الشاشة وتتقص فمش بتظهر خالص.
     function bindColorDropdown() {
       var trigger = document.getElementById("os-cd-trigger");
       var list = document.getElementById("os-cd-list");
@@ -4152,50 +4165,25 @@
       var display = document.getElementById("os-cd-display");
       if (!trigger || !list || !hidden) return;
 
-      // [FIX-DROPDOWN-POSITION] نفس مشكلة os-id-panel: الـ list
-      // position:fixed من غير إحداثيات محسوبة من الـ trigger بيطلع
-      // في مكان عشوائي بعرض غلط. بنحسب مكانه فعليًا زي os-id-panel.
-      var _cdRepositionTicking = false;
-      function _repositionColorList() {
-        if (!list.classList.contains("os-cd-open")) return;
-        if (_cdRepositionTicking) return;
-        _cdRepositionTicking = true;
-        requestAnimationFrame(function () {
-          _positionFixedDropdownPanel(trigger, list, {
-            gap: 4,
-            matchTriggerWidth: true,
-            maxHeight: 220,
-          });
-          _cdRepositionTicking = false;
-        });
-      }
+      var _cdApi = initFixedDropdownPanel(trigger, list, {
+        openClass: "os-cd-open",
+        activeClass: "os-cd-active",
+        gap: 4,
+        matchTriggerWidth: true,
+        maxHeight: 220,
+      });
 
       trigger.addEventListener("click", function (e) {
         e.stopPropagation();
-        var open = list.classList.toggle("os-cd-open");
-        trigger.classList.toggle("os-cd-active", open);
-        if (open) {
-          _positionFixedDropdownPanel(trigger, list, {
-            gap: 4,
-            matchTriggerWidth: true,
-            maxHeight: 220,
-          });
-          window.addEventListener("scroll", _repositionColorList, {
-            capture: true,
-            passive: true,
-          });
-          window.addEventListener("resize", _repositionColorList, {
-            passive: true,
-          });
-        } else {
-          window.removeEventListener("scroll", _repositionColorList, {
-            capture: true,
-            passive: true,
-          });
-          window.removeEventListener("resize", _repositionColorList, {
-            passive: true,
-          });
+        _cdApi.toggle();
+      });
+
+      trigger.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          _cdApi.toggle();
         }
+        if (e.key === "Escape") _cdApi.closePanel();
       });
 
       list.addEventListener("click", function (e) {
@@ -4212,29 +4200,7 @@
           ';border:1.5px solid #00000022;vertical-align:middle;margin-left:6px"></span>' +
           esc(val);
         display.style.color = "var(--text)";
-        list.classList.remove("os-cd-open");
-        trigger.classList.remove("os-cd-active");
-        window.removeEventListener("scroll", _repositionColorList, {
-          capture: true,
-          passive: true,
-        });
-        window.removeEventListener("resize", _repositionColorList, {
-          passive: true,
-        });
-      });
-
-      document.addEventListener("click", function (e) {
-        if (!e.target.closest("#os-color-wrap")) {
-          list.classList.remove("os-cd-open");
-          trigger.classList.remove("os-cd-active");
-          window.removeEventListener("scroll", _repositionColorList, {
-            capture: true,
-            passive: true,
-          });
-          window.removeEventListener("resize", _repositionColorList, {
-            passive: true,
-          });
-        }
+        _cdApi.closePanel();
       });
     }
 
@@ -4242,6 +4208,9 @@
     function refreshColorDropdown(itemId) {
       var wrap = document.getElementById("os-color-wrap");
       if (!wrap) return;
+      // [FIX-DROPDOWN-CONTAINING-BLOCK] لو القائمة كانت مفتوحة ومتنقّلة
+      // لـ body، رجّعها الأول عشان ما تفضلش يتيمة بعد إعادة البناء.
+      _restoreFixedPanel(document.getElementById("os-cd-list"));
       wrap.outerHTML = buildColorDropdown(itemId);
       bindColorDropdown();
     }

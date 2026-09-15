@@ -25759,6 +25759,10 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
   }
 
   function closeModal(id) {
+    // [FIX-DROPDOWN-CONTAINING-BLOCK] رجّع/شيل أي دروب داون position:fixed
+    // اتنقلت لـ body وهي مفتوحة قبل ما المودال نفسه يتشال.
+    if (typeof _purgeOrphanFixedPanels === "function")
+      _purgeOrphanFixedPanels(true);
     var ov = document.getElementById(id || "modal-overlay");
     if (ov) {
       ov.remove();
@@ -26623,8 +26627,71 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
   // فعليًا (نفس المنطق المستخدم بالفعل في os-cd-list بتاع شاشة الأصناف)
   // وبتقلب الـ panel لفوق لو مفيش مساحة تحت في الشاشة.
   // ════════════════════════════════════════════════════════════════
+  // [FIX-DROPDOWN-CONTAINING-BLOCK 2026-09-15] الحل الجذري:
+  // الإحداثيات اللي بنحسبها هنا إحداثيات Viewport (getBoundingClientRect +
+  // window.innerWidth/innerHeight). ده صح *فقط* لو الـ containing block
+  // بتاع الـ position:fixed هو الـ viewport. أي أب في السلسلة عنده
+  // transform / will-change:transform / filter / backdrop-filter /
+  // perspective / contain:(paint|layout|strict|content) بيتحوّل هو نفسه
+  // لـ containing block، فالإحداثيات بتتحسب من حدوده هو → الـ panel
+  // بتطير بره الشاشة وبتتقص بـ overflow:hidden بتاعه فمش بتظهر خالص.
+  // ده بالظبط اللي بيحصل جوه .edit-drawer / .edit-drawer-inner
+  // (Style_04_Components.html) لأن عندهم will-change:transform +
+  // transform:translateZ(0) للأنيميشن.
+  // بدل ما نفضل نطارد كل خاصية CSS في كل ملف استايل (وده اللي اتعمل
+  // قبل كده مع contain وفضلت تتكسر تاني)، الـ panel دلوقتي بتتنقل
+  // (Portal) لـ document.body وقت الفتح وترجع مكانها وقت القفل — نفس
+  // اللي AppSelect بيعمله بالظبط. كده مفيش أي أب يقدر يأثر عليها
+  // مهما اتضاف عليه من خصائص CSS في المستقبل.
+  // ════════════════════════════════════════════════════════════════
+
+  // بينضّف أي panel اتنقلت لـ body وأبوها الأصلي اتشال من الـ DOM
+  // (مثال: الـ drawer اتقفل والدروب داون كانت مفتوحة، أو الـ wrap
+  // اتعمله إعادة بناء بـ outerHTML وهي مفتوحة).
+  function _purgeOrphanFixedPanels(force) {
+    var nodes = document.querySelectorAll('body > [data-fixed-portal="1"]');
+    Array.prototype.forEach.call(nodes, function (p) {
+      var home = p.__portalHome;
+      var alive = !!(home && home.parent && home.parent.isConnected);
+      if (!alive) {
+        p.__portalHome = null;
+        p.removeAttribute("data-fixed-portal");
+        if (p.parentNode) p.parentNode.removeChild(p);
+      } else if (force) {
+        _restoreFixedPanel(p);
+      }
+    });
+  }
+
+  function _portalFixedPanel(panel) {
+    if (!panel) return;
+    _purgeOrphanFixedPanels(false);
+    if (panel.parentNode === document.body) return;
+    if (!panel.parentNode) return;
+    panel.__portalHome = { parent: panel.parentNode, next: panel.nextSibling };
+    panel.setAttribute("data-fixed-portal", "1");
+    document.body.appendChild(panel);
+  }
+
+  function _restoreFixedPanel(panel) {
+    if (!panel || panel.getAttribute("data-fixed-portal") !== "1") return;
+    var home = panel.__portalHome;
+    panel.__portalHome = null;
+    panel.removeAttribute("data-fixed-portal");
+    if (home && home.parent && home.parent.isConnected) {
+      var ref =
+        home.next && home.next.parentNode === home.parent ? home.next : null;
+      home.parent.insertBefore(panel, ref);
+    } else if (panel.parentNode) {
+      panel.parentNode.removeChild(panel);
+    }
+  }
+
   function _positionFixedDropdownPanel(trigger, panel, opts) {
     opts = opts || {};
+    // لازم الـ Portal يحصل قبل أي تعيين إحداثيات — عشان الـ containing
+    // block يبقى الـ viewport فعليًا وقت ما الستايلات تتطبّق.
+    _portalFixedPanel(panel);
     var gap = opts.gap != null ? opts.gap : 4;
     var maxH = opts.maxHeight || 300;
     var rect = trigger.getBoundingClientRect();
@@ -26656,38 +26723,91 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
     }
   }
 
-  function initSearchableIdPanel(trigger, panel, searchEl) {
-    // الـ panel ده متصل بصريًا بالـ trigger (border-top:none)، فلازم
-    // يبقى بنفس عرضه بالظبط ولاصق فيه من غير فجوة.
-    var posOpts = { gap: 0, matchTriggerWidth: true, maxHeight: 300 };
+  // ════════════════════════════════════════════════════════════════
+  // [FIX-DROPDOWN-CONTAINING-BLOCK] كنترولر موحّد لأي دروب داون
+  // position:fixed من النوع القديم (os-id-panel / os-cd-list...).
+  // بيتولّى: الفتح/القفل، الـ Portal لـ body ورجوعها، إعادة الحساب
+  // مع السكرول/الريسايز، وقفل القائمة عند الضغط بره — من غير ما كل
+  // شاشة تسجّل document listener خاص بيها (اللي كان بيتراكم مع كل
+  // إعادة بناء للحقل، وكان هيقفل القائمة غلط بعد الـ Portal لأنها
+  // بقت بره الـ wrap).
+  // ════════════════════════════════════════════════════════════════
+  function initFixedDropdownPanel(trigger, panel, opts) {
+    opts = opts || {};
+    var openClass = opts.openClass || "os-id-open";
+    var activeClass = opts.activeClass || "os-id-active";
+    var posOpts = {
+      gap: opts.gap != null ? opts.gap : 4,
+      matchTriggerWidth: opts.matchTriggerWidth !== false,
+      minWidth: opts.minWidth,
+      maxHeight: opts.maxHeight || 300,
+    };
     var _repositionTicking = false;
+
+    function isOpen() {
+      return panel.classList.contains(openClass);
+    }
     function _reposition() {
-      if (!panel.classList.contains("os-id-open")) return;
-      if (_repositionTicking) return;
+      if (!isOpen() || _repositionTicking) return;
       _repositionTicking = true;
       requestAnimationFrame(function () {
-        _positionFixedDropdownPanel(trigger, panel, posOpts);
         _repositionTicking = false;
+        if (!isOpen()) return;
+        // الـ trigger اتشال من الشاشة (إعادة بناء/قفل مودال) → اقفل
+        if (!trigger.isConnected) return closePanel();
+        _positionFixedDropdownPanel(trigger, panel, posOpts);
       });
+    }
+    function _onOutsideClick(e) {
+      if (panel.contains(e.target) || trigger.contains(e.target)) return;
+      closePanel();
     }
     function openPanel() {
       _positionFixedDropdownPanel(trigger, panel, posOpts);
-      panel.classList.add("os-id-open");
-      trigger.classList.add("os-id-active");
+      panel.classList.add(openClass);
+      trigger.classList.add(activeClass);
       window.addEventListener("scroll", _reposition, { capture: true, passive: true });
       window.addEventListener("resize", _reposition, { passive: true });
-      if (searchEl)
+      document.addEventListener("click", _onOutsideClick, true);
+      if (opts.focusEl)
         setTimeout(function () {
-          searchEl.focus();
+          try {
+            opts.focusEl.focus();
+          } catch (_e) {}
         }, 50);
+      if (typeof opts.onOpen === "function") opts.onOpen();
     }
     function closePanel() {
-      panel.classList.remove("os-id-open");
-      trigger.classList.remove("os-id-active");
+      panel.classList.remove(openClass);
+      trigger.classList.remove(activeClass);
       window.removeEventListener("scroll", _reposition, { capture: true, passive: true });
       window.removeEventListener("resize", _reposition, { passive: true });
+      document.removeEventListener("click", _onOutsideClick, true);
+      _restoreFixedPanel(panel);
+      if (typeof opts.onClose === "function") opts.onClose();
     }
-    return { openPanel: openPanel, closePanel: closePanel };
+    function toggle() {
+      isOpen() ? closePanel() : openPanel();
+    }
+    return {
+      openPanel: openPanel,
+      closePanel: closePanel,
+      isOpen: isOpen,
+      toggle: toggle,
+    };
+  }
+
+  function initSearchableIdPanel(trigger, panel, searchEl) {
+    // الـ panel ده متصل بصريًا بالـ trigger (border-top:none)، فلازم
+    // يبقى بنفس عرضه بالظبط ولاصق فيه من غير فجوة.
+    return initFixedDropdownPanel(trigger, panel, {
+      openClass: "os-id-open",
+      activeClass: "os-id-active",
+      gap: 0,
+      matchTriggerWidth: true,
+      maxHeight: 300,
+      focusEl: searchEl,
+    });
   }
 
   function toggleNotifDropdown() {
@@ -27656,6 +27776,10 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
       if (window._sdCloseGuard(onClose) === false) return;
     }
     window._sdCloseGuard = null;
+    // [FIX-DROPDOWN-CONTAINING-BLOCK] أي دروب داون متنقّلة لـ body لسه
+    // مفتوحة لازم ترجع/تتشال قبل ما الدروار يتقفل — وإلا تفضل طايرة
+    // فوق الشاشة بعد اختفاء المودال.
+    _purgeOrphanFixedPanels(true);
     var fab = document.getElementById("ai-fab");
     if (fab) fab.style.display = "";
     var drawer = document.getElementById("edit-drawer");

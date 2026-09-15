@@ -6438,13 +6438,40 @@ var qrcode = function() {
             e.stopPropagation();
           });
 
+          // [FIX-DRIVE-IMG-LINK] روابط مشاركة جوجل درايف العادية
+          // (drive.google.com/file/d/FILE_ID/view?...) هي روابط لصفحة
+          // معاينة HTML، مش صورة مباشرة — فمستحيل تتحمّل جوه <img>.
+          // الدالة دي بتكتشف أي شكل من أشكال رابط درايف (file/d/ID،
+          // open?id=ID، uc?id=ID، lh3.googleusercontent بالفعل...) وتحوّله
+          // لصيغة صورة مباشرة قابلة للعرض.
+          function _toDirectImageUrl(url) {
+            if (!url) return url;
+            var v = url.trim();
+            var id = null;
+            var m =
+              v.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/) ||
+              v.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/) ||
+              v.match(/drive\.google\.com\/uc\?(?:export=\w+&)?id=([a-zA-Z0-9_-]+)/) ||
+              v.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+            if (m) id = m[1];
+            if (id) {
+              // lh3.googleusercontent أكثر ثباتًا واستقرارًا من drive.google.com/uc
+              // (بيتعامل معاه المتصفح كصورة مباشرة بدون تحويلات/تحذيرات فيروسات).
+              return "https://lh3.googleusercontent.com/d/" + id;
+            }
+            return v; // مش رابط درايف — اسيبه زي ما هو (رابط صورة مباشر عادي)
+          }
+
           function _applyManualUrl() {
-            var val = (manualUrlInput.value || "").trim();
-            if (!val) return;
+            var raw = (manualUrlInput.value || "").trim();
+            if (!raw) return;
+            var val = _toDirectImageUrl(raw);
             urlInput2.value = val;
             if (previewImg2) {
               previewImg2.onerror = function () {
-                NotificationEngine.error("تعذّر تحميل الصورة من الرابط — تأكد إن الرابط صحيح");
+                NotificationEngine.error(
+                  "تعذّر تحميل الصورة من الرابط — تأكد إن الرابط صحيح، وإن الملف في جوجل درايف مشارك بصلاحية \"أي حد لديه الرابط\"",
+                );
               };
               previewImg2.src = val;
               previewImg2.style.display = "block";

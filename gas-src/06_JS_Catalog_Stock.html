@@ -4152,10 +4152,50 @@
       var display = document.getElementById("os-cd-display");
       if (!trigger || !list || !hidden) return;
 
+      // [FIX-DROPDOWN-POSITION] نفس مشكلة os-id-panel: الـ list
+      // position:fixed من غير إحداثيات محسوبة من الـ trigger بيطلع
+      // في مكان عشوائي بعرض غلط. بنحسب مكانه فعليًا زي os-id-panel.
+      var _cdRepositionTicking = false;
+      function _repositionColorList() {
+        if (!list.classList.contains("os-cd-open")) return;
+        if (_cdRepositionTicking) return;
+        _cdRepositionTicking = true;
+        requestAnimationFrame(function () {
+          _positionFixedDropdownPanel(trigger, list, {
+            gap: 4,
+            matchTriggerWidth: true,
+            maxHeight: 220,
+          });
+          _cdRepositionTicking = false;
+        });
+      }
+
       trigger.addEventListener("click", function (e) {
         e.stopPropagation();
         var open = list.classList.toggle("os-cd-open");
         trigger.classList.toggle("os-cd-active", open);
+        if (open) {
+          _positionFixedDropdownPanel(trigger, list, {
+            gap: 4,
+            matchTriggerWidth: true,
+            maxHeight: 220,
+          });
+          window.addEventListener("scroll", _repositionColorList, {
+            capture: true,
+            passive: true,
+          });
+          window.addEventListener("resize", _repositionColorList, {
+            passive: true,
+          });
+        } else {
+          window.removeEventListener("scroll", _repositionColorList, {
+            capture: true,
+            passive: true,
+          });
+          window.removeEventListener("resize", _repositionColorList, {
+            passive: true,
+          });
+        }
       });
 
       list.addEventListener("click", function (e) {
@@ -4174,12 +4214,26 @@
         display.style.color = "var(--text)";
         list.classList.remove("os-cd-open");
         trigger.classList.remove("os-cd-active");
+        window.removeEventListener("scroll", _repositionColorList, {
+          capture: true,
+          passive: true,
+        });
+        window.removeEventListener("resize", _repositionColorList, {
+          passive: true,
+        });
       });
 
       document.addEventListener("click", function (e) {
         if (!e.target.closest("#os-color-wrap")) {
           list.classList.remove("os-cd-open");
           trigger.classList.remove("os-cd-active");
+          window.removeEventListener("scroll", _repositionColorList, {
+            capture: true,
+            passive: true,
+          });
+          window.removeEventListener("resize", _repositionColorList, {
+            passive: true,
+          });
         }
       });
     }

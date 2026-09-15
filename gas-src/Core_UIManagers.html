@@ -14,10 +14,68 @@
   // bindPOItemDropdownEdit) و06_JS_Catalog_Stock.html (bindItemDropdown).
   // صفر تغيير في السلوك — نفس الكلاسات، نفس التوقيت (50ms focus delay).
   // ════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════
+  // [FIX-DROPDOWN-POSITION] الدروب دون داونز دي (os-id-panel/os-cd-list)
+  // بتستخدم position:fixed عشان تفلت من overflow:hidden بتاع المودال،
+  // لكن من غير ما JS يحدد لها إحداثيات، بتترسم في مكانها الافتراضي في
+  // الصفحة (زي ما لو كانت position:static) — مش تحت الحقل ولا بنفس
+  // عرضه. الدالة دي بتحسب مكان/عرض الـ panel بناءً على مكان الـ trigger
+  // فعليًا (نفس المنطق المستخدم بالفعل في os-cd-list بتاع شاشة الأصناف)
+  // وبتقلب الـ panel لفوق لو مفيش مساحة تحت في الشاشة.
+  // ════════════════════════════════════════════════════════════════
+  function _positionFixedDropdownPanel(trigger, panel, opts) {
+    opts = opts || {};
+    var gap = opts.gap != null ? opts.gap : 4;
+    var maxH = opts.maxHeight || 300;
+    var rect = trigger.getBoundingClientRect();
+    var width = opts.matchTriggerWidth === false
+      ? Math.max(rect.width, opts.minWidth || 200)
+      : rect.width;
+
+    // أفقيًا: RTL — نثبّت الحافة اليمنى مع حافة الـ trigger اليمنى،
+    // ولو هتخرج بره الشاشة من الشمال نزوّد المسافة من اليمين.
+    var rightEdge = window.innerWidth - rect.right;
+    var availableLeft = rect.right - width;
+    if (availableLeft < 8) rightEdge = Math.max(8, window.innerWidth - width - 8);
+    panel.style.right = rightEdge + "px";
+    panel.style.left = "auto";
+    panel.style.width = width + "px";
+
+    // رأسيًا: تحت الـ trigger افتراضيًا، ولو مفيش مساحة كافية تحت
+    // وفيه مساحة أكبر فوق، نقلب الـ panel لفوق.
+    var spaceBelow = window.innerHeight - rect.bottom - gap;
+    var spaceAbove = rect.top - gap;
+    if (spaceBelow < Math.min(maxH, 150) && spaceAbove > spaceBelow) {
+      panel.style.top = "auto";
+      panel.style.bottom = window.innerHeight - rect.top + gap + "px";
+      panel.style.maxHeight = Math.min(maxH, spaceAbove) + "px";
+    } else {
+      panel.style.bottom = "auto";
+      panel.style.top = rect.bottom + gap + "px";
+      panel.style.maxHeight = Math.min(maxH, Math.max(spaceBelow, 120)) + "px";
+    }
+  }
+
   function initSearchableIdPanel(trigger, panel, searchEl) {
+    // الـ panel ده متصل بصريًا بالـ trigger (border-top:none)، فلازم
+    // يبقى بنفس عرضه بالظبط ولاصق فيه من غير فجوة.
+    var posOpts = { gap: 0, matchTriggerWidth: true, maxHeight: 300 };
+    var _repositionTicking = false;
+    function _reposition() {
+      if (!panel.classList.contains("os-id-open")) return;
+      if (_repositionTicking) return;
+      _repositionTicking = true;
+      requestAnimationFrame(function () {
+        _positionFixedDropdownPanel(trigger, panel, posOpts);
+        _repositionTicking = false;
+      });
+    }
     function openPanel() {
+      _positionFixedDropdownPanel(trigger, panel, posOpts);
       panel.classList.add("os-id-open");
       trigger.classList.add("os-id-active");
+      window.addEventListener("scroll", _reposition, { capture: true, passive: true });
+      window.addEventListener("resize", _reposition, { passive: true });
       if (searchEl)
         setTimeout(function () {
           searchEl.focus();
@@ -26,6 +84,8 @@
     function closePanel() {
       panel.classList.remove("os-id-open");
       trigger.classList.remove("os-id-active");
+      window.removeEventListener("scroll", _reposition, { capture: true, passive: true });
+      window.removeEventListener("resize", _reposition, { passive: true });
     }
     return { openPanel: openPanel, closePanel: closePanel };
   }

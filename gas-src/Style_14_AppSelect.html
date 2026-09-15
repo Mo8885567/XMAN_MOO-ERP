@@ -257,6 +257,27 @@
     max-height: var(--as-panel-max-h);
     flex: 1 1 auto;
     -webkit-overflow-scrolling: touch;
+    /* [FIX-SCROLL-AFFORDANCE] كان السكرول شغال فعليًا لكن مفيش أي إشارة
+       بصرية إن فيه عناصر تحت — سكرول-بار رفيع 6px بيدوب في الخلفية.
+       ظل التدرّج ده (scroll shadow) بيظهر تلقائيًا لو فيه محتوى مخفي
+       فوق/تحت، ويختفي لوحده لما توصل لآخر القائمة — بدون أي JS. */
+    background:
+      linear-gradient(var(--surface) 30%, transparent),
+      linear-gradient(transparent, var(--surface) 70%) 0 100%,
+      radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, 0.18), transparent),
+      radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, 0.18), transparent) 0 100%;
+    background-repeat: no-repeat;
+    background-color: var(--surface);
+    background-size:
+      100% 22px,
+      100% 22px,
+      100% 8px,
+      100% 8px;
+    background-attachment: local, local, scroll, scroll;
+  }
+  .as-list::-webkit-scrollbar-thumb {
+    background: var(--accent);
+    opacity: 0.6;
   }
   .as-viewport { position: relative; }
 

@@ -1064,6 +1064,25 @@
     max-height: 220px;
     overflow-y: auto;
     padding: 4px;
+    /* [FIX-SCROLL-AFFORDANCE] ظل تدرّج يوضح إن فيه ألوان زيادة تحت —
+       بيظهر/يختفي تلقائيًا حسب موضع السكرول، بدون JS إضافي. */
+    background:
+      linear-gradient(var(--surface) 30%, transparent),
+      linear-gradient(transparent, var(--surface) 70%) 0 100%,
+      radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, 0.18), transparent),
+      radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, 0.18), transparent) 0 100%;
+    background-repeat: no-repeat;
+    background-color: var(--surface);
+    background-size:
+      100% 18px,
+      100% 18px,
+      100% 8px,
+      100% 8px;
+    background-attachment: local, local, scroll, scroll;
+  }
+  .os-cd-list::-webkit-scrollbar-thumb {
+    background: var(--accent);
+    opacity: 0.6;
   }
   .os-cd-list.os-cd-open {
     visibility: visible;

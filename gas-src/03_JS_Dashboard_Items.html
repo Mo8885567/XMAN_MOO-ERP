@@ -2874,7 +2874,16 @@ var qrcode = function() {
     );
   }
 
-  var _ccdCloseHandlers = {};
+  // [FIX-DROPDOWN-CONTAINING-BLOCK 2026-09-15] اتوحّد على
+  // initFixedDropdownPanel (Core_UIManagers) — كان ده رابع نسخة مستقلة
+  // من نفس منطق الفتح/القفل/الموضع. النسخة القديمة كانت بتحسب إحداثيات
+  // viewport لعنصر position:fixed جوه .edit-drawer، والدروار عنده
+  // will-change/transform فبيبقى هو الـ containing block → القائمة
+  // بتتحسب بره الشاشة وتتقص بـ overflow:hidden فمش بتظهر.
+  // الكنترولر الموحّد بينقل القائمة لـ document.body وقت الفتح
+  // (Portal) وبيرجّعها وقت القفل، وبيدير الـ scroll/resize/الضغط بره
+  // بنفسه — فمفيش داعي لـ _ccdCloseHandlers ولا listeners يدوية.
+  var _ccdApis = {};
 
   function _initCCD(uid, onChange) {
     var trigger = document.getElementById(uid + "-ccd-trigger");
@@ -2886,26 +2895,25 @@ var qrcode = function() {
     trigger.parentNode.replaceChild(newTrigger, trigger);
     trigger = newTrigger;
 
-    function positionList() {
-      var rect = trigger.getBoundingClientRect();
-      var minW = Math.max(rect.width, 200);
-      // RTL: نحسب من اليمين — نثبّت الحافة اليمنى مع عرض كافي للمحتوى
-      var rightEdge = window.innerWidth - rect.right;
-      // لو القائمة هتخرج من الشاشة على اليسار → نضبط
-      var availableLeft = rect.right - minW;
-      if (availableLeft < 8) rightEdge = window.innerWidth - minW - 8;
-      list.style.top = rect.bottom + 4 + "px";
-      list.style.right = rightEdge + "px";
-      list.style.left = "auto";
-      list.style.width = "auto";
-      list.style.minWidth = minW + "px";
-      list.style.maxWidth = "320px";
+    // لو النسخة السابقة لنفس الـ uid كانت مفتوحة/متنقّلة لـ body
+    if (_ccdApis[uid]) {
+      try {
+        _ccdApis[uid].closePanel();
+      } catch (_e) {}
     }
 
+    var api = initFixedDropdownPanel(trigger, list, {
+      openClass: "os-cd-open",
+      activeClass: "os-cd-active",
+      gap: 4,
+      matchTriggerWidth: false,
+      minWidth: 200,
+      maxHeight: 220,
+    });
+    _ccdApis[uid] = api;
+
     trigger.addEventListener("click", function () {
-      var isOpen = list.classList.toggle("os-cd-open");
-      trigger.classList.toggle("os-cd-active", isOpen);
-      if (isOpen) positionList();
+      api.toggle();
     });
 
     list.addEventListener("mousedown", function (e) {
@@ -2914,50 +2922,9 @@ var qrcode = function() {
       e.preventDefault();
       var val = item.dataset.value;
       _setCCDValue(uid, val);
-      list.classList.remove("os-cd-open");
-      trigger.classList.remove("os-cd-active");
+      api.closePanel();
       if (typeof onChange === "function") onChange(val);
     });
-
-    // إغلاق عند النقر خارج القائمة
-    if (_ccdCloseHandlers[uid]) {
-      document.removeEventListener("click", _ccdCloseHandlers[uid]);
-    }
-    var _ccdScrollTicking = false;
-    var _ccdScrollHandler = function () {
-      if (!list.classList.contains("os-cd-open")) return;
-      if (_ccdScrollTicking) return;
-      _ccdScrollTicking = true;
-      requestAnimationFrame(function () {
-        positionList();
-        _ccdScrollTicking = false;
-      });
-    };
-    window.addEventListener("scroll", _ccdScrollHandler, {
-      capture: true,
-      passive: true,
-    });
-    window.addEventListener("resize", _ccdScrollHandler, { passive: true });
-    _ccdCloseHandlers[uid] = function (e) {
-      var ccd = document.getElementById(uid + "-ccd");
-      if (!ccd) {
-        document.removeEventListener("click", _ccdCloseHandlers[uid]);
-        window.removeEventListener("scroll", _ccdScrollHandler, {
-          capture: true,
-          passive: true,
-        });
-        window.removeEventListener("resize", _ccdScrollHandler, {
-          passive: true,
-        });
-        delete _ccdCloseHandlers[uid];
-        return;
-      }
-      if (!ccd.contains(e.target) && !list.contains(e.target)) {
-        list.classList.remove("os-cd-open");
-        trigger.classList.remove("os-cd-active");
-      }
-    };
-    document.addEventListener("click", _ccdCloseHandlers[uid]);
   }
 
   function _setCCDValue(uid, colorName) {
@@ -3117,7 +3084,7 @@ var qrcode = function() {
   //  items: [{ id, name, code }]
   //  يبني الـ widget داخل div#uid-idd-outer إن وُجد
   // ══════════════════════════════════════════════════════════════
-  var _iddCloseHandlers = {};
+  var _iddApis = {};
 
   function _buildItemDropdownWidget(uid, items, placeholder, onChange) {
     var outer = document.getElementById(uid + "-idd-outer");
@@ -3201,6 +3168,33 @@ var qrcode = function() {
     trigger = newTrigger;
     disp = document.getElementById(uid + "-idd-disp");
 
+    if (_iddApis[uid]) {
+      try {
+        _iddApis[uid].closePanel();
+      } catch (_e) {}
+    }
+
+    // [FIX-DROPDOWN-CONTAINING-BLOCK 2026-09-15] الكنترولر الموحّد
+    // (Portal لـ body + حساب موضع/عرض + scroll/resize + الضغط بره).
+    var _iddApi = initFixedDropdownPanel(trigger, panel, {
+      openClass: "os-id-open",
+      activeClass: "os-id-active",
+      gap: 0,
+      matchTriggerWidth: true,
+      maxHeight: 300,
+      onOpen: function () {
+        var s2 = document.getElementById(uid + "-idd-search");
+        if (s2) {
+          s2.value = "";
+          filterOpts("");
+          setTimeout(function () {
+            s2.focus();
+          }, 50);
+        }
+      },
+    });
+    _iddApis[uid] = _iddApi;
+
     function openPanel() {
       // منع الفتح لو المخزن لم يُختار بعد
       var whEl =
@@ -3218,36 +3212,21 @@ var qrcode = function() {
           NotificationEngine.warning("اختر المخزن أولاً");
         return;
       }
-      // حساب موضع الـ trigger لتحديد مكان الـ panel كـ fixed
-      var rect = trigger.getBoundingClientRect();
-      panel.style.top = rect.bottom + "px";
-      panel.style.left = rect.left + "px";
-      panel.style.right = "auto";
-      panel.style.width = rect.width + "px";
-      panel.classList.add("os-id-open");
-      trigger.classList.add("os-id-active");
-      var s = document.getElementById(uid + "-idd-search");
-      if (s) {
-        s.value = "";
-        filterOpts("");
-        setTimeout(function () {
-          s.focus();
-        }, 50);
-      }
+      _iddApi.openPanel();
     }
     function closePanel() {
-      panel.classList.remove("os-id-open");
-      trigger.classList.remove("os-id-active");
+      _iddApi.closePanel();
     }
 
     trigger.addEventListener("click", function () {
-      panel.classList.contains("os-id-open") ? closePanel() : openPanel();
+      _iddApi.isOpen() ? closePanel() : openPanel();
     });
     trigger.addEventListener("keydown", function (e) {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         openPanel();
       }
+      if (e.key === "Escape") closePanel();
     });
 
     function filterOpts(q) {
@@ -3310,49 +3289,6 @@ var qrcode = function() {
       });
     }
 
-    // إغلاق عند الضغط خارج
-    if (_iddCloseHandlers[uid]) {
-      document.removeEventListener("click", _iddCloseHandlers[uid]);
-    }
-    // إعادة حساب الموضع عند التمرير أو تغيير حجم النافذة — مع rAF throttle لمنع layout thrashing
-    var _iddScrollTicking = false;
-    var _iddScrollHandler = function () {
-      if (!panel.classList.contains("os-id-open")) return;
-      if (_iddScrollTicking) return;
-      _iddScrollTicking = true;
-      requestAnimationFrame(function () {
-        var r = trigger.getBoundingClientRect();
-        panel.style.top = r.bottom + "px";
-        panel.style.left = r.left + "px";
-        panel.style.right = "auto";
-        panel.style.width = r.width + "px";
-        _iddScrollTicking = false;
-      });
-    };
-    window.addEventListener("scroll", _iddScrollHandler, {
-      capture: true,
-      passive: true,
-    });
-    window.addEventListener("resize", _iddScrollHandler, { passive: true });
-    _iddCloseHandlers[uid] = function (e) {
-      var idd = document.getElementById(uid + "-idd");
-      if (!idd) {
-        document.removeEventListener("click", _iddCloseHandlers[uid]);
-        window.removeEventListener("scroll", _iddScrollHandler, {
-          capture: true,
-          passive: true,
-        });
-        window.removeEventListener("resize", _iddScrollHandler, {
-          passive: true,
-        });
-        delete _iddCloseHandlers[uid];
-        return;
-      }
-      if (!idd.contains(e.target) && !panel.contains(e.target)) {
-        closePanel();
-      }
-    };
-    document.addEventListener("click", _iddCloseHandlers[uid]);
   }
 
   function _getItemDropdownValue(uid) {

@@ -1021,6 +1021,21 @@
 
       var wrap = document.createElement("div");
       wrap.id = (select.id || "as") + "-wrap";
+      // [FILTER-BAR-2026-09-15] الـ <select> الأصلي بيحمل غالبًا نية
+      // العرض بتاعة الشاشة (style="width:auto;min-width:140px" في أشرطة
+      // الفلاتر مثلاً). قبل كده كانت النية دي بتضيع تمامًا وقت الترقية،
+      // والـ .as-root بياخد width:100% من Style_14 → الفلتر بياخد سطر
+      // كامل لوحده جوه أي flex row. بننقل قيم الأبعاد المصرّح بيها بس
+      // (width/min/max/flex) — من غير أي شكل تاني — فالشاشة بتفضل هي
+      // اللي بتحدد عرض حقلها زي ما كانت متوقعة.
+      ["width", "minWidth", "maxWidth", "flex"].forEach(function (prop) {
+        var v = select.style ? select.style[prop] : "";
+        // width:auto بنسيبها للـ CSS (كلاس .filter-bar أو .as-root) — لأن
+        // نقلها كـ inline على root اللي هو inline-flex بيخليه ينكمش على
+        // حجم النص في شاشات مش مقصود فيها كده.
+        if (!v || (prop === "width" && v === "auto")) return;
+        wrap.style[prop] = v;
+      });
       select.style.display = "none";
       select.parentNode.insertBefore(wrap, select);
       wrap.appendChild(select);

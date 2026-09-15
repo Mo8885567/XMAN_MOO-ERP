@@ -1702,6 +1702,45 @@
     flex: 1;
     min-width: 180px;
   }
+
+  /* ── [FILTER-BAR-2026-09-15] شريط فلاتر أفقي موحّد ──────────────
+     كل شاشة كانت بتكتب style="display:flex;flex-wrap:wrap;gap:10px"
+     بنفسها على حاوية الفلاتر، والنتيجة إن أي <select> اتترقّى لـ
+     AppSelect بقى .as-root عنده width:100% (لأن الـ inline width
+     بتاع الـ select الأصلي كان بيضيع وقت الترقية) → كل فلتر بياخد
+     سطر لوحده رأسيًا بدل ما يقف جنب اللي قبله.
+     الكلاس ده هو المصدر الوحيد لتخطيط أي شريط فلاتر: البحث بياخد
+     المساحة الأكبر، وكل فلتر بعرض مرن معقول، وبينزلوا تحت بعض
+     تلقائيًا على الشاشات الصغيرة بس. */
+  .filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  .filter-bar > .search-input-wrap {
+    flex: 3 1 220px;
+    min-width: 180px;
+  }
+  .filter-bar > select.input,
+  .filter-bar > input.input,
+  .filter-bar > .as-root {
+    flex: 1 1 150px;
+    width: auto;
+    min-width: 130px;
+    max-width: 260px;
+  }
+  .filter-bar > span,
+  .filter-bar > .btn {
+    flex: 0 0 auto;
+  }
+  @media (max-width: 760px) {
+    .filter-bar > * {
+      flex: 1 1 100%;
+      max-width: 100%;
+    }
+  }
+
   .search-input-wrap .s-icon {
     position: absolute;
     right: 13px;

@@ -130,6 +130,18 @@
     // ─────────────────────────────────────────────────────────────────────
     function register(screenId, columns, options) {
       options = options || {};
+      // [FIX-GLOBAL-FITWIDTH-2026-09-15] fitToWidth كان اختياريًا per-screen
+      // (لازم كل شاشة تمرره صراحة في options)، وده خلى 19 من أصل 21 شاشة
+      // بتستخدم ColumnEngine.register() تفضل في الوضع الافتراضي (عرض px
+      // ثابت لكل عمود + عمود حشو فاضي يمتص أي مساحة زيادة) بدل الاحتواء
+      // التلقائي — رغم إن ده مش قرار مقصود من أي شاشة، غالبًا نسيان تمرير
+      // الخيار. الحل: fitToWidth يبقى true افتراضيًا لكل الشاشات، وأي
+      // شاشة عايزة السلوك القديم (عمود ثابت + سكرول أفقي، مفيد لو عندها
+      // أعمدة كتير أو محتاجة تثبيت/سحب يدوي) تصرّح explicitly
+      // fitToWidth:false في options بتاعتها.
+      if (!options.hasOwnProperty("fitToWidth")) {
+        options.fitToWidth = true;
+      }
       var normalized = columns.map(function (c, i) {
         return Object.assign(
           {

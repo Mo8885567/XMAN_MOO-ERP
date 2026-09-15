@@ -2408,6 +2408,32 @@
         }
       });
     }
+    // 1b) [FIX-FINANCE-CARDS-STUCK-LOADING] كروت المالية (إيرادات/مصروفات/
+    // ذمم) محتاجة كمان saleInvoicesLight/purchaseInvoicesLight — دول
+    // بييجوا من نداء منفصل تمامًا (getFinanceSummaryLight) مش جزء من
+    // حزمة ensureExtendedData (level3). الـ DL.Core.getFinanceSummaryLight
+    // كانت متعرّفة بالفعل بس محدّش بينادِيها فعليًا، فـ xdComputeFinance's
+    // extReady كان بيفضل false للأبد وكل كروت المالية عالقة على skeleton.
+    if (
+      APP.data &&
+      APP.data.saleInvoicesLight === undefined &&
+      typeof DL !== "undefined" &&
+      DL.Core &&
+      typeof DL.Core.getFinanceSummaryLight === "function"
+    ) {
+      DL.Core.getFinanceSummaryLight(APP.currentUser.username, SESSION.token, {
+        onSuccess: function (res) {
+          var d = (res && res.data) || {};
+          APP.data.saleInvoicesLight = d.saleInvoicesLight || [];
+          APP.data.purchaseInvoicesLight = d.purchaseInvoicesLight || [];
+          if (APP.currentPage === "dashboard") xdRefreshWidget("finance");
+        },
+        onError: function () {
+          // فشل صامت — الكروت تفضل skeleton، هتتحمل تاني مع أي إعادة
+          // فتح للوحة أو زر "تحديث البيانات"
+        },
+      });
+    }
     // 2) فودافون كاش — نداء مستقل خفيف (Lazy)
     setTimeout(xdLoadVodafoneWidget, 150);
 

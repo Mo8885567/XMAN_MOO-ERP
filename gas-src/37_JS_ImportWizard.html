@@ -1307,7 +1307,7 @@
       " | الملف: " +
       esc(IW.state.fileInfo ? IW.state.fileInfo.name : "") +
       " | التاريخ: " +
-      esc(fmtDateTime(new Date())) +
+      esc(DateEngine.formatDateTime(new Date())) +
       "</div>" +
       rejectedHtml +
       "</div>";
@@ -1353,7 +1353,7 @@
         ["مرفوضة/مستبعدة", counts.total - stats.imported],
         ["الملف", IW.state.fileInfo ? IW.state.fileInfo.name : ""],
         ["المستخدم", APP.currentUser.full_name || APP.currentUser.username],
-        ["التاريخ", fmtDateTime(new Date())],
+        ["التاريخ", DateEngine.formatDateTime(new Date())],
       ];
       var wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
       var wb = XLSX.utils.book_new();

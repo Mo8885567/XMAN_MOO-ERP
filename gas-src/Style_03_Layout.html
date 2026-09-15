@@ -36,8 +36,15 @@
     transition:
       opacity 0.18s ease,
       transform 0.18s cubic-bezier(0.4, 0, 0.2, 1);
-    /* Isolate page content from drawer paint */
-    contain: layout style;
+    /* [FIX-DROPDOWN-ESCAPE] كانت contain: layout style — قيمة layout
+       بتخلي #page-content نفسه "containing block" لأي عنصر position:fixed
+       جواه (زي os-id-panel/os-cd-list واللي مش بتاعت AppSelect المتصلة
+       بـ body مباشرة)، فبتترسم داخل حدود #page-content (اللي بيسكرول جوه
+       .content) بدل الشاشة كلها — ده اللي كان بيخلي الدروب داون تظهر
+       "تحت" محتوى الصفحة بدل ما تطفو فوقه. أُزيلت layout وسيبت style بس
+       (مفيهاش تأثير على containing block). التكلفة: عزل أداء أخف شوية
+       بس، مفيش تأثير وظيفي. */
+    contain: style;
   }
 
   #page-trail {

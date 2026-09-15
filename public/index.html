@@ -968,8 +968,15 @@
     transition:
       opacity 0.18s ease,
       transform 0.18s cubic-bezier(0.4, 0, 0.2, 1);
-    /* Isolate page content from drawer paint */
-    contain: layout style;
+    /* [FIX-DROPDOWN-ESCAPE] كانت contain: layout style — قيمة layout
+       بتخلي #page-content نفسه "containing block" لأي عنصر position:fixed
+       جواه (زي os-id-panel/os-cd-list واللي مش بتاعت AppSelect المتصلة
+       بـ body مباشرة)، فبتترسم داخل حدود #page-content (اللي بيسكرول جوه
+       .content) بدل الشاشة كلها — ده اللي كان بيخلي الدروب داون تظهر
+       "تحت" محتوى الصفحة بدل ما تطفو فوقه. أُزيلت layout وسيبت style بس
+       (مفيهاش تأثير على containing block). التكلفة: عزل أداء أخف شوية
+       بس، مفيش تأثير وظيفي. */
+    contain: style;
   }
 
   #page-trail {
@@ -4718,8 +4725,12 @@
     flex-direction: column;
     overflow: hidden;
     pointer-events: all;
-    /* Isolate paint to this subtree */
-    contain: strict;
+    /* [FIX-DROPDOWN-ESCAPE] كانت contain: strict — بتخلي edit-drawer-inner
+       containing block لأي دروب داون position:fixed جواها (os-id-panel،
+       os-cd-list...)، فبتترسم مقفولة/متقطّعة داخل حدود الـ drawer بدل ما
+       تطفو فوق الشاشة كلها. أُزيلت الـ containment (كانت لعزل الـ paint
+       فقط، وده أقل أهمية من كسر الدروب داون). مفيش تأثير وظيفي، عزل أداء
+       أخف شوية بس. */
     will-change: transform;
     backface-visibility: hidden;
   }
@@ -4770,8 +4781,10 @@
     padding: 24px 28px;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
-    /* Prevent scroll from triggering layout on parent */
-    contain: paint;
+    /* [FIX-DROPDOWN-ESCAPE] كانت contain: paint — بردو بتخلي modal-body
+       (وهو الأب المباشر لحقول الدروب داون داخل المودالز/الدروارز) containing
+       block لعناصر position:fixed جواها، فيبقى نفس تأثير المشكلة اللي
+       اتصلحت في edit-drawer-inner. أُزيلت. */
   }
   .edit-drawer-inner .modal-body::-webkit-scrollbar {
     width: 5px;
@@ -4909,7 +4922,8 @@
     overflow-x: hidden;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
-    contain: paint;
+    /* [FIX-DROPDOWN-ESCAPE] نفس مشكلة contain:paint اللي بتكسر position:fixed
+       للدروب داون جوه الـ HR drawer — أُزيلت. */
   }
   .hr-drawer-body::-webkit-scrollbar {
     width: 5px;
@@ -25551,7 +25565,11 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
     s.id = "styled-drawer-css";
     s.textContent = [
       /* wrapper داخل edit-drawer */
-      ".sd-inner { background:var(--bg); display:flex; flex-direction:column; height:100%; overflow:hidden; pointer-events:all; contain:strict; will-change:transform; backface-visibility:hidden; }",
+      /* [FIX-DROPDOWN-ESCAPE] كانت فيها contain:strict — بتخلي sd-inner
+         containing block لأي دروب داون position:fixed جواها (زي حقل
+         "الصنف" في مودال رصيد أول المدة)، فتترسم مقطوعة/مقفولة داخل حدود
+         الـ drawer بدل ما تطفو فوق الشاشة كلها. أُزيلت الـ containment. */
+      ".sd-inner { background:var(--bg); display:flex; flex-direction:column; height:100%; overflow:hidden; pointer-events:all; will-change:transform; backface-visibility:hidden; }",
       /* header ملوّن */
       ".sd-header { display:flex; align-items:center; gap:14px; padding:20px 24px; flex-shrink:0; }",
       ".sd-header-icon { width:48px; height:48px; border-radius:14px; background:rgba(255,255,255,0.22); display:flex; align-items:center; justify-content:center; font-size:22px; color:#fff; flex-shrink:0; box-shadow:0 2px 12px rgba(0,0,0,0.15); }",

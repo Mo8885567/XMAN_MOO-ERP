@@ -1452,8 +1452,12 @@
     flex-direction: column;
     overflow: hidden;
     pointer-events: all;
-    /* Isolate paint to this subtree */
-    contain: strict;
+    /* [FIX-DROPDOWN-ESCAPE] كانت contain: strict — بتخلي edit-drawer-inner
+       containing block لأي دروب داون position:fixed جواها (os-id-panel،
+       os-cd-list...)، فبتترسم مقفولة/متقطّعة داخل حدود الـ drawer بدل ما
+       تطفو فوق الشاشة كلها. أُزيلت الـ containment (كانت لعزل الـ paint
+       فقط، وده أقل أهمية من كسر الدروب داون). مفيش تأثير وظيفي، عزل أداء
+       أخف شوية بس. */
     will-change: transform;
     backface-visibility: hidden;
   }
@@ -1504,8 +1508,10 @@
     padding: 24px 28px;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
-    /* Prevent scroll from triggering layout on parent */
-    contain: paint;
+    /* [FIX-DROPDOWN-ESCAPE] كانت contain: paint — بردو بتخلي modal-body
+       (وهو الأب المباشر لحقول الدروب داون داخل المودالز/الدروارز) containing
+       block لعناصر position:fixed جواها، فيبقى نفس تأثير المشكلة اللي
+       اتصلحت في edit-drawer-inner. أُزيلت. */
   }
   .edit-drawer-inner .modal-body::-webkit-scrollbar {
     width: 5px;
@@ -1643,7 +1649,8 @@
     overflow-x: hidden;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
-    contain: paint;
+    /* [FIX-DROPDOWN-ESCAPE] نفس مشكلة contain:paint اللي بتكسر position:fixed
+       للدروب داون جوه الـ HR drawer — أُزيلت. */
   }
   .hr-drawer-body::-webkit-scrollbar {
     width: 5px;

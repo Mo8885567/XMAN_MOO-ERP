@@ -1545,8 +1545,10 @@
   // bindCurrentStock — المخزن الحالي (الشاشة المدمجة)
   // ─────────────────────────────────────────────────────────────
 
-  var _csViewMode = "table"; // "table" | "cards"
-  var _csColorMode = false; // true = تفصيل بالألوان
+  // [TOOLBAR-MERGE] _csViewMode/_csColorMode اتشالوا — طريقة العرض بقت
+  // جزء من ColumnEngine نفسه (viewModes) وبتتحفظ/تتقرأ عبر تفضيلات
+  // الجدول الموحّدة (راجع _csRegisterStockColumns)، مفيش داعي لمتغيّر محلي.
+  var _csLastItems = []; // آخر صفوف اتفلترت — تُستخدم داخل onViewModeChange
 
   function bindCurrentStock() {
     // ── inject styles (مرة واحدة) ─────────────────────────────
@@ -1659,148 +1661,11 @@
         );
     });
 
-    // ── زر تبديل عرض (جدول / كروت) ────────────────────────────
-    var viewBtn = document.getElementById("cs-view-toggle");
-    if (viewBtn) {
-      viewBtn.addEventListener("click", function () {
-        _csViewMode = _csViewMode === "table" ? "cards" : "table";
-        _csColorMode = false;
-        viewBtn.textContent =
-          _csViewMode === "table" ? "⊞ عرض كروت" : " عرض جدول";
-        var clrBtn = document.getElementById("cs-color-toggle");
-        if (clrBtn) {
-          clrBtn.textContent = " تفصيل بالألوان";
-          clrBtn.className = "btn btn-outline btn-sm";
-        }
-        _csRenderContent(_csGetFiltered());
-      });
-    }
-
-    // ── زر تفصيل بالألوان ─────────────────────────────────────
-    var colorBtn = document.getElementById("cs-color-toggle");
-    if (colorBtn) {
-      colorBtn.addEventListener("click", function () {
-        _csColorMode = !_csColorMode;
-        _csViewMode = "table";
-        colorBtn.textContent = _csColorMode
-          ? " موديل ككل"
-          : " تفصيل بالألوان";
-        colorBtn.className = _csColorMode
-          ? "btn btn-primary btn-sm"
-          : "btn btn-outline btn-sm";
-        var vBtn = document.getElementById("cs-view-toggle");
-        if (vBtn) {
-          vBtn.textContent = "⊞ عرض كروت";
-        }
-        _csRenderContent(_csGetFiltered());
-      });
-    }
-
-    // ── طباعة ─────────────────────────────────────────────────
-    var printBtn = document.getElementById("cs-print-btn");
-    if (printBtn) {
-      printBtn.addEventListener("click", function () {
-        var filtered = _csGetFiltered();
-        // [PRINT-ENGINE-UNIFY] كانت هذه الشاشة تبني نافذة طباعة خاصة بها
-        // (صفحة واحدة، بدون تكرار رأس/تذييل/ترقيم صفحات) — الآن توحّدت
-        // مع باقي شاشات النظام عبر ExportUtil.toPrint نفسه.
-        var _headers = [
-          "الكود",
-          "الاسم",
-          "المجموعة",
-          "الوحدة",
-          "الإجمالي",
-          "توزيع المخازن",
-          "الحد الأدنى",
-          "الحالة",
-          "التكلفة الإجمالية",
-        ];
-        var _data = filtered.map(function (it) {
-          var ss = stockStatusBadge(it);
-          var status =
-            ss.cls === "out" ? "نفد" : ss.cls === "low" ? "منخفض" : "متاح";
-          var whList = getCatalogItemStockByWarehouse(it.id)
-            .map(function (r) {
-              return r.name + ":" + r.qty;
-            })
-            .join(" / ");
-          var totalCost = ss.qty * Number(it.cost_price || 0);
-          return [
-            it.id || "",
-            it.name || "",
-            getGroupLabel(it.group),
-            it.unit || "",
-            ss.qty,
-            whList || "—",
-            it.min_qty || "—",
-            status,
-            totalCost > 0 ? formatMoney(totalCost, { decimals: 0 }) : "—",
-          ];
-        });
-        ExportUtil.toPrint(
-          _data,
-          _headers,
-          "المخزن الحالي",
-          "إجمالي: " + filtered.length + " صنف",
-        );
-      });
-    }
-
-    // ── تصدير CSV ─────────────────────────────────────────────
-    var csExportWrap = document.getElementById("cs-export-btn-wrap");
-    if (csExportWrap && window.ExportUtil) {
-      var _getCsData = function () {
-        var filtered = _csGetFiltered();
-        var headers = [
-          "الكود",
-          "الاسم",
-          "المجموعة",
-          "الوحدة",
-          "الإجمالي",
-          "توزيع المخازن",
-          "الحد الأدنى",
-          "الحالة",
-          "سعر التكلفة",
-          "سعر البيع",
-          "التكلفة الإجمالية",
-          "الوصف",
-        ];
-        var rows = filtered.map(function (it) {
-          var ss = stockStatusBadge(it);
-          var status =
-            ss.cls === "out" ? "نفد" : ss.cls === "low" ? "منخفض" : "متاح";
-          var whList = getCatalogItemStockByWarehouse(it.id)
-            .map(function (r) {
-              return r.name + ":" + r.qty;
-            })
-            .join(" | ");
-          var totalCost = ss.qty * (it.cost_price || 0);
-          return [
-            it.id || "",
-            it.name || "",
-            getGroupLabel(it.group),
-            it.unit || "",
-            ss.qty,
-            whList,
-            it.min_qty || 0,
-            status,
-            it.cost_price || 0,
-            it.selling_price || 0,
-            totalCost.toFixed(0),
-            it.description || "",
-          ];
-        });
-        return { headers: headers, rows: rows };
-      };
-      var csDD = ExportUtil.createDropdown({
-        getData: _getCsData,
-        filename: "مخزون_حالي_" + new Date().toISOString().slice(0, 10),
-        title: "تقرير المخزون الحالي",
-        subtitle: "تاريخ التقرير: " + fmtDate(new Date()),
-        sheetName: "المخزون",
-      });
-      csExportWrap.appendChild(csDD);
-    }
+    // [TOOLBAR-MERGE] أزرار تبديل العرض (جدول/كروت/تفصيل بالألوان) والطباعة
+    // والتصدير كانت هنا كشريط مستقل فوق الفلاتر — بقت دلوقتي داخل تولبار
+    // الجدول نفسه: "طرق العرض" (viewModes)، "تصدير"، "طباعة" — كلهم متاحين
+    // مباشرة من تولبار ColumnEngine بمجرد رسم الجدول (_csRegisterStockColumns)،
+    // فمفيش داعي لربط أزرار منفصلة هنا ولا لبناء بيانات طباعة/تصدير يدوية.
   }
 
   // ── فلترة الأصناف ────────────────────────────────────────────
@@ -1904,26 +1769,16 @@
       );
   }
 
-  // ── رندر المحتوى حسب الوضع ────────────────────────────────────
+  // ── رندر المحتوى ────────────────────────────────────────────
+  // [TOOLBAR-MERGE] وضع العرض (جدول/كروت/تفصيل بالألوان) بقى جوه
+  // ColumnEngine نفسه (viewModes) — الشاشة دلوقتي دايمًا بترسم من خلال
+  // نفس الجدول الموحّد، وهو اللي بيقرر شكل العرض الفعلي.
   function _csRenderContent(items) {
     var el = document.getElementById("cs-content");
     if (!el) return;
-    if (_csViewMode === "cards" && !_csColorMode) {
-      el.innerHTML = buildCatalogCards(items);
-      return;
-    }
-    if (!items.length) {
-      el.innerHTML =
-        '<div class="card"><div class="empty-state"><div class="empty-icon"></div><p>لا توجد نتائج</p></div></div>';
-      return;
-    }
     el.innerHTML = '<div id="cs-ce-container"></div>';
     var container = document.getElementById("cs-ce-container");
-    if (_csColorMode) {
-      _csRenderColorDetailCE(container, items);
-    } else {
-      _csRenderStockTableCE(container, items);
-    }
+    _csRenderStockTableCE(container, items);
   }
 
   // ── pills توزيع الألوان لكل صنف ──────────────────────────────
@@ -2398,6 +2253,25 @@
         // [FIT-TO-WIDTH] كل الأعمدة الظاهرة تاخد نفس النسبة من عرض الجدول
         // وتتقلّص/تتمدد مع الحاوية بدل عرض px ثابت — بدون سكرول جانبي.
         fitToWidth: true,
+        // [TOOLBAR-MERGE] عرض كروت / تفصيل بالألوان كانا زرارين مستقلين
+        // فوق الفلاتر — بقوا دلوقتي قسم جوه منسدلة "طرق العرض" في نفس
+        // تولبار الجدول (زي شجري/جدولي في شاشة المجموعات). "جدول" هو
+        // nativeViewMode (جدول ColumnEngine الأصلي بتصدير/طباعة/بحث
+        // كاملين)، والوضعين التانيين بيرسموا في حاوية مخصّصة.
+        viewModes: [
+          { key: "table", label: "جدول", icon: "ti-table" },
+          { key: "colors", label: "تفصيل بالألوان", icon: "ti-palette" },
+          { key: "cards", label: "عرض كروت", icon: "ti-layout-grid" },
+        ],
+        defaultViewMode: "table",
+        nativeViewMode: "table",
+        onViewModeChange: function (mode, containerEl) {
+          if (mode === "cards") {
+            containerEl.innerHTML = buildCatalogCards(_csLastItems);
+          } else if (mode === "colors") {
+            containerEl.innerHTML = _csBuildColorDetail(_csLastItems);
+          }
+        },
       },
     );
   }
@@ -2425,6 +2299,7 @@
 
   function _csRenderStockTableCE(container, items) {
     _csRegisterStockColumns();
+    _csLastItems = items || []; // تُستخدم داخل onViewModeChange (كروت/تفصيل بالألوان)
     var whName = _csGetActiveWarehouseName();
     ColumnEngine.renderTable(
       "stock_current",
@@ -3032,6 +2907,10 @@
                 ? c.code.trim().toUpperCase()
                 : colorName.replace(/\s+/g, "").substring(0, 3).toUpperCase();
             var subCode = (it.code || it.id) + "-" + colorCode;
+            var colorImage =
+              typeof c === "object" && c.image && c.image.trim()
+                ? c.image.trim()
+                : "";
             // رصيد هذا اللون من المخازن
             var warehouseQtys = {};
             (APP.data.stock || []).forEach(function (s) {
@@ -3116,10 +2995,24 @@
                 );
               })
               .join("");
+            var colorImgHtml = colorImage
+              ? '<img src="' +
+                esc(colorImage) +
+                '" style="width:36px;height:36px;object-fit:cover;border-radius:8px;border:1px solid var(--border);flex-shrink:0;cursor:pointer" ' +
+                "onclick=\"event.stopPropagation();openImageLightbox('" +
+                esc(colorImage) +
+                "','" +
+                esc(colorName) +
+                "')\" " +
+                'onerror="this.style.display=\'none\'">'
+              : '<span style="width:36px;height:36px;border-radius:8px;background:var(--bg);border:1px solid var(--border);' +
+                'display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--text3);font-size:15px">' +
+                '<i class="ti ti-photo-off"></i></span>';
             return (
               '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;">' +
               '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
-              '<div style="display:flex;align-items:center;gap:7px">' +
+              '<div style="display:flex;align-items:center;gap:8px;min-width:0">' +
+              colorImgHtml +
               '<span style="width:12px;height:12px;border-radius:50%;background:' +
               _mDotHex +
               ";border:2px solid " +

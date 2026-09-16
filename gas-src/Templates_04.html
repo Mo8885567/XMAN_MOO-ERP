@@ -1239,12 +1239,11 @@
       '<div><h1 style="font-size:22px;margin:0">المخزن الحالي</h1>' +
       '<p style="margin:2px 0 0;color:var(--text3);font-size:13px">دليل الأكواد الشامل مع الرصيد التفصيلي</p></div>' +
       "</div>" +
-      '<div class="header-actions">' +
-      '<button class="btn btn-outline" id="cs-view-toggle" title="تبديل عرض" style="display:flex;align-items:center;gap:6px"><i class="ti ti-layout-grid" style="font-size:14px"></i> عرض كروت</button>' +
-      '<button class="btn btn-outline" id="cs-color-toggle" title="تفصيل بالألوان" style="display:flex;align-items:center;gap:6px"><i class="ti ti-palette" style="font-size:14px"></i> تفصيل بالألوان</button>' +
-      '<button class="btn btn-outline" id="cs-print-btn" style="display:flex;align-items:center;gap:6px"><i class="ti ti-printer" style="font-size:14px"></i> طباعة</button>' +
-      '<button class="btn btn-primary" id="cs-export-btn" style="display:flex;align-items:center;gap:6px"><i class="ti ti-file-export" style="font-size:14px"></i> تصدير CSV</button>' +
-      "</div></div>" +
+      // [TOOLBAR-MERGE] أزرار عرض كروت/تفصيل بالألوان/طباعة/تصدير CSV كانت هنا
+      // كصف مستقل فوق الفلاتر — بقت متاحة دلوقتي جوه تولبار الجدول نفسه
+      // (طرق العرض + تصدير + طباعة) عبر viewModes في _csRegisterStockColumns،
+      // بدل ازدواج شريطين لنفس الغرض.
+      "</div>" +
       // ── شريط الإحصائيات السريعة ──
       '<div id="cs-stats-bar" style="margin-bottom:16px"></div>' +
       // ── شريط البحث والفلاتر ──

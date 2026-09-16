@@ -4082,13 +4082,27 @@
       var selName = (selectedColor || "").trim();
       var selHex = selName ? _resolveHex(selName, "") : "";
 
+      // [ORPHAN-COLOR-SAFETY-NET] لو القيمة المحفوظة في السجل (وضع التعديل)
+      // مش موجودة ضمن قائمة الألوان الحالية (Colors) — مثلاً السجل بيخزن اسم
+      // لون اتحذف بعدين، أو اسم قديم قبل ما يتفعّل تحديث تلقائي للمراجع —
+      // كانت بتفضل معروضة في أعلى الحقل بس من غير أي عنصر مطابق لها جوه
+      // القائمة نفسها، فيبدو وكأن القيمة دي مش موجودة أصلاً في السيستم. هنا
+      // بنضيفها كخيار إضافي معلَّم بوضوح، عشان المستخدم يشوفها ويقدر يختار
+      // بدلها اللون الصحيح الحالي.
+      var selNormalized = selName ? _normalizeColor(selName) : "";
+      var selMatchesKnown =
+        !selName ||
+        colors.some(function (c) {
+          return _normalizeColor(c.name) === selNormalized;
+        });
+
       var items = noColors
         ? '<div class="os-cd-item os-cd-disabled"> لا توجد ألوان مُعرَّفة</div>'
         : colors
             .map(function (c) {
               var hex = _resolveHex(c.name, c.code);
               var isSel =
-                selName && c.name.trim() === selName
+                selName && _normalizeColor(c.name) === selNormalized
                   ? " os-cd-selected"
                   : "";
               return (
@@ -4109,6 +4123,20 @@
               );
             })
             .join("");
+
+      if (!selMatchesKnown) {
+        items +=
+          '<div class="os-cd-item os-cd-selected" data-value="' +
+          esc(selName) +
+          '">' +
+          '<span class="os-cd-dot" style="background:' +
+          (selHex || "#ccc") +
+          '"></span>' +
+          '<span class="os-cd-label">' +
+          esc(selName) +
+          ' <span class="os-cd-code" style="color:#ef4444">(القيمة المحفوظة — غير موجودة في قائمة الألوان الحالية)</span>' +
+          "</span></div>";
+      }
 
       var triggerDisplay = selName
         ? '<span id="os-cd-display" style="color:var(--text)">' +

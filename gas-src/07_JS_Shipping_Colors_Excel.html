@@ -2431,9 +2431,22 @@
                     _cache.data.colors = APP.data.colors;
                   }
                 }
-                reloadAfterMutation(function () {
-                  renderPage("color_definitions");
-                });
+                reloadAfterMutation(
+                  function () {
+                    renderPage("color_definitions");
+                  },
+                  null,
+                  // [SE-BUBBLE-FIX-2026-09-16] false = وضع صامت — SaveEngine.run
+                  // فوق بيدير فقاعة "جار الحفظ → جار التحديث → تم الحفظ" لوحده
+                  // بالفعل (successMessage فوق). من غير false هنا،
+                  // reloadAfterMutation كانت بتفتح فقاعتها الخاصة تاني فوق
+                  // فقاعة SaveEngine، وبتفضل الفقاعتين متضاربتين لحد ما
+                  // المزامنة الخلفية الكاملة (getAllData) تخلص فعليًا —
+                  // وده اللي كان بيحسّس المستخدم إن الحفظ بياخد وقت طويل
+                  // جدًا رغم إن الحفظ الفعلي في السيرفر خلص من زمان (راجع
+                  // نفس الإصلاح والتعليق في شاشة المخازن أعلى الملف).
+                  false,
+                );
               },
             });
           });
@@ -2808,9 +2821,17 @@
                     _cache.data.sizeGroups = APP.data.sizeGroups;
                   }
                 }
-                reloadAfterMutation(function () {
-                  renderPage("size_definitions");
-                });
+                reloadAfterMutation(
+                  function () {
+                    renderPage("size_definitions");
+                  },
+                  null,
+                  // [SE-BUBBLE-FIX-2026-09-16] راجع نفس الشرح في شاشة الألوان
+                  // أعلى الملف — false يمنع فقاعة تحميل ثانية تتضارب مع فقاعة
+                  // SaveEngine.run وتفضل معلّقة لحد ما المزامنة الخلفية الكاملة
+                  // تخلص.
+                  false,
+                );
               },
             });
           });
@@ -2986,9 +3007,17 @@
                     _cache.data.sizes = APP.data.sizes;
                   }
                 }
-                reloadAfterMutation(function () {
-                  renderPage("size_definitions");
-                });
+                reloadAfterMutation(
+                  function () {
+                    renderPage("size_definitions");
+                  },
+                  null,
+                  // [SE-BUBBLE-FIX-2026-09-16] راجع نفس الشرح في شاشة الألوان
+                  // أعلى الملف — false يمنع فقاعة تحميل ثانية تتضارب مع فقاعة
+                  // SaveEngine.run وتفضل معلّقة لحد ما المزامنة الخلفية الكاملة
+                  // تخلص.
+                  false,
+                );
               },
             });
           });
@@ -3165,9 +3194,18 @@
                     _cache.data.units = APP.data.units;
                   }
                 }
-                reloadAfterMutation(function () {
-                  renderPage("unit_definitions");
-                });
+                reloadAfterMutation(
+                  function () {
+                    renderPage("unit_definitions");
+                  },
+                  null,
+                  // [SE-BUBBLE-FIX-2026-09-16] راجع نفس الشرح في شاشة الألوان
+                  // أعلى الملف — false يمنع فقاعة تحميل ثانية تتضارب مع فقاعة
+                  // SaveEngine.run وتفضل معلّقة لحد ما المزامنة الخلفية الكاملة
+                  // (getAllData) تخلص — وده بالظبط سبب إحساس إن الحفظ هنا
+                  // بياخد وقت طويل جدًا.
+                  false,
+                );
               },
             });
           });

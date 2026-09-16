@@ -1137,6 +1137,16 @@
     }
     var c = document.getElementById("page-content");
     if (!c) return;
+    // [DEBUG-SIDEBAR-2026-09-16] تشخيص مؤقت — عداد لعدد مرات إعادة رسم
+    // المحتوى ووقتها بالنسبة لليوجين، عشان نأكد/ننفي فرضية "تكرار الريفريش".
+    // امسح البلوك ده بعد ما نلاقي السبب.
+    window.__DEBUG_RENDERPAGE_COUNT__ = (window.__DEBUG_RENDERPAGE_COUNT__ || 0) + 1;
+    console.log(
+      "[DEBUG-RELOAD] renderPage('" + page + "') #" +
+        window.__DEBUG_RENDERPAGE_COUNT__ + " — منذ اللوجين: " +
+        (Date.now() - (APP._loginTime || 0)) + "ms | silent=" +
+        !!APP._fromSilentRefresh,
+    );
     APP.currentPage = page;
     // [SIDEBAR-IW-ACTIVE] شاشات الفاتورة/المرتجع (workspace) مش بند سايد
     // بار حقيقي بتاعها، فبنلوّن بدلها التاب المقابل ليها في القائمة

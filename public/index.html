@@ -16627,6 +16627,16 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
     }
     var c = document.getElementById("page-content");
     if (!c) return;
+    // [DEBUG-SIDEBAR-2026-09-16] تشخيص مؤقت — عداد لعدد مرات إعادة رسم
+    // المحتوى ووقتها بالنسبة لليوجين، عشان نأكد/ننفي فرضية "تكرار الريفريش".
+    // امسح البلوك ده بعد ما نلاقي السبب.
+    window.__DEBUG_RENDERPAGE_COUNT__ = (window.__DEBUG_RENDERPAGE_COUNT__ || 0) + 1;
+    console.log(
+      "[DEBUG-RELOAD] renderPage('" + page + "') #" +
+        window.__DEBUG_RENDERPAGE_COUNT__ + " — منذ اللوجين: " +
+        (Date.now() - (APP._loginTime || 0)) + "ms | silent=" +
+        !!APP._fromSilentRefresh,
+    );
     APP.currentPage = page;
     // [SIDEBAR-IW-ACTIVE] شاشات الفاتورة/المرتجع (workspace) مش بند سايد
     // بار حقيقي بتاعها، فبنلوّن بدلها التاب المقابل ليها في القائمة
@@ -24835,6 +24845,12 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
       var menuEl = document.getElementById(gId + "-menu");
       if (!toggleEl || !menuEl) return;
       var open = menuEl.classList.contains("open");
+      // [DEBUG-SIDEBAR-2026-09-16] تشخيص مؤقت — امسح السطر ده بعد ما نلاقي السبب.
+      console.trace(
+        "[DEBUG-SIDEBAR] _toggleGroupMenu(" + gId + ") — كان مفتوح=" + open +
+          " | منذ اللوجين: " +
+          (Date.now() - (APP && APP._loginTime ? APP._loginTime : 0)) + "ms",
+      );
 
       // أغلق كل الـ groups الأخرى وامسح تلوينها (بانتقال سلس)
       document
@@ -26871,6 +26887,13 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
   }
 
   function _closeAllDropdowns() {
+    // [DEBUG-SIDEBAR-2026-09-16] تشخيص مؤقت — تتبع مين بينادي القفل ده وإمتى
+    // بالنسبة لوقت اللوجين. امسح السطر ده بعد ما نلاقي السبب.
+    console.trace(
+      "[DEBUG-SIDEBAR] _closeAllDropdowns() نودي — منذ اللوجين: " +
+        (Date.now() - (APP && APP._loginTime ? APP._loginTime : 0)) +
+        "ms | currentPage=" + (APP && APP.currentPage),
+    );
     document.querySelectorAll(".nav-grp-toggle").forEach(function (t) {
       var gId = t.id.replace("-toggle", "");
       var m = document.getElementById(gId + "-menu");
@@ -26895,6 +26918,12 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
   }
 
   function closeSidebar() {
+    // [DEBUG-SIDEBAR-2026-09-16] تشخيص مؤقت — امسح السطر ده بعد ما نلاقي السبب.
+    console.trace(
+      "[DEBUG-SIDEBAR] closeSidebar() نودي — منذ اللوجين: " +
+        (Date.now() - (APP && APP._loginTime ? APP._loginTime : 0)) +
+        "ms | currentPage=" + (APP && APP.currentPage),
+    );
     var sb = document.getElementById("main-sidebar");
     var bd = document.getElementById("sidebar-backdrop");
     var btn = document.getElementById("sidebar-toggle");

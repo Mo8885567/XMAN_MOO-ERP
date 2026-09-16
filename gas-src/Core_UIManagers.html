@@ -228,6 +228,13 @@
   }
 
   function _closeAllDropdowns() {
+    // [DEBUG-SIDEBAR-2026-09-16] تشخيص مؤقت — تتبع مين بينادي القفل ده وإمتى
+    // بالنسبة لوقت اللوجين. امسح السطر ده بعد ما نلاقي السبب.
+    console.trace(
+      "[DEBUG-SIDEBAR] _closeAllDropdowns() نودي — منذ اللوجين: " +
+        (Date.now() - (APP && APP._loginTime ? APP._loginTime : 0)) +
+        "ms | currentPage=" + (APP && APP.currentPage),
+    );
     document.querySelectorAll(".nav-grp-toggle").forEach(function (t) {
       var gId = t.id.replace("-toggle", "");
       var m = document.getElementById(gId + "-menu");
@@ -252,6 +259,12 @@
   }
 
   function closeSidebar() {
+    // [DEBUG-SIDEBAR-2026-09-16] تشخيص مؤقت — امسح السطر ده بعد ما نلاقي السبب.
+    console.trace(
+      "[DEBUG-SIDEBAR] closeSidebar() نودي — منذ اللوجين: " +
+        (Date.now() - (APP && APP._loginTime ? APP._loginTime : 0)) +
+        "ms | currentPage=" + (APP && APP.currentPage),
+    );
     var sb = document.getElementById("main-sidebar");
     var bd = document.getElementById("sidebar-backdrop");
     var btn = document.getElementById("sidebar-toggle");

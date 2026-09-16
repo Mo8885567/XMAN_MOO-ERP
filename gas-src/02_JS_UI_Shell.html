@@ -4258,6 +4258,12 @@
       var menuEl = document.getElementById(gId + "-menu");
       if (!toggleEl || !menuEl) return;
       var open = menuEl.classList.contains("open");
+      // [DEBUG-SIDEBAR-2026-09-16] تشخيص مؤقت — امسح السطر ده بعد ما نلاقي السبب.
+      console.trace(
+        "[DEBUG-SIDEBAR] _toggleGroupMenu(" + gId + ") — كان مفتوح=" + open +
+          " | منذ اللوجين: " +
+          (Date.now() - (APP && APP._loginTime ? APP._loginTime : 0)) + "ms",
+      );
 
       // أغلق كل الـ groups الأخرى وامسح تلوينها (بانتقال سلس)
       document

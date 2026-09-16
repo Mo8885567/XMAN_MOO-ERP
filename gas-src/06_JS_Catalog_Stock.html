@@ -897,25 +897,6 @@
     ColumnEngine.register(
       "catalog_items",
       [
-        // [ROWNUM-COLUMN] عمود "م." — ترقيم تلقائي من النظام، مقفول
-        // (locked:true) فمايظهرش في نافذة "تخصيص الجدول" ومايتسحبش
-        // ولا يتفرز ولا يتفكّ تثبيته؛ دايمًا أول عمود يمين الجدول.
-        // القيمة نفسها ترتيب عرض حي (1،2،3..) بيتغيّر مع الفرز/الفلتر،
-        // مش رقم مخزّن في البيانات.
-        {
-          key: "_rownum",
-          label: "م",
-          type: "rownum",
-          width: 50,
-          align: "center",
-          locked: true,
-          frozen: "right",
-          sortable: false,
-          searchable: false,
-          filterable: false,
-          exportable: false,
-          printable: false,
-        },
         {
           key: "id",
           label: "الكود",

@@ -376,12 +376,42 @@
       };
     }
 
+    // ─────────────────────────────────────────────────────────────
+    // [P-02/P-03 FIX — AUDIT-2026-09] syncFromFullData(fresh)
+    //
+    // المشكلة اللي بتحلها: reloadAfterMutation() (01_JS_Core_Auth.html)
+    // بتجيب نسخة "fresh" كاملة من getAllData() بعد كل حركة (إضافة/تعديل/
+    // حذف)، وبتحدّث بيها APP.data فورًا. لكن UDE كان نظام منفصل تمامًا —
+    // مش بيعرف إن الحركة حصلت أصلاً، فنسخته المحلية (localStorage
+    // wms_ude_lvl_2/3/4) كانت تفضل زي ما هي لحد ما 10 دقائق (STALE_MS)
+    // تعدي. النتيجة: Refresh فعلي للصفحة (F5) خلال هذه النافذة كان ممكن
+    // يعرض رصيد مخزون قديم فورًا (Instant Render من localStorage) رغم
+    // إن الرصيد الحقيقي في APP.data (قبل الـ F5) كان صحيحًا.
+    //
+    // الحل هنا: بما إن getAllData() و getAllDataByLevel() مبنيين من نفس
+    // DATA_REGISTRY (_buildDataBundle) — نفس أسماء الحقول بالظبط — فالنسخة
+    // "fresh" الوحيدة اللي وصلت بالفعل صالحة تمامًا كنسخة تحديث لكل
+    // مستويات UDE (2/3/4) مع بعض، من غير أي نداء شبكة إضافي (Zero extra
+    // requests — فقط تحديث محلي لحالة UDE بنفس البيانات اللي وصلت أصلاً).
+    //
+    // يُستدعى من reloadAfterMutation() و reloadAfterMutationFull() مباشرة
+    // بعد _applyFreshData(fresh) في كل مرة ناجحة.
+    // ─────────────────────────────────────────────────────────────
+    function syncFromFullData(fresh) {
+      if (!fresh || typeof fresh !== "object") return;
+      [2, 3, 4].forEach(function (lvl) {
+        _loadedLevels[lvl] = true;
+        _lsSave(lvl, fresh);
+      });
+    }
+
     return {
       ensure: ensure,
       ensurePage: ensurePage,
       levelsForPage: levelsForPage,
       warmup: warmup,
       haveAllLevels: _haveAllLevels,
+      syncFromFullData: syncFromFullData,
       debugState: debugState,
     };
   })();

@@ -416,6 +416,7 @@ var DOPOST_ALLOWED_FUNCTIONS = [
   "resolveColorHex",
   "getOpeningStock",
   "saveOpeningStock",
+  "deleteOpeningStock", // [ALLOWLIST-FIX] was missing from the allowlist — called from 06_JS_Catalog_Stock.html via _gsr()
   "postOpeningStockJournal", // [OB-JOURNAL-UI] posts the opening-stock journal entry from the opening-balances screen button
   // AI Proxy (SEC-FIX-5)
   "proxyGroqChat",

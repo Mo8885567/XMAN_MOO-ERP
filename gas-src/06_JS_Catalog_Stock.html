@@ -3825,12 +3825,16 @@
       });
     }
 
-    function buildItemDropdown(selectedId, whId) {
+    function buildItemDropdown(selectedId, whId, skipWhLock) {
       // [OS-WH-REQUIRED] لو مفيش مخزن مختار لسه، الدروب داون يفضل مقفول
-      var whLocked = !whId;
-      var items = APP.data.items.filter(function (i) {
-        return _osItemMatchesWarehouse(i, whId);
-      });
+      // [EDIT-SMOOTH] في وضع التعديل مفيش حقل مخزن أصلاً — skipWhLock
+      // بيسمح بعرض كل الأصناف مفتوحة بدون قفل ينتظر اختيار مخزن أولاً.
+      var whLocked = !whId && !skipWhLock;
+      var items = whId
+        ? APP.data.items.filter(function (i) {
+            return _osItemMatchesWarehouse(i, whId);
+          })
+        : APP.data.items;
       var grouped = _groupItems(items);
 
       var optHtml = grouped.order
@@ -3890,7 +3894,12 @@
         (whLocked ? ' data-wh-locked="1"' : "") +
         ">" +
         '<input type="hidden" id="os-item" value="' +
-        esc(selectedId || "") +
+        // [EDIT-SMOOTH] الحقل الخفي لازم يخزّن نفس "الكود" اللي بيتخزّن
+        // عند اختيار صنف من القائمة (شوف listWrap click handler تحت:
+        // hidden.value = code)، مش الـ id — عشان itemCodeToId(selCode)
+        // وقت الحفظ يشتغل صح من أول فتح للمودال بدون ما المستخدم يغيّر
+        // الاختيار يدويًا.
+        esc(selItem ? selItem.code || selItem.id : "") +
         '">' +
         '<div class="os-id-trigger' +
         (whLocked ? " os-id-locked" : "") +
@@ -4024,20 +4033,31 @@
     }
 
     // يبني HTML الـ custom dropdown للألوان
-    function buildColorDropdown(itemId) {
+    // [EDIT-SMOOTH] بيدعم دلوقتي selectedColor اختياري عشان يتقدر يتفتح
+    // بلون مُختار مسبقًا (وضع التعديل) بنفس شكل/تفاعل وضع الإضافة تمامًا،
+    // بدل الحقل الثابت (readonly) اللي كان بيتعرض قبل كده في التعديل.
+    function buildColorDropdown(itemId, selectedColor) {
       var it = APP.data.items.find(function (i) {
         return i.id === itemId;
       });
       var colors = it ? getItemColors(it.id) : [];
       var noColors = colors.length === 0 && itemId;
+      var selName = (selectedColor || "").trim();
+      var selHex = selName ? _resolveHex(selName, "") : "";
 
       var items = noColors
         ? '<div class="os-cd-item os-cd-disabled"> لا توجد ألوان مُعرَّفة</div>'
         : colors
             .map(function (c) {
               var hex = _resolveHex(c.name, c.code);
+              var isSel =
+                selName && c.name.trim() === selName
+                  ? " os-cd-selected"
+                  : "";
               return (
-                '<div class="os-cd-item" data-value="' +
+                '<div class="os-cd-item' +
+                isSel +
+                '" data-value="' +
                 esc(c.name) +
                 '">' +
                 '<span class="os-cd-dot" style="background:' +
@@ -4053,11 +4073,22 @@
             })
             .join("");
 
+      var triggerDisplay = selName
+        ? '<span id="os-cd-display" style="color:var(--text)">' +
+          '<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:' +
+          (selHex || "#ccc") +
+          ';border:1.5px solid #00000022;vertical-align:middle;margin-left:6px"></span>' +
+          esc(selName) +
+          "</span>"
+        : '<span id="os-cd-display" style="color:var(--text3)">— اختر اللون *</span>';
+
       return (
         '<div class="os-color-dropdown" id="os-color-wrap">' +
-        '<input type="hidden" id="os-color" value="">' +
+        '<input type="hidden" id="os-color" value="' +
+        esc(selName) +
+        '">' +
         '<div class="os-cd-trigger input" id="os-cd-trigger" tabindex="0">' +
-        '<span id="os-cd-display" style="color:var(--text3)">— اختر اللون *</span>' +
+        triggerDisplay +
         '<span style="margin-right:auto;font-size:11px;opacity:.6">▼</span>' +
         "</div>" +
         '<div class="os-cd-list" id="os-cd-list">' +
@@ -4132,27 +4163,14 @@
       bindColorDropdown();
     }
 
-    // حقل اللون حسب الوضع
-    var colorField = "";
-    if (isEdit) {
-      var colorDisplay = color && color.trim() ? color.trim() : "بدون لون";
-      var editHex = _resolveHex(color, "");
-      colorField =
-        '<div class="field"><label>اللون *</label>' +
-        '<div class="input" style="display:flex;align-items:center;gap:8px;background:var(--surface2);cursor:default">' +
-        '<span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:' +
-        editHex +
-        ';border:1.5px solid #00000022;flex-shrink:0"></span>' +
-        "<span>" +
-        esc(colorDisplay) +
-        "</span></div>" +
-        "</div>";
-    } else {
-      colorField =
-        '<div class="field"><label>اللون *</label>' +
-        buildColorDropdown("") +
-        "</div>";
-    }
+    // حقل اللون — نفس الـ dropdown التفاعلي في وضعي الإضافة والتعديل
+    // [EDIT-SMOOTH] كان في وضع التعديل مجرد <div> ثابت غير قابل للتفاعل؛
+    // بقى دلوقتي نفس مكوّن buildColorDropdown بالظبط، مفتوح على قيمة
+    // اللون الحالية جاهزة للتغيير بنفس سلاسة الإضافة.
+    var colorField =
+      '<div class="field"><label>اللون *</label>' +
+      buildColorDropdown(isEdit ? item_id : "", isEdit ? color : "") +
+      "</div>";
 
     // حقل المخزن — يُستخدم لفلترة قائمة الأصناف (وضع الإضافة فقط)
     // [OS-WH-REQUIRED] المخزن بقى إلزامي قبل اختيار الصنف — اتشالت
@@ -4186,10 +4204,11 @@
         '<div class="modal-body">' +
         '<div style="display:flex;flex-direction:column;gap:16px">' +
         (isEdit
-          ? '<div class="field full" style="width:100%"><label>الصنف *</label>' +
-            '<input class="input" value="' +
-            esc(itemIdToCode(item_id)) +
-            '" readonly style="background:var(--surface2)">' +
+          ? // [EDIT-SMOOTH] كان حقل نصي readonly ثابت — بقى نفس الـ
+            // dropdown التفاعلي (بحث + قائمة مجمّعة) المستخدم في وضع
+            // الإضافة، مفتوح على الصنف الحالي وقابل للتغيير لو حصل غلط.
+            '<div class="field full" style="width:100%"><label>الصنف *</label>' +
+            buildItemDropdown(item_id, "", true) +
             "</div>"
           : '<div style="display:grid;grid-template-columns:1fr 2fr;gap:12px">' +
             warehouseField +
@@ -4216,11 +4235,13 @@
         '<button class="btn btn-outline" onclick="closeStyledDrawer()">إلغاء</button>' +
         '<button class="btn btn-primary" id="save-os-btn"><i class="ti ti-device-floppy"></i> حفظ</button>',
       onReady: function () {
-        // في وضع الإضافة: لما يتغير الصنف يتحدث custom dropdown اللون
-        if (!isEdit) {
-          bindColorDropdown();
-          bindItemDropdown();
+        // [EDIT-SMOOTH] الدروب دان بتاعة الصنف/اللون بقت شغالة في وضعي
+        // الإضافة والتعديل مع بعض — لما يتغير الصنف يتحدث custom
+        // dropdown اللون في الحالتين.
+        bindColorDropdown();
+        bindItemDropdown();
 
+        if (!isEdit) {
           var whSelectEl = document.getElementById("os-warehouse");
           if (whSelectEl) {
             whSelectEl.addEventListener("change", function () {
@@ -4266,15 +4287,14 @@
         document
           .getElementById("save-os-btn")
           .addEventListener("click", function () {
-            var selCode = isEdit
-              ? item_id
-              : document.getElementById("os-item").value;
-            var selId = isEdit ? item_id : itemCodeToId(selCode);
-            var selColor = isEdit
-              ? color || ""
-              : document.getElementById("os-color")
-                ? document.getElementById("os-color").value
-                : "";
+            // [EDIT-SMOOTH] القراءة بقت موحّدة في وضعي الإضافة والتعديل —
+            // نفس الـ hidden inputs بتوع الدروب داون في الحالتين، فمفيش
+            // فرع خاص بيقرأ item_id/color القديمين مباشرة بعد كده.
+            var selCode = document.getElementById("os-item").value;
+            var selId = itemCodeToId(selCode) || selCode;
+            var selColor = document.getElementById("os-color")
+              ? document.getElementById("os-color").value
+              : "";
             var qty = Number(document.getElementById("os-qty").value);
             // [تم شيل حقل تكلفة الوحدة الافتتاحية] — دايمًا نسيب unitCost فاضية
             // عشان السيرفر (saveOpeningStock) يستخدم تكلفة الصنف الحالية من
@@ -4295,104 +4315,170 @@
             if (isNaN(qty) || qty < 0)
               return NotificationEngine.error("الكمية غير صحيحة");
 
+            // [EDIT-SMOOTH] في وضع التعديل ممكن دلوقتي يغيّر الصنف و/أو
+            // اللون (زي الإضافة بالظبط) — لو اتغيّروا، السجل بيتحفظ تحت
+            // مفتاح جديد (item_id+color) عند saveOpeningStock (upsert)،
+            // فلازم نلغي السجل القديم صراحةً بدل ما يفضل يتيم بنفس الكمية
+            // القديمة. ولو المفتاح الجديد أصلاً ليه سجل موجود (غير السجل
+            // اللي بنعدّله)، نمنع الحفظ بدل ما نكتب فوق رصيد صنف/لون تاني
+            // من غير ما المستخدم ياخد باله.
+            var isRename =
+              isEdit &&
+              (String(selId) !== String(item_id) ||
+                selColor.trim() !== String(color || "").trim());
+            if (isRename) {
+              var _clash = (APP.data.openingStock || []).find(function (r) {
+                return (
+                  String(r.item_id) === String(selId) &&
+                  String(r.color || "").trim() === selColor.trim()
+                );
+              });
+              if (_clash)
+                return NotificationEngine.error(
+                  "يوجد رصيد أول مدة مسجَّل بالفعل لهذا الصنف واللون — عدّله مباشرة بدل تكراره",
+                );
+            }
+
             // UX: إغلاق فوري + مؤشر خلفي
             closeStyledDrawer();
 
-            // [SE-ROLLOUT] عبر SaveEngine.run بدل _freezeUI/_gsr اليدوي.
-            SaveEngine.run({
-              screen: "opening_stock",
-              entity: "opening_stock",
-              recordId: isEdit ? item_id : null,
-              fn: "saveOpeningStock",
-              params: [
-                selId,
-                selColor,
-                qty,
-                notes,
-                APP.currentUser ? APP.currentUser.username : "",
-                SESSION.token,
-                unitCost,
-              ],
-              savingLabel: isEdit
-                ? "⏳ جاري تعديل رصيد أول المدة..."
-                : "⏳ جاري حفظ رصيد أول المدة...",
-              successMessage: isEdit
-                ? " تم تعديل رصيد أول المدة بنجاح"
-                : " تم حفظ رصيد أول المدة بنجاح",
-              onSuccess: function () {
-                // [AUTO-OB-JOURNAL] كان في السابق زرار يدوي منفصل "ترحيل
-                // القيد المحاسبي" لازم المستخدم يدوسه بنفسه بعد إضافة كل
-                // رصيد افتتاحي. دلوقتي بيترحّل تلقائيًا في الخلفية فورًا بعد
-                // كل حفظ ناجح — postOpeningStockJournal بقت Idempotent
-                // (بتلغي القيد القديم وترحّل قيد جديد بالإجمالي المحدّث)،
-                // فمفيش داعي لأي تدخل يدوي أو تأكيد من المستخدم هنا.
-                _gsr(
-                  "postOpeningStockJournal",
-                  [new Date().toISOString().split("T")[0], SESSION.token],
-                  {
-                    // [FIX-REFERR] _invalidateServerCache دالة سيرفر فقط
-                    // (Code_12_Core.js) ومش موجودة في سكوب المتصفح — استدعاؤها
-                    // هنا مباشرة كان بيطلّع ReferenceError. مفيش داعي لها من
-                    // العميل أصلًا لأن postOpeningStockJournal بتعمل الـ
-                    // invalidate بنفسها سيرفر-سايد جوه تنفيذها.
-                    onSuccess: function () {},
-                    onError: function (r) {
-                      // ما بنوقفش المستخدم أو نفشّل الحفظ بسبب فشل الترحيل
-                      // التلقائي (زي مثلاً عدم وجود صلاحية addJournalEntry،
-                      // أو عدم تسعير صنف) — نسجّل فقط في الكونسول، وفيه
-                      // زرار " ترحيل القيد المحاسبي" لسه موجود للمدير
-                      // لو حابب يرحّل يدويًا في أي وقت.
-                      console.warn(
-                        "[AUTO-OB-JOURNAL] تعذّر الترحيل التلقائي: " +
-                          (r && r.message),
-                      );
+            function _saveOsRecord() {
+              // [SE-ROLLOUT] عبر SaveEngine.run بدل _freezeUI/_gsr اليدوي.
+              SaveEngine.run({
+                screen: "opening_stock",
+                entity: "opening_stock",
+                recordId: isEdit ? item_id : null,
+                fn: "saveOpeningStock",
+                params: [
+                  selId,
+                  selColor,
+                  qty,
+                  notes,
+                  APP.currentUser ? APP.currentUser.username : "",
+                  SESSION.token,
+                  unitCost,
+                ],
+                savingLabel: isEdit
+                  ? "⏳ جاري تعديل رصيد أول المدة..."
+                  : "⏳ جاري حفظ رصيد أول المدة...",
+                successMessage: isEdit
+                  ? " تم تعديل رصيد أول المدة بنجاح"
+                  : " تم حفظ رصيد أول المدة بنجاح",
+                onSuccess: function () {
+                  // [AUTO-OB-JOURNAL] كان في السابق زرار يدوي منفصل "ترحيل
+                  // القيد المحاسبي" لازم المستخدم يدوسه بنفسه بعد إضافة كل
+                  // رصيد افتتاحي. دلوقتي بيترحّل تلقائيًا في الخلفية فورًا بعد
+                  // كل حفظ ناجح — postOpeningStockJournal بقت Idempotent
+                  // (بتلغي القيد القديم وترحّل قيد جديد بالإجمالي المحدّث)،
+                  // فمفيش داعي لأي تدخل يدوي أو تأكيد من المستخدم هنا.
+                  _gsr(
+                    "postOpeningStockJournal",
+                    [new Date().toISOString().split("T")[0], SESSION.token],
+                    {
+                      // [FIX-REFERR] _invalidateServerCache دالة سيرفر فقط
+                      // (Code_12_Core.js) ومش موجودة في سكوب المتصفح — استدعاؤها
+                      // هنا مباشرة كان بيطلّع ReferenceError. مفيش داعي لها من
+                      // العميل أصلًا لأن postOpeningStockJournal بتعمل الـ
+                      // invalidate بنفسها سيرفر-سايد جوه تنفيذها.
+                      onSuccess: function () {},
+                      onError: function (r) {
+                        // ما بنوقفش المستخدم أو نفشّل الحفظ بسبب فشل الترحيل
+                        // التلقائي (زي مثلاً عدم وجود صلاحية addJournalEntry،
+                        // أو عدم تسعير صنف) — نسجّل فقط في الكونسول، وفيه
+                        // زرار " ترحيل القيد المحاسبي" لسه موجود للمدير
+                        // لو حابب يرحّل يدويًا في أي وقت.
+                        console.warn(
+                          "[AUTO-OB-JOURNAL] تعذّر الترحيل التلقائي: " +
+                            (r && r.message),
+                        );
+                      },
                     },
-                  },
-                );
+                  );
 
-                // [PERF-FIX] الحفظ خلص فعلاً فوق (saveOpeningStock) في السيرفر.
-                // قبل كده كنا بنستنى reloadAfterMutationFull() اللي بتمسح كل
-                // الكاش وتعيد قراءة كل شيتات النظام (فواتير/حركات/عملاء...)
-                // مش بس OpeningStock — فكان الصف الجديد يتأخر في الظهور لحد
-                // ما الرحلة الكاملة دي تخلص. دلوقتي: تحديث محلي فوري لمصفوفة
-                // openingStock في APP.data (Optimistic Update) + رسم الجدول
-                // على طول، ومزامنة خفيفة في الخلفية (reloadAfterMutation) بس
-                // للتأكد من مطابقة السيرفر — بدون ما تنتظرها.
-                var _osRow = {
-                  item_id: selId,
-                  color: selColor,
-                  quantity: qty,
-                  notes: notes,
-                  date: new Date().toISOString(),
-                  unit_cost: unitCost,
-                };
-                if (APP.data && Array.isArray(APP.data.openingStock)) {
-                  var _osIdx = APP.data.openingStock.findIndex(function (r) {
-                    return (
-                      String(r.item_id) === String(selId) &&
-                      String(r.color || "").trim() ===
-                        String(selColor).trim()
-                    );
-                  });
-                  if (_osIdx > -1) APP.data.openingStock[_osIdx] = _osRow;
-                  else APP.data.openingStock.push(_osRow);
-                  if (typeof _cache !== "undefined" && _cache.data) {
-                    _cache.data.openingStock = APP.data.openingStock;
+                  // [PERF-FIX] الحفظ خلص فعلاً فوق (saveOpeningStock) في السيرفر.
+                  // قبل كده كنا بنستنى reloadAfterMutationFull() اللي بتمسح كل
+                  // الكاش وتعيد قراءة كل شيتات النظام (فواتير/حركات/عملاء...)
+                  // مش بس OpeningStock — فكان الصف الجديد يتأخر في الظهور لحد
+                  // ما الرحلة الكاملة دي تخلص. دلوقتي: تحديث محلي فوري لمصفوفة
+                  // openingStock في APP.data (Optimistic Update) + رسم الجدول
+                  // على طول، ومزامنة خفيفة في الخلفية (reloadAfterMutation) بس
+                  // للتأكد من مطابقة السيرفر — بدون ما تنتظرها.
+                  var _osRow = {
+                    item_id: selId,
+                    color: selColor,
+                    quantity: qty,
+                    notes: notes,
+                    date: new Date().toISOString(),
+                    unit_cost: unitCost,
+                  };
+                  if (APP.data && Array.isArray(APP.data.openingStock)) {
+                    var _osIdx = APP.data.openingStock.findIndex(function (r) {
+                      return (
+                        String(r.item_id) === String(selId) &&
+                        String(r.color || "").trim() ===
+                          String(selColor).trim()
+                      );
+                    });
+                    if (_osIdx > -1) APP.data.openingStock[_osIdx] = _osRow;
+                    else APP.data.openingStock.push(_osRow);
+                    if (typeof _cache !== "undefined" && _cache.data) {
+                      _cache.data.openingStock = APP.data.openingStock;
+                    }
                   }
-                }
-                reloadAfterMutation(
-                  function () {
-                    renderPage("opening_stock");
+                  reloadAfterMutation(
+                    function () {
+                      renderPage("opening_stock");
+                    },
+                    null,
+                    {
+                      title: "⏳ جار التحديث...",
+                      emoji: "",
+                      successMsg: " تم تحديث البيانات",
+                    },
+                  );
+                },
+              });
+            }
+
+            if (isRename) {
+              // [EDIT-SMOOTH] لازم نمسح السجل القديم (item_id/color
+              // الأصليين) الأول قبل ما نحفظ تحت المفتاح الجديد، وإلا
+              // فضل موجود بنفس الكمية القديمة زي لو كان صنف/لون منفصل.
+              _gsr(
+                "deleteOpeningStock",
+                [
+                  item_id,
+                  color || "",
+                  APP.currentUser ? APP.currentUser.username : "",
+                  SESSION.token,
+                ],
+                {
+                  onSuccess: function () {
+                    if (APP.data && Array.isArray(APP.data.openingStock)) {
+                      var _rmIdx = APP.data.openingStock.findIndex(
+                        function (r) {
+                          return (
+                            String(r.item_id) === String(item_id) &&
+                            String(r.color || "").trim() ===
+                              String(color || "").trim()
+                          );
+                        },
+                      );
+                      if (_rmIdx > -1) APP.data.openingStock.splice(_rmIdx, 1);
+                    }
+                    _saveOsRecord();
                   },
-                  null,
-                  {
-                    title: "⏳ جار التحديث...",
-                    emoji: "",
-                    successMsg: " تم تحديث البيانات",
+                  onError: function (r) {
+                    NotificationEngine.error(
+                      "تعذّر نقل الرصيد للصنف/اللون الجديد: " +
+                        (r && r.message),
+                    );
                   },
-                );
-              },
-            });
+                },
+              );
+            } else {
+              _saveOsRecord();
+            }
           });
       },
     });

@@ -13543,12 +13543,42 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
       };
     }
 
+    // ─────────────────────────────────────────────────────────────
+    // [P-02/P-03 FIX — AUDIT-2026-09] syncFromFullData(fresh)
+    //
+    // المشكلة اللي بتحلها: reloadAfterMutation() (01_JS_Core_Auth.html)
+    // بتجيب نسخة "fresh" كاملة من getAllData() بعد كل حركة (إضافة/تعديل/
+    // حذف)، وبتحدّث بيها APP.data فورًا. لكن UDE كان نظام منفصل تمامًا —
+    // مش بيعرف إن الحركة حصلت أصلاً، فنسخته المحلية (localStorage
+    // wms_ude_lvl_2/3/4) كانت تفضل زي ما هي لحد ما 10 دقائق (STALE_MS)
+    // تعدي. النتيجة: Refresh فعلي للصفحة (F5) خلال هذه النافذة كان ممكن
+    // يعرض رصيد مخزون قديم فورًا (Instant Render من localStorage) رغم
+    // إن الرصيد الحقيقي في APP.data (قبل الـ F5) كان صحيحًا.
+    //
+    // الحل هنا: بما إن getAllData() و getAllDataByLevel() مبنيين من نفس
+    // DATA_REGISTRY (_buildDataBundle) — نفس أسماء الحقول بالظبط — فالنسخة
+    // "fresh" الوحيدة اللي وصلت بالفعل صالحة تمامًا كنسخة تحديث لكل
+    // مستويات UDE (2/3/4) مع بعض، من غير أي نداء شبكة إضافي (Zero extra
+    // requests — فقط تحديث محلي لحالة UDE بنفس البيانات اللي وصلت أصلاً).
+    //
+    // يُستدعى من reloadAfterMutation() و reloadAfterMutationFull() مباشرة
+    // بعد _applyFreshData(fresh) في كل مرة ناجحة.
+    // ─────────────────────────────────────────────────────────────
+    function syncFromFullData(fresh) {
+      if (!fresh || typeof fresh !== "object") return;
+      [2, 3, 4].forEach(function (lvl) {
+        _loadedLevels[lvl] = true;
+        _lsSave(lvl, fresh);
+      });
+    }
+
     return {
       ensure: ensure,
       ensurePage: ensurePage,
       levelsForPage: levelsForPage,
       warmup: warmup,
       haveAllLevels: _haveAllLevels,
+      syncFromFullData: syncFromFullData,
       debugState: debugState,
     };
   })();
@@ -18800,6 +18830,13 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
         fresh._loaded = true;
         _saveCache(fresh);
         _applyFreshData(fresh);
+        // [P-02/P-03 FIX] زامن كاش UDE (localStorage wms_ude_lvl_*) بنفس
+        // النسخة الطازجة اللي وصلت لتوّها — بدل ما يفضل UDE.warmup()
+        // (اللي بيتنادى بالتوازي بعد اللوجين) شغّال بنداء شبكة منفصل ممكن
+        // يرجّع نسخة أقدم من دي ويكتبها فوقها لاحقًا. مفيش نداء شبكة إضافي.
+        if (typeof UDE !== "undefined" && UDE.syncFromFullData) {
+          UDE.syncFromFullData(fresh);
+        }
         if (typeof _hideAppLoader === "function") _hideAppLoader();
         if (typeof APP._onDataLoaded === "function") {
           var _hook = APP._onDataLoaded;
@@ -19802,6 +19839,16 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
             var fresh = _parseData(d);
             _saveCache(fresh);
             _applyFreshData(fresh);
+            // [P-02/P-03 FIX — AUDIT-2026-09] زامن كاش UDE (localStorage
+            // wms_ude_lvl_2/3/4) بنفس النسخة الطازجة اللي وصلت لتوّها بعد
+            // الحركة. من غير هذا السطر، Refresh فعلي للصفحة (F5) خلال أقل
+            // من 10 دقائق (STALE_MS) من أي حركة كان ممكن يعرض رصيد مخزون
+            // قديم فورًا من نسخة UDE المحلية القديمة، رغم إن APP.data نفسه
+            // كان بالفعل محدَّث صح في نفس الجلسة. مفيش أي نداء شبكة إضافي —
+            // فقط إعادة استخدام نفس "fresh" اللي وصلت بالفعل.
+            if (typeof UDE !== "undefined" && UDE.syncFromFullData) {
+              UDE.syncFromFullData(fresh);
+            }
             // لا تعمل re-render لصفحات الوارد/الصادر/التحويل
             // عشان متمسحش الفورم لو المستخدم شغّال عليه
             var _noRerender = ["tx_in", "tx_out", "tx_transfer"];
@@ -19865,6 +19912,11 @@ RULE 10 — [DL-UNIFY] ممنوع أي منطق retry/timeout/تطبيع است�
           var fresh = _parseData(d);
           _saveCache(fresh);
           _applyFreshData(fresh);
+          // [P-02/P-03 FIX] نفس مبدأ reloadAfterMutation — زامن كاش UDE
+          // بنفس النسخة الطازجة بدل ما يفضل معتمد على نسخته المحلية القديمة.
+          if (typeof UDE !== "undefined" && UDE.syncFromFullData) {
+            UDE.syncFromFullData(fresh);
+          }
         } catch (parseErr) {
           anim.fail("خطأ في معالجة البيانات");
           if (unfreeze) setTimeout(unfreeze, 1700);

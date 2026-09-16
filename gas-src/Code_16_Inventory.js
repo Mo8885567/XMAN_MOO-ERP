@@ -3763,8 +3763,13 @@ function _reverseTransactionStockEffect(tx) {
 }
 
 function reloadStockFromAllTransactions() {
-  // [C-04 FIX] قفل إلزامي — هذه أداة صيانة يدوية (تُستخدم من fixStockColors) وتحذف
-  // وتعيد بناء شيت Stock بالكامل، فيجب ألا تتزامن مع أي حركة إضافة/حذف أخرى
+  // [C-04 FIX] قفل إلزامي — تحذف وتعيد بناء شيت Stock بالكامل، فيجب ألا
+  // تتزامن مع أي حركة إضافة/حذف أخرى.
+  // [AUDIT-2026-09 توضيح] هذه الدالة مش أداة صيانة يدوية فقط — بتُستدعى
+  // تلقائيًا من updateTransaction() بعد أي تعديل ناجح لحركة (حتى لو الحقل
+  // المعدَّل لا يؤثر على الكمية، مثل الملاحظات)، بالإضافة لاستدعائها اليدوي
+  // من fixStockColors. أي تعديل على مفتاح/أعمدة إعادة البناء هنا (تحت)
+  // بيأثر على كل حركة تعديل تمر بالنظام، مش بس التشغيل اليدوي.
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(10000);
@@ -3778,10 +3783,35 @@ function reloadStockFromAllTransactions() {
     const lastRow = stockSheet.getLastRow();
     if (lastRow > 1) stockSheet.deleteRows(2, lastRow - 1);
 
-    // المفتاح: item_id || warehouse || colorNorm (normalized للدمج الصحيح)
+    // [P-01 FIX — AUDIT-2026-09] المفتاح لازم يطابق حرفيًا مفتاح
+    // getOrCreateStockRow (updateStockBalance)، وإلا أي نداء لهذه الدالة
+    // (بيحصل تلقائيًا من updateTransaction لأي تعديل، حتى لو مجرد ملاحظة)
+    // بيدمج كل دُفعات/سيريالات نفس الصنف/المخزن/اللون في صف واحد بصمت،
+    // ويمسح batch_no/serial_no/expiry_date لكل المخزون. المفتاح القديم
+    // كان item_id||warehouse||colorNorm بس — بدون batch_no/serial_no.
     const map = {};
-    // نحتفظ بأول اسم أصلي لكل color normalized
-    const colorOriginal = {};
+    // نحتفظ بأول قيم أصلية (لون/دفعة/سيريال) شوفناها لكل مفتاح — نفس مبدأ
+    // colorOriginal القديم، لكن موسّع ليغطي الحقول التلاتة مع بعض
+    const originalByKey = {};
+    // آخر expiry_date شوفناه لكل مفتاح على حركة IN بس (نفس updateStockBalance
+    // بالظبط: هو الوحيد اللي بيكتب عمود expiry_date، وبس لو tx.expiry_date
+    // موجودة، وبـ setValue بيستبدل مش يجمع — يعني "آخر واحدة بتكسب"،
+    // فبنعمل overwrite هنا بنفس الترتيب الزمني لصفوف Transactions)
+    const expiryByKey = {};
+
+    function _mkKey(itemId, warehouse, colorNorm, batchNorm, serialNorm) {
+      return (
+        String(itemId) +
+        "||" +
+        warehouse +
+        "||" +
+        colorNorm +
+        "||" +
+        batchNorm +
+        "||" +
+        serialNorm
+      );
+    }
 
     txs.forEach(function (tx) {
       const qty = Number(tx.quantity || 0);
@@ -3789,48 +3819,93 @@ function reloadStockFromAllTransactions() {
       const colorStr = String(tx.color || "").trim();
       // normalize يحل مشكلة أسود/اسود عند دمج السجلات
       const colorNorm = _normalizeColorName(colorStr);
+      const batchStr = String(tx.batch_no || "").trim();
+      const serialStr = String(tx.serial_no || "").trim();
+
+      function _remember(key) {
+        if (!originalByKey[key]) {
+          originalByKey[key] = {
+            color: colorStr,
+            batch: batchStr,
+            serial: serialStr,
+          };
+        }
+        // [IN فقط — يطابق updateStockBalance] آخر expiry_date مُرسلة تكسب
+        if (type === "IN" && tx.expiry_date) {
+          expiryByKey[key] = tx.expiry_date;
+        }
+      }
 
       if (
         (type === "IN" || type === "FG_IN" || type === "FACTORY_RETURN") &&
         tx.to_warehouse
       ) {
-        const k =
-          String(tx.item_id) + "||" + tx.to_warehouse + "||" + colorNorm;
+        const k = _mkKey(
+          tx.item_id,
+          tx.to_warehouse,
+          colorNorm,
+          batchStr,
+          serialStr,
+        );
         map[k] = (map[k] || 0) + qty;
-        if (!colorOriginal[colorNorm] && colorStr)
-          colorOriginal[colorNorm] = colorStr;
+        _remember(k);
       }
       if ((type === "OUT" || type === "DISPATCH" || type === "WASTE") && tx.from_warehouse) {
-        const k = tx.item_id + "||" + tx.from_warehouse + "||" + colorNorm;
+        const k = _mkKey(
+          tx.item_id,
+          tx.from_warehouse,
+          colorNorm,
+          batchStr,
+          serialStr,
+        );
         map[k] = (map[k] || 0) - qty;
-        if (!colorOriginal[colorNorm] && colorStr)
-          colorOriginal[colorNorm] = colorStr;
+        _remember(k);
       }
       if (type === "TRANSFER") {
         if (tx.from_warehouse) {
-          const kf = tx.item_id + "||" + tx.from_warehouse + "||" + colorNorm;
+          const kf = _mkKey(
+            tx.item_id,
+            tx.from_warehouse,
+            colorNorm,
+            batchStr,
+            serialStr,
+          );
           map[kf] = (map[kf] || 0) - qty;
-          if (!colorOriginal[colorNorm] && colorStr)
-            colorOriginal[colorNorm] = colorStr;
+          _remember(kf);
         }
         if (tx.to_warehouse) {
-          const kt = tx.item_id + "||" + tx.to_warehouse + "||" + colorNorm;
+          const kt = _mkKey(
+            tx.item_id,
+            tx.to_warehouse,
+            colorNorm,
+            batchStr,
+            serialStr,
+          );
           map[kt] = (map[kt] || 0) + qty;
-          if (!colorOriginal[colorNorm] && colorStr)
-            colorOriginal[colorNorm] = colorStr;
+          _remember(kt);
         }
       }
     });
 
-    // كتابة 4 أعمدة: item_id | warehouse | color (الاسم الأصلي) | quantity
+    // كتابة 7 أعمدة كاملة: item_id | warehouse | color | quantity |
+    // batch_no | serial_no | expiry_date — نفس عرض HEADERS.Stock بالظبط،
+    // عشان صف مُعاد بناؤه هنا يطابق حرفيًا صف مكتوب من updateStockBalance
     const newRows = Object.keys(map).map(function (k) {
       const parts = k.split("||");
-      const colorNorm = parts[2] || "";
-      const originalName = colorOriginal[colorNorm] || colorNorm;
-      return [parts[0], parts[1], originalName, map[k]];
+      const warehouse = parts[1];
+      const orig = originalByKey[k] || { color: "", batch: "", serial: "" };
+      return [
+        parts[0],
+        warehouse,
+        orig.color,
+        map[k],
+        orig.batch,
+        orig.serial,
+        expiryByKey[k] || "",
+      ];
     });
     if (newRows.length > 0)
-      stockSheet.getRange(2, 1, newRows.length, 4).setValues(newRows);
+      stockSheet.getRange(2, 1, newRows.length, 7).setValues(newRows);
   } catch (e) {
     console.error("reloadStockFromAllTransactions Error:", e.message);
   } finally {

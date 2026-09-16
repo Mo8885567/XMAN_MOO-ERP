@@ -1111,6 +1111,15 @@
     opacity: 0.55;
     font-size: 13px;
   }
+  /* [EDIT-SMOOTH] تظليل اللون المختار حاليًا في قائمة تفصيل الألوان —
+     نفس منطق .os-id-opt.os-id-selected بتاعة دروب داون الصنف */
+  .os-cd-item.os-cd-selected {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+  .os-cd-item.os-cd-selected .os-cd-label {
+    color: var(--accent);
+    font-weight: 600;
+  }
   /* حقل اللون لما يكون معطّل — خلفية بيضاء بدل الرمادي */
   .os-cd-trigger[style*="not-allowed"] {
     background: var(--surface) !important;

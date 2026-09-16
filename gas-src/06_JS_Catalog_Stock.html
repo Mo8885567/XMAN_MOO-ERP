@@ -3481,25 +3481,25 @@
         // قابل للطي بدل ما كل لون يبان كصف مستقل من الأول — يرجّع نفس
         // شكل العرض اللي كان موجود قبل توحيد الجدول مع ColumnEngine.
         groupBy: "item_code",
-        groupHeader: function (rows, key) {
+        // [GROUP-ALIGN-2026-09-16] كل قيمة بترجع في عمودها بالظبط (بدل
+        // نص واحد ممتد) عشان تقف محاذية تمامًا مع صفوف التفاصيل تحتها:
+        // اسم الموديل تحت عمود "الموديل"، عدد الألوان تحت "اللون"،
+        // وإجمالي الكمية تحت "الكمية".
+        groupColumns: function (rows, key) {
           var first = rows[0] || {};
           var totalQty = rows.reduce(function (sum, r) {
             return sum + Number(r.quantity || 0);
           }, 0);
-          return (
-            '<span class="ce-group-key">' +
-            esc(key || "—") +
-            "</span>" +
-            '<span class="ce-group-name">' +
-            esc(first.item_name || "") +
-            "</span>" +
-            '<span class="ce-group-count">' +
-            rows.length +
-            " لون</span>" +
-            '<span class="ce-group-total">' +
-            totalQty +
-            " وحدة</span>"
-          );
+          return {
+            item_name:
+              '<span class="ce-group-name">' +
+              esc(first.item_name || "") +
+              "</span>",
+            color:
+              '<span class="ce-group-count">' + rows.length + " لون</span>",
+            quantity:
+              '<span class="ce-group-total">' + totalQty + " وحدة</span>",
+          };
         },
       },
     );

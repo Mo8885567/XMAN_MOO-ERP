@@ -123,18 +123,21 @@
         ".ce-preset-chip.active{background:var(--accent);color:#fff;border-color:var(--accent)}",
         // ── [GROUP-BY-2026-09-15] رأس مجموعة قابل للطي (اختياري عبر
         // options.groupBy عند register) + صفوف التفاصيل اللي بيلفّها.
-        // مش جزء من شبكة .ce-grid-row عشان تفضل شريط واحد ممتد بعرض
-        // الجدول كله بغض النظر عن عدد/عرض الأعمدة الظاهرة حاليًا.
-        ".ce-group-header{display:flex;align-items:center;gap:10px;padding:10px 14px;",
-        "cursor:pointer;user-select:none;background:var(--surface2);",
-        "border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text)}",
+        // [GROUP-ALIGN-2026-09-16] الرأس بقى صف شبكة حقيقي (.ce-grid-row)
+        // بنفس أعمدة الجدول تمامًا — كل قيمة (كود/موديل/لون/كمية) بتقف
+        // بالظبط تحت عمودها، بدل شريط واحد ممتد بمحاذاة flex عشوائية
+        // كانت بتوّه العين عن باقي الصفوف تحته.
+        ".ce-group-header{cursor:pointer;user-select:none;background:var(--surface2);",
+        "border-bottom:1px solid var(--border);font-weight:600;color:var(--text)}",
         ".ce-group-header:hover{background:var(--surface3)}",
-        ".ce-group-header i.ti{font-size:15px;color:var(--text3);transition:transform .15s ease;flex-shrink:0}",
-        ".ce-group-key{color:var(--accent);font-family:var(--font-mono);font-weight:700}",
-        ".ce-group-name{color:var(--text2);font-weight:600}",
-        ".ce-group-count,.ce-group-total{font-size:11.5px;font-weight:600;color:var(--text3);",
-        "background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-pill);",
-        "padding:2px 9px;margin-inline-start:auto}",
+        ".ce-group-header .ce-td{display:flex;align-items:center;gap:6px}",
+        ".ce-group-header i.ti{font-size:14px;color:var(--text3);flex-shrink:0}",
+        ".ce-group-key{color:var(--accent);font-family:var(--font-mono);font-weight:700;font-size:13px}",
+        ".ce-group-name{color:var(--text2);font-weight:600;font-size:13px}",
+        ".ce-group-count,.ce-group-total{display:inline-block;font-size:11.5px;font-weight:600;",
+        "color:var(--text3);background:var(--surface);border:1px solid var(--border);",
+        "border-radius:var(--radius-pill);padding:2px 9px;white-space:nowrap}",
+        ".ce-group-dash{color:var(--text3)}",
         ".ce-group-body{display:block}",
         ".ce-group-body .ce-body-row{background:var(--surface)}",
       ].join("\n");
@@ -1035,36 +1038,61 @@
       });
     }
 
-    // الشكل الافتراضي لرأس المجموعة لو الشاشة ما مرّرتش options.groupHeader
-    // بنفسها — بيعرض قيمة مفتاح التجميع + عدد الصفوف بس. أي شاشة عايزة
-    // تفاصيل أغنى (اسم صنف، إجمالي كمية...) تمرّر دالتها الخاصة.
-    function _defaultGroupHeaderHtml(group) {
-      return (
-        '<span class="ce-group-key">' +
-        _esc(group.key || "—") +
-        "</span>" +
-        '<span class="ce-group-count">' +
-        group.rows.length +
-        " صف</span>"
-      );
-    }
-
-    function _groupHeaderRowHtml(screenId, group, expanded) {
+    // [GROUP-ALIGN-2026-09-16] رأس المجموعة بقى صف شبكة حقيقي: خلية واحدة
+    // لكل عمود ظاهر في الجدول، بالظبط زي صفوف التفاصيل، فتتماشى القيم
+    // تلقائيًا مع أعمدة الجدول (ترتيب/عرض/تثبيت) بدل شريط flex منفصل.
+    // عمود التجميع نفسه (groupBy) بياخد السهم + القيمة، وأي عمود تاني
+    // الشاشة عايزة تلخّصه (زي "إجمالي الكمية") تمرّره عبر options.groupColumns
+    // (دالة بترجع { colKey: htmlString } لكل مجموعة) — أي عمود مش موجود
+    // في الماب ده بيتعرض كـ "—" بسيط.
+    function _groupHeaderRowHtml(screenId, group, expanded, cols) {
       var opts = _registry[screenId].options || {};
-      var contentHtml =
-        typeof opts.groupHeader === "function"
-          ? opts.groupHeader(group.rows, group.key)
-          : _defaultGroupHeaderHtml(group);
+      var groupByKey = opts.groupBy;
+      var valuesMap =
+        typeof opts.groupColumns === "function"
+          ? opts.groupColumns(group.rows, group.key) || {}
+          : {};
+      var cellsHtml = cols
+        .map(function (c) {
+          var content;
+          if (c.key === groupByKey) {
+            content =
+              '<i class="ti ' +
+              (expanded ? "ti-chevron-down" : "ti-chevron-left") +
+              '" aria-hidden="true"></i><span class="ce-group-key">' +
+              _esc(group.key || "—") +
+              "</span>";
+          } else if (
+            Object.prototype.hasOwnProperty.call(valuesMap, c.key)
+          ) {
+            content = valuesMap[c.key];
+          } else {
+            content = '<span class="ce-group-dash">—</span>';
+          }
+          return (
+            '<div class="ce-td ce-frozen" data-col="' +
+            c.key +
+            '" style="text-align:' +
+            (c.align === "left"
+              ? "left"
+              : c.align === "right"
+                ? "right"
+                : "center") +
+            '">' +
+            content +
+            "</div>"
+          );
+        })
+        .join("");
       return (
-        '<div class="ce-group-header" data-group-key="' +
+        '<div class="ce-body-row ce-grid-row ce-group-header" data-group-key="' +
         _esc(group.key) +
         '" data-expanded="' +
         (expanded ? "1" : "0") +
-        '"><i class="ti ' +
-        (expanded ? "ti-chevron-down" : "ti-chevron-left") +
-        '" aria-hidden="true"></i>' +
-        contentHtml +
+        '">' +
+        cellsHtml +
         "</div>"
+
       );
     }
 
@@ -1092,6 +1120,14 @@
             );
             if (groupBodyEl)
               groupBodyEl.style.display = nowExpanded ? "block" : "none";
+            // [GROUP-TOGGLE-SOUND-2026-09-16] صوت خفيف عند فتح المجموعة
+            // (نفس نغمة "ui.click" العامة المستخدمة في باقي أزرار النظام)
+            // عبر AudioService الموحّد (21_JS_AudioService.html) — بيحترم
+            // تلقائيًا إعدادات المستخدم (كتم/مستوى الصوت) لأنه بيمر بنفس
+            // المسار الموحّد AS.click() بدل تشغيل صوت مباشر هنا.
+            if (nowExpanded && window.AS && typeof AS.click === "function") {
+              AS.click();
+            }
           });
         },
       );
@@ -1189,7 +1225,7 @@
           body.innerHTML = groups
             .map(function (g) {
               var isExpanded = !!exp[g.key];
-              var headerHtml = _groupHeaderRowHtml(screenId, g, isExpanded);
+              var headerHtml = _groupHeaderRowHtml(screenId, g, isExpanded, cols);
               var rowsHtml = g.rows
                 .map(function (r) {
                   var h = rowHtml(r, idxCounter);

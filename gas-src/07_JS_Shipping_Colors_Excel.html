@@ -171,27 +171,37 @@
 
   /** تجهيز صفوف المخازن (عدد الأصناف المرتبطة بكل مخزن) قبل تمريرها لـ ColumnEngine */
   function _warehousesPrepareRowsForCE(warehouses) {
-    var groups = APP.data.groups || [];
     var items = APP.data.items || [];
 
-    // خريطة: warehouse_id → Set(item_ids) — بنفس منطق النسخة القديمة
-    var whItemIds = {};
-    groups.forEach(function (g) {
-      if (!g.warehouse_id) return;
-      var whId = String(g.warehouse_id);
-      if (!whItemIds[whId]) whItemIds[whId] = {};
-      items.forEach(function (it) {
-        if (String(it.group) === String(g.id)) {
-          whItemIds[whId][String(it.id || it.item_id || "")] = true;
-        }
+    // [FIX-WAREHOUSE-ITEM-COUNT-2026-09-16] العدّ القديم كان بيعتمد على
+    // groups[].warehouse_id (ربط مجموعة بمخزن) — وده مسار قديم مش بيتحفظ
+    // فعليًا من أي شاشة حاليًا، فكان بيرجع 0 دايمًا (— لكل المخازن) حتى
+    // لو المخزن فيه أصناف فعلية. الربط الحقيقي والحالي للصنف بالمخزن بقى
+    // مباشر عبر item.warehouse_ids (كل المخازن المسموح بيع/شراء/تخزين
+    // الصنف فيها) أو item.default_warehouse_id (المخزن الافتراضي) —
+    // راجع ItemWarehousesPicker + [WAREHOUSE-UNIFY-2026-07-28] في
+    // 03_JS_Dashboard_Items.html.
+    var whItemIds = {}; // warehouse_id (نص) → Set(item ids)
+
+    items.forEach(function (it) {
+      var ids = [];
+      if (Array.isArray(it.warehouse_ids) && it.warehouse_ids.length) {
+        ids = it.warehouse_ids;
+      } else if (it.default_warehouse_id) {
+        ids = [it.default_warehouse_id];
+      }
+      ids.forEach(function (whId) {
+        if (!whId) return;
+        var key = String(whId);
+        if (!whItemIds[key]) whItemIds[key] = {};
+        whItemIds[key][String(it.id || it.item_id || "")] = true;
       });
     });
 
     return (warehouses || []).map(function (wh) {
       var row = Object.assign({}, wh);
-      row.item_count = whItemIds[String(wh.id)]
-        ? Object.keys(whItemIds[String(wh.id)]).length
-        : 0;
+      var set = whItemIds[String(wh.id)];
+      row.item_count = set ? Object.keys(set).length : 0;
       return row;
     });
   }

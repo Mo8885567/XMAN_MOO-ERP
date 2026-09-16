@@ -87,6 +87,7 @@
         ".ce-colctx-sub{padding:6px 10px;font-size:11px;color:var(--text3);font-weight:700}",
         ".ce-body-row{border-bottom:1px solid var(--border);font-size:13px;color:var(--text)}",
         ".ce-body-row:hover{background:var(--surface2)}",
+        ".ce-body-row.ce-row-clickable{cursor:pointer}",
         ".ce-td{padding:8px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:inherit}",
         ".ce-frozen{position:sticky;z-index:2}",
         ".ce-empty{padding:30px;text-align:center;color:var(--text3);font-size:13px}",
@@ -1159,6 +1160,7 @@
 
       var rowKey = (_registry[screenId].options || {}).rowKey || "id";
       var onRowClick = st.opts.onRowClick;
+      var _rowClickable = !!(onRowClick && st.opts.rowClickEnabled);
 
       function rowHtml(row, idx, top) {
         var attrs = "";
@@ -1172,7 +1174,9 @@
               'px"'
             : "";
         return (
-          '<div class="ce-body-row ce-grid-row" data-row-idx="' +
+          '<div class="ce-body-row ce-grid-row' +
+          (_rowClickable ? " ce-row-clickable" : "") +
+          '" data-row-idx="' +
           idx +
           '"' +
           (idVal !== undefined && idVal !== null
@@ -1330,11 +1334,17 @@
     }
 
     function _wireRowClicks(screenId) {
-      // [DISABLED] تم تعطيل خاصية فتح شاشة التعديل بالضغط على الصف بالكامل
-      // في كل الجداول اللي بتستخدم ColumnEngine (حتى لو الشاشة بتبعت onRowClick).
-      // لو حبيت ترجعها تاني: احذف السطر ده وارجع الشرط القديم اللي بيتحقق من st.opts.onRowClick.
-      return;
-      if (!st.opts.onRowClick) return;
+      // [ROW-CLICK-OPT-IN-2026-09-16] كان معطّل بالكامل لكل الجداول
+      // (return; قبل أي كود) بسبب تعارض قديم بين الضغط على الصف وأزرار/
+      // روابط جوه الخلايا. رجّعناه بس اختياري (opts.rowClickEnabled)
+      // عشان أي شاشة تفعّله بنفسها من غير ما يأثر على باقي جداول
+      // ColumnEngine اللي معتمدة إن الصف مش قابل للضغط. لاحظ إن الكود
+      // القديم هنا كان بيستخدم متغيّر "st" مش معرّف في الـ scope ده
+      // أصلاً (bug كامن ماكانش هيشتغل حتى لو شيلنا الـ return) — بقى
+      // بيُقرأ الآن من _state[screenId] الصح.
+      var st = _state[screenId];
+      if (!st || !st.opts || !st.opts.onRowClick || !st.opts.rowClickEnabled)
+        return;
       var body = document.getElementById("ce-tbody-" + screenId);
       if (!body || body._ceWired) return;
       body._ceWired = true;

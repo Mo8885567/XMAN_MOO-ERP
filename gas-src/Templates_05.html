@@ -339,12 +339,21 @@
     var whBlocksHtml = warehouses
       .map(function (wh) {
         var whItemIds = {};
+        // [FIX-CODEGUIDE-ZERO-QTY-2026-09-16] الشرط القديم Number(s.quantity||0) > 0
+        // كان بيمنع ظهور أي صنف لسه ما دخلتلوش حركة/رصيد افتتاحي (كمية = 0)،
+        // حتى لو الصنف فعليًا موجود وتابع للمخزن ده. أي صف في جدول الأرصدة
+        // (APP.data.stock) بيدل على انتماء الصنف للمخزن بغض النظر عن الكمية،
+        // فبنعتمد عليه من غير شرط الكمية. وكمان بنضيف الأصناف اللي مالهاش أي
+        // حركة أصلاً (مفيش لها صف Stock من الأساس) عن طريق المخزن الافتراضي
+        // المحفوظ على الصنف نفسه (it.default_warehouse_id).
         (APP.data.stock || []).forEach(function (s) {
-          if (
-            String(s.warehouse) === String(wh.id) &&
-            Number(s.quantity || 0) > 0
-          ) {
+          if (String(s.warehouse) === String(wh.id)) {
             whItemIds[String(s.item_id)] = true;
+          }
+        });
+        items.forEach(function (it) {
+          if (String(it.default_warehouse_id || "") === String(wh.id)) {
+            whItemIds[String(it.id)] = true;
           }
         });
         var whItems = items.filter(function (it) {

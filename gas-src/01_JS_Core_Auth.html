@@ -1057,9 +1057,35 @@
       });
       return;
     }
+    // ── [FIX-SIDEBAR-STATE-PRESERVE-2026-09-16] render() بيمسح #root
+    // بالكامل (renderLayout()) ويعيد بناء السايد بار من الصفر — ده سليم
+    // لأول render بعد اللوجين (مفيش حالة قديمة أصلاً)، لكن لو render()
+    // اتنادت وإحنا بالفعل جوّه النظام (زي تبديل اللغة I18N.switchLanguage،
+    // أو ترقيع ترجمة صلاحيات لاحقًا)، كانت بتقفل أي قروب سايد بار مفتوحه
+    // وترجّع سكرول المحتوى لفوق — سلوك مش موجود في أي برنامج احترافي.
+    // الحل: لو فيه layout قديم فعلاً، نحفظ القروبات المفتوحة وموضع
+    // السكرول قبل الاستبدال، ونرجّعهم تاني بعد إعادة البناء.
+    var _hadLayoutBefore = !!document.querySelector(".sidebar-nav");
+    var _openGroupIds = [];
+    var _prevScrollTop = 0;
+    if (_hadLayoutBefore) {
+      document.querySelectorAll(".nav-grp-toggle.open").forEach(function (t) {
+        _openGroupIds.push(t.id.replace("-toggle", ""));
+      });
+      var _prevScrollEl = document.querySelector(".content");
+      if (_prevScrollEl) _prevScrollTop = _prevScrollEl.scrollTop;
+    }
     root.innerHTML = renderLayout();
     bindNav();
     bindTopBar();
+    if (_hadLayoutBefore && _openGroupIds.length) {
+      _openGroupIds.forEach(function (gId) {
+        var toggleEl = document.getElementById(gId + "-toggle");
+        var menuEl = document.getElementById(gId + "-menu");
+        if (toggleEl) toggleEl.classList.add("open");
+        if (menuEl) menuEl.classList.add("open");
+      });
+    }
     // ── [UX-INSTANT-DASHBOARD] بدل شاشة "app-loading-overlay" الوسيطة
     // (اسم الشركة + سبينر) اللي كانت بتغطي الشاشة لحد ما البيانات توصل:
     // بنعرض الصفحة فورًا زي ما هي. APP.data معرّفة فوق بمصفوفات فاضية
@@ -1069,7 +1095,16 @@
     // (ensureExtendedData + xdRefreshWidget). لما getAllDataLight يرجع
     // بالبيانات الحقيقية، renderPage() بتتنادى تاني والأرقام تتبدّل
     // فورًا مكانها — من غير أي شاشة وسيطة منفصلة بين اللوجين والنظام.
+    // [FIX-SIDEBAR-STATE-PRESERVE-2026-09-16] لو فيه layout قديم، الرسم
+    // ده "تحديث خلفي" (silent) مش فتح شاشة جديدة — امنع فليكر/قفزة سكرول
+    // زي أي silent refresh تاني في النظام، ورجّع نفس موضع السكرول بعدها.
+    if (_hadLayoutBefore) APP._fromSilentRefresh = true;
     renderPage(APP.currentPage);
+    if (_hadLayoutBefore) {
+      APP._fromSilentRefresh = false;
+      var _newScrollEl = document.querySelector(".content");
+      if (_newScrollEl) _newScrollEl.scrollTop = _prevScrollTop;
+    }
     updateAlertBadge();
   }
   // ── navigate() — alias لـ renderPage (مطلوب من الـ notifications) ──

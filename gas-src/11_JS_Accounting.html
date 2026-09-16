@@ -112,7 +112,17 @@
     } catch (e) {}
     reloadAfterMutationFull(function () {
       ensureExtendedData(function () {
-        renderPage(page);
+        // [FIX-SIDEBAR-STATE-PRESERVE-2026-09-16] ده تحديث تلقائي بعد
+        // حفظ/تعديل — مش تنقل المستخدم لصفحة جديدة — فمفروض يحصل بصمت
+        // زي _resolvePartialRenderIfNeeded (01_JS_Core_Auth.html): من غير
+        // فليكر ظاهر ولا رجوع السكرول لفوق، واللي كان بيبان للمستخدم
+        // كإعادة رسم للشاشة كلها كل مرة يحفظ حاجة في المحاسبة/HR.
+        APP._fromSilentRefresh = true;
+        try {
+          renderPage(page);
+        } finally {
+          APP._fromSilentRefresh = false;
+        }
       }, true);
     });
   }

@@ -213,6 +213,19 @@
       var order = prefs.order || [];
 
       var cols = reg.columns.map(function (c) {
+        // [LOCKED-COLUMN] عمود مقفول (c.locked===true) — عمود نظامي بحت
+        // (زي "م." الترقيم التسلسلي) لا يخضع لأي تفضيل مستخدم إطلاقًا:
+        // دايمًا ظاهر، دايمًا بعرضه وتثبيته المُعرَّفين في register()،
+        // ومايتأثرش بأي حفظ سابق في prefs (تخصيص/بريست قديم). ده اللي
+        // بيحقق "لا يمكن التحكم فيه" — التحكم مقصور فقط على الأعمدة
+        // العادية عبر نافذة "تخصيص الجدول".
+        if (c.locked) {
+          return Object.assign({}, c, {
+            _visible: true,
+            _width: c.width,
+            _frozen: c.frozen || "right",
+          });
+        }
         return Object.assign({}, c, {
           _visible: visible.hasOwnProperty(c.key)
             ? !!visible[c.key]
@@ -247,6 +260,20 @@
           if (order.indexOf(c.key) === -1) ordered.push(byKey[c.key]);
         });
         cols = ordered;
+      }
+
+      // [LOCKED-COLUMN] بعد أي إعادة ترتيب (سواء افتراضي أو محفوظ من
+      // المستخدم)، الأعمدة المقفولة تُنتزع من أي مكان وقعت فيه وتُعاد
+      // لأول الصف دايمًا (يمين الجدول في RTL) بنفس ترتيبها الأصلي في
+      // التعريف — فمستحيل ترتيب المستخدم (prefs.order قديم) يزحزحها.
+      var lockedCols = cols.filter(function (c) {
+        return c.locked;
+      });
+      if (lockedCols.length) {
+        var restCols = cols.filter(function (c) {
+          return !c.locked;
+        });
+        cols = lockedCols.concat(restCols);
       }
       return cols;
     }
@@ -786,6 +813,23 @@
       if (!head) return;
       head.innerHTML = cols
         .map(function (c) {
+          // [LOCKED-COLUMN] بدون سحب/تحجيم/فرز/قائمة سياق — رأسه ثابت
+          // بصريًا ووظيفيًا زي عموده تمامًا.
+          if (c.locked) {
+            return (
+              '<div class="ce-th ce-frozen" data-col="' +
+              c.key +
+              '" data-locked="1" draggable="false" style="cursor:default;justify-content:' +
+              (c.align === "left"
+                ? "flex-start"
+                : c.align === "right"
+                  ? "flex-end"
+                  : "center") +
+              '">' +
+              (c.label !== undefined && c.label !== null ? c.label : c.key) +
+              "</div>"
+            );
+          }
           return (
             '<div class="ce-th ce-frozen" data-col="' +
             c.key +
@@ -820,6 +864,7 @@
 
       // فتح Column Context Menu عبر زرار ⋮ أو زر الفأرة الأيمن على أي جزء من الرأس
       head.querySelectorAll(".ce-th").forEach(function (th) {
+        if (th.getAttribute("data-locked") === "1") return;
         var key = th.getAttribute("data-col");
         th.addEventListener("contextmenu", function (e) {
           e.preventDefault();
@@ -858,6 +903,8 @@
       var dragged = null;
       var draggedKey = null;
       head.querySelectorAll(".ce-th").forEach(function (th) {
+        // [LOCKED-COLUMN] لا يُسحب ولا يُستقبل عليه إفلات — يفضل مكانه ثابت
+        if (th.getAttribute("data-locked") === "1") return;
         th.addEventListener("dragstart", function (e) {
           dragged = th;
           draggedKey = th.getAttribute("data-col");
@@ -1183,6 +1230,16 @@
           ">" +
           cols
             .map(function (c) {
+              // [ROWNUM-COLUMN] عمود ترقيم تلقائي (م.) — القيمة مش من
+              // بيانات الصف؛ هي ترتيبه الحالي في القائمة المعروضة (بعد
+              // الفرز/الفلترة)، فبتتغيّر لو المستخدم غيّر الترتيب أو
+              // بحث، تمامًا زي رقم صف عادي في أي جدول.
+              var cellHtml =
+                c.type === "rownum"
+                  ? '<span style="font-weight:600;color:var(--text2)">' +
+                    (idx + 1) +
+                    "</span>"
+                  : _formatCell(c, row);
               return (
                 '<div class="ce-td ce-frozen" data-col="' +
                 c.key +
@@ -1193,7 +1250,7 @@
                     ? "right"
                     : "center") +
                 '">' +
-                _formatCell(c, row) +
+                cellHtml +
                 "</div>"
               );
             })
@@ -2149,16 +2206,22 @@
     var _custDraft = {}; // screenId -> نسخة عمل مؤقتة قبل الحفظ
 
     function openCustomize(screenId) {
-      _custDraft[screenId] = _effectiveColumns(screenId).map(function (c) {
-        return {
-          key: c.key,
-          label: c.label,
-          category: c.category,
-          visible: c._visible,
-          width: c._width,
-          frozen: c._frozen,
-        };
-      });
+      // [LOCKED-COLUMN] الأعمدة المقفولة لا تظهر أصلاً في نافذة "تخصيص
+      // الجدول" — لا إظهار/إخفاء، لا عرض، لا تثبيت، لا ترتيب.
+      _custDraft[screenId] = _effectiveColumns(screenId)
+        .filter(function (c) {
+          return !c.locked;
+        })
+        .map(function (c) {
+          return {
+            key: c.key,
+            label: c.label,
+            category: c.category,
+            visible: c._visible,
+            width: c._width,
+            frozen: c._frozen,
+          };
+        });
 
       var body =
         '<div class="ce-cust-search"><input type="text" id="ce-cust-search-box" placeholder="بحث عن عمود..." /></div>' +
@@ -2374,7 +2437,11 @@
     }
     function _custReset(screenId) {
       var reg = _registry[screenId];
-      _custDraft[screenId] = reg.columns.map(function (c) {
+      _custDraft[screenId] = reg.columns
+        .filter(function (c) {
+          return !c.locked;
+        })
+        .map(function (c) {
         return {
           key: c.key,
           label: c.label,
@@ -2383,7 +2450,7 @@
           width: c.width,
           frozen: c.frozen,
         };
-      });
+        });
       _renderCustList(screenId, "");
     }
     function _custSaveAsPreset(screenId) {

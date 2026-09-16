@@ -4062,28 +4062,24 @@
     // [EDIT-SMOOTH] بيدعم دلوقتي selectedColor اختياري عشان يتقدر يتفتح
     // بلون مُختار مسبقًا (وضع التعديل) بنفس شكل/تفاعل وضع الإضافة تمامًا،
     // بدل الحقل الثابت (readonly) اللي كان بيتعرض قبل كده في التعديل.
+    // [FIX-OPENINGSTOCK-GLOBAL-COLORS] كان الدروب داون بيعرض بس ألوان
+    // الصنف نفسه (getItemColors) — أي لون مسجّل برصيد أول مدة قديم ومش
+    // موجود ضمن ألوان الصنف الحالية كان بيظهر "غير موجودة في ألوان
+    // الصنف" ومفيش طريقة تختار غيره غير من نفس القايمة الضيّقة دي.
+    // بقى بيعرض كل الألوان المُعرَّفة في السيستم كله (شاشة "تعريف
+    // الألوان" — APP.data.colors)، بحيث تقدر تختار أي لون سواء كان
+    // متسجّل مسبقًا على الصنف أو لأ.
     function buildColorDropdown(itemId, selectedColor) {
-      var it = APP.data.items.find(function (i) {
-        return i.id === itemId;
-      });
-      var colors = it ? getItemColors(it.id) : [];
-      var noColors = colors.length === 0 && itemId;
+      var colors = (APP.data.colors || [])
+        .filter(function (c) {
+          return c && c.name;
+        })
+        .map(function (c) {
+          return { name: String(c.name).trim(), code: String(c.code || "").trim() };
+        });
+      var noColors = colors.length === 0;
       var selName = (selectedColor || "").trim();
       var selHex = selName ? _resolveHex(selName, "") : "";
-
-      // [ORPHAN-COLOR-SAFETY-NET] لو القيمة المحفوظة في السجل (وضع التعديل)
-      // مش موجودة ضمن ألوان الصنف الحالية — مثلاً لون اتغيّر اسمه من شاشة
-      // "تعريف الألوان" قبل ما يتفعّل تحديث تلقائي للمراجع القديمة — كانت
-      // بتفضل معروضة في أعلى الحقل بس من غير أي عنصر مطابق لها جوه القائمة
-      // نفسها، فيبدو وكأن القيمة دي مش موجودة أصلاً في السيستم. هنا بنضيفها
-      // كخيار إضافي معلَّم بوضوح، عشان المستخدم يشوفها ويقدر يختار بدلها
-      // اللون الصحيح الحالي.
-      var selNormalized = selName ? _normalizeColor(selName) : "";
-      var selMatchesKnown =
-        !selName ||
-        colors.some(function (c) {
-          return _normalizeColor(c.name) === selNormalized;
-        });
 
       var items = noColors
         ? '<div class="os-cd-item os-cd-disabled"> لا توجد ألوان مُعرَّفة</div>'
@@ -4091,7 +4087,7 @@
             .map(function (c) {
               var hex = _resolveHex(c.name, c.code);
               var isSel =
-                selName && _normalizeColor(c.name) === selNormalized
+                selName && c.name.trim() === selName
                   ? " os-cd-selected"
                   : "";
               return (
@@ -4112,20 +4108,6 @@
               );
             })
             .join("");
-
-      if (!selMatchesKnown) {
-        items +=
-          '<div class="os-cd-item os-cd-selected" data-value="' +
-          esc(selName) +
-          '">' +
-          '<span class="os-cd-dot" style="background:' +
-          (selHex || "#ccc") +
-          '"></span>' +
-          '<span class="os-cd-label">' +
-          esc(selName) +
-          ' <span class="os-cd-code" style="color:#ef4444">(القيمة المحفوظة — غير موجودة في ألوان الصنف الحالية)</span>' +
-          "</span></div>";
-      }
 
       var triggerDisplay = selName
         ? '<span id="os-cd-display" style="color:var(--text)">' +

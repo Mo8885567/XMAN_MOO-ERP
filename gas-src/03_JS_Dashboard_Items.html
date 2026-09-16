@@ -7282,8 +7282,8 @@ var qrcode = function() {
         // ── تعديل لون موجود — يملأ الحقول ببياناته ويخبّي الـ tag مؤقتاً ──
         window._editColorTag = function (tagEl) {
           if (!tagEl) return;
-          var name = tagEl.getAttribute("data-color-name") || "";
-          var code = tagEl.getAttribute("data-color-code") || "";
+          var name = (tagEl.getAttribute("data-color-name") || "").trim();
+          var code = (tagEl.getAttribute("data-color-code") || "").trim();
           var hex = tagEl.getAttribute("data-color-hex") || "";
           var img = tagEl.getAttribute("data-color-image") || "";
 
@@ -7298,13 +7298,45 @@ var qrcode = function() {
           tagEl.style.display = "none";
 
           // حاول تختار نفس اللون في المنسدل (لو لسه موجود في الألوان
-          // المحفوظة) عشان يبان مختار وقت التعديل
+          // المحفوظة) عشان يبان مختار وقت التعديل. المطابقة بقت
+          // case-insensitive + trimmed عشان فروق بسيطة في حالة الحروف
+          // أو مسافات زيادة في الكود/الاسم متمنعش المطابقة.
           var colorSel = document.getElementById("i-color-select");
           if (colorSel) {
+            var codeLC = code.toLowerCase();
+            var nameLC = name.toLowerCase();
             var matched = Array.from(colorSel.options).find(function (o) {
-              return o.dataset.code === code || o.dataset.name === name;
+              var oCode = (o.dataset.code || "").trim().toLowerCase();
+              var oName = (o.dataset.name || "").trim().toLowerCase();
+              return (!!code && oCode === codeLC) || (!!name && oName === nameLC);
             });
-            colorSel.value = matched ? matched.value : "";
+
+            // [FIX-EDIT-COLOR-NOT-FOUND-2026-09-15] لو اللون ده مش
+            // موجود (تاني) في قائمة "الألوان المحفوظة" — مثلاً اتغيّر
+            // اسمه/كوده في شاشة تعريف الألوان، أو كان اتضاف يدويًا
+            // للصنف من غير ما يتسجّل عالميًا — بدل ما الحقل يفضل فاضي
+            // (وده اللي كان بيحصل قبل كده)، بنضيف/نستخدم <option> مؤقت
+            // بنفس بيانات الـ tag نفسه عشان يفضل ظاهر ومختار في المنسدل
+            // وقت التعديل، ولو المستخدم ضغط "إضافة" من غير ما يغيّره
+            // هيترحفظ بنفس بياناته الأصلية زي ما هي.
+            if (!matched) {
+              var tempVal = "__editing__" + (code || name);
+              matched = colorSel.querySelector(
+                'option[value="' + tempVal.replace(/"/g, "") + '"]',
+              );
+              if (!matched) {
+                matched = document.createElement("option");
+                matched.value = tempVal;
+                matched.textContent = name || code;
+                matched.dataset.name = name;
+                matched.dataset.code = code;
+                matched.dataset.hex = hex;
+                matched.dataset.temp = "1";
+                colorSel.appendChild(matched);
+              }
+            }
+
+            colorSel.value = matched.value;
             if (window.SplitSelect) SplitSelect.refresh("i-color-select");
           }
 
@@ -7366,6 +7398,14 @@ var qrcode = function() {
               opt.dataset.code || "",
               opt.dataset.hex || null,
               imgInp ? imgInp.value.trim() : "",
+            );
+            // [FIX-EDIT-COLOR-NOT-FOUND-2026-09-15] نضّف أي <option> مؤقت
+            // كان اتضاف وقت فتح تعديل لون مش موجود في القائمة المحفوظة
+            // (شوف window._editColorTag) — مبقاش له داعي بعد ما استُخدم.
+            Array.from(colorSel.querySelectorAll("option[data-temp='1']")).forEach(
+              function (o) {
+                o.remove();
+              },
             );
           });
         // [IMG-DEFER-UPLOAD-2026-08-05] منطق الحفظ الفعلي اتنقل لدالة

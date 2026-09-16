@@ -330,20 +330,36 @@
       "</div>";
 
     // ── بناء بلوكات المخازن ─────────────────────────────────────
+    // [FIX-CODEGUIDE-EMPTY-WAREHOUSES] المجموعات بقت عامة على مستوى
+    // النظام كله ومش مرتبطة بـ warehouse_id بعد تعديل [GROUPS-GLOBAL-2026-09-09]
+    // (Code_16_Inventory.js/addGroup) — فالفلترة القديمة بـ
+    // g.warehouse_id === wh.id كانت دايمًا بترجّع صفر، فكل المخازن كانت
+    // بتظهر فاضية هنا حتى لو فيها أصناف فعلاً. الانتماء الحقيقي لصنف
+    // لمخزن بييجي من جدول الأرصدة (APP.data.stock)، مش من المجموعة.
     var whBlocksHtml = warehouses
       .map(function (wh) {
-        var whGroups = groups.filter(function (g) {
-          return g.warehouse_id === wh.id || g.warehouse_id === wh.name;
+        var whItemIds = {};
+        (APP.data.stock || []).forEach(function (s) {
+          if (
+            String(s.warehouse) === String(wh.id) &&
+            Number(s.quantity || 0) > 0
+          ) {
+            whItemIds[String(s.item_id)] = true;
+          }
         });
-        var whItemCount = items.filter(function (it) {
-          return whGroups.some(function (g) {
-            return g.id === it.group || g.name === it.group;
+        var whItems = items.filter(function (it) {
+          return whItemIds[String(it.id)];
+        });
+        var whItemCount = whItems.length;
+        var whGroupsPresent = groups.filter(function (g) {
+          return whItems.some(function (it) {
+            return it.group === g.id || it.group === g.name;
           });
-        }).length;
+        });
 
-        var groupsHtml = whGroups
+        var groupsHtml = whGroupsPresent
           .map(function (g) {
-            var groupItems = items.filter(function (it) {
+            var groupItems = whItems.filter(function (it) {
               return it.group === g.id || it.group === g.name;
             });
 
@@ -428,12 +444,12 @@
           '<span class="cg2-wh-meta">كود المخزن: ' +
           esc(wh.code || wh.id) +
           " — " +
-          whGroups.length +
+          whGroupsPresent.length +
           " مجموعة — " +
           whItemCount +
           " صنف</span>" +
           "</div>" +
-          (whGroups.length > 0
+          (whItemCount > 0
             ? groupsHtml
             : '<div class="cg2-empty-group" style="border:0.5px solid var(--border);border-radius:var(--radius);padding:14px">' +
               I18N.t("MSG_NO_GROUPS_FOR_WAREHOUSE") +

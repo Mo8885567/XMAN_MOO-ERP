@@ -945,12 +945,111 @@ function updateColor(color) {
     });
     if (!updateRes.success)
       return errResponse(updateRes.errorMessage || "خطأ في تعديل اللون");
+    // [COLOR-RENAME-CASCADE] الألوان بتتخزن كـ"اسم نصي" جوه Items.colors_json
+    // و Stock.color و OpeningStock.color (مفيش ربط بـ Colors.id) — فتعديل
+    // اسم اللون هنا وحده كان بيسيب كل المراجع دي شايلة الاسم القديم، وده اللي
+    // كان بيسبب اختفاء/عدم تطابق اللون في شاشات الأصناف والمخزون ورصيد أول
+    // المدة. الدالة دي بتحدّث كل المراجع دفعة واحدة بنفس اسم/كود/hex الجديد.
+    _cascadeColorRenameOnUpdate(row.name, {
+      name: String(color.name).trim(),
+      code: String(color.code).trim().toUpperCase(),
+      hex: String(color.hex || "").trim(),
+    });
     _invalidateServerCacheInventory(); // [PERF-SCOPED-INVALIDATION-INVENTORY] scoped (was blanket _invalidateServerCache)
     CacheEngine.invalidate(CacheEngine.NAMESPACE.REFERENCE, "colors");
     return okResponse("تم تعديل اللون");
   } catch (e) {
     return errResponse("خطأ: " + e.message);
   }
+}
+
+/**
+ * [COLOR-RENAME-CASCADE] بعد تعديل لون في شاشة "تعريف الألوان"، بيدور على
+ * كل مكان بيخزن اسم اللون ده كنص (بدل ربط بـ ID) ويحدّثه للاسم/الكود/الـ
+ * hex الجديد:
+ *   1) Items.colors_json  — قائمة ألوان كل صنف (نسخة خاصة بالصنف)
+ *   2) Stock.color        — أرصدة المخزون الفعلية
+ *   3) OpeningStock.color — أرصدة أول المدة
+ *
+ * المطابقة بتتم بعد تطبيع الاسم القديم (_normalizeColorName) عشان تنجح
+ * حتى لو فيه اختلاف بسيط في الهمزات/التشكيل. أي خطأ هنا بيتسجّل بس
+ * ومايكسرش عملية تعديل اللون نفسها (اللون اتحدّث في شيت Colors بالفعل).
+ *
+ * @param {String} oldName - اسم اللون قبل التعديل.
+ * @param {{name:String,code:String,hex:String}} newColor - القيم الجديدة.
+ */
+function _cascadeColorRenameOnUpdate(oldName, newColor) {
+  try {
+    var oldKey = _normalizeColorName(oldName);
+    if (!oldKey) return;
+
+    // 1) Items.colors_json
+    var itemsSheet = getSheet("Items");
+    var lastCol = itemsSheet.getLastColumn();
+    var itemsHeaderRow = itemsSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    var colorsColIdx = itemsHeaderRow.indexOf("colors_json");
+    if (colorsColIdx > -1) {
+      var itemRows = readSheet("Items"); // من غير parseJson — نحتاج النص الخام
+      itemRows.forEach(function (item) {
+        if (!item.colors_json) return;
+        var arr;
+        try {
+          arr =
+            typeof item.colors_json === "string"
+              ? JSON.parse(item.colors_json)
+              : item.colors_json;
+        } catch (e) {
+          return;
+        }
+        if (!Array.isArray(arr) || !arr.length) return;
+        var changed = false;
+        var updatedArr = arr.map(function (c) {
+          var isObj = typeof c === "object" && c !== null;
+          var cName = isObj ? c.name : c;
+          if (_normalizeColorName(cName) !== oldKey) return c;
+          changed = true;
+          if (isObj) {
+            c.name = newColor.name;
+            if (newColor.code) c.code = newColor.code;
+            if (newColor.hex) c.hex = newColor.hex;
+            return c;
+          }
+          return newColor.name;
+        });
+        if (changed) {
+          itemsSheet
+            .getRange(item._row, colorsColIdx + 1)
+            .setValue(JSON.stringify(updatedArr));
+        }
+      });
+    }
+
+    // 2) Stock.color + 3) OpeningStock.color
+    _renameColorInSimpleSheet("Stock", "color", oldKey, newColor.name);
+    _renameColorInSimpleSheet("OpeningStock", "color", oldKey, newColor.name);
+  } catch (e) {
+    // ما نكسرش عملية تعديل اللون نفسها لو الـ cascade فشل جزئيًا — اللون
+    // نفسه اتحدّث بالفعل في شيت Colors قبل ما نوصل هنا.
+    try {
+      Logger.log("Color rename cascade failed: " + e.message);
+    } catch (e2) {}
+  }
+}
+
+/** يحدّث اسم اللون (كنص) في أي شيت بسيط عنده عمود لون (Stock/OpeningStock) */
+function _renameColorInSimpleSheet(sheetName, colField, oldKeyNormalized, newName) {
+  var sheet = getSheet(sheetName);
+  var lastCol = sheet.getLastColumn();
+  if (!lastCol) return;
+  var headerRow = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var colIdx = headerRow.indexOf(colField);
+  if (colIdx === -1) return;
+  var rows = readSheet(sheetName);
+  rows.forEach(function (r) {
+    if (_normalizeColorName(r[colField]) === oldKeyNormalized) {
+      sheet.getRange(r._row, colIdx + 1).setValue(newName);
+    }
+  });
 }
 
 function deleteColor(id, user, sessionToken) {

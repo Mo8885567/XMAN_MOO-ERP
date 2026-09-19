@@ -897,6 +897,7 @@
     ColumnEngine.register(
       "catalog_items",
       [
+        ColumnEngine.serialColumn(),
         {
           key: "id",
           label: "الكود",
@@ -2072,6 +2073,7 @@
     ColumnEngine.register(
       "stock_current",
       [
+        ColumnEngine.serialColumn(),
         {
           key: "display_code",
           label: "الكود",
@@ -4369,8 +4371,13 @@
 
             // [OS-WH-REQUIRED] تحقق دفاعي إضافي (بجانب قفل الدروب داون
             // نفسه) — لازم مخزن محدد قبل الحفظ في وضع الإضافة
+            // [OS-WH-2026-09] كان الحقل ده بيتقرأ بس عشان يفلتر قائمة
+            // الأصناف (refreshItemDropdown) ومبيتبعتش لـ saveOpeningStock
+            // خالص، يعني المخزن المُختار مكنش بيتسجل مع الرصيد. دلوقتي
+            // بيتبعت كباراميتر فعلي.
+            var whChosen = "";
             if (!isEdit) {
-              var whChosen = document.getElementById("os-warehouse")
+              whChosen = document.getElementById("os-warehouse")
                 ? document.getElementById("os-warehouse").value
                 : "";
               if (!whChosen) return NotificationEngine.error("اختر المخزن أولاً");
@@ -4391,6 +4398,12 @@
               isEdit &&
               (String(selId) !== String(item_id) ||
                 selColor.trim() !== String(color || "").trim());
+            // [OS-WH-2026-09] عند تغيير الصنف/اللون أثناء التعديل، مفتاح
+            // البحث في saveOpeningStock بيتغيّر (item_id+color جديدين)
+            // فمش هيلاقي سجل قديم، وبالتالي هيتعامل معاه كسجل جديد
+            // ويطلب مخزن. بما إن حقل المخزن مخفي في وضع التعديل، نبعت
+            // مخزن السجل الأصلي (rec.warehouse_id) عشان يفضل نفس المخزن.
+            if (isRename && rec) whChosen = rec.warehouse_id || "";
             if (isRename) {
               var _clash = (APP.data.openingStock || []).find(function (r) {
                 return (
@@ -4422,6 +4435,7 @@
                   APP.currentUser ? APP.currentUser.username : "",
                   SESSION.token,
                   unitCost,
+                  whChosen,
                 ],
                 savingLabel: isEdit
                   ? "⏳ جاري تعديل رصيد أول المدة..."
@@ -4475,6 +4489,9 @@
                     notes: notes,
                     date: new Date().toISOString(),
                     unit_cost: unitCost,
+                    // [OS-WH-2026-09] عشان التحديث الفوري المحلي يعكس المخزن
+                    // برضه، مش بس يتظبط بعد المزامنة الخلفية.
+                    warehouse_id: whChosen,
                   };
                   if (APP.data && Array.isArray(APP.data.openingStock)) {
                     var _osIdx = APP.data.openingStock.findIndex(function (r) {

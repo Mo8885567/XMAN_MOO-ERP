@@ -2093,6 +2093,9 @@ const OPENING_STOCK_HEADERS = [
   "notes",
   "date",
   "unit_cost", // [MD-06 FIX] the explicit opening unit cost — optional, falls back to item.cost_price
+  "warehouse_id", // [OS-WH-2026-09] المخزن اللي اتسجل عليه الرصيد الافتتاحي — إلزامي عند
+  // الإضافة (يدوي أو استيراد)، ومتوقّع بالفعل من deleteWarehouse dependency check
+  // (Code_44_DeleteEngine.js) اللي كان بيتحقق منه من غير ما يكون العمود موجود أصلاً.
 ];
 
 // ← v4.1: warehouse-level permissions

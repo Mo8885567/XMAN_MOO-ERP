@@ -59,6 +59,10 @@ function _buildOpeningMap(openingStock) {
  * @param {String} user - اسم المستخدم المنفِّذ.
  * @param {String} sessionToken - توكن الجلسة.
  * @param {Number|String} [unit_cost] - تكلفة الوحدة الاختيارية.
+ * @param {String} [warehouse_id] - [OS-WH-2026-09] المخزن اللي اتسجل عليه
+ *   الرصيد. إلزامي عند إضافة سجل جديد (ولازم يكون موجود فعلاً في شيت
+ *   Warehouses). عند تعديل سجل موجود وعدم إرساله، يُحتفظ بالمخزن القديم
+ *   كما هو (الواجهة حاليًا بتخفي حقل المخزن في وضع التعديل).
  * @returns {{success: Boolean, message: String}}
  */
 function saveOpeningStock(
@@ -69,6 +73,7 @@ function saveOpeningStock(
   user,
   sessionToken,
   unit_cost,
+  warehouse_id,
 ) {
   try {
     var permErr = _checkPermission(user, "addOpeningStock", sessionToken);
@@ -96,11 +101,36 @@ function saveOpeningStock(
         String(r.color || "").trim() === colorStr
       );
     });
+
+    // [OS-WH-2026-09] المخزن إلزامي عند الإضافة، ولازم يكون موجود فعلاً في
+    // شيت المخازن — نفس فكرة validItemIds في importOpeningStockBulk، بس
+    // للمخازن بدل الأصناف، عشان نمنع تسجيل رصيد على مخزن وهمي/محذوف.
+    var whId = String(warehouse_id || "").trim();
+    if (whId) {
+      var whExists = readSheet("Warehouses", WAREHOUSE_HEADERS).some(
+        function (w) {
+          return String(w.id) === whId;
+        },
+      );
+      if (!whExists) return errResponse("المخزن المحدد غير موجود");
+    }
+    if (!existing && !whId) return errResponse("يجب تحديد المخزن");
+    // عند التعديل بدون اختيار مخزن جديد: نحافظ على المخزن القديم كما هو.
+    var finalWhId = whId || (existing ? existing.warehouse_id || "" : "");
+
     if (existing) {
       sheet
-        .getRange(existing._row, 1, 1, 6)
+        .getRange(existing._row, 1, 1, 7)
         .setValues([
-          [item_id, colorStr, Number(qty), notes || "", new Date(), unitCost],
+          [
+            item_id,
+            colorStr,
+            Number(qty),
+            notes || "",
+            new Date(),
+            unitCost,
+            finalWhId,
+          ],
         ]);
       _invalidateServerCacheOpeningBalances(); // [PERF-SCOPED-INVALIDATION] scoped (was blanket _invalidateServerCache)
       return okResponse("✅ تم تعديل رصيد أول المدة");
@@ -112,6 +142,7 @@ function saveOpeningStock(
         notes || "",
         new Date(),
         unitCost,
+        finalWhId,
       ]);
       _invalidateServerCacheOpeningBalances(); // [PERF-SCOPED-INVALIDATION] scoped (was blanket _invalidateServerCache)
       return okResponse("✅ تم إضافة رصيد أول المدة");
@@ -473,7 +504,7 @@ function postOpeningStockJournal(date, sessionToken) {
   }
 }
 
-function importOpeningStockBulk(rows, callerUser, sessionToken) {
+function importOpeningStockBulk(rows, callerUser, sessionToken, warehouse_id) {
   try {
     var permErr = _checkPermission(callerUser, "addOpeningStock", sessionToken);
     if (permErr) return permErr;
@@ -495,6 +526,19 @@ function importOpeningStockBulk(rows, callerUser, sessionToken) {
       var id = String(it.id || "").trim();
       if (id) validItemIds[id] = true;
     });
+
+    // [OS-WH-2026-09] المخزن إلزامي هنا كمان — إما مخزن عام لكل صفوف
+    // الاستيراد (warehouse_id)، أو مخزن مُحدَّد لكل صف على حدة (r.warehouse_id)
+    // لو الملف نفسه فيه عمود مخزن. نفس فكرة التحقق من الأصناف بالظبط.
+    var validWarehouseIds = {};
+    getSheetData("Warehouses").forEach(function (w) {
+      var id = String(w.id || "").trim();
+      if (id) validWarehouseIds[id] = true;
+    });
+    var globalWhId = String(warehouse_id || "").trim();
+    if (globalWhId && !validWarehouseIds[globalWhId]) {
+      return errResponse("المخزن المحدد للاستيراد غير موجود");
+    }
 
     var added = 0,
       updated = 0,
@@ -544,6 +588,22 @@ function importOpeningStockBulk(rows, callerUser, sessionToken) {
           return;
         }
 
+        // [OS-WH-2026-09] مخزن الصف: عمود صريح في الملف لو موجود، وإلا
+        // المخزن العام المختار قبل الاستيراد.
+        var rowWhId = String(r.warehouse_id || "").trim() || globalWhId;
+        if (!rowWhId) {
+          errors.push("صف " + rowNum + ": لم يتم تحديد المخزن");
+          skipped++;
+          return;
+        }
+        if (!validWarehouseIds[rowWhId]) {
+          errors.push(
+            "صف " + rowNum + ": المخزن (" + rowWhId + ") غير موجود",
+          );
+          skipped++;
+          return;
+        }
+
         var rec = existing.find(function (e) {
           return (
             String(e.item_id) === itemId &&
@@ -552,11 +612,21 @@ function importOpeningStockBulk(rows, callerUser, sessionToken) {
         });
         if (rec) {
           sheet
-            .getRange(rec._row, 1, 1, 5)
-            .setValues([[itemId, colorStr, qty, notes, new Date()]]);
+            .getRange(rec._row, 1, 1, 7)
+            .setValues([
+              [
+                itemId,
+                colorStr,
+                qty,
+                notes,
+                new Date(),
+                rec.unit_cost === undefined ? "" : rec.unit_cost,
+                rowWhId,
+              ],
+            ]);
           updated++;
         } else {
-          newRows.push([itemId, colorStr, qty, notes, new Date()]);
+          newRows.push([itemId, colorStr, qty, notes, new Date(), "", rowWhId]);
           added++;
           // أضف السجل الجديد للـ existing عشان نتجنب التكرار في نفس الاستيراد
           // (رقم الصف الافتراضي = آخر صف حالي + عدد الصفوف الجديدة لحد دلوقتي)
@@ -565,6 +635,7 @@ function importOpeningStockBulk(rows, callerUser, sessionToken) {
             color: colorStr,
             quantity: qty,
             notes: notes,
+            warehouse_id: rowWhId,
             _row: baseLastRow + newRows.length,
           });
         }

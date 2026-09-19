@@ -397,11 +397,11 @@
     // ─────────────────────────────────────────────────────────────────────
     // §CE-04  عرض قيمة خلية حسب نوع العمود
     // ─────────────────────────────────────────────────────────────────────
-    function _formatCell(col, row) {
+    function _formatCell(col, row, idx) {
       var val = row[col.key];
       if (col.format) {
         try {
-          return col.format(val, row);
+          return col.format(val, row, idx);
         } catch (e) {
           return "";
         }
@@ -508,7 +508,7 @@
         for (var i = 0; i < n; i++) {
           var w;
           try {
-            var cellHtml = _formatCell(c, rows[i]);
+            var cellHtml = _formatCell(c, rows[i], i);
             w =
               c.type === "custom"
                 ? _measureHtmlWidth(cellHtml)
@@ -1197,7 +1197,7 @@
                     ? "right"
                     : "center") +
                 '">' +
-                _formatCell(c, row) +
+                _formatCell(c, row, idx) +
                 "</div>"
               );
             })
@@ -1828,10 +1828,10 @@
         .trim();
     }
 
-    function _exportCell(col, row) {
+    function _exportCell(col, row, idx) {
       if (typeof col.exportValue === "function") {
         try {
-          return col.exportValue(row);
+          return col.exportValue(row, idx);
         } catch (e) {
           return "";
         }
@@ -1845,7 +1845,7 @@
       ) {
         return Number(row[col.key]) || 0;
       }
-      var v = _stripHtml(_formatCell(col, row));
+      var v = _stripHtml(_formatCell(col, row, idx));
       return v === "—" ? "" : v;
     }
 
@@ -1857,9 +1857,9 @@
       var headers = cols.map(function (c) {
         return c.label !== undefined && c.label !== null ? c.label : c.key;
       });
-      var data = st.filtered.map(function (row) {
+      var data = st.filtered.map(function (row, idx) {
         return cols.map(function (c) {
-          return _exportCell(c, row);
+          return _exportCell(c, row, idx);
         });
       });
       return { headers: headers, data: data };
@@ -2479,9 +2479,43 @@
         "</div>";
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // §CE-SERIAL  عمود "م" (مسلسل) ديناميكي — يُبنى على idx اللي بيوصل
+    // لـ format() من rowHtml/_formatCell (راجع التعديل اللي بيمرّر idx).
+    // الترقيم بيتغيّر تلقائيًا مع الفرز/البحث/الفلترة لأنه مبني على ترتيب
+    // الصف الفعلي جوه st.filtered مش على أي حقل ثابت في البيانات.
+    // مش قابل للفرز/الفلترة/البحث (مفيش قيمة حقيقية وراه)، لكنه ظاهر في
+    // التصدير/الطباعة برقم متسلسل صحيح لأن _exportPayload بقى بيمرر idx
+    // كمان لـ _exportCell/_formatCell.
+    // ─────────────────────────────────────────────────────────────────────
+    function serialColumn(opts) {
+      opts = opts || {};
+      return {
+        key: opts.key || "_serial",
+        label: opts.label || "م",
+        type: "custom",
+        width: opts.width || 46,
+        align: "center",
+        frozen: opts.frozen !== undefined ? opts.frozen : "right",
+        sortable: false,
+        filterable: false,
+        searchable: false,
+        format: function (v, row, idx) {
+          var n = (idx || 0) + 1;
+          return (
+            '<span style="display:inline-block;min-width:20px;text-align:center;' +
+            'font-size:12px;font-weight:600;color:var(--text3)">' +
+            n +
+            "</span>"
+          );
+        },
+      };
+    }
+
     return {
       register: register,
       renderTable: renderTable,
+      serialColumn: serialColumn,
       showLoading: showLoading,
       appendRows: appendRows,
       openCustomize: openCustomize,

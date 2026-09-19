@@ -673,6 +673,10 @@
         IW.state.rawRows,
         APP.currentUser.username,
         SESSION.token,
+        // [OS-WH-2026-09] كان بيتسجل في IW.state.warehouseId وميتبعتش أبداً
+        // للباك إند، فتحقق ربط الصنف بالمخزن (businessRules في
+        // Code_29_ImportEngine.js) مكنش بيشتغل عمليًا خالص.
+        { warehouseId: IW.state.warehouseId || "" },
       ],
       {
         timeout: 60000,
@@ -1152,6 +1156,9 @@
         {
           rehostImages: !!IW.state.rehostImages,
           compressImages: !!IW.state.rehostImages && !!IW.state.compressImages,
+          // [OS-WH-2026-09] نفس المخزن المختار وقت الرفع — من غيره
+          // customCommit في opening_stock كان بيتخزّن الصف من غير مخزن خالص.
+          warehouseId: IW.state.warehouseId || "",
         },
       ],
       {

@@ -679,10 +679,20 @@ var ImportEngine = (function () {
             });
           }
 
+          // [OS-WH-2026-09] المخزن إلزامي لاستيراد أرصدة أول المدة — نفس
+          // إلزامية الفرونت إند (iw-warehouse-select)، بس بفحص فعلي هنا
+          // كمان بدل ما نعتمد على الواجهة بس.
+          if (!warehouseId) {
+            return errResponse("يجب اختيار المخزن قبل الاستيراد");
+          }
+
           var lock = LockService.getScriptLock();
           lock.waitLock(20000);
           try {
-            var sheet = getSheet("OpeningStock");
+            // [OS-WH-FIX] كان بيتقرا من غير OPENING_STOCK_HEADERS، فمكنش
+            // بيعمل self-healing لأي عمود ناقص (زي warehouse_id الجديد)
+            // لأن OpeningStock مش مسجّل في خريطة HEADERS العامة.
+            var sheet = getSheet("OpeningStock", OPENING_STOCK_HEADERS);
             var existing = readSheet("OpeningStock", OPENING_STOCK_HEADERS, {
               dateOnly: true,
             });
@@ -733,19 +743,38 @@ var ImportEngine = (function () {
                 );
               });
 
+              // [OS-WH-2026-09] المخزن بيتسجل مع الصف نفسه — نفس المخزن
+              // المختار في الويزارد قبل رفع الملف (وليس مجرد فحص تحقق فقط).
               if (found) {
                 sheet
-                  .getRange(found._row, 1, 1, 6)
+                  .getRange(found._row, 1, 1, 7)
                   .setValues([
-                    [itemId, color, qty, notes, new Date(), unitCost],
+                    [
+                      itemId,
+                      color,
+                      qty,
+                      notes,
+                      new Date(),
+                      unitCost,
+                      warehouseId || found.warehouse_id || "",
+                    ],
                   ]);
               } else {
-                newRows.push([itemId, color, qty, notes, new Date(), unitCost]);
+                newRows.push([
+                  itemId,
+                  color,
+                  qty,
+                  notes,
+                  new Date(),
+                  unitCost,
+                  warehouseId,
+                ]);
                 existing.push({
                   item_id: itemId,
                   color: color,
                   quantity: qty,
                   notes: notes,
+                  warehouse_id: warehouseId,
                   _row: baseLastRow + newRows.length,
                 });
               }

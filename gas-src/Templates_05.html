@@ -351,6 +351,16 @@
             whItemIds[String(s.item_id)] = true;
           }
         });
+        // [FIX-CODEGUIDE-OPENING-STOCK-2026-09-19] الرصيد الافتتاحي بقى
+        // بيتسجل عليه مخزن فعليًا (OPENING_STOCK_HEADERS.warehouse_id) —
+        // فبنعتبره مصدر انتماء تالت زي Stock وdefault_warehouse_id بالظبط،
+        // عشان صنف جديد اتسجّل له رصيد افتتاحي بس لسه ملوش أي حركة (Stock)
+        // ولا مخزن افتراضي، يظهر في مخزنه الصح فورًا هنا.
+        (APP.data.openingStock || []).forEach(function (o) {
+          if (String(o.warehouse_id || "") === String(wh.id)) {
+            whItemIds[String(o.item_id)] = true;
+          }
+        });
         items.forEach(function (it) {
           if (String(it.default_warehouse_id || "") === String(wh.id)) {
             whItemIds[String(it.id)] = true;

@@ -3506,88 +3506,96 @@
     var groups = APP.data.groups || [];
     var items = APP.data.items || [];
 
+    // [FIX-CODEGUIDE-WH-LINK-2026-09-20] نفس منطق شاشة دليل الأكواد بالظبط
+    // (cgPartitionItems/cgItemInGroup في Templates_05.html) — النسخة القديمة
+    // كانت بتجيب المجموعات من g.warehouse_id (مسار قديم مبقاش بيتحفظ)
+    // فكان الـ PDF بيطلع فاضي حتى لو الشاشة فيها أصناف.
+    var part = cgPartitionItems(warehouses, items);
+
+    function pdfGroupBlock(prefix, name, list) {
+      var rows = list
+        .map(function (it) {
+          return (
+            "<tr>" +
+            "<td>" + esc(it.code || it.id) + "</td>" +
+            "<td>" + esc(it.name) + "</td>" +
+            "<td>" + esc(it.description || "—") + "</td>" +
+            "<td>" + esc(it.unit || "—") + "</td>" +
+            "</tr>"
+          );
+        })
+        .join("");
+      return (
+        '<div class="pdf-group">' +
+        '<div class="pdf-group-header">' +
+        '<span class="pdf-group-prefix">' + esc(prefix) + "</span>" +
+        '<span class="pdf-group-name">' + esc(name) + "</span>" +
+        '<span class="pdf-group-count">' + list.length + " صنف</span>" +
+        "</div>" +
+        (rows
+          ? '<table class="pdf-table"><thead><tr><th>كود الصنف</th><th>الاسم</th><th>الوصف</th><th>الوحدة</th></tr></thead><tbody>' +
+            rows +
+            "</tbody></table>"
+          : '<p class="pdf-empty">لا توجد أصناف في هذه المجموعة</p>') +
+        "</div>"
+      );
+    }
+
+    function pdfGroupsFor(list, showEmptyGroups) {
+      var html = groups
+        .map(function (g) {
+          var gi = list.filter(function (it) {
+            return cgItemInGroup(it, g);
+          });
+          if (!showEmptyGroups && !gi.length) return "";
+          return pdfGroupBlock(g.prefix || g.id, g.name, gi);
+        })
+        .join("");
+      var ungrouped = cgUngroupedItems(list, groups);
+      if (ungrouped.length) html += pdfGroupBlock("—", "بدون مجموعة", ungrouped);
+      return html;
+    }
+
+    function pdfWhBlock(code, name, metaText, innerHtml) {
+      return (
+        '<div class="pdf-wh-block">' +
+        '<div class="pdf-wh-header">' +
+        '<span class="pdf-wh-code">' + esc(code) + "</span>" +
+        '<span class="pdf-wh-name">' + esc(name) + "</span>" +
+        '<span class="pdf-wh-meta">' + metaText + "</span>" +
+        "</div>" +
+        innerHtml +
+        "</div>"
+      );
+    }
+
     var blocksHtml = "";
+
+    // أصناف غير مربوطة بمخزن (تظهر لو الفلتر الحالي "الكل" أو عليها)
+    var noneBlock = document.querySelector('.cg2-wh-block[data-wh="__none__"]');
+    if (part.unassigned.length && !(noneBlock && noneBlock.style.display === "none")) {
+      blocksHtml += pdfWhBlock(
+        "—",
+        "أصناف غير مربوطة بمخزن",
+        part.unassigned.length + " صنف — متاحة لكل المخازن",
+        pdfGroupsFor(part.unassigned, false),
+      );
+    }
+
     warehouses.forEach(function (wh) {
       var whBlock = document.querySelector(
         '.cg2-wh-block[data-wh="' + wh.id + '"]',
       );
       if (whBlock && whBlock.style.display === "none") return; // مخفي بالفلتر
-
-      var whGroups = groups.filter(function (g) {
-        return g.warehouse_id === wh.id || g.warehouse_id === wh.name;
-      });
-
-      var groupsContent = "";
-      whGroups.forEach(function (g) {
-        var groupItems = items.filter(function (it) {
-          return it.group === g.id || it.group === g.name;
-        });
-
-        var rows = groupItems
-          .map(function (it) {
-            return (
-              "<tr>" +
-              "<td>" +
-              esc(it.code || it.id) +
-              "</td>" +
-              "<td>" +
-              esc(it.name) +
-              "</td>" +
-              "<td>" +
-              esc(it.description || "—") +
-              "</td>" +
-              "<td>" +
-              esc(it.unit || "—") +
-              "</td>" +
-              "</tr>"
-            );
-          })
-          .join("");
-
-        groupsContent +=
-          '<div class="pdf-group">' +
-          '<div class="pdf-group-header">' +
-          '<span class="pdf-group-prefix">' +
-          esc(g.prefix || g.id) +
-          "</span>" +
-          '<span class="pdf-group-name">' +
-          esc(g.name) +
-          "</span>" +
-          '<span class="pdf-group-count">' +
-          groupItems.length +
-          " صنف</span>" +
-          "</div>" +
-          (rows
-            ? '<table class="pdf-table"><thead><tr><th>كود الصنف</th><th>الاسم</th><th>الوصف</th><th>الوحدة</th></tr></thead><tbody>' +
-              rows +
-              "</tbody></table>"
-            : '<p class="pdf-empty">لا توجد أصناف في هذه المجموعة</p>') +
-          "</div>";
-      });
-
-      blocksHtml +=
-        '<div class="pdf-wh-block">' +
-        '<div class="pdf-wh-header">' +
-        '<span class="pdf-wh-code">' +
-        esc(wh.code || wh.id) +
-        "</span>" +
-        '<span class="pdf-wh-name">' +
-        esc(wh.name) +
-        "</span>" +
-        '<span class="pdf-wh-meta">' +
-        whGroups.length +
-        " مجموعة — " +
-        items.filter(function (it) {
-          return whGroups.some(function (g) {
-            return g.id === it.group || g.name === it.group;
-          });
-        }).length +
-        " صنف</span>" +
-        "</div>" +
-        (whGroups.length > 0
-          ? groupsContent
-          : '<p class="pdf-empty">لا توجد مجموعات</p>') +
-        "</div>";
+      var whItems = part.byWh[String(wh.id)] || [];
+      blocksHtml += pdfWhBlock(
+        wh.code || wh.id,
+        wh.name,
+        groups.length + " مجموعة — " + whItems.length + " صنف",
+        groups.length > 0
+          ? pdfGroupsFor(whItems, true)
+          : '<p class="pdf-empty">لا توجد مجموعات</p>',
+      );
     });
 
     var logoHtml = logoUrl

@@ -260,6 +260,68 @@
 </template>
 
 <script>
+  // ════════════════════════════════════════════════════════════════════
+  // [FIX-CODEGUIDE-WH-LINK-2026-09-20] منطق انتماء الصنف لمخزن/مجموعة — مشترك
+  // بين شاشة دليل الأكواد وتصدير الـ PDF (cgExportPDF في
+  // 07_JS_Shipping_Colors_Excel.html).
+  //
+  // السبب الجذري لاختفاء الأصناف: الشاشة كانت بتعتمد على
+  // item.default_warehouse_id بس. الأصناف اللي اتسجلت من غير مخزن افتراضي
+  // (استيراد Excel — عمود "المخزن" بيتقرا ويتحقق منه بس مش بيتكتب —
+  // أو أصناف قديمة أو تسجيل من غير ربط) قيمتها فاضية، فمكانتش بتظهر تحت أي
+  // مخزن. وكمان الأصناف المربوطة بأكتر من مخزن (جدول ItemWarehouses →
+  // item.warehouse_ids) كانت بتظهر تحت مخزنها الافتراضي بس.
+  // نفس قاعدة باقي النظام (شاشة المخازن، أرصدة أول المدة، _postProcessItems):
+  //   warehouse_ids لو موجودة، وإلا default_warehouse_id، وإلا الصنف "غير
+  //   مقيّد" (متاح لكل المخازن) — فبنعرضه في بلوك مستقل بدل ما نخفيه.
+  // ════════════════════════════════════════════════════════════════════
+  function cgItemWarehouseKeys(it) {
+    if (Array.isArray(it.warehouse_ids) && it.warehouse_ids.length) {
+      return it.warehouse_ids.map(String);
+    }
+    return it.default_warehouse_id ? [String(it.default_warehouse_id)] : [];
+  }
+  function cgItemInWarehouse(it, wh) {
+    return cgItemWarehouseKeys(it).some(function (k) {
+      return k === String(wh.id) || k === String(wh.name);
+    });
+  }
+  // الصنف بيخزّن group كـ id (الفورم/الاستيراد)، وأصناف قديمة ممكن تكون
+  // اسم أو prefix — نفس التسامح الموجود في openItemModal.
+  function cgItemInGroup(it, g) {
+    var v = it.group;
+    if (v == null || v === "") return false;
+    return v === g.id || v === g.name || (!!g.prefix && v === g.prefix);
+  }
+  // byWh[wh.id] = أصناف المخزن (الصنف المربوط بأكتر من مخزن بيتكرر فيهم)،
+  // unassigned = أصناف مالهاش أي مخزن صالح (فاضي، أو مخزن اتحذف).
+  function cgPartitionItems(warehouses, items) {
+    var byWh = {};
+    var unassigned = [];
+    warehouses.forEach(function (wh) {
+      byWh[String(wh.id)] = [];
+    });
+    items.forEach(function (it) {
+      var placed = false;
+      warehouses.forEach(function (wh) {
+        if (cgItemInWarehouse(it, wh)) {
+          byWh[String(wh.id)].push(it);
+          placed = true;
+        }
+      });
+      if (!placed) unassigned.push(it);
+    });
+    return { byWh: byWh, unassigned: unassigned };
+  }
+  // أصناف مجموعتها مش موجودة (اتحذفت/فاضية) — من غير ده كانت بتختفي.
+  function cgUngroupedItems(items, groups) {
+    return items.filter(function (it) {
+      return !groups.some(function (g) {
+        return cgItemInGroup(it, g);
+      });
+    });
+  }
+
   function renderCodeGuide() {
     var warehouses = APP.data.warehouses || [];
     var groups = APP.data.groups || [];
@@ -268,6 +330,7 @@
     // ── إحصائيات سريعة ──────────────────────────────────────────
     var totalGroups = groups.length;
     var totalItems = items.length;
+    var cgPart = cgPartitionItems(warehouses, items);
 
     var statsHtml =
       '<div class="cg2-stats-row">' +
@@ -314,7 +377,13 @@
             "</button>"
           );
         })
-        .join("");
+        .join("") +
+      (cgPart.unassigned.length
+        ? '<button class="cg2-fbtn" id="cg-btn-__none__" onclick="cgFilter(\'__none__\')">' +
+          "غير مربوطة بمخزن (" +
+          cgPart.unassigned.length +
+          ")</button>"
+        : "");
 
     var toolbarHtml =
       '<div class="cg2-toolbar">' +
@@ -336,146 +405,155 @@
     // g.warehouse_id === wh.id كانت دايمًا بترجّع صفر، فكل المخازن كانت
     // بتظهر فاضية هنا حتى لو فيها أصناف فعلاً. الانتماء الحقيقي لصنف
     // لمخزن بييجي من جدول الأرصدة (APP.data.stock)، مش من المجموعة.
-    var whBlocksHtml = warehouses
-      .map(function (wh) {
-        var whItemIds = {};
-        // [FIX-CODEGUIDE-ZERO-QTY-2026-09-16] الشرط القديم Number(s.quantity||0) > 0
-        // كان بيمنع ظهور أي صنف لسه ما دخلتلوش حركة/رصيد افتتاحي (كمية = 0)،
-        // حتى لو الصنف فعليًا موجود وتابع للمخزن ده. أي صف في جدول الأرصدة
-        // (APP.data.stock) بيدل على انتماء الصنف للمخزن بغض النظر عن الكمية،
-        // فبنعتمد عليه من غير شرط الكمية. وكمان بنضيف الأصناف اللي مالهاش أي
-        // حركة أصلاً (مفيش لها صف Stock من الأساس) عن طريق المخزن الافتراضي
-        // المحفوظ على الصنف نفسه (it.default_warehouse_id).
-        // [FIX-CODEGUIDE-NO-BALANCE-LINK-2026-09-19] بناءً على طلب صريح:
-        // انتماء الصنف للمخزن هنا معتمدش خالص على وجود رصيد له (Stock
-        // حركات أو OpeningStock) — دليل الأكواد شاشة مرجعية للتصنيف
-        // التنظيمي بس (أي صنف موجود في أي مخزن)، مش تقرير أرصدة. الاعتماد
-        // الوحيد بقى على item.default_warehouse_id (تخصيص صريح للصنف).
-        items.forEach(function (it) {
-          if (String(it.default_warehouse_id || "") === String(wh.id)) {
-            whItemIds[String(it.id)] = true;
-          }
-        });
-        var whItems = items.filter(function (it) {
-          return whItemIds[String(it.id)];
-        });
-        var whItemCount = whItems.length;
-        // [FIX-CODEGUIDE-GROUPS-GLOBAL-2026-09-19] المجموعات بقت عامة على
-        // مستوى النظام كله (مش مرتبطة بمخزن معيّن) بعد [GROUPS-GLOBAL-2026-09-09]،
-        // فمفروض تظهر كلها تحت كل مخزن حتى لو لسه مفيش أصناف لمخزن ده
-        // متسجلة فعليًا في المجموعة دي — بدل ما نخفي المجموعة بالكامل
-        // ونعرض "لا توجد مجموعات لهذا المخزن" لمجرد إن مفيش صنف واحد لسه
-        // اتربط بالمخزن ده. الفلترة الفعلية بتحصل جوه كل مجموعة (groupItems)
-        // فبتفضل بتعرض بس أصناف المخزن ده، وتعرض "لا توجد أصناف" لو صفر.
-        var whGroupsPresent = groups;
+    // ── مُولّدات HTML المشتركة (بلوك مجموعة / صفوف أصناف) ─────────
+    function itemRowsHtml(list) {
+      return list
+        .map(function (it) {
+          return (
+            '<tr class="cg2-item-row" data-search="' +
+            esc(
+              (
+                it.id +
+                " " +
+                (it.code || "") +
+                " " +
+                it.name +
+                " " +
+                (it.description || "")
+              ).toLowerCase(),
+            ) +
+            '">' +
+            '<td><span class="cg2-item-code">' +
+            esc(it.code || it.id) +
+            "</span></td>" +
+            '<td class="cg2-item-name">' +
+            esc(it.name) +
+            "</td>" +
+            '<td class="cg2-item-desc">' +
+            esc(it.description || "—") +
+            "</td>" +
+            '<td><span class="cg2-unit-badge">' +
+            esc(it.unit || "—") +
+            "</span></td>" +
+            "</tr>"
+          );
+        })
+        .join("");
+    }
 
-        var groupsHtml = whGroupsPresent
-          .map(function (g) {
-            var groupItems = whItems.filter(function (it) {
-              return it.group === g.id || it.group === g.name;
-            });
+    function groupBlockHtml(prefix, name, list) {
+      var rowsHtml = itemRowsHtml(list);
+      return (
+        '<div class="cg2-group-block">' +
+        '<div class="cg2-group-header">' +
+        '<span class="cg2-group-prefix">' +
+        esc(prefix) +
+        "</span>" +
+        '<span class="cg2-group-name">' +
+        esc(name) +
+        "</span>" +
+        '<span class="cg2-group-count">' +
+        list.length +
+        " صنف</span>" +
+        "</div>" +
+        (rowsHtml
+          ? '<table class="cg2-table">' +
+            "<thead><tr>" +
+            "<th>" +
+            I18N.t("LBL_ITEM_CODE") +
+            "</th><th>" +
+            I18N.t("LBL_NAME") +
+            "</th><th>" +
+            I18N.t("LBL_DESCRIPTION") +
+            "</th><th>" +
+            I18N.t("LBL_UNIT") +
+            "</th>" +
+            "</tr></thead><tbody>" +
+            rowsHtml +
+            "</tbody></table>"
+          : '<div class="cg2-empty-group">' +
+            I18N.t("MSG_NO_ITEMS_IN_GROUP") +
+            "</div>") +
+        "</div>"
+      );
+    }
 
-            var rowsHtml = groupItems
-              .map(function (it) {
-                return (
-                  '<tr class="cg2-item-row" data-search="' +
-                  esc(
-                    (
-                      it.id +
-                      " " +
-                      it.name +
-                      " " +
-                      (it.description || "")
-                    ).toLowerCase(),
-                  ) +
-                  '">' +
-                  '<td><span class="cg2-item-code">' +
-                  esc(it.code || it.id) +
-                  "</span></td>" +
-                  '<td class="cg2-item-name">' +
-                  esc(it.name) +
-                  "</td>" +
-                  '<td class="cg2-item-desc">' +
-                  esc(it.description || "—") +
-                  "</td>" +
-                  '<td><span class="cg2-unit-badge">' +
-                  esc(it.unit || "—") +
-                  "</span></td>" +
-                  "</tr>"
-                );
-              })
-              .join("");
+    // المجموعات عامة على مستوى النظام ([GROUPS-GLOBAL-2026-09-09]) فبتظهر
+    // كلها تحت كل مخزن حتى لو فاضية (showEmptyGroups)، أما بلوك "غير
+    // مربوطة بمخزن" فبنعرض فيه المجموعات اللي فيها أصناف بس.
+    // + مجموعة "بدون مجموعة" لأي صنف مجموعته مش موجودة.
+    function groupsHtmlFor(list, showEmptyGroups) {
+      var html = groups
+        .map(function (g) {
+          var gi = list.filter(function (it) {
+            return cgItemInGroup(it, g);
+          });
+          if (!showEmptyGroups && !gi.length) return "";
+          return groupBlockHtml(g.prefix || g.id, g.name, gi);
+        })
+        .join("");
+      var ungrouped = cgUngroupedItems(list, groups);
+      if (ungrouped.length) html += groupBlockHtml("—", "بدون مجموعة", ungrouped);
+      return html;
+    }
 
-            return (
-              '<div class="cg2-group-block">' +
-              '<div class="cg2-group-header">' +
-              '<span class="cg2-group-prefix">' +
-              esc(g.prefix || g.id) +
-              "</span>" +
-              '<span class="cg2-group-name">' +
-              esc(g.name) +
-              "</span>" +
-              '<span class="cg2-group-count">' +
-              groupItems.length +
-              " صنف</span>" +
-              "</div>" +
-              (rowsHtml
-                ? '<table class="cg2-table">' +
-                  "<thead><tr>" +
-                  "<th>" +
-                  I18N.t("LBL_ITEM_CODE") +
-                  "</th><th>" +
-                  I18N.t("LBL_NAME") +
-                  "</th><th>" +
-                  I18N.t("LBL_DESCRIPTION") +
-                  "</th><th>" +
-                  I18N.t("LBL_UNIT") +
-                  "</th>" +
-                  "</tr></thead><tbody>" +
-                  rowsHtml +
-                  "</tbody></table>"
-                : '<div class="cg2-empty-group">' +
-                  I18N.t("MSG_NO_ITEMS_IN_GROUP") +
-                  "</div>") +
-              "</div>"
-            );
-          })
-          .join("");
+    // ── بلوك الأصناف غير المربوطة بأي مخزن ──────────────────────
+    // [FIX-CODEGUIDE-WH-LINK-2026-09-20] بحسب قاعدة النظام، صنف بدون مخزن
+    // محدد = "متاح لكل المخازن" (راجع _postProcessItems) — فمينفعش نخفيه.
+    var unassignedBlockHtml = cgPart.unassigned.length
+      ? '<div class="cg2-wh-block" data-wh="__none__">' +
+        '<div class="cg2-wh-header">' +
+        '<span class="cg2-wh-code">—</span>' +
+        '<span class="cg2-wh-name">أصناف غير مربوطة بمخزن</span>' +
+        '<span class="cg2-wh-meta">' +
+        cgPart.unassigned.length +
+        " صنف — متاحة لكل المخازن</span>" +
+        "</div>" +
+        '<div style="margin-bottom:10px;padding:10px 14px;border-radius:var(--radius);' +
+        "background:var(--warning-soft,#fef3c7);color:var(--text2,#78350f);" +
+        'font-size:13px;line-height:1.7">' +
+        "الأصناف دي مسجّلة في النظام لكن مفيش لها مخزن محدد (لا مخزن افتراضي ولا " +
+        "مخازن مرتبطة). لتظهر تحت مخزن معيّن: افتح الصنف من شاشة الأصناف " +
+        "واختار المخزن من حقل «المخزن»." +
+        "</div>" +
+        groupsHtmlFor(cgPart.unassigned, false) +
+        "</div>"
+      : "";
 
-        return (
-          '<div class="cg2-wh-block" data-wh="' +
-          esc(wh.id) +
-          '">' +
-          '<div class="cg2-wh-header">' +
-          '<span class="cg2-wh-code">' +
-          esc(wh.code || wh.id) +
-          "</span>" +
-          '<span class="cg2-wh-name">' +
-          esc(wh.name) +
-          "</span>" +
-          '<span class="cg2-wh-meta">كود المخزن: ' +
-          esc(wh.code || wh.id) +
-          " — " +
-          whGroupsPresent.length +
-          " مجموعة — " +
-          whItemCount +
-          " صنف</span>" +
-          "</div>" +
-          // [FIX-CODEGUIDE-GROUPS-GLOBAL-2026-09-19] الشرط القديم whItemCount > 0
-          // كان هو السبب الحقيقي في إخفاء كل المجموعات لمجرد إن مفيش صنف
-          // واحد لسه مرتبط بالمخزن ده (whItemIds فاضية) — حتى لو المجموعات
-          // نفسها (اللي بقت عامة) موجودة فعلاً. دلوقتي بنعتمد على وجود
-          // مجموعات أصلاً (whGroupsPresent، وهي كل المجموعات دايمًا)، مش
-          // على وجود أصناف مرتبطة بالمخزن.
-          (whGroupsPresent.length > 0
-            ? groupsHtml
-            : '<div class="cg2-empty-group" style="border:0.5px solid var(--border);border-radius:var(--radius);padding:14px">' +
-              I18N.t("MSG_NO_GROUPS_FOR_WAREHOUSE") +
-              "</div>") +
-          "</div>"
-        );
-      })
-      .join("");
+    var whBlocksHtml =
+      unassignedBlockHtml +
+      warehouses
+        .map(function (wh) {
+          var whItems = cgPart.byWh[String(wh.id)] || [];
+          var whGroupsPresent = groups;
+          return (
+            '<div class="cg2-wh-block" data-wh="' +
+            esc(wh.id) +
+            '">' +
+            '<div class="cg2-wh-header">' +
+            '<span class="cg2-wh-code">' +
+            esc(wh.code || wh.id) +
+            "</span>" +
+            '<span class="cg2-wh-name">' +
+            esc(wh.name) +
+            "</span>" +
+            '<span class="cg2-wh-meta">كود المخزن: ' +
+            esc(wh.code || wh.id) +
+            " — " +
+            whGroupsPresent.length +
+            " مجموعة — " +
+            whItems.length +
+            " صنف</span>" +
+            "</div>" +
+            (whGroupsPresent.length > 0
+              ? groupsHtmlFor(whItems, true)
+              : '<div class="cg2-empty-group" style="border:0.5px solid var(--border);border-radius:var(--radius);padding:14px">' +
+                I18N.t("MSG_NO_GROUPS_FOR_WAREHOUSE") +
+                "</div>") +
+            "</div>"
+          );
+        })
+        .join("");
 
     // ── CSS موجود في Style.html (لا حاجة لإضافته هنا) ──────────
 

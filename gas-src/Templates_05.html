@@ -370,11 +370,14 @@
           return whItemIds[String(it.id)];
         });
         var whItemCount = whItems.length;
-        var whGroupsPresent = groups.filter(function (g) {
-          return whItems.some(function (it) {
-            return it.group === g.id || it.group === g.name;
-          });
-        });
+        // [FIX-CODEGUIDE-GROUPS-GLOBAL-2026-09-19] المجموعات بقت عامة على
+        // مستوى النظام كله (مش مرتبطة بمخزن معيّن) بعد [GROUPS-GLOBAL-2026-09-09]،
+        // فمفروض تظهر كلها تحت كل مخزن حتى لو لسه مفيش أصناف لمخزن ده
+        // متسجلة فعليًا في المجموعة دي — بدل ما نخفي المجموعة بالكامل
+        // ونعرض "لا توجد مجموعات لهذا المخزن" لمجرد إن مفيش صنف واحد لسه
+        // اتربط بالمخزن ده. الفلترة الفعلية بتحصل جوه كل مجموعة (groupItems)
+        // فبتفضل بتعرض بس أصناف المخزن ده، وتعرض "لا توجد أصناف" لو صفر.
+        var whGroupsPresent = groups;
 
         var groupsHtml = whGroupsPresent
           .map(function (g) {
@@ -468,7 +471,13 @@
           whItemCount +
           " صنف</span>" +
           "</div>" +
-          (whItemCount > 0
+          // [FIX-CODEGUIDE-GROUPS-GLOBAL-2026-09-19] الشرط القديم whItemCount > 0
+          // كان هو السبب الحقيقي في إخفاء كل المجموعات لمجرد إن مفيش صنف
+          // واحد لسه مرتبط بالمخزن ده (whItemIds فاضية) — حتى لو المجموعات
+          // نفسها (اللي بقت عامة) موجودة فعلاً. دلوقتي بنعتمد على وجود
+          // مجموعات أصلاً (whGroupsPresent، وهي كل المجموعات دايمًا)، مش
+          // على وجود أصناف مرتبطة بالمخزن.
+          (whGroupsPresent.length > 0
             ? groupsHtml
             : '<div class="cg2-empty-group" style="border:0.5px solid var(--border);border-radius:var(--radius);padding:14px">' +
               I18N.t("MSG_NO_GROUPS_FOR_WAREHOUSE") +

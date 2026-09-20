@@ -2097,6 +2097,18 @@ const OPENING_STOCK_HEADERS = [
   // الإضافة (يدوي أو استيراد)، ومتوقّع بالفعل من deleteWarehouse dependency check
   // (Code_44_DeleteEngine.js) اللي كان بيتحقق منه من غير ما يكون العمود موجود أصلاً.
 ];
+// [FIX-OPENINGSTOCK-HEADERS-FALLBACK-2026-09-19] "OpeningStock" مكنش مسجَّل
+// في HEADERS خالص — فأي نداء getSheet("OpeningStock") من غير تمرير
+// customHeaders صراحة (زي الحلقة العامة setupAllSheets في Code_21_Setup.js:
+// getSheet(name, HEADERS[name] || WAREHOUSE_HEADERS)) كان بيقع على fallback
+// WAREHOUSE_HEADERS، فيضيف أعمدة المخازن (id/name/code/type/manager/location/
+// status/account_id/created_at) غلط جوه شيت OpeningStock. ده اللي حصل فعليًا
+// أول ما setupAllSheets اتشغّل بعد إضافة warehouse_id — والأعمدة الزيادة
+// اتصلّحت يدويًا مرة واحدة في الشيت نفسه (حذف الأعمدة الفاضية دي).
+// مسجَّلة هنا بعد تعريف OPENING_STOCK_HEADERS مباشرة (مش جوه الـ object
+// literal بتاع HEADERS فوق) عشان نتجنب ReferenceError من الترتيب
+// (temporal dead zone) — HEADERS بيتعرّف قبل الثابت ده في نفس الملف.
+HEADERS.OpeningStock = OPENING_STOCK_HEADERS;
 
 // ← v4.1: warehouse-level permissions
 const WH_ACCESS_HEADERS = [

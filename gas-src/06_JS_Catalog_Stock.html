@@ -4239,27 +4239,33 @@
       buildColorDropdown(isEdit ? item_id : "", isEdit ? color : "") +
       "</div>";
 
-    // حقل المخزن — يُستخدم لفلترة قائمة الأصناف (وضع الإضافة فقط)
-    // [OS-WH-REQUIRED] المخزن بقى إلزامي قبل اختيار الصنف — اتشالت
-    // "كل المخازن" عشان يضمن إن المستخدم يحدد مخزن الأول.
+    // حقل المخزن — إلزامي في وضعي الإضافة والتعديل مع بعض. في الإضافة
+    // بيتستخدم كمان لفلترة قائمة الأصناف؛ في التعديل بيبقى مفتوح
+    // ومحدد افتراضيًا على مخزن السجل الحالي (rec.warehouse_id) وقابل
+    // للتغيير لو حصل غلط في المخزن الأصلي.
+    // [OS-WH-EDIT-2026-09-19] كان الحقل ده مخفي بالكامل في وضع التعديل
+    // (warehouseField = "")، فمفيش طريقة تشوف أو تغيّر مخزن سجل موجود
+    // من غير ما تمسحه وتضيفه تاني.
+    var currentWhId = isEdit && rec ? String(rec.warehouse_id || "") : "";
     var warehouseOptions = (APP.data.warehouses || [])
       .map(function (wh) {
         return (
           '<option value="' +
           esc(wh.id) +
-          '">' +
+          '"' +
+          (String(wh.id) === currentWhId ? " selected" : "") +
+          ">" +
           esc(wh.name) +
           "</option>"
         );
       })
       .join("");
-    var warehouseField = isEdit
-      ? ""
-      : '<div class="field"><label>المخزن *</label>' +
-        '<select class="input" id="os-warehouse">' +
-        '<option value="">— اختر المخزن —</option>' +
-        warehouseOptions +
-        "</select></div>";
+    var warehouseField =
+      '<div class="field"><label>المخزن *</label>' +
+      '<select class="input" id="os-warehouse">' +
+      '<option value="">— اختر المخزن —</option>' +
+      warehouseOptions +
+      "</select></div>";
 
     openStyledDrawer({
       title: isEdit ? "تعديل رصيد أول المدة" : "إضافة رصيد أول المدة",
@@ -4274,8 +4280,13 @@
           ? // [EDIT-SMOOTH] كان حقل نصي readonly ثابت — بقى نفس الـ
             // dropdown التفاعلي (بحث + قائمة مجمّعة) المستخدم في وضع
             // الإضافة، مفتوح على الصنف الحالي وقابل للتغيير لو حصل غلط.
-            '<div class="field full" style="width:100%"><label>الصنف *</label>' +
+            // [OS-WH-EDIT-2026-09-19] وضيفنا حقل المخزن جنبه بنفس تخطيط
+            // وضع الإضافة (1fr للمخزن، 2fr للصنف).
+            '<div style="display:grid;grid-template-columns:1fr 2fr;gap:12px">' +
+            warehouseField +
+            '<div class="field"><label>الصنف *</label>' +
             buildItemDropdown(item_id, "", true) +
+            "</div>" +
             "</div>"
           : '<div style="display:grid;grid-template-columns:1fr 2fr;gap:12px">' +
             warehouseField +
@@ -4308,15 +4319,18 @@
         bindColorDropdown();
         bindItemDropdown();
 
-        if (!isEdit) {
-          var whSelectEl = document.getElementById("os-warehouse");
-          if (whSelectEl) {
-            whSelectEl.addEventListener("change", function () {
-              refreshItemDropdown(whSelectEl.value);
-            });
-          }
+        // [OS-WH-EDIT-2026-09-19] الفلترة حسب المخزن (refreshItemDropdown)
+        // منطقيًا مفيدة بس في وضع الإضافة (لسه هيختار الصنف). في التعديل
+        // الصنف متحدد فعلاً، فمش بنستخدم الحدث ده لفلترة القائمة — بس
+        // السيلكت نفسه لازم يفضل موجود ومتاح للتغيير في الحالتين.
+        var whSelectEl = document.getElementById("os-warehouse");
+        if (whSelectEl && !isEdit) {
+          whSelectEl.addEventListener("change", function () {
+            refreshItemDropdown(whSelectEl.value);
+          });
+        }
 
-          // إذا في defaultItemId — اختاره تلقائياً بالـ custom dropdown
+        if (!isEdit) {          // إذا في defaultItemId — اختاره تلقائياً بالـ custom dropdown
           if (defaultItemId) {
             var defItem = APP.data.items.find(function (i) {
               return i.id === defaultItemId;
@@ -4370,18 +4384,13 @@
             var notes = document.getElementById("os-notes").value.trim();
 
             // [OS-WH-REQUIRED] تحقق دفاعي إضافي (بجانب قفل الدروب داون
-            // نفسه) — لازم مخزن محدد قبل الحفظ في وضع الإضافة
-            // [OS-WH-2026-09] كان الحقل ده بيتقرأ بس عشان يفلتر قائمة
-            // الأصناف (refreshItemDropdown) ومبيتبعتش لـ saveOpeningStock
-            // خالص، يعني المخزن المُختار مكنش بيتسجل مع الرصيد. دلوقتي
-            // بيتبعت كباراميتر فعلي.
-            var whChosen = "";
-            if (!isEdit) {
-              whChosen = document.getElementById("os-warehouse")
-                ? document.getElementById("os-warehouse").value
-                : "";
-              if (!whChosen) return NotificationEngine.error("اختر المخزن أولاً");
-            }
+            // نفسه) — لازم مخزن محدد قبل الحفظ في الحالتين.
+            // [OS-WH-EDIT-2026-09-19] الحقل بقى ظاهر ومتاح للتغيير في
+            // وضع التعديل كمان (كان قبل كده بيتقرأ في وضع الإضافة بس).
+            var whChosen = document.getElementById("os-warehouse")
+              ? document.getElementById("os-warehouse").value
+              : "";
+            if (!whChosen) return NotificationEngine.error("اختر المخزن أولاً");
             if (!selId) return NotificationEngine.error("اختر الصنف");
             if (!selColor) return NotificationEngine.error("اختر اللون أولاً");
             if (isNaN(qty) || qty < 0)
@@ -4398,12 +4407,10 @@
               isEdit &&
               (String(selId) !== String(item_id) ||
                 selColor.trim() !== String(color || "").trim());
-            // [OS-WH-2026-09] عند تغيير الصنف/اللون أثناء التعديل، مفتاح
-            // البحث في saveOpeningStock بيتغيّر (item_id+color جديدين)
-            // فمش هيلاقي سجل قديم، وبالتالي هيتعامل معاه كسجل جديد
-            // ويطلب مخزن. بما إن حقل المخزن مخفي في وضع التعديل، نبعت
-            // مخزن السجل الأصلي (rec.warehouse_id) عشان يفضل نفس المخزن.
-            if (isRename && rec) whChosen = rec.warehouse_id || "";
+            // [OS-WH-EDIT-2026-09-19] الحقل بقى ظاهر دايمًا (مش مخفي في
+            // التعديل زي قبل)، فـ whChosen فوق أصلاً بيعكس اختيار
+            // المستخدم الفعلي (سواء سابه على مخزن السجل الأصلي أو غيّره).
+            // مبقاش محتاجين نفرض rec.warehouse_id هنا عند تغيير الصنف/اللون.
             if (isRename) {
               var _clash = (APP.data.openingStock || []).find(function (r) {
                 return (

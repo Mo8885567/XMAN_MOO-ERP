@@ -544,9 +544,11 @@
       '<label style="font-size:12px;font-weight:600;color:var(--text2);display:flex;align-items:center;gap:5px">' +
       '<i class="ti ti-package" style="font-size:13px;color:#2563eb"></i> الصنف <span style="color:var(--danger)">*</span>' +
       "</label>" +
-      '<div class="item-srch-wrap" id="stmt-item-wrap">' +
-      '<input type="text" id="stmt-item-search" class="input" placeholder=" ابحث بالاسم أو الكود..." autocomplete="off">' +
-      '<select id="stmt-item" style="display:none"><option value="">—</option>' +
+      '<div class="item-srch-wrap item-srch-combo" id="stmt-item-wrap">' +
+      '<input type="text" id="stmt-item-search" class="input" placeholder="اختر الصنف أو ابحث بالاسم / الكود..." autocomplete="off">' +
+      '<i class="ti ti-chevron-down item-srch-chev" aria-hidden="true"></i>' +
+      // [ITEM-COMBO-2026-09-20] data-as-skip — شوف التعليق في Templates_02 (إذن الوارد)
+      '<select id="stmt-item" data-as-skip style="display:none"><option value="">—</option>' +
       itOpts +
       "</select>" +
       '<div id="stmt-item-list" class="item-srch-list"></div>' +

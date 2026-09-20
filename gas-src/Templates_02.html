@@ -1250,9 +1250,13 @@
       '<div class="tx-in-add-row">' +
       '<div class="tx-in-field-group" style="flex:3;min-width:0">' +
       '<div class="tx-in-add-label"><i class="ti ti-package" aria-hidden="true"></i> الصنف</div>' +
-      '<div class="item-srch-wrap" id="in-item-wrap">' +
-      '<input type="text" id="in-item-search" class="input" placeholder=" ابحث عن الصنف..." autocomplete="off" disabled>' +
-      '<select id="in-item" style="display:none"><option value="">—</option>' +
+      '<div class="item-srch-wrap item-srch-combo" id="in-item-wrap">' +
+      '<input type="text" id="in-item-search" class="input" placeholder="اختر المخزن أولاً..." autocomplete="off" disabled>' +
+      '<i class="ti ti-chevron-down item-srch-chev" aria-hidden="true"></i>' +
+      // [ITEM-COMBO-2026-09-20] data-as-skip: الـ <select> ده مجرد مخزن قيمة للـ combobox اللي فوق
+      // (بحث + اختيار في حقل واحد). من غير الـ attribute ده initCustomSelects كانت بتحوّله لـ
+      // AppSelect ظاهر تحت حقل البحث → دروب داون مكرر.
+      '<select id="in-item" data-as-skip style="display:none"><option value="">—</option>' +
       itOpts +
       "</select>" +
       '<div id="in-item-list" class="item-srch-list"></div>' +

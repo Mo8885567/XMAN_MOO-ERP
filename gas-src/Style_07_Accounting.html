@@ -281,6 +281,31 @@
     font-size: 13px;
   }
 
+  /* [ITEM-COMBO-2026-09-20] حقل واحد = بحث + دروب داون (إذن وارد / صادر / تحويل).
+     السهم على الشمال (RTL) وبيدور لما القائمة تتفتح؛ pointer-events:none عشان
+     الضغطة عليه توصل للـ input وتفتح القائمة. */
+  .item-srch-combo input[type="text"] {
+    padding-left: 34px !important;
+    text-overflow: ellipsis;
+  }
+  .item-srch-combo .item-srch-chev {
+    position: absolute;
+    left: 12px;
+    top: 22px; /* نص min-height بتاع الـ input (44px) */
+    transform: translateY(-50%);
+    font-size: 16px;
+    color: var(--text3);
+    pointer-events: none;
+    transition: transform 0.15s ease;
+  }
+  .item-srch-combo.item-srch-wrap-open .item-srch-chev {
+    transform: translateY(-50%) rotate(180deg);
+    color: var(--accent);
+  }
+  .item-srch-combo input[type="text"]:disabled ~ .item-srch-chev {
+    opacity: 0.4;
+  }
+
   /* القائمة المنسدلة — تشبه os-id-panel */
   .item-srch-list {
     position: absolute;

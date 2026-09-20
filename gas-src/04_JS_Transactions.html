@@ -1359,12 +1359,17 @@
   // ─────────────────────────────────────────────────────────────
   // Search Dropdown للأصناف — مساعد مشترك
   // ─────────────────────────────────────────────────────────────
-  function _bindItemSearch(prefix, onSelect) {
+  // [ITEM-COMBO-2026-09-20] بقى combobox واحد: حقل نصي بيبحث + بيفتح قائمة الاختيار
+  // (بدل حقل بحث + AppSelect منفصلين). selectId اختياري للحالات اللي id الـ <select>
+  // فيها مش نفس الـ prefix — زي التحويل (tr-item-search ↔ tr-item-sel): من غيره الـ
+  // getElementById("tr-item") كانت بترجّع null والدالة بتخرج من غير ما تربط حاجة.
+  function _bindItemSearch(prefix, onSelect, selectId) {
     var searchEl = document.getElementById(prefix + "-search");
-    var hiddenSel = document.getElementById(prefix);
+    var hiddenSel = document.getElementById(selectId || prefix);
     var listEl = document.getElementById(prefix + "-list");
     var groupFilterEl = document.getElementById(prefix + "-group-filter");
     if (!searchEl || !hiddenSel || !listEl) return;
+    var wrapEl = searchEl.closest ? searchEl.closest(".item-srch-wrap") : null;
 
     if (window.SplitSelect && groupFilterEl) {
       SplitSelect.init(prefix + "-group-filter", {
@@ -1439,10 +1444,16 @@
           .join("");
       }
       listEl.classList.add("item-srch-open");
+      if (wrapEl) wrapEl.classList.add("item-srch-wrap-open");
     }
 
     function _hideItemList() {
       listEl.classList.remove("item-srch-open");
+      if (wrapEl) wrapEl.classList.remove("item-srch-wrap-open");
+    }
+
+    function _isListOpen() {
+      return listEl.classList.contains("item-srch-open");
     }
 
     // ── أحداث فلتر المجموعة ──────────────────────────────────
@@ -1456,35 +1467,105 @@
       });
     }
 
-    // ── أحداث حقل البحث ──────────────────────────────────────
-    searchEl.addEventListener("input", function () {
-      buildList(this.value);
-    });
+    // ── اختيار صنف (ماوس أو كيبورد) ──────────────────────────
+    // _typed = المستخدم كتب فعلاً في الحقل (مش بس النص = اسم الصنف المختار)
+    var _typed = false;
 
-    searchEl.addEventListener("focus", function () {
-      buildList(this.value);
-    });
-
-    searchEl.addEventListener("keydown", function (e) {
-      if (e.key === "Escape") {
-        _hideItemList();
-      }
-    });
-
-    // ── اختيار عنصر من القائمة ──────────────────────────────
-    listEl.addEventListener("mousedown", function (e) {
-      var item = e.target.closest(".item-srch-item");
-      if (!item || !item.dataset.val) return;
-      e.preventDefault(); // يمنع blur قبل الاختيار
-
-      hiddenSel.value = item.dataset.val;
-      searchEl.value = item.dataset.label || item.textContent.trim();
+    function _pickItem(itemEl) {
+      if (!itemEl || !itemEl.dataset.val) return;
+      _typed = false;
+      hiddenSel.value = itemEl.dataset.val;
+      searchEl.value = itemEl.dataset.label || itemEl.textContent.trim();
       _hideItemList();
 
       // أطلق change event على الـ hidden select
       hiddenSel.dispatchEvent(new Event("change"));
 
-      if (typeof onSelect === "function") onSelect(item.dataset.val);
+      if (typeof onSelect === "function") onSelect(itemEl.dataset.val);
+    }
+
+    function _moveActive(dir) {
+      var its = listEl.querySelectorAll(".item-srch-item");
+      if (!its.length) return;
+      var idx = -1;
+      for (var i = 0; i < its.length; i++) {
+        if (its[i].classList.contains("active")) {
+          idx = i;
+          its[i].classList.remove("active");
+          break;
+        }
+      }
+      idx += dir;
+      if (idx < 0) idx = its.length - 1;
+      if (idx >= its.length) idx = 0;
+      its[idx].classList.add("active");
+      if (its[idx].scrollIntoView) its[idx].scrollIntoView({ block: "nearest" });
+    }
+
+    // ── أحداث حقل البحث ──────────────────────────────────────
+    searchEl.addEventListener("input", function () {
+      _typed = true;
+      // مسح النص بالكامل = إلغاء الاختيار الحالي
+      if (!this.value && hiddenSel.value) {
+        hiddenSel.value = "";
+        hiddenSel.dispatchEvent(new Event("change"));
+      }
+      buildList(this.value);
+    });
+
+    searchEl.addEventListener("focus", function () {
+      _typed = false;
+      // لو فيه صنف مختار: القائمة تتفتح كاملة (مش متفلترة باسم الصنف) والنص
+      // يتحدد عشان أول حرف يكتبه يستبدله.
+      buildList("");
+      var el = this;
+      if (el.value) setTimeout(function () { el.select(); }, 0);
+    });
+
+    // ضغطة تانية على حقل عليه focus بالفعل (بعد Escape أو اختيار) تفتح القائمة
+    searchEl.addEventListener("click", function () {
+      if (!_isListOpen()) buildList(_typed ? this.value : "");
+    });
+
+    searchEl.addEventListener("blur", function () {
+      // تأخير بسيط عشان ضغطة الماوس على عنصر القائمة تلحق تتنفذ
+      setTimeout(function () {
+        _hideItemList();
+        // كتب نص ومختارش حاجة → رجّع اسم الصنف المختار (أو فضّي الحقل)
+        if (_typed) {
+          _typed = false;
+          if (typeof searchEl._syncFromSelect === "function")
+            searchEl._syncFromSelect();
+        }
+      }, 150);
+    });
+
+    searchEl.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        _hideItemList();
+      } else if (e.key === "Tab") {
+        _hideItemList();
+      } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (!_isListOpen()) buildList(_typed ? this.value : "");
+        _moveActive(e.key === "ArrowDown" ? 1 : -1);
+      } else if (e.key === "Enter" && _isListOpen()) {
+        var act =
+          listEl.querySelector(".item-srch-item.active") ||
+          (_typed ? listEl.querySelector(".item-srch-item") : null);
+        if (act) {
+          e.preventDefault();
+          _pickItem(act);
+        }
+      }
+    });
+
+    // ── اختيار عنصر من القائمة بالماوس ──────────────────────
+    listEl.addEventListener("mousedown", function (e) {
+      var item = e.target.closest(".item-srch-item");
+      if (!item || !item.dataset.val) return;
+      e.preventDefault(); // يمنع blur قبل الاختيار
+      _pickItem(item);
     });
 
     // ── إخفاء القائمة عند الضغط خارجها ─────────────────────
@@ -1675,7 +1756,7 @@
         if (this.value) {
           if (searchEl) {
             searchEl.disabled = false;
-            searchEl.placeholder = "\u{1F50D} ابحث بالاسم أو الكود...";
+            searchEl.placeholder = "اختر الصنف أو ابحث بالاسم / الكود...";
             searchEl.value = "";
           }
         } else {
@@ -1821,7 +1902,7 @@
         if (this.value) {
           if (searchEl) {
             searchEl.disabled = false;
-            searchEl.placeholder = "\u{1F50D} ابحث بالاسم أو الكود...";
+            searchEl.placeholder = "اختر الصنف أو ابحث بالاسم / الكود...";
             searchEl.value = "";
           }
         } else {
@@ -2224,7 +2305,7 @@
 
     _upgradeWhSelect("tr-from");
     _upgradeWhSelect("tr-to");
-    _bindItemSearch("tr-item");
+    _bindItemSearch("tr-item", null, "tr-item-sel");
 
     if (fromSel)
       fromSel.addEventListener("change", function () {
@@ -2233,7 +2314,7 @@
         if (fromVal) {
           if (searchEl) {
             searchEl.disabled = false;
-            searchEl.placeholder = " ابحث بالاسم أو الكود...";
+            searchEl.placeholder = "اختر الصنف أو ابحث بالاسم / الكود...";
             searchEl.value = "";
           }
           _filterItemsByWarehouse("tr-item-sel", fromVal, "OUT");

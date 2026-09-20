@@ -127,9 +127,11 @@
       '<div class="tx-out-add-row">' +
       '<div class="tx-out-field-group" style="flex:3;min-width:0">' +
       '<div class="tx-out-add-label"><i class="ti ti-package" aria-hidden="true"></i> الصنف</div>' +
-      '<div class="item-srch-wrap" id="out-item-wrap">' +
-      '<input type="text" id="out-item-search" class="input" placeholder=" ابحث عن الصنف..." autocomplete="off" disabled>' +
-      '<select id="out-item" style="display:none"><option value="">—</option>' +
+      '<div class="item-srch-wrap item-srch-combo" id="out-item-wrap">' +
+      '<input type="text" id="out-item-search" class="input" placeholder="اختر المخزن أولاً..." autocomplete="off" disabled>' +
+      '<i class="ti ti-chevron-down item-srch-chev" aria-hidden="true"></i>' +
+      // [ITEM-COMBO-2026-09-20] data-as-skip — شوف التعليق في Templates_02 (إذن الوارد)
+      '<select id="out-item" data-as-skip style="display:none"><option value="">—</option>' +
       itOpts +
       "</select>" +
       '<div id="out-item-list" class="item-srch-list"></div>' +
@@ -303,9 +305,11 @@
       '<div class="tx-tr-add-row">' +
       '<div class="tx-tr-field-group" style="flex:3;min-width:0">' +
       '<div class="tx-tr-add-label"><i class="ti ti-package" aria-hidden="true"></i> الصنف</div>' +
-      '<div class="item-srch-wrap" id="tr-item-wrap">' +
+      '<div class="item-srch-wrap item-srch-combo" id="tr-item-wrap">' +
       '<input type="text" id="tr-item-search" class="input" placeholder="اختر المستودع أولاً..." autocomplete="off" disabled>' +
-      '<select id="tr-item-sel" style="display:none"><option value="">—</option>' +
+      '<i class="ti ti-chevron-down item-srch-chev" aria-hidden="true"></i>' +
+      // [ITEM-COMBO-2026-09-20] data-as-skip — شوف التعليق في Templates_02 (إذن الوارد)
+      '<select id="tr-item-sel" data-as-skip style="display:none"><option value="">—</option>' +
       itOpts +
       "</select>" +
       '<div id="tr-item-list" class="item-srch-list"></div>' +

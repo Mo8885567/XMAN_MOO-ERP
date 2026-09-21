@@ -649,7 +649,10 @@
     // المدمج في التولبار الخاص بـ ColumnEngine بدل #cd-search اليدوي.
     var tableHtml =
       '<div class="card" style="padding:0;overflow:hidden">' +
-      '<div id="color-defs-ce-container"></div></div>';
+      // [CE-CARD-PADDING-2026-09-20] الكارت padding:0 عشان overflow:hidden، فالتولبار
+      // كان لازق في حرف الكارت من فوق ومن الجناب — padding:12px على الحاوية زي
+      // باقي شاشات ColumnEngine (مرتجعات/فواتير) بيدي مسافة بيضاء حوالين الكل.
+      '<div id="color-defs-ce-container" style="padding:12px"></div></div>';
 
     return (
       '<div class="page-enter">' +
@@ -793,7 +796,8 @@
       // 07_JS_Shipping_Colors_Excel.html.
       bodyHtml =
         '<div class="card" style="padding:0;overflow:hidden">' +
-        '<div id="size-defs-ce-container"></div></div>';
+        // [CE-CARD-PADDING-2026-09-20] شوف التعليق في تعريف الألوان
+        '<div id="size-defs-ce-container" style="padding:12px"></div></div>';
     }
 
     return (
@@ -855,7 +859,8 @@
     // ── الجدول [COLUMN-ENGINE] — نفس نمط جدول المقاسات ──
     var bodyHtml =
       '<div class="card" style="padding:0;overflow:hidden">' +
-      '<div id="unit-defs-ce-container"></div></div>';
+      // [CE-CARD-PADDING-2026-09-20] شوف التعليق في تعريف الألوان
+      '<div id="unit-defs-ce-container" style="padding:12px"></div></div>';
 
     return (
       '<div class="page-enter">' +

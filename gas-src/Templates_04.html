@@ -1398,7 +1398,8 @@
       "</div></div>" +
       statsHtml +
       '<div class="card" style="padding:0;overflow:hidden">' +
-      '<div id="os-ce-container"></div>' +
+      // [CE-CARD-PADDING-2026-09-20] الكارت padding:0 → التولبار كان لازق في الحرف
+      '<div id="os-ce-container" style="padding:12px"></div>' +
       "</div>"
     );
   }

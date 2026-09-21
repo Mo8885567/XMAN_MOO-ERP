@@ -3676,6 +3676,10 @@ var qrcode = function() {
         // هنا فقط عبر hideSearch، وباقي أدوات التولبار (تصدير/طباعة/طرق
         // العرض) تفضل شغالة زي ما هي.
         hideSearch: true,
+        // [TOOLBAR-HOST-2026-09-20] التولبار (عداد/طرق العرض/تصدير/طباعة)
+        // مدموج في نفس صف زر "فلتر متقدم" (راجع Templates_02.html →
+        // #items-ce-toolbar-host) بدل صف مستقل فوق الجدول.
+        toolbarHostId: "items-ce-toolbar-host",
         // [FIT-TO-WIDTH] كل الأعمدة الظاهرة تاخد نفس النسبة من عرض الجدول
         // وتتقلّص/تتمدد مع الحاوية بدل عرض px ثابت — بدون سكرول جانبي.
         fitToWidth: true,

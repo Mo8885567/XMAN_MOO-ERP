@@ -632,10 +632,13 @@
       '<option value="group_desc">المجموعة (ي → أ)</option>' +
       "</select></div>" +
       "</div>" +
-      // زر الفلتر المتقدم + مسح الفلاتر في نفس الصف
-      '<div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between">' +
+      // زر الفلتر المتقدم + مسح الفلاتر + تولبار الجدول (عداد/طرق العرض/
+      // تصدير/طباعة) كله في صف واحد [TOOLBAR-HOST-2026-09-20]. الـ host
+      // بيتملى من ColumnEngine (options.toolbarHostId) ويتحط أقصى الشمال.
+      '<div style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
       '<button id="item-adv-toggle" class="btn btn-secondary btn-sm" style="white-space:nowrap"> فلتر متقدم</button>' +
       '<button id="item-clear-filters" style="display:none;align-items:center;gap:5px;background:rgba(239,68,68,.08);color:#ef4444;border:1.5px solid rgba(239,68,68,.35);border-radius:8px;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;white-space:nowrap" onmouseover="this.style.background=\'rgba(239,68,68,.18)\'" onmouseout="this.style.background=\'rgba(239,68,68,.08)\'"> مسح الفلاتر</button>' +
+      '<div id="items-ce-toolbar-host" style="margin-inline-start:auto;min-width:0"></div>' +
       "</div>" +
       // ── الفلتر المتقدم (مخفي) ──
       '<div id="item-adv-panel" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">' +
@@ -670,7 +673,9 @@
       // [MERGED-HEADER-2026-09] فاصل بسيط بدل بطاقة منفصلة — تولبار
       // ColumnEngine (عداد/طرق العرض/تصدير/طباعة) هيظهر مباشرة تحت
       // شريط الفلاتر جوه نفس البطاقة.
-      '<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">' +
+      // [TOOLBAR-HOST-2026-09-20] الفاصل اتشال — التولبار بقى في صف الفلتر
+      // المتقدم فوق، فالجدول بييجي مباشرة بعده.
+      '<div style="margin-top:12px">' +
       '<div id="items-ce-container"></div>' +
       "</div></div>"
     );

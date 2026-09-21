@@ -3541,19 +3541,28 @@
       );
     }
 
-    function pdfGroupsFor(list, showEmptyGroups) {
-      var html = groups
-        .map(function (g) {
-          var gi = list.filter(function (it) {
-            return cgItemInGroup(it, g);
-          });
-          if (!showEmptyGroups && !gi.length) return "";
-          return pdfGroupBlock(g.prefix || g.id, g.name, gi);
+    // [CODEGUIDE-HIDE-EMPTY-GROUPS-2026-09-20] المجموعات الفاضية مبتظهرش
+    function pdfGroupsList(list) {
+      var out = [];
+      groups.forEach(function (g) {
+        var gi = list.filter(function (it) {
+          return cgItemInGroup(it, g);
+        });
+        if (gi.length) out.push({ prefix: g.prefix || g.id, name: g.name, items: gi });
+      });
+      var ungrouped = cgUngroupedItems(list, groups);
+      if (ungrouped.length)
+        out.push({ prefix: "—", name: "بدون مجموعة", items: ungrouped });
+      return out;
+    }
+    function pdfGroupsFor(list) {
+      var gs = pdfGroupsList(list);
+      if (!gs.length) return '<p class="pdf-empty">لا توجد أصناف</p>';
+      return gs
+        .map(function (x) {
+          return pdfGroupBlock(x.prefix, x.name, x.items);
         })
         .join("");
-      var ungrouped = cgUngroupedItems(list, groups);
-      if (ungrouped.length) html += pdfGroupBlock("—", "بدون مجموعة", ungrouped);
-      return html;
     }
 
     function pdfWhBlock(code, name, metaText, innerHtml) {
@@ -3578,7 +3587,7 @@
         "—",
         "أصناف غير مربوطة بمخزن",
         part.unassigned.length + " صنف — متاحة لكل المخازن",
-        pdfGroupsFor(part.unassigned, false),
+        pdfGroupsFor(part.unassigned),
       );
     }
 
@@ -3591,10 +3600,8 @@
       blocksHtml += pdfWhBlock(
         wh.code || wh.id,
         wh.name,
-        groups.length + " مجموعة — " + whItems.length + " صنف",
-        groups.length > 0
-          ? pdfGroupsFor(whItems, true)
-          : '<p class="pdf-empty">لا توجد مجموعات</p>',
+        pdfGroupsList(whItems).length + " مجموعة — " + whItems.length + " صنف",
+        pdfGroupsFor(whItems),
       );
     });
 

@@ -478,23 +478,36 @@
       );
     }
 
-    // المجموعات عامة على مستوى النظام ([GROUPS-GLOBAL-2026-09-09]) فبتظهر
-    // كلها تحت كل مخزن حتى لو فاضية (showEmptyGroups)، أما بلوك "غير
-    // مربوطة بمخزن" فبنعرض فيه المجموعات اللي فيها أصناف بس.
+    // [CODEGUIDE-HIDE-EMPTY-GROUPS-2026-09-20] بناءً على طلب المستخدم: المجموعة
+    // اللي مفيهاش أصناف (تحت المخزن ده) مبتظهرش خالص — بدل ما كانت بتظهر
+    // فاضية تحت كل مخزن لأن المجموعات عامة على مستوى النظام.
     // + مجموعة "بدون مجموعة" لأي صنف مجموعته مش موجودة.
-    function groupsHtmlFor(list, showEmptyGroups) {
-      var html = groups
-        .map(function (g) {
-          var gi = list.filter(function (it) {
-            return cgItemInGroup(it, g);
-          });
-          if (!showEmptyGroups && !gi.length) return "";
-          return groupBlockHtml(g.prefix || g.id, g.name, gi);
+    function groupsWithItems(list) {
+      var out = [];
+      groups.forEach(function (g) {
+        var gi = list.filter(function (it) {
+          return cgItemInGroup(it, g);
+        });
+        if (gi.length) out.push({ prefix: g.prefix || g.id, name: g.name, items: gi });
+      });
+      var ungrouped = cgUngroupedItems(list, groups);
+      if (ungrouped.length)
+        out.push({ prefix: "—", name: "بدون مجموعة", items: ungrouped });
+      return out;
+    }
+    function groupsHtmlFor(list, emptyMsg) {
+      var gs = groupsWithItems(list);
+      if (!gs.length)
+        return (
+          '<div class="cg2-empty-group" style="border:0.5px solid var(--border);border-radius:var(--radius);padding:14px">' +
+          esc(emptyMsg || "لا توجد أصناف") +
+          "</div>"
+        );
+      return gs
+        .map(function (x) {
+          return groupBlockHtml(x.prefix, x.name, x.items);
         })
         .join("");
-      var ungrouped = cgUngroupedItems(list, groups);
-      if (ungrouped.length) html += groupBlockHtml("—", "بدون مجموعة", ungrouped);
-      return html;
     }
 
     // ── بلوك الأصناف غير المربوطة بأي مخزن ──────────────────────
@@ -516,7 +529,7 @@
         "مخازن مرتبطة). لتظهر تحت مخزن معيّن: افتح الصنف من شاشة الأصناف " +
         "واختار المخزن من حقل «المخزن»." +
         "</div>" +
-        groupsHtmlFor(cgPart.unassigned, false) +
+        groupsHtmlFor(cgPart.unassigned) +
         "</div>"
       : "";
 
@@ -525,7 +538,7 @@
       warehouses
         .map(function (wh) {
           var whItems = cgPart.byWh[String(wh.id)] || [];
-          var whGroupsPresent = groups;
+          var whGroupsCount = groupsWithItems(whItems).length;
           return (
             '<div class="cg2-wh-block" data-wh="' +
             esc(wh.id) +
@@ -540,16 +553,12 @@
             '<span class="cg2-wh-meta">كود المخزن: ' +
             esc(wh.code || wh.id) +
             " — " +
-            whGroupsPresent.length +
+            whGroupsCount +
             " مجموعة — " +
             whItems.length +
             " صنف</span>" +
             "</div>" +
-            (whGroupsPresent.length > 0
-              ? groupsHtmlFor(whItems, true)
-              : '<div class="cg2-empty-group" style="border:0.5px solid var(--border);border-radius:var(--radius);padding:14px">' +
-                I18N.t("MSG_NO_GROUPS_FOR_WAREHOUSE") +
-                "</div>") +
+            groupsHtmlFor(whItems, "لا توجد أصناف في هذا المخزن") +
             "</div>"
           );
         })

@@ -89,19 +89,6 @@
         ".ce-body-row:hover{background:var(--surface2)}",
         ".ce-body-row.ce-row-clickable{cursor:pointer}",
         ".ce-td{padding:8px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:inherit}",
-        // [COL-DIVIDERS-2026-09-20] فواصل رأسية بين الأعمدة (رأس + صفوف). مفعّلة
-        // افتراضياً لكل جداول ColumnEngine، وتتلغى بـ options.columnDividers:false.
-        // الصفوف كانت align-items:center فالخلية بتاخد ارتفاع محتواها بس، وأي
-        // border عليها كان هيطلع مقطوع في الصفوف الطويلة (صورة/ألوان). فبنعمل
-        // stretch عشان الخلية تملا ارتفاع الصف، ونرجّع التوسيط الرأسي للنص
-        // بـ align-content:center (بيشتغل على block containers) — ده بيحافظ
-        // على ellipsis اللي مش بيشتغل مع display:flex.
-        ".ce-col-dividers .ce-grid-row{align-items:stretch}",
-        ".ce-col-dividers .ce-td{align-content:center}",
-        ".ce-col-dividers .ce-th,.ce-col-dividers .ce-td{border-inline-end:1px solid var(--border);",
-        "border-inline-end-color:color-mix(in srgb,var(--border) 60%,var(--text3))}",
-        ".ce-col-dividers .ce-grid-row>.ce-th:last-child,.ce-col-dividers .ce-grid-row>.ce-td:last-child{border-inline-end:none}",
-        ".ce-col-dividers .ce-group-header .ce-td{border-inline-end:none}",
         ".ce-frozen{position:sticky;z-index:2}",
         ".ce-empty{padding:30px;text-align:center;color:var(--text3);font-size:13px}",
         // ── [COLUMN-ENGINE-EXTRA-ROWS] صف افتتاحي (topRow) وصف إجمالي
@@ -588,22 +575,8 @@
       else container.removeAttribute("data-ce-loading");
       container.setAttribute("data-ce-scope", screenId);
       container.classList.add("ce-wrap");
-      container.classList.toggle(
-        "ce-col-dividers",
-        _registry[screenId].options.columnDividers !== false,
-      );
-      // [TOOLBAR-HOST-2026-09-20] option اختياري options.toolbarHostId: لو
-      // العنصر ده موجود في الصفحة، التولبار (عداد/طرق العرض/تصدير/طباعة)
-      // بيتحط جواه بدل أول الـ container — عشان الشاشة تدمجه في صف موجود
-      // أصلاً (زي صف "فلتر متقدم" في الأصناف). كل عناصر التولبار بتتوصّل
-      // بالـ id (getElementById) فمفيش أي فرق في السلوك، والـ host بيتحدّث
-      // مع كل render زي ما الـ container بيتحدّث.
-      var _tbHostId = _registry[screenId].options.toolbarHostId;
-      var _tbHost = _tbHostId ? document.getElementById(_tbHostId) : null;
-      var _tbHtml = _buildToolbar(screenId);
-      if (_tbHost) _tbHost.innerHTML = _tbHtml;
       container.innerHTML =
-        (_tbHost ? "" : _tbHtml) +
+        _buildToolbar(screenId) +
         '<div id="ce-tablewrap-' +
         screenId +
         '"><div class="ce-table-scroll"><div class="ce-thead-row ce-grid-row" id="ce-thead-' +
